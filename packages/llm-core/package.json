@@ -1,0 +1,29 @@
+{
+    "name": "@circuitforge/llm-core",
+    "version": "1.0.0",
+    "description": "LLM integration for circuit generation (stub)",
+    "main": "dist/index.js",
+    "types": "dist/index.d.ts",
+    "files": [
+        "dist"
+    ],
+    "scripts": {
+        "build": "tsc",
+        "dev": "tsc --watch",
+        "lint": "eslint src --ext .ts",
+        "lint:fix": "eslint src --ext .ts --fix",
+        "clean": "rm -rf dist coverage",
+        "typecheck": "tsc --noEmit"
+    },
+    "dependencies": {
+        "@anthropic-ai/sdk": "^0.100.1",
+        "@circuitforge/eda-core": "workspace:*"
+    },
+    "devDependencies": {
+        "@types/node": "^20.11.0",
+        "typescript": "^5.3.3"
+    },
+    "peerDependencies": {
+        "typescript": "^5.0.0"
+    }
+}

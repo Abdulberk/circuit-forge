@@ -1,0 +1,177 @@
+/**
+ * Netlist Sanitizer Tests
+ * Tests for include path whitelisting and security features
+ */
+import {
+    validateIncludePath,
+    sanitizeNodeName,
+    sanitizeNetlist,
+    sanitizeValue,
+    validateDesignator,
+    hasShellMetacharacters,
+    SecurityError,
+} from '../src/netlist/sanitizer';
+
+describe('NetlistSanitizer', () => {
+    describe('validateIncludePath', () => {
+        const jobDir = '/tmp/sim/job123';
+
+        it('should allow files within job directory', () => {
+            expect(() => validateIncludePath('model.lib', jobDir)).not.toThrow();
+            expect(() => validateIncludePath('models/diode.lib', jobDir)).not.toThrow();
+        });
+
+        it('should reject absolute paths', () => {
+            expect(() => validateIncludePath('/etc/passwd', jobDir)).toThrow(SecurityError);
+            expect(() => validateIncludePath('C:\\Windows\\system32\\config', jobDir)).toThrow(SecurityError);
+        });
+
+        it('should reject parent directory traversal', () => {
+            expect(() => validateIncludePath('../outside.lib', jobDir)).toThrow(SecurityError);
+            expect(() => validateIncludePath('models/../../../etc/passwd', jobDir)).toThrow(SecurityError);
+        });
+
+        it('should reject special prefixes', () => {
+            expect(() => validateIncludePath('~/.bashrc', jobDir)).toThrow(SecurityError);
+            expect(() => validateIncludePath('$HOME/file', jobDir)).toThrow(SecurityError);
+        });
+
+        it('should allow common model file extensions', () => {
+            expect(() => validateIncludePath('model.lib', jobDir)).not.toThrow();
+            expect(() => validateIncludePath('model.mod', jobDir)).not.toThrow();
+            expect(() => validateIncludePath('model.subckt', jobDir)).not.toThrow();
+            expect(() => validateIncludePath('model.inc', jobDir)).not.toThrow();
+        });
+    });
+
+    describe('sanitizeNodeName', () => {
+        it('should prefix alphanumeric names with n', () => {
+            const result = sanitizeNodeName('out123');
+            expect(result).toMatch(/^n/);
+        });
+
+        it('should replace special characters with underscores', () => {
+            expect(sanitizeNodeName('node-1')).toContain('_');
+            expect(sanitizeNodeName('node.1')).toContain('_');
+        });
+
+        it('should handle mixed special characters', () => {
+            const result = sanitizeNodeName('node-1.out');
+            expect(result).toContain('_');
+            expect(result).not.toContain('-');
+            expect(result).not.toContain('.');
+        });
+
+        it('should prefix reserved words', () => {
+            const result = sanitizeNodeName('gnd');
+            expect(result).toMatch(/^x_/);
+        });
+
+        it('should handle empty string', () => {
+            expect(sanitizeNodeName('')).toBe('node');
+        });
+
+        it('should prefix numeric-only names', () => {
+            expect(sanitizeNodeName('123')).toBe('n123');
+        });
+    });
+
+    describe('sanitizeNetlist', () => {
+        const jobDir = '/tmp/sim/job123';
+
+        it('should pass through valid netlist', () => {
+            const netlist = `* Test circuit
+V1 in 0 DC 5
+R1 in out 1k
+.end`;
+            const result = sanitizeNetlist(netlist, jobDir);
+            expect(result).toBe(netlist);
+        });
+
+        it('should reject shell commands', () => {
+            const netlist = `.shell echo "hacked"`;
+            expect(() => sanitizeNetlist(netlist, jobDir)).toThrow(SecurityError);
+        });
+
+        it('should reject system commands', () => {
+            const netlist = `.system rm -rf /`;
+            expect(() => sanitizeNetlist(netlist, jobDir)).toThrow(SecurityError);
+        });
+
+        it('should validate include paths', () => {
+            const netlist = `.include ../../../etc/passwd`;
+            expect(() => sanitizeNetlist(netlist, jobDir)).toThrow(SecurityError);
+        });
+
+        it('should allow valid include paths', () => {
+            const netlist = `.include model.lib`;
+            expect(() => sanitizeNetlist(netlist, jobDir)).not.toThrow();
+        });
+    });
+
+    describe('sanitizeValue', () => {
+        it('should preserve valid values', () => {
+            expect(sanitizeValue('1k')).toBe('1k');
+            expect(sanitizeValue('100n')).toBe('100n');
+            expect(sanitizeValue('5V')).toBe('5V');
+        });
+
+        it('should preserve source expressions', () => {
+            expect(sanitizeValue('SIN(0 1 1k)')).toBe('SIN(0 1 1k)');
+            expect(sanitizeValue('DC 5')).toBe('DC 5');
+        });
+
+        it('should remove dangerous characters', () => {
+            expect(sanitizeValue('1k;rm -rf /')).not.toContain(';');
+            expect(sanitizeValue('1k`whoami`')).not.toContain('`');
+        });
+    });
+
+    describe('validateDesignator', () => {
+        it('should accept valid designators', () => {
+            expect(validateDesignator('R1')).toBe(true);
+            expect(validateDesignator('C10')).toBe(true);
+            expect(validateDesignator('V1')).toBe(true);
+            expect(validateDesignator('D1')).toBe(true);
+        });
+
+        it('should reject invalid designators', () => {
+            expect(validateDesignator('1R')).toBe(false);
+            expect(validateDesignator('R')).toBe(false);
+            expect(validateDesignator('')).toBe(false);
+        });
+    });
+
+    describe('hasShellMetacharacters', () => {
+        it('should detect shell metacharacters', () => {
+            expect(hasShellMetacharacters('test;rm')).toBe(true);
+            expect(hasShellMetacharacters('test|cat')).toBe(true);
+            expect(hasShellMetacharacters('test`whoami`')).toBe(true);
+            expect(hasShellMetacharacters('test$HOME')).toBe(true);
+        });
+
+        it('should pass clean strings', () => {
+            expect(hasShellMetacharacters('test123')).toBe(false);
+            expect(hasShellMetacharacters('model.lib')).toBe(false);
+        });
+    });
+
+    describe('SecurityError', () => {
+        it('should be instanceof Error', () => {
+            const error = new SecurityError('test', 'TEST_CODE');
+            expect(error).toBeInstanceOf(Error);
+            expect(error).toBeInstanceOf(SecurityError);
+        });
+
+        it('should have correct name', () => {
+            const error = new SecurityError('test', 'TEST_CODE');
+            expect(error.name).toBe('SecurityError');
+        });
+
+        it('should preserve message and code', () => {
+            const error = new SecurityError('test message', 'TEST_CODE');
+            expect(error.message).toBe('test message');
+            expect(error.code).toBe('TEST_CODE');
+        });
+    });
+});

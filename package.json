@@ -1,0 +1,40 @@
+{
+    "name": "circuit-forge",
+    "version": "1.0.0",
+    "private": true,
+    "description": "AI Circuit Generator & Simulator - Backend",
+    "scripts": {
+        "dev": "turbo run dev",
+        "build": "turbo run build",
+        "test": "turbo run test",
+        "test:cov": "turbo run test:cov",
+        "test:e2e": "turbo run test:e2e",
+        "lint": "turbo run lint",
+        "lint:fix": "turbo run lint:fix",
+        "format": "prettier --write \"**/*.{ts,tsx,js,jsx,json,md}\"",
+        "format:check": "prettier --check \"**/*.{ts,tsx,js,jsx,json,md}\"",
+        "db:migrate": "pnpm --filter api db:migrate",
+        "db:migrate:dev": "pnpm --filter api db:migrate:dev",
+        "db:generate": "pnpm --filter api db:generate",
+        "db:studio": "pnpm --filter api db:studio",
+        "db:seed": "pnpm --filter api db:seed",
+        "clean": "turbo run clean && rm -rf node_modules",
+        "typecheck": "turbo run typecheck"
+    },
+    "devDependencies": {
+        "@types/node": "^20.11.0",
+        "eslint": "^8.56.0",
+        "@typescript-eslint/eslint-plugin": "^6.19.0",
+        "@typescript-eslint/parser": "^6.19.0",
+        "eslint-config-prettier": "^9.1.0",
+        "eslint-plugin-import": "^2.29.1",
+        "prettier": "^3.2.4",
+        "turbo": "^1.11.3",
+        "typescript": "^5.3.3"
+    },
+    "packageManager": "pnpm@8.14.1",
+    "engines": {
+        "node": ">=20.0.0",
+        "pnpm": ">=8.0.0"
+    }
+}

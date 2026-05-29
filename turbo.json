@@ -1,0 +1,69 @@
+{
+    "$schema": "https://turbo.build/schema.json",
+    "globalDependencies": [
+        ".env"
+    ],
+    "pipeline": {
+        "build": {
+            "dependsOn": [
+                "^build"
+            ],
+            "outputs": [
+                "dist/**"
+            ]
+        },
+        "dev": {
+            "cache": false,
+            "persistent": true
+        },
+        "lint": {
+            "outputs": []
+        },
+        "lint:fix": {
+            "outputs": []
+        },
+        "test": {
+            "dependsOn": [
+                "build"
+            ],
+            "outputs": [
+                "coverage/**"
+            ]
+        },
+        "test:cov": {
+            "dependsOn": [
+                "build"
+            ],
+            "outputs": [
+                "coverage/**"
+            ]
+        },
+        "test:e2e": {
+            "dependsOn": [
+                "build"
+            ],
+            "outputs": []
+        },
+        "typecheck": {
+            "dependsOn": [
+                "^build"
+            ],
+            "outputs": []
+        },
+        "clean": {
+            "cache": false
+        },
+        "db:migrate": {
+            "cache": false
+        },
+        "db:migrate:dev": {
+            "cache": false
+        },
+        "db:generate": {
+            "cache": false
+        },
+        "db:seed": {
+            "cache": false
+        }
+    }
+}

@@ -1,0 +1,226 @@
+// Prisma schema for Circuit Forge
+// Multi-tenant architecture with organizations, projects, and simulations
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ============================================================================
+// User & Authentication
+// ============================================================================
+
+model User {
+  id           String   @id @default(uuid())
+  email        String   @unique
+  passwordHash String
+  name         String
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  // Relations
+  memberships     OrgMembership[]
+  projectVersions ProjectVersion[]
+  auditLogs       AuditLog[]
+
+  @@map("users")
+}
+
+// ============================================================================
+// Organization & Membership
+// ============================================================================
+
+model Organization {
+  id        String   @id @default(uuid())
+  name      String
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  // Relations
+  memberships    OrgMembership[]
+  projects       Project[]
+  templates      Template[]
+  assets         Asset[]
+  simulationJobs SimulationJob[]
+  auditLogs      AuditLog[]
+
+  @@map("organizations")
+}
+
+model OrgMembership {
+  id        String   @id @default(uuid())
+  orgId     String
+  userId    String
+  role      OrgRole  @default(MEMBER)
+  createdAt DateTime @default(now())
+
+  // Relations
+  org  Organization @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  user User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([orgId, userId])
+  @@map("org_memberships")
+}
+
+enum OrgRole {
+  OWNER
+  ADMIN
+  MEMBER
+}
+
+// ============================================================================
+// Projects & Versions
+// ============================================================================
+
+model Project {
+  id          String   @id @default(uuid())
+  orgId       String
+  name        String
+  description String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  // Relations
+  org      Organization     @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  versions ProjectVersion[]
+
+  @@unique([orgId, name])
+  @@map("projects")
+}
+
+model ProjectVersion {
+  id              String   @id @default(uuid())
+  projectId       String
+  versionNumber   Int
+  createdByUserId String
+  circuitJson     Json     // Canonical circuit representation
+  uiJson          Json     // Layout/UI state
+  createdAt       DateTime @default(now())
+
+  // Relations
+  project        Project         @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  createdBy      User            @relation(fields: [createdByUserId], references: [id])
+  simulationJobs SimulationJob[]
+
+  @@unique([projectId, versionNumber])
+  @@map("project_versions")
+}
+
+// ============================================================================
+// Templates
+// ============================================================================
+
+model Template {
+  id          String   @id @default(uuid())
+  orgId       String?  // null = public template
+  name        String
+  description String?
+  tags        String[]
+  circuitJson Json
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  // Relations
+  org Organization? @relation(fields: [orgId], references: [id], onDelete: Cascade)
+
+  @@map("templates")
+}
+
+// ============================================================================
+// Assets (SPICE models, symbol packs, etc.)
+// ============================================================================
+
+model Asset {
+  id          String    @id @default(uuid())
+  orgId       String
+  type        AssetType
+  name        String
+  description String?
+  contentType String
+  sizeBytes   Int
+  s3Key       String
+  sha256      String
+  createdAt   DateTime  @default(now())
+
+  // Relations
+  org Organization @relation(fields: [orgId], references: [id], onDelete: Cascade)
+
+  @@map("assets")
+}
+
+enum AssetType {
+  SPICE_MODEL
+  SYMBOL_PACK
+  OTHER
+}
+
+// ============================================================================
+// Simulation Jobs
+// ============================================================================
+
+model SimulationJob {
+  id               String       @id @default(uuid())
+  orgId            String
+  projectVersionId String?
+  status           SimJobStatus @default(QUEUED)
+  engine           SimEngine    @default(NGSPICE)
+  analysisConfig   Json
+  netlist          String       @db.Text
+  stdout           String?      @db.Text
+  stderr           String?      @db.Text
+  resultJson       Json?
+  resultS3Key      String?
+  metrics          Json?        // { runtimeMs, peakMemBytes, pointsCount }
+  errorMessage     String?
+  createdAt        DateTime     @default(now())
+  startedAt        DateTime?
+  finishedAt       DateTime?
+
+  // Relations
+  org            Organization    @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  projectVersion ProjectVersion? @relation(fields: [projectVersionId], references: [id], onDelete: SetNull)
+
+  @@index([orgId, createdAt])
+  @@index([status])
+  @@map("simulation_jobs")
+}
+
+enum SimJobStatus {
+  QUEUED
+  RUNNING
+  SUCCEEDED
+  FAILED
+  CANCELED
+  TIMED_OUT
+}
+
+enum SimEngine {
+  NGSPICE
+}
+
+// ============================================================================
+// Audit Logs
+// ============================================================================
+
+model AuditLog {
+  id         String   @id @default(uuid())
+  orgId      String
+  userId     String
+  action     String   // e.g., "project.create", "simulation.start"
+  entityType String   // e.g., "Project", "SimulationJob"
+  entityId   String
+  meta       Json?    // Additional context
+  createdAt  DateTime @default(now())
+
+  // Relations
+  org  Organization @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  user User         @relation(fields: [userId], references: [id])
+
+  @@index([orgId, createdAt])
+  @@index([entityType, entityId])
+  @@map("audit_logs")
+}
