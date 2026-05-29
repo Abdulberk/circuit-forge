@@ -75,9 +75,19 @@ export class DesignService {
                 const status = await this.pollJob(jobId, userId, 90_000);
                 const result = (await this.simulation.getResult(jobId, userId)) as {
                     result?: { meta?: { pointsCount?: number } };
+                    metrics?: { pointsCount?: number };
                     error?: string;
                 };
-                const pointsCount = result?.result?.meta?.pointsCount ?? 0;
+                // pointsCount lives in `metrics` (always persisted by the worker). The full
+                // `resultJson` — and thus `result.meta` — is undefined when the worker offloads
+                // large results (>1MB) to S3, so reading it there falsely reports 0 points and
+                // breaks the loop on big-but-valid simulations. Prefer metrics; fall back to meta.
+                const statusMetrics = status.metrics as { pointsCount?: number } | undefined;
+                const pointsCount =
+                    statusMetrics?.pointsCount ??
+                    result?.metrics?.pointsCount ??
+                    result?.result?.meta?.pointsCount ??
+                    0;
                 const succeeded = status.status === 'SUCCEEDED' && pointsCount > 0;
                 history.push({ round, status: status.status, pointsCount, jobId });
 

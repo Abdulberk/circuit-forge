@@ -1,10 +1,11 @@
 /**
  * Simulation Service
  */
-import { Injectable, NotFoundException } from '@nestjs/common';
+import { Injectable, NotFoundException, Logger } from '@nestjs/common';
 import { InjectQueue } from '@nestjs/bullmq';
 import { Queue } from 'bullmq';
 import { Prisma } from '@prisma/client';
+import { S3Client, GetObjectCommand } from '@aws-sdk/client-s3';
 import { PrismaService } from '../prisma/prisma.service';
 import { VersionsService } from '../versions/versions.service';
 import { OrgsService } from '../orgs/orgs.service';
@@ -13,12 +14,27 @@ import type { CircuitJson, AnalysisConfig } from '@circuitforge/eda-core';
 
 @Injectable()
 export class SimulationService {
+    private readonly logger = new Logger(SimulationService.name);
+    private readonly s3: S3Client;
+    private readonly bucket: string;
+
     constructor(
         private prisma: PrismaService,
         private versionsService: VersionsService,
         private orgsService: OrgsService,
         @InjectQueue('simulations') private simulationQueue: Queue,
-    ) { }
+    ) {
+        this.bucket = process.env.S3_BUCKET || 'circuitforge';
+        this.s3 = new S3Client({
+            endpoint: process.env.S3_ENDPOINT || 'http://localhost:9000',
+            region: process.env.S3_REGION || 'us-east-1',
+            credentials: {
+                accessKeyId: process.env.S3_ACCESS_KEY || 'minioadmin',
+                secretAccessKey: process.env.S3_SECRET_KEY || 'minioadmin',
+            },
+            forcePathStyle: process.env.S3_FORCE_PATH_STYLE === 'true',
+        });
+    }
 
     async createFromVersion(
         versionId: string,
@@ -139,13 +155,48 @@ export class SimulationService {
             };
         }
 
-        // If result is in S3, we would fetch it here
-        // For now, return from DB
+        // Large results (>1MB) are spilled to S3 by the worker, which leaves resultJson
+        // null and sets resultS3Key. Hydrate from S3 so the response always carries the
+        // full SimulationResult ({ meta, series }) — matching small, DB-stored results.
+        let result: unknown = job.resultJson ?? null;
+        if (result === null && job.resultS3Key) {
+            result = await this.fetchResultFromS3(job.resultS3Key);
+        }
+
         return {
             id: job.id,
             status: job.status,
-            result: job.resultJson,
+            result,
             metrics: job.metrics,
+            // A SUCCEEDED job should always carry a result; a null here means the payload was
+            // spilled to S3 and could not be fetched/parsed. Surface it so clients can tell
+            // "temporarily unavailable" apart from a genuinely empty dataset.
+            ...(result === null ? { error: 'Result data is currently unavailable from storage.' } : {}),
         };
+    }
+
+    /**
+     * Fetch a simulation result the worker spilled to S3 (key: results/{jobId}/result.json).
+     * Returns the parsed SimulationResult ({ meta, series }), or null if it cannot be
+     * fetched/parsed — callers already treat a null result as "data unavailable".
+     */
+    private async fetchResultFromS3(key: string): Promise<unknown | null> {
+        try {
+            const response = await this.s3.send(
+                new GetObjectCommand({ Bucket: this.bucket, Key: key }),
+            );
+            const body = await response.Body?.transformToString();
+            return body ? JSON.parse(body) : null;
+        } catch (err) {
+            // The job succeeded and the worker wrote a result to S3, so a failure here
+            // (missing/corrupt object, connectivity) is a real problem — log it instead of
+            // silently returning null, which is indistinguishable from "no data" downstream.
+            this.logger.error(
+                `Failed to fetch/parse S3 result at key "${key}": ${
+                    err instanceof Error ? err.message : String(err)
+                }`,
+            );
+            return null;
+        }
     }
 }
