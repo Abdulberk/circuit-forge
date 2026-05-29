@@ -257,12 +257,15 @@ I/O and parsing, not just the ngspice process).
   `S3_ENDPOINT`, `S3_REGION`, credentials, and `forcePathStyle = S3_FORCE_PATH_STYLE`
   (required for MinIO).
 
-### API read-back caveat
+### API read-back of S3-spilled results
 
-`SimulationService.getResult` returns `job.resultJson` directly and has a `// If result
-is in S3, we would fetch it here` TODO — i.e. for results that spilled to S3
-(`resultS3Key` set, `resultJson` null) the API does **not** currently re-hydrate the
-payload. Small results returned inline work fine.
+`SimulationService.getResult` returns small results inline from `job.resultJson`. When a
+result spilled to S3 (`resultS3Key` set, `resultJson` null), the API **re-hydrates** it via
+`fetchResultFromS3`: it `GetObject`s `results/{jobId}/result.json` from the same `S3_BUCKET`
+(a per-service `S3Client` configured exactly like `AssetsService`), `JSON.parse`s the
+`{ meta, series }` payload, and returns it as `result`. On a fetch/parse failure it logs the
+error and returns `result: null` plus an `error` field, so callers can tell "temporarily
+unavailable from storage" apart from a genuinely empty dataset.
 
 ---
 
