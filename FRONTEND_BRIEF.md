@@ -67,7 +67,7 @@ These decisions are settled. Build to them; do not relitigate them.
 
 ## 1. Product Overview & Personas
 
-**Circuit Forge** is an enterprise, multi-tenant EDA web app. The frontend is a greenfield single-page / server-rendered application that talks **only** to the existing NestJS API (`http://localhost:3001`, Swagger `/docs`, OpenAPI JSON `/docs-json`). Its job is to make the backend's capabilities usable and pleasant:
+**Circuit Forge** is an enterprise, multi-tenant EDA web app. The frontend is a greenfield **Next.js (App Router)** application — used almost entirely client-side — that talks **only** to the existing NestJS API (`http://localhost:3001`, Swagger `/docs`, OpenAPI JSON `/docs-json`). Its job is to make the backend's capabilities usable and pleasant:
 
 - **Design** circuits in a schematic editor built around the canonical `CircuitJson` graph.
 - **Validate** continuously with eda-core's client-side ERC (`runErc`) — no round-trip, no secrets.
@@ -734,7 +734,7 @@ submit ──▶ QUEUED ──▶ RUNNING ──▶ SUCCEEDED ──▶ GET …/
 
 > **Authoritative source.** Every contract below is derived from the running NestJS code under `apps/api/src/**` and the ground-truth docs (`docs/API.md`, `docs/SECURITY.md`), verified against source. Where the API's behavior is surprising or buggy, it is flagged as **QUIRK** with the exact frontend mitigation. **Do not invent endpoints or fields.** If the OpenAPI document at `/docs-json` disagrees with this section, the running server wins — regenerate the client and reconcile.
 >
-> **The rule that dominates this entire section:** the LLM provider key and every other secret stays **server-side**. The frontend NEVER calls an LLM provider, NEVER embeds a provider key, and NEVER uses a `NEXT_PUBLIC_`/`VITE_`-style env var for anything secret. All AI generation goes through the backend endpoints in §4.4.9. The only client-visible config is the API base URL. (The previous frontend's worst defect was leaking the LLM key through a `NEXT_PUBLIC_` variable — that mistake must never recur.)
+> **The rule that dominates this entire section:** the LLM provider key and every other secret stays **server-side**. The frontend NEVER calls an LLM provider, NEVER embeds a provider key, and NEVER uses a `NEXT_PUBLIC_` env var for anything secret. All AI generation goes through the backend endpoints in §4.4.9. The only client-visible config is the API base URL. (The previous frontend's worst defect was leaking the LLM key through a `NEXT_PUBLIC_` variable — that mistake must never recur.)
 
 ---
 
@@ -757,16 +757,16 @@ import { z } from 'zod';
 
 const Env = z.object({
   // Public base URL of the Circuit Forge API. NOT a secret.
-  // Vite: VITE_API_BASE_URL · Next: NEXT_PUBLIC_API_BASE_URL
+  // Next.js: exposed to the client only via the NEXT_PUBLIC_ prefix.
   API_BASE_URL: z.string().url().default('http://localhost:3001'),
 });
 
 export const env = Env.parse({
-  API_BASE_URL: import.meta.env.VITE_API_BASE_URL,
+  API_BASE_URL: process.env.NEXT_PUBLIC_API_URL,
 });
 ```
 
-> **MANDATE (anti-leak):** the only public-prefixed env var permitted is the API base URL. No provider keys, JWT secrets, S3 credentials, or DB URLs may ever appear in client code or the bundle. Add a CI grep that fails the build if a `NEXT_PUBLIC_`/`VITE_` identifier appears next to `KEY`/`SECRET`/`TOKEN`/`PASSWORD`.
+> **MANDATE (anti-leak):** the only public-prefixed env var permitted is the API base URL. No provider keys, JWT secrets, S3 credentials, or DB URLs may ever appear in client code or the bundle. Add a CI grep that fails the build if a `NEXT_PUBLIC_` identifier appears next to `KEY`/`SECRET`/`TOKEN`/`PASSWORD` (anything `NEXT_PUBLIC_*` is inlined into the client bundle and is public).
 
 #### 4.1.2 CORS
 
@@ -814,7 +814,7 @@ The per-route limits that are *declared* (and will activate the moment a guard i
 
 ---
 
-### 4.2 Authentication flow & SPA token strategy
+### 4.2 Authentication flow & client token strategy
 
 JWT-based. Tokens are minted in `AuthService.generateTokens` (`auth.service.ts`).
 
@@ -870,7 +870,7 @@ All four live on the `auth` controller, **no guard**, all public.
 > - Tokens are **non-revocable** server-side (no blocklist / `tokenVersion`). A leaked access token is valid for its full 15m; a leaked refresh token for 7d. This is exactly why the access token must not be persisted (§4.2.2).
 > - The seeded demo user is `demo@circuitforge.io` / `demo123456` (use it for development).
 
-#### 4.2.2 Recommended SPA token strategy
+#### 4.2.2 Recommended client token strategy
 
 | Token | Where to store | Why |
 |---|---|---|
@@ -2166,9 +2166,9 @@ Treat network errors / client-timeouts like `502` (Retry). Read the status from 
 
 **Zero AI configuration exists in the browser.** The only AI surface the frontend touches is the four authenticated endpoints above. There is no client-side Anthropic SDK, no gateway URL, no model name, and above all **no provider key** anywhere in the web app or its bundle.
 
-- The **only** permitted client env var is the API base URL (`VITE_API_BASE_URL` or equivalent). Never a `VITE_LLM_*`, never `LLM_API_KEY`, never an `*_PUBLIC_*` AI key.
+- The **only** permitted client env var is the API base URL (`NEXT_PUBLIC_API_URL`). Never a `NEXT_PUBLIC_LLM_*`, never `LLM_API_KEY`, never any `NEXT_PUBLIC_` AI key.
 - No direct `fetch` to `api.anthropic.com` / `api.zentio.dev` from the browser. All AI traffic goes through the NestJS API, which holds the key server-side and validates output with eda-core.
-- This is a **build-blocking review failure** if violated: a `VITE_`/`NEXT_PUBLIC_` AI key, a client-side `@anthropic-ai/sdk` import, or any direct gateway fetch from browser code. Add a CI guard (e.g. grep the bundle/source for `anthropic`, `zentio`, `LLM_API_KEY`) — it must find nothing in the web app.
+- This is a **build-blocking review failure** if violated: a `NEXT_PUBLIC_` AI key, a client-side `@anthropic-ai/sdk` import, or any direct gateway fetch from browser code. Add a CI guard (e.g. grep the bundle/source for `anthropic`, `zentio`, `LLM_API_KEY`) — it must find nothing in the web app.
 
 ---
 
@@ -2269,19 +2269,19 @@ This section is the build contract for the **greenfield** Circuit Forge web clie
 
 | Concern | Choice | Justification |
 |---|---|---|
-| **Framework** | **React 18 + Vite SPA** (`react`, `react-dom`, `vite`, `@vitejs/plugin-react`) | The product is an **auth-gated single-page tool** (a schematic editor) hitting a *separate* NestJS API. Next.js App Router buys SSR/RSC/server-actions that are dead weight here: every meaningful view is behind JWT auth, there is nothing to SSR or SEO-index, and RSC cannot reach a Bearer-token API without re-plumbing auth onto a Node server you do not want to run and maintain alongside the existing one. Vite gives instant HMR, the fastest editor iteration loop, one mental model (everything is a client component), and a single static build artifact you can serve from any CDN/proxy. **Pick React + Vite SPA.** (If you genuinely need a public marketing/SEO surface later, host that as a *separate* static site — do not pull the editor into SSR for it.) |
+| **Framework** | **Next.js 16 (App Router) + React 19** (`next`, `react`, `react-dom`) | The product is an **auth-gated editor tool** hitting a *separate* NestJS API, so build it as a **client-first Next app**: a thin App-Router shell with every interactive tree marked `'use client'`. Do **not** fetch the Bearer-token API from Server Components / RSC — the browser calls the API directly with the in-memory access token (RSC running on the server has no access to it). What you *do* use from Next: file-based routing with nested layouts, `error.tsx` / `loading.tsx` / `not-found.tsx` per segment, route groups, first-class code-splitting, and a mature deploy story. Since there is nothing to SSR or SEO-index, you may set `output: 'export'` for a fully static bundle (serve from any CDN) **or** run the standard Node server — either is fine. Heavy browser-only libs (React Flow, uPlot) must be loaded with `next/dynamic` `{ ssr: false }` (or live strictly under a `'use client'` boundary that never renders on the server). React 19 ships with Next 16 — the named libs (React Flow/@xyflow, Radix/shadcn, uPlot, TanStack Query/Table, react-hook-form) support React 19; pin React-19-compatible versions. |
 | **Language / compiler bar** | **TypeScript, `strict` + extras** | Mirror the backend's `tsconfig.base.json`: `strict`, `noUncheckedIndexedAccess`, `noImplicitReturns`, `noUnusedLocals`, `noUnusedParameters`, `noFallthroughCasesInSwitch`, `forceConsistentCasingInFileNames`. `noUncheckedIndexedAccess` is mandatory — it is what makes the `Map<id, …>` lookups (§8.5) safe by forcing `undefined` handling. **Zero `any`. Zero unchecked `as` casts.** All boundary data is *validated* with Zod, never asserted. |
 | **Editor document state** | **Zustand** (single store; `immer` + `subscribeWithSelector` middleware) | The editor document (`CircuitJson` + `UiJson`) is **the single source of truth** and must support undo/redo, autosave, and fine-grained subscriptions. Zustand gives O(1) selector subscriptions (one glyph re-renders, not the tree) and ergonomic mutations via `immer`. **One store, no split-brain.** Local `useState` is allowed *only* for ephemeral, non-shared UI (a hover flag inside one component). |
 | **Server cache / data fetching** | **TanStack Query v5** over a typed API client | Server cache (orgs, projects, versions, templates, assets, simulation status/result) is a *different* concern from the editor document — never store it in Zustand. TanStack Query handles caching, retries, background refetch, and is the right primitive for the **simulation polling loop** (`refetchInterval` driven by job status). Add `@tanstack/react-query-devtools` (dev only). |
 | **Forms + validation** | **react-hook-form + Zod** (`@hookform/resolvers/zod`) | Every form (login, register, create org/project, save version, analysis config, AI prompt) uses RHF for uncontrolled-input performance and Zod for one schema shared by validation and TS types. Reuse `eda-core` Zod schemas (`AnalysisConfigSchema`, `SpiceValueSchema`, `ProbeSchema`) directly so a form cannot submit a payload the backend will `400`. |
 | **UI kit** | **shadcn/ui + Radix primitives + TailwindCSS** | Radix gives **accessible-by-default** primitives (focus management, ARIA roles, keyboard nav) — directly fixing the old app's zero-accessibility audit. shadcn/ui is copy-in (no opaque dependency; fully ownable/themeable). Add `class-variance-authority` + `tailwind-merge` for variants. |
 | **Schematic editor** | **React Flow / @xyflow** (MIT) as the default engine — render **custom SVG/HTML nodes** for the 7 component symbols and **custom orthogonal edges** for wires | See §8.4. React Flow is the FOSS standard for node/port editors: MIT-licensed (only Pro examples/support/attribution-removal are paid) and **DOM-based (HTML/SVG, not canvas)**, so it keeps native hit-testing/focus/ARIA — the accessibility the old audit punished — while giving pan/zoom, selection, viewport, and a `Handle` (port) API for free. You still own the *schematic* look: each component is a custom node (declarative SVG symbol; pins = uniquely-id'd `Handle`s seeded from `COMPONENT_PINS`) and each wire a custom **orthogonal/step** edge (React Flow's default edges are bezier — schematics want Manhattan routing). Note: a `Handle`'s `type` is source/target **direction**, not a datatype, so enforce pin compatibility with `isValidConnection`. Scale via memoized custom nodes + `onlyRenderVisibleElements` (no fixed node-count threshold is documented — profile your circuits). **Alternative (max control):** a from-scratch custom SVG renderer — full control of symbols/routing, but you build pan/zoom, selection, hit-testing and wiring yourself; the §8.4 guidance applies to either path. **Commercial alternative:** GoJS (paid) is the most EDA-proven option (official Circuit Designer sample, typed ports with link-count limits, built-in palette, orthogonal routing). **Open alternative:** maxGraph (framework-agnostic mxGraph successor, orthogonal routing, still pre-1.0). Canvas (react-konva/WebGL) is justified for *one* thing only: the waveform plot. |
-| **Routing** | **React Router v6** (`react-router-dom`, `createBrowserRouter`) | Standard for SPAs; route-level `loader`s can prefetch via the TanStack Query client, and route-level `errorElement` gives per-route error boundaries for free. |
+| **Routing** | **Next.js App Router** (file-based, in `src/app/`) | Routes are folders with `page.tsx`; nested `layout.tsx` carry the app chrome + providers; `error.tsx` per segment gives per-route error boundaries for free; `loading.tsx` gives Suspense fallbacks. Guard the authenticated area with a client auth-check in the `(app)` route group's layout (redirect to `/login` when there is no token) — or Next middleware if you later move to cookie auth. Prefetch via the TanStack Query client inside client components/effects (not RSC loaders). |
 | **Icons** | **lucide-react** | Pairs with shadcn/ui; tree-shakeable. **Every icon-only control gets an `aria-label`** (§8.4 a11y). |
 | **Charts / waveforms** | **uPlot** via a thin React wrapper | The server returns `SimulationResult { meta, series: DataSeries[] }` with potentially tens of thousands of `{x,y}` points. uPlot is the fastest large-series time/frequency plotter — far lighter than Recharts/Chart.js at this volume. Map `meta.analysisType` → axis labels using `meta.xLabel` / `meta.xUnit` already provided by the parser (`tran`→time/s, `ac`→freq/Hz with log option, `dc`→sweep var, `op`→single point). |
 | **Toasts** | **sonner** (or shadcn `useToast`) — **mounted once at the app root** | The old app declared toasts but never mounted the provider, so nothing fired. Mount `<Toaster />` in the root layout on day one (§8.4 resilience). |
 | **Tables / lists** | **TanStack Table** (headless) for project/version/job/asset lists | Headless and accessible; integrates with TanStack Query data. |
-| **Tooling** | Vitest, React Testing Library, Playwright, ESLint (typescript-eslint + `eslint-plugin-jsx-a11y`), Prettier, `@axe-core/playwright` | a11y lint and a bundle-size budget are enforced in CI (§8.4 testing). |
+| **Tooling** | Vitest, React Testing Library, Playwright, ESLint (`eslint-config-next` + typescript-eslint + `eslint-plugin-jsx-a11y`), Prettier, `@axe-core/playwright` | a11y lint and a bundle-size budget are enforced in CI (§8.4 testing). Vitest runs with jsdom + a React plugin alongside Next; Playwright runs against `next dev`/`next start` (or the exported static `out/`). |
 
 #### Sharing types with the backend (this is a separate repo)
 
@@ -2299,24 +2299,23 @@ Because the frontend is a *separate* project, the domain contract must be shared
 ### 8.2 Suggested folder structure
 
 ```
-circuit-forge-web/                     # standalone repo (or apps/web if co-located — user's choice)
-├─ index.html
-├─ vite.config.ts
+circuit-forge-web/                     # standalone Next.js repo (App Router)
+├─ next.config.ts                      # output: 'export' (static) OR default Node server
 ├─ tsconfig.json                       # mirror tsconfig.base.json's strict flags
-├─ .env.local                          # VITE_API_URL=http://localhost:3001  (NO secrets — see §8.3)
+├─ .env.local                          # NEXT_PUBLIC_API_URL=http://localhost:3001  (NO secrets — see §8.3)
 ├─ src/
-│  ├─ main.tsx                         # mounts <App/>; QueryClientProvider; RouterProvider; <Toaster/>
-│  ├─ App.tsx                          # root layout + top-level ErrorBoundary + Suspense
-│  ├─ app/
-│  │  ├─ router.tsx                    # createBrowserRouter; route tree + errorElement per route
-│  │  ├─ providers.tsx                 # QueryClient, theme, toast, auth providers
-│  │  └─ routes/                       # route components (lazy-loaded)
-│  │     ├─ login.tsx   register.tsx
-│  │     ├─ dashboard.tsx  project.$projectId.tsx
-│  │     ├─ editor.$versionId.tsx      # the schematic editor shell
-│  │     ├─ templates.tsx  assets.tsx  settings.tsx
+│  ├─ app/                             # App Router — routes are folders with page.tsx
+│  │  ├─ layout.tsx                    # root layout: <Providers/> + <Toaster/> mounted here
+│  │  ├─ providers.tsx                 # 'use client': QueryClientProvider, theme, toast, auth
+│  │  ├─ error.tsx  global-error.tsx   # top-level error boundaries (recoverable fallback)
+│  │  ├─ (auth)/login/page.tsx   (auth)/register/page.tsx
+│  │  ├─ (app)/layout.tsx              # 'use client' auth guard (redirect to /login if no token) + chrome
+│  │  ├─ (app)/dashboard/page.tsx   (app)/projects/[projectId]/page.tsx
+│  │  ├─ (app)/editor/[versionId]/page.tsx    # schematic editor shell (client)
+│  │  ├─ (app)/editor/[versionId]/error.tsx   # dedicated boundary around the editor
+│  │  └─ (app)/templates/page.tsx  (app)/assets/page.tsx  (app)/settings/page.tsx
 │  ├─ lib/
-│  │  ├─ env.ts                        # Zod-validated import.meta.env; ONLY VITE_API_URL allowed
+│  │  ├─ env.ts                        # Zod-validated process.env.NEXT_PUBLIC_*; ONLY NEXT_PUBLIC_API_URL
 │  │  ├─ api/
 │  │  │  ├─ client.ts                  # fetch wrapper: base URL, auth header, refresh-on-401, typed errors
 │  │  │  ├─ generated.ts               # openapi-typescript output (DO NOT edit by hand)
@@ -2332,7 +2331,7 @@ circuit-forge-web/                     # standalone repo (or apps/web if co-loca
 │  │  └─ selectors.ts                  # memoized selectors + Map<id,…> indices
 │  ├─ features/
 │  │  ├─ editor/
-│  │  │  ├─ Canvas.tsx                 # SVG root: pan/zoom transform, grid, layers
+│  │  │  ├─ Canvas.tsx                 # 'use client' React Flow root (next/dynamic ssr:false); nodes=symbols, edges=wires
 │  │  │  ├─ ComponentGlyph.tsx         # React.memo per component (static geometry only)
 │  │  │  ├─ symbols/                   # one pure SVG symbol per ComponentType (7 today)
 │  │  │  ├─ Pin.tsx  Wire.tsx  Net.tsx
@@ -2344,7 +2343,7 @@ circuit-forge-web/                     # standalone repo (or apps/web if co-loca
 │  │  │  ├─ AnalysisConfigForm.tsx     # tran/ac/dc/op (RHF + AnalysisConfigSchema)
 │  │  │  ├─ ProbePicker.tsx            # choose probes  (ProbeSchema; mandate explicit probes)
 │  │  │  ├─ useSimulationJob.ts        # submit → poll status → fetch result
-│  │  │  └─ WaveformChart.tsx          # uPlot wrapper over SimulationResult.series
+│  │  │  └─ WaveformChart.tsx          # 'use client' uPlot wrapper (next/dynamic ssr:false) over SimulationResult.series
 │  │  ├─ erc/ErcPanel.tsx              # runErc(circuit) from eda-core, client-side (pure, no secrets)
 │  │  ├─ ai/                           # consumes the BUILT AI endpoints (see AI Circuit Generation section)
 │  │  │  ├─ GenerateCircuitDialog.tsx  # prompt → POST /generate-circuit → validated CircuitJson
@@ -2362,27 +2361,27 @@ circuit-forge-web/                     # standalone repo (or apps/web if co-loca
 
 ### 8.3 Secrets boundary (hard rule — fixes the worst old-app bug)
 
-> **SECURITY CARDINAL RULE.** No provider/LLM keys, JWT secrets, S3 credentials, or DB URLs ever appear in client code or the shipped bundle. The **only** permitted client-visible config is the API base URL. The old frontend's worst bug was leaking the LLM key via a `NEXT_PUBLIC_`-prefixed env var, exposing it in the JS bundle. The Vite equivalent footgun is `import.meta.env.VITE_*` — **everything prefixed `VITE_` is inlined into the bundle and is public.**
+> **SECURITY CARDINAL RULE.** No provider/LLM keys, JWT secrets, S3 credentials, or DB URLs ever appear in client code or the shipped bundle. The **only** permitted client-visible config is the API base URL. The old frontend's worst bug was leaking the LLM key via a `NEXT_PUBLIC_`-prefixed env var, exposing it in the JS bundle. In Next.js this is exactly the footgun to respect: **anything prefixed `NEXT_PUBLIC_` is inlined into the client bundle and is public** — never give a secret that prefix.
 
-- **The only allowed `VITE_*` value is `VITE_API_URL`** (a public endpoint, `http://localhost:3001` in dev). Validate it at boot in `lib/env.ts` with a Zod schema and fail fast.
+- **The only allowed `NEXT_PUBLIC_*` value is `NEXT_PUBLIC_API_URL`** (a public endpoint, `http://localhost:3001` in dev). Validate it at boot in `lib/env.ts` with a Zod schema and fail fast.
 - **No model API keys, no `JWT_SECRET`, no S3 credentials, no `LLM_API_KEY` ever exist in the frontend.** AI configuration is **server-side only** (`LLM_API_KEY`, `LLM_BASE_URL`, `LLM_MODEL=claude-sonnet-4-6` live in the API environment). All AI generation goes through the authenticated backend endpoints in `apps/api/src/generation/` (`POST /generate-circuit`, `/edit-circuit`, `/explain-circuit`, `/design-circuit`) — the frontend **consumes** them and never imports an LLM SDK or fetches an LLM provider directly. Asset uploads use **backend-issued presigned URLs** (`POST /orgs/:orgId/assets/models/presign` → direct `PUT` to S3), so the client never sees S3 credentials.
 - **CI grep guard (required, must block the build):** add a check that fails if any client source or build output contains a client secret. Concretely:
 
   ```bash
   # ci/check-no-secrets.sh — fail the build if a client secret leaks.
   set -euo pipefail
-  # 1) Source: no VITE_* env that smells like a secret, and no LLM SDK / provider host.
-  if grep -REn 'VITE_[A-Z0-9_]*(KEY|SECRET|TOKEN|PASSWORD|CREDENTIAL)' src/; then
-    echo "FAIL: a VITE_*_KEY/SECRET/TOKEN appeared in client source"; exit 1; fi
+  # 1) Source: no NEXT_PUBLIC_* env that smells like a secret, and no LLM SDK / provider host.
+  if grep -REn 'NEXT_PUBLIC_[A-Z0-9_]*(KEY|SECRET|TOKEN|PASSWORD|CREDENTIAL)' src/; then
+    echo "FAIL: a NEXT_PUBLIC_*_KEY/SECRET/TOKEN appeared in client source"; exit 1; fi
   if grep -REn '@anthropic-ai/sdk|api\.anthropic\.com|LLM_API_KEY|JWT_SECRET|S3_SECRET_KEY' src/; then
     echo "FAIL: an LLM SDK / provider host / server secret name appeared in client source"; exit 1; fi
-  # 2) Build output: scan the emitted bundle too (catches transitive leaks).
-  if grep -REn 'api\.anthropic\.com|sk-ant-|AKIA[0-9A-Z]{16}' dist/; then
+  # 2) Build output: scan the emitted client bundle too (catches transitive leaks).
+  if grep -REn 'api\.anthropic\.com|sk-ant-|AKIA[0-9A-Z]{16}' .next/ out/ 2>/dev/null; then
     echo "FAIL: a secret-shaped string appeared in the built bundle"; exit 1; fi
   echo "OK: no client secrets detected"
   ```
 
-  **Acceptance:** a deliberately added fake secret (e.g. `VITE_LLM_KEY=sk-ant-xxx`) in code or env must fail CI.
+  **Acceptance:** a deliberately added fake secret (e.g. `NEXT_PUBLIC_LLM_KEY=sk-ant-xxx`) in code or env must fail CI.
 
 **Token storage** (full strategy lives in the Backend Integration Contract section; the boundary rule here): the **access token stays in memory only** (the `authStore`, never `localStorage`) — it is a 15-minute, non-revocable bearer credential, so keeping it out of persistent storage removes the highest-value XSS target. The **refresh token** is kept in memory for v1 (a same-origin BFF cookie is the v2 upgrade); avoid `localStorage` for it because it is a 7-day, server-non-revocable credential. The API client (`lib/api/client.ts`) attaches `Authorization: Bearer <accessToken>` and, on `401`, transparently calls `POST /auth/refresh` once (single-flight), rotates **both** tokens, retries the original request once, and on failure clears the store and redirects to login. `POST /auth/logout` is a server no-op (no blocklist) — the client simply discards tokens.
 
@@ -2437,7 +2436,7 @@ WCAG 2.1 AA target. Non-negotiable baseline:
 
 #### Resilience (error boundaries, typed errors, loading/empty/error states)
 
-- **Error boundaries:** a top-level boundary in `App.tsx` + **per-route `errorElement`** (React Router) + a **dedicated boundary around the canvas** so a render glitch in one glyph never white-screens the editor. Boundaries show a recoverable fallback ("reload editor"), not a blank page.
+- **Error boundaries:** root `app/error.tsx` + `app/global-error.tsx` + **per-segment `error.tsx`** (App Router) + a **dedicated React error boundary around the canvas** so a render glitch in one glyph never white-screens the editor. Boundaries show a recoverable fallback ("reload editor"), not a blank page.
 - **Toasts mounted once** at the root (`<Toaster />`) — verified by a test that triggers a toast and asserts it renders. (Old app never mounted it.)
 - **Loading / empty / error states everywhere:** every async surface renders explicit `isLoading` (skeleton), `isError` (typed message + retry), and **empty** states ("No projects yet — create one"). No silent blank panels. Enforce via reusable `<QueryBoundary>` / `<EmptyState>`.
 - **Typed errors:** `lib/api/errors.ts` defines `ApiError` parsing the backend envelope `{ statusCode, message, error }` (`message` may be a `string` or `string[]` from the global `ValidationPipe`). Map: `400`→field errors (the pipe runs `forbidNonWhitelisted`, so send only documented fields), `401`→refresh-then-retry-then-login, `403`→"insufficient permissions" (role-gated deletes need OWNER/ADMIN), `404`→not-found, `409`→"email already registered", `429`→"slow down" (quick-sim is throttled 10/60s; the AI endpoints are throttled 3–10/60s). No raw error objects reach the UI.
@@ -2507,7 +2506,7 @@ WCAG 2.1 AA target. Non-negotiable baseline:
 - [ ] **a11y pass:** `jsx-a11y` + axe green in CI; keyboard + screen-reader smoke test for each screen.
 - [ ] **Error boundaries** around the editor, waveform viewer, and route shells; **toasts mounted** at the root and test-verified.
 - [ ] **Single source of truth state** — one Zustand editor store; server state only in TanStack Query; no dead store + local-`useState` split-brain.
-- [ ] **No secrets client-side** — verified by the §8.3 CI grep guard; AI/secret calls only via backend; Bearer auth on every business call; only `VITE_API_URL` is public.
+- [ ] **No secrets client-side** — verified by the §8.3 CI grep guard; AI/secret calls only via backend; Bearer auth on every business call; only `NEXT_PUBLIC_API_URL` is public.
 - [ ] **No client-side solver** — simulation is strictly submit → poll → render; **no un-memoized full-tree re-renders** — every glyph `React.memo`'d with narrow selectors and `Map<id,…>` lookups.
 - [ ] **No dead code / phantom imports**; lint + typecheck clean; bundle-size budget enforced.
 - [ ] **Loading/empty/error states** for every async surface; resilient to the documented backend quirks (empty series, S3-rehydrate failure, non-UUID seed ids, no cancel/no member API, role-gated deletes returning `403`/`400`).
@@ -2518,7 +2517,7 @@ WCAG 2.1 AA target. Non-negotiable baseline:
 
 Derived directly from the abandoned `circuit-simulator` audit — each maps to a mandate above:
 
-1. **No client-exposed secrets.** Never put API/LLM keys in `VITE_*` or any bundled code; all secret/AI/signed calls go through the backend (presigned S3 URLs, server-held `LLM_API_KEY`). (Old: key leaked via `NEXT_PUBLIC_`.) → §8.3.
+1. **No client-exposed secrets.** Never put API/LLM keys in `NEXT_PUBLIC_*` or any bundled code; all secret/AI/signed calls go through the backend (presigned S3 URLs, server-held `LLM_API_KEY`). (Old: key leaked via a `NEXT_PUBLIC_` var.) → §8.3.
 2. **No untested code.** Tests required from PR #1 (Vitest + RTL + Playwright), coverage gated in CI. (Old: 0 tests.) → §8.4 testing.
 3. **No un-memoized full-tree re-renders.** Every glyph is `React.memo` with narrow selectors; no inline objects/closures into memoized children. (Old: 0 `React.memo`.) → §8.4 performance.
 4. **No accessibility gaps.** `aria-label` on every icon button, ARIA roles on interactive SVG, full keyboard nav, focus management; `jsx-a11y` + axe gated. (Old: 0 a11y attributes.) → §8.4 a11y.
@@ -2534,6 +2533,6 @@ Derived directly from the abandoned `circuit-simulator` audit — each maps to a
 
 ### Closing
 
-A "done" Circuit Forge frontend is: a React + Vite SPA where (1) every API call goes through a **typed, auth-aware client**; (2) the editor document is **eda-core `CircuitJson` + `UiJson`** with no drifted/duplicated model and Zod validation at every boundary; (3) simulation is strictly **server-batch** (submit → poll → render — no client solver) and the **built** AI endpoints (`/generate-circuit`, `/edit-circuit`, `/explain-circuit`, `/design-circuit`) are consumed with no client-side secret; (4) glyphs are **memoized** with O(1) `Map` lookups and virtualized to the 1000-component ceiling; (5) **WCAG 2.1 AA accessibility**, error boundaries, and a mounted toast system are in place; (6) **tests** (Vitest/RTL + Playwright) and CI gates (lint, typecheck, a11y, secret-scan, bundle budget) are green. When this section conflicts with the running server, the **live API + `/docs-json` win** — regenerate the client and reconcile.
+A "done" Circuit Forge frontend is: a **client-first Next.js (App Router) app** where (1) every API call goes through a **typed, auth-aware client**; (2) the editor document is **eda-core `CircuitJson` + `UiJson`** with no drifted/duplicated model and Zod validation at every boundary; (3) simulation is strictly **server-batch** (submit → poll → render — no client solver) and the **built** AI endpoints (`/generate-circuit`, `/edit-circuit`, `/explain-circuit`, `/design-circuit`) are consumed with no client-side secret; (4) glyphs are **memoized** with O(1) `Map` lookups and virtualized to the 1000-component ceiling; (5) **WCAG 2.1 AA accessibility**, error boundaries, and a mounted toast system are in place; (6) **tests** (Vitest/RTL + Playwright) and CI gates (lint, typecheck, a11y, secret-scan, bundle budget) are green. When this section conflicts with the running server, the **live API + `/docs-json` win** — regenerate the client and reconcile.
 
 
