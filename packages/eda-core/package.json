@@ -1,7 +1,31 @@
 {
-    "name": "@circuitforge/eda-core",
+    "name": "@circuit-forge/eda-core",
     "version": "1.0.0",
     "description": "Circuit manipulation, netlist generation, and SPICE parsing library",
+    "license": "MIT",
+    "author": "Abdulberk",
+    "homepage": "https://github.com/Abdulberk/circuit-forge/tree/main/packages/eda-core#readme",
+    "repository": {
+        "type": "git",
+        "url": "git+https://github.com/Abdulberk/circuit-forge.git",
+        "directory": "packages/eda-core"
+    },
+    "bugs": {
+        "url": "https://github.com/Abdulberk/circuit-forge/issues"
+    },
+    "keywords": [
+        "spice",
+        "ngspice",
+        "netlist",
+        "circuit",
+        "eda",
+        "schematic",
+        "simulation",
+        "zod"
+    ],
+    "publishConfig": {
+        "access": "public"
+    },
     "main": "dist/index.js",
     "types": "dist/index.d.ts",
     "files": [
@@ -9,6 +33,7 @@
     ],
     "scripts": {
         "build": "tsc",
+        "prepublishOnly": "npm run build",
         "dev": "tsc --watch",
         "lint": "eslint src --ext .ts",
         "lint:fix": "eslint src --ext .ts --fix",

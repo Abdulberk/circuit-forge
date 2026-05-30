@@ -42,7 +42,7 @@ BullMQ queue; a separate worker process consumes those jobs and shells out to th
         │  Auth · Orgs · Projects · Versions · Templates · Assets ·      │
         │  Simulation · Health                                           │
         │                                                                │
-        │  uses @circuitforge/eda-core to turn CircuitJson -> netlist    │
+        │  uses @circuit-forge/eda-core to turn CircuitJson -> netlist    │
         │  BullMQ producer  ──┐         AWS SDK ──┐    Prisma ──┐         │
         └─────────────────────┼──────────────────┼─────────────┼─────────┘
                               │ enqueue           │ presign/read│ R/W
@@ -138,7 +138,7 @@ circuit-forge/
 │   ├── api/                 # "api"                     (NestJS REST API)
 │   └── worker-sim/          # "@circuitforge/worker-sim" (BullMQ + ngspice)
 ├── packages/
-│   ├── eda-core/            # "@circuitforge/eda-core"   (netlist/parse/ERC lib)
+│   ├── eda-core/            # "@circuit-forge/eda-core"   (netlist/parse/ERC lib)
 │   └── llm-core/            # "@circuitforge/llm-core"   (stub)
 ├── infra/docker/           # api.Dockerfile, worker-sim.Dockerfile
 ├── docs/                   # this file + API/DATA_MODEL/etc.
@@ -151,7 +151,7 @@ circuit-forge/
 ```
 
 Internal dependencies are declared with `workspace:*` (e.g. `apps/api` and
-`apps/worker-sim` both depend on `"@circuitforge/eda-core": "workspace:*"`).
+`apps/worker-sim` both depend on `"@circuit-forge/eda-core": "workspace:*"`).
 **This makes the repo pnpm-only** — running `npm install` cannot resolve
 `workspace:*` and crashes. Always use `pnpm` (`packageManager` is pinned to
 `pnpm@8.14.1` in [package.json](../package.json), `engines` requires Node ≥ 20 and

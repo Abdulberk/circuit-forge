@@ -7,8 +7,8 @@ import * as fs from 'fs/promises';
 import * as path from 'path';
 import { config } from '../config';
 import { logger } from '../logger';
-import { parseSimulationOutput, sanitizeNetlist, extractProbes } from '@circuitforge/eda-core';
-import type { SimulationResult } from '@circuitforge/eda-core';
+import { parseSimulationOutput, sanitizeNetlist, extractProbes } from '@circuit-forge/eda-core';
+import type { SimulationResult } from '@circuit-forge/eda-core';
 
 /**
  * Simulation job input
