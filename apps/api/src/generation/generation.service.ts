@@ -20,7 +20,7 @@ import {
     type GenerateCircuitConfig,
     type GenerateCircuitResult,
 } from '@circuitforge/llm-core';
-import { safeValidateCircuitJson, type CircuitJson } from '@circuitforge/eda-core';
+import { safeValidateCircuitJson, type CircuitJson } from '@circuit-forge/eda-core';
 import { GenerateCircuitDto, EditCircuitDto, ExplainCircuitDto } from './dto';
 
 @Injectable()

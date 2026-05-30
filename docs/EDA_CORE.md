@@ -3,7 +3,7 @@
 This document is the authoritative reference for the two core EDA packages in the
 circuit-forge monorepo:
 
-- **`@circuitforge/eda-core`** — the canonical circuit model, SPICE netlist generation,
+- **`@circuit-forge/eda-core`** — the canonical circuit model, SPICE netlist generation,
   netlist sanitization/security, simulation-output parsing, netlist parsing, Electrical
   Rule Check (ERC), Zod validation schemas, and unit utilities.
 - **`@circuitforge/llm-core`** — currently a **stub** for future LLM-driven circuit
@@ -665,7 +665,7 @@ package root.
 
 ---
 
-## 8. Public API — `@circuitforge/eda-core`
+## 8. Public API — `@circuit-forge/eda-core`
 
 The complete export surface of [index.ts](../packages/eda-core/src/index.ts). "Kind" notes
 whether each is a type-only export (`type`), value/function, class, const, or enum.
@@ -801,7 +801,7 @@ future LLM integration."* No real model calls are made. It currently exposes:
 | `promptTemplates` | const | Three string templates (`generateCircuit`, `explainCircuit`, `suggestImprovements`) with `{{requirements}}` / `{{circuit}}` placeholders. Not wired to any model. |
 | `createLlmProvider` | fn | Factory that **always** returns a `StubLlmProvider(config)`, regardless of `config.provider`. |
 
-It imports `CircuitJson` as a type from `@circuitforge/eda-core` (internal `workspace:*`
+It imports `CircuitJson` as a type from `@circuit-forge/eda-core` (internal `workspace:*`
 dependency). There is no networking, SDK usage, or environment-variable reading in this package
 as written.
 

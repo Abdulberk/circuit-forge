@@ -7,7 +7,7 @@ result back to Postgres (or S3/MinIO for large payloads).
 
 This document describes the worker as it is actually implemented in
 [apps/worker-sim/src](../apps/worker-sim/src). Netlist generation and CSV parsing live in
-the `@circuitforge/eda-core` package and are referenced where relevant.
+the `@circuit-forge/eda-core` package and are referenced where relevant.
 
 ---
 

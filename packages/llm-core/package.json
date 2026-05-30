@@ -17,7 +17,7 @@
     },
     "dependencies": {
         "@anthropic-ai/sdk": "^0.100.1",
-        "@circuitforge/eda-core": "workspace:*"
+        "@circuit-forge/eda-core": "workspace:*"
     },
     "devDependencies": {
         "@types/node": "^20.11.0",

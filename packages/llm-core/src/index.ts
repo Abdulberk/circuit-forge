@@ -10,7 +10,7 @@ import {
     safeValidateAnalysisConfig,
     type CircuitJson,
     type AnalysisConfig,
-} from '@circuitforge/eda-core';
+} from '@circuit-forge/eda-core';
 
 /** Defaults — overridable via config / env. */
 const DEFAULT_BASE_URL = 'https://api.zentio.dev'; // SDK appends /v1/messages

@@ -12,7 +12,7 @@ import {
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { generateCircuit, fixCircuit, CircuitGenerationError } from '@circuitforge/llm-core';
-import { generateNetlist, type CircuitJson, type AnalysisConfig } from '@circuitforge/eda-core';
+import { generateNetlist, type CircuitJson, type AnalysisConfig } from '@circuit-forge/eda-core';
 import { SimulationService } from '../simulation/simulation.service';
 import { DesignCircuitDto } from './dto';
 

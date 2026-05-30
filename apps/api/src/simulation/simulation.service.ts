@@ -9,8 +9,8 @@ import { S3Client, GetObjectCommand } from '@aws-sdk/client-s3';
 import { PrismaService } from '../prisma/prisma.service';
 import { VersionsService } from '../versions/versions.service';
 import { OrgsService } from '../orgs/orgs.service';
-import { generateNetlist } from '@circuitforge/eda-core';
-import type { CircuitJson, AnalysisConfig } from '@circuitforge/eda-core';
+import { generateNetlist } from '@circuit-forge/eda-core';
+import type { CircuitJson, AnalysisConfig } from '@circuit-forge/eda-core';
 
 @Injectable()
 export class SimulationService {
