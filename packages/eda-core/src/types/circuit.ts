@@ -37,6 +37,19 @@ export type ComponentType =
     | 'ground';
 
 /**
+ * Sourcing / catalog metadata for a real manufacturer part attached to a component.
+ * Populated when a component is created from a distributor catalog (e.g. TME, DigiKey).
+ */
+export interface ComponentSourcing {
+    supplier: string; // e.g. "tme"
+    supplierId: string; // supplier's own part identifier (e.g. TME symbol)
+    unitCost?: number; // price for quantity 1, in `currency`
+    currency?: string; // e.g. "EUR"
+    stock?: number; // available quantity at the supplier
+    datasheetUrl?: string;
+}
+
+/**
  * Component definition
  */
 export interface Component {
@@ -47,6 +60,11 @@ export interface Component {
     model?: string; // For diodes, transistors - model name
     pins: PinConnection[];
     properties?: Record<string, unknown>;
+    // Optional real-part / catalog metadata (added when a component is created from a parts catalog)
+    mpn?: string; // Manufacturer Part Number, e.g. "NE555P"
+    manufacturer?: string; // e.g. "TEXAS INSTRUMENTS"
+    footprint?: string; // package/case, e.g. "0603", "SOIC-8"
+    sourcing?: ComponentSourcing;
 }
 
 /**

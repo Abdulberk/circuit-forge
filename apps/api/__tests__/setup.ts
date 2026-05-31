@@ -14,6 +14,10 @@ process.env.S3_SECRET_KEY = 'minioadmin';
 process.env.S3_BUCKET = 'circuitforge-test';
 process.env.S3_REGION = 'us-east-1';
 process.env.S3_FORCE_PATH_STYLE = 'true';
+// TME component catalog (parts module) — dummy creds so the module boots in tests; the TME client is mocked.
+process.env.TME_TOKEN = 'test-tme-token';
+process.env.TME_SECRET = 'test-tme-secret';
+process.env.TME_BASE_URL = 'https://api.tme.eu';
 
 // Increase timeout for integration tests
 jest.setTimeout(30000);

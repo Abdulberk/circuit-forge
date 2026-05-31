@@ -7,6 +7,7 @@
 export type {
     CircuitJson,
     Component,
+    ComponentSourcing,
     Net,
     PinConnection,
     ComponentType,
@@ -47,6 +48,7 @@ export type { ErcSeverity } from './types/erc';
 export {
     CircuitJsonSchema,
     ComponentSchema,
+    ComponentSourcingSchema,
     NetSchema,
     ComponentTypeSchema,
     PinConnectionSchema,
