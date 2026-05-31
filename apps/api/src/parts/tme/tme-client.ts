@@ -47,9 +47,26 @@ export class TmeClient {
         return { country, language, currency };
     }
 
-    /** GET a TME endpoint and return the unwrapped `data`. Runs through the concurrency limiter. */
+    /** GET a TME endpoint and return the unwrapped `data`. Runs through the concurrency limiter,
+     *  with one transient retry (5xx / network) on top of the in-request one-shot 401 retry. */
     async get<T = unknown>(path: string, query: Query = {}): Promise<T> {
-        return this.pool.run(() => this.request<T>(path, query, true));
+        return this.pool.run(() => this.withRetry(() => this.request<T>(path, query, true)));
+    }
+
+    private async withRetry<T>(fn: () => Promise<T>, attempts = 2): Promise<T> {
+        let lastErr: unknown;
+        for (let i = 0; i < attempts; i++) {
+            try {
+                return await fn();
+            } catch (err) {
+                lastErr = err;
+                const transient =
+                    err instanceof TmeNetworkError || (err instanceof TmeApiError && err.httpStatus >= 500);
+                if (!transient || i === attempts - 1) throw err;
+                await new Promise((r) => setTimeout(r, 200 * (i + 1)));
+            }
+        }
+        throw lastErr;
     }
 
     private async request<T>(path: string, query: Query, retryOn401: boolean): Promise<T> {
@@ -90,6 +107,10 @@ export class TmeClient {
 
         if (res.ok && json?.status === 'OK') {
             return (json.data ?? ({} as T)) as T;
+        }
+        // A 2xx with an unparseable body is a distinct failure from an error envelope.
+        if (res.ok && json === null) {
+            throw new TmeApiError('E_INVALID_JSON', res.status, `TME returned a non-JSON ${res.status} body`);
         }
 
         throw new TmeApiError(

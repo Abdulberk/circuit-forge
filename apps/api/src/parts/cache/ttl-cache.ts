@@ -15,6 +15,7 @@ interface Entry<T> {
 export class TtlCache {
     private readonly store = new Map<string, Entry<unknown>>();
     private readonly inflight = new Map<string, Promise<unknown>>();
+    private readonly maxEntries = 1000;
 
     async getOrLoad<T>(key: string, ttlMs: number, loader: () => Promise<T>): Promise<T> {
         const hit = this.store.get(key);
@@ -27,6 +28,11 @@ export class TtlCache {
         const promise = loader()
             .then((value) => {
                 this.store.set(key, { value, expiresAt: Date.now() + ttlMs });
+                // Bound memory: evict the oldest entry once over the cap (Map preserves insertion order).
+                if (this.store.size > this.maxEntries) {
+                    const oldest = this.store.keys().next().value;
+                    if (oldest !== undefined) this.store.delete(oldest);
+                }
                 return value;
             })
             .finally(() => {

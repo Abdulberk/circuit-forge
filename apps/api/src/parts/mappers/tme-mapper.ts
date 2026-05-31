@@ -73,10 +73,16 @@ export function mapSearchElementToPart(el: TmeSearchElement) {
 }
 
 export function mapParameters(el?: TmeParametersElement): CatalogParameter[] {
-    const elements = el?.parameters?.elements ?? [];
+    // Defensive caps against anomalous upstream data (counts/lengths) — real parts are well under these.
+    const elements = (el?.parameters?.elements ?? []).slice(0, 200);
     return elements.map((p) => ({
-        name: p.name,
-        value: (p.values ?? []).map((v) => v.value).filter(Boolean).join(', '),
+        name: String(p.name).slice(0, 200),
+        value: (p.values ?? [])
+            .slice(0, 50)
+            .map((v) => v.value)
+            .filter(Boolean)
+            .join(', ')
+            .slice(0, 2000),
     }));
 }
 
@@ -92,12 +98,16 @@ export function footprintFromParameters(params: CatalogParameter[]): string | un
     return chosen?.value || undefined;
 }
 
-export function mapPriceBreaks(el?: TmeDataElement): { priceBreaks: PriceBreak[]; unitCost?: number; currency?: string; stock?: number } {
-    const currency = el?.prices?.currency;
+export function mapPriceBreaks(
+    el: TmeDataElement | undefined,
+    fallbackCurrency: string,
+): { priceBreaks: PriceBreak[]; unitCost?: number; currency: string; stock?: number } {
+    // Every PriceBreak gets a non-empty currency (TME omits it on some tiers) — never "".
+    const currency = el?.prices?.currency || fallbackCurrency;
     const priceBreaks: PriceBreak[] = (el?.prices?.elements ?? []).map((p) => ({
         amount: p.amount,
         price: p.price,
-        currency: currency ?? '',
+        currency,
         special: p.special,
     }));
     const single = priceBreaks.find((b) => b.amount === 1) ?? priceBreaks[0];
@@ -119,12 +129,18 @@ export function mapManufacturer(m: TmeManufacturer): ManufacturerRef {
     return { id: String(m.id), name: m.name, productsCount: m.products_count ?? 0 };
 }
 
-export function mapCategoryNode(node: TmeCategoryNode): CategoryNode {
+const MAX_CATEGORY_DEPTH = 8;
+
+export function mapCategoryNode(node: TmeCategoryNode, depth = 0): CategoryNode {
     return {
         id: String(node.id),
         parentId: node.parent_id === node.id ? null : String(node.parent_id),
         name: node.name ?? '',
         productsCount: node.products_count ?? 0,
-        children: (node.children ?? []).map(mapCategoryNode),
+        // Bound recursion depth/breadth against a pathological tree.
+        children:
+            depth >= MAX_CATEGORY_DEPTH
+                ? []
+                : (node.children ?? []).slice(0, 1000).map((c) => mapCategoryNode(c, depth + 1)),
     };
 }

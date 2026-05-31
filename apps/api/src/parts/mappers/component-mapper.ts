@@ -95,16 +95,20 @@ export class ComponentMapper {
     }
 
     /** Normalize a catalog value (e.g. "10kΩ", "100nF", "10µH") into a SPICE-friendly value ("10K", "100n"). */
-    private normalizeValue(raw: string): string {
+    private normalizeValue(raw: string): string | undefined {
         const cleaned = raw
             .replace(/[µμ]/g, 'u')
             .replace(/Ω|ohms?/gi, '')
             .trim();
         for (const candidate of [cleaned, cleaned.split(/\s+/)[0] ?? cleaned]) {
+            // Reject ranges / tolerances / multi-part values (e.g. "4.5...16V", "100-470u", "±5%") —
+            // those are not a single SPICE-simulatable value.
+            if (/\d\s*[-–—]\s*\d|\.{2,}|[±%]/.test(candidate)) continue;
             const parsed = parseSpiceValue(candidate);
-            if (parsed.isValid) return formatSpiceValue(parsed.value);
+            // Guard against overflow to Infinity/NaN producing strings like "InfinityT".
+            if (parsed.isValid && Number.isFinite(parsed.value)) return formatSpiceValue(parsed.value);
         }
-        return raw.trim();
+        return undefined;
     }
 
     private toSourcing(part: CatalogPart): ComponentSourcing {

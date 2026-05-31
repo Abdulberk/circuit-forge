@@ -36,8 +36,9 @@ export class PartsService {
     ) {}
 
     async search(dto: SearchPartsDto): Promise<SearchResult> {
+        const page = dto.page && dto.page > 0 ? dto.page : 1;
         try {
-            const key = `search:${dto.q}:${dto.manufacturerId ?? ''}:${dto.categoryId ?? ''}:${dto.page ?? 1}`;
+            const key = `search:${dto.q}:${dto.manufacturerId ?? ''}:${dto.categoryId ?? ''}:${page}`;
             return await this.cache.getOrLoad(key, this.ttl('TME_SEARCH_TTL_MS', 60_000), () =>
                 this.provider.search({
                     q: dto.q,
@@ -47,6 +48,11 @@ export class PartsService {
                 }),
             );
         } catch (err) {
+            // The upstream WAF rejects some phrases (e.g. "<script>", SQLi) with a non-JSON 403.
+            // For a search, that just means "no such parts" — return empty rather than erroring out.
+            if (err instanceof TmeApiError && err.code === 'E_HTTP_403') {
+                return { items: [], page, pageSize: 0 };
+            }
             throw this.mapError(err);
         }
     }
@@ -107,13 +113,16 @@ export class PartsService {
         if (err instanceof HttpException) return err;
 
         if (err instanceof TmeApiError) {
+            // Genuine auth/account problem (our credentials) — service-side, not the caller's fault.
+            if (err.httpStatus === 401 || err.code === 'E_AUTHORIZATION_FAILED') {
+                return new ServiceUnavailableException('Component catalog authorization failed.');
+            }
+            // The catalog rejected the request parameters.
             if (err.httpStatus === 400 || err.code === 'E_INPUT_PARAMS_VALIDATION_ERROR') {
                 return new BadRequestException(`Component catalog rejected the request: ${err.message}`);
             }
-            if (err.httpStatus === 401 || err.httpStatus === 403 || err.code.startsWith('E_AUTHORIZATION')) {
-                return new ServiceUnavailableException('Component catalog authorization failed.');
-            }
-            return new BadGatewayException(`Component catalog error: ${err.message}`);
+            // Anything else from upstream (WAF 403, 5xx, unexpected) — bad gateway, not "service down".
+            return new BadGatewayException('Component catalog upstream error.');
         }
         if (err instanceof TmeNetworkError) {
             return new BadGatewayException('Component catalog is currently unreachable.');

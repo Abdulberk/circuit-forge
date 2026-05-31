@@ -4,7 +4,7 @@
  * TME access tokens live ~300s. We refresh ~30s ahead of expiry and use a single-flight guard so
  * that, under concurrent load, only ONE `/auth/token` request is in flight at a time.
  */
-import { Injectable } from '@nestjs/common';
+import { Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { requireTmeConfig, type TmeConfig } from './tme.config';
 import { TmeApiError, TmeNetworkError } from './tme-errors';
@@ -29,6 +29,7 @@ export class TmeTokenCache {
     private accessToken: string | null = null;
     private expiresAtMs = 0;
     private inflight: Promise<string> | null = null;
+    private readonly logger = new Logger(TmeTokenCache.name);
 
     constructor(private readonly config: ConfigService) {}
 
@@ -41,6 +42,7 @@ export class TmeTokenCache {
     invalidate(): void {
         this.accessToken = null;
         this.expiresAtMs = 0;
+        this.inflight = null; // force the next getToken() (e.g. the 401 retry) to fetch a fresh token
     }
 
     async getToken(): Promise<string> {
@@ -73,7 +75,9 @@ export class TmeTokenCache {
                 signal: controller.signal,
             });
         } catch (err) {
-            throw new TmeNetworkError('TME token request failed', err);
+            const timedOut = err instanceof Error && err.name === 'AbortError';
+            this.logger.warn(`TME token request ${timedOut ? 'timed out' : 'failed'}`);
+            throw new TmeNetworkError(`TME token request ${timedOut ? 'timed out' : 'failed'}`, err);
         } finally {
             clearTimeout(timer);
         }

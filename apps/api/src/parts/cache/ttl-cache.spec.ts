@@ -34,4 +34,15 @@ describe('TtlCache', () => {
         expect(results).toEqual(['x', 'x', 'x']);
         expect(calls).toBe(1);
     });
+
+    it('evicts oldest entries beyond the size cap', async () => {
+        const cache = new TtlCache();
+        for (let i = 0; i < 1100; i++) {
+            await cache.getOrLoad('k' + i, 60_000, async () => i);
+        }
+        // k0 was inserted first and should have been evicted past the 1000-entry cap → reloads.
+        const loader = jest.fn().mockResolvedValue('reloaded');
+        expect(await cache.getOrLoad('k0', 60_000, loader)).toBe('reloaded');
+        expect(loader).toHaveBeenCalledTimes(1);
+    });
 });
