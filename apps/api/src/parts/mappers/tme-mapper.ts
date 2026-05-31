@@ -81,13 +81,14 @@ export function mapParameters(el?: TmeParametersElement): CatalogParameter[] {
 }
 
 /**
- * Footprint from the package parameter. TME names it "Case - inch" (e.g. "0603") / "Case - mm",
- * sometimes "Package"/"Housing"; prefer the inch code (the conventional footprint name).
+ * Footprint from the "Case" parameter. TME names it "Case" / "Case - inch" (e.g. "0603") /
+ * "Case - mm"; prefer the inch code. Deliberately does NOT match "Kind of package" (that's the
+ * packaging form — bulk/tape/reel — not a footprint); falls back to a "Housing" param if present.
  */
 export function footprintFromParameters(params: CatalogParameter[]): string | undefined {
-    const candidates = params.filter((p) => /\b(case|package|housing)\b/i.test(p.name));
-    const inch = candidates.find((p) => /inch/i.test(p.name));
-    const chosen = inch ?? candidates[0];
+    const cases = params.filter((p) => /^case\b/i.test(p.name.trim()));
+    const inch = cases.find((p) => /inch/i.test(p.name));
+    const chosen = inch ?? cases[0] ?? params.find((p) => /\bhousing\b/i.test(p.name));
     return chosen?.value || undefined;
 }
 
