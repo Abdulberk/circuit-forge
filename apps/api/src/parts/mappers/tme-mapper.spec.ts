@@ -56,7 +56,7 @@ describe('tme-mapper', () => {
         expect(footprintFromParameters(params)).toBe('0603');
     });
 
-    it('extracts footprint from TME "Case - inch" (preferred over mm / package)', () => {
+    it('extracts footprint from "Case" (prefers inch; ignores "Kind of package" packaging)', () => {
         expect(
             footprintFromParameters([
                 { name: 'Case - mm', value: '1608' },
@@ -64,20 +64,36 @@ describe('tme-mapper', () => {
                 { name: 'Resistance', value: '10kΩ' },
             ]),
         ).toBe('0603');
-        expect(footprintFromParameters([{ name: 'Package', value: 'SOIC-8' }])).toBe('SOIC-8');
+        // "Kind of package" (bulk/tape/reel) must NOT win over the real "Case" footprint.
+        expect(
+            footprintFromParameters([
+                { name: 'Kind of package', value: 'bulk, tape' },
+                { name: 'Case', value: 'DO35' },
+            ]),
+        ).toBe('DO35');
         expect(footprintFromParameters([{ name: 'Resistance', value: '10k' }])).toBeUndefined();
     });
 
     it('maps price breaks, stock and unit cost (qty 1)', () => {
-        const r = mapPriceBreaks({
-            symbol: 'x',
-            stock_quantity: 100,
-            prices: { currency: 'EUR', elements: [{ amount: 1, price: 0.44 }, { amount: 10, price: 0.33 }] },
-        });
+        const r = mapPriceBreaks(
+            {
+                symbol: 'x',
+                stock_quantity: 100,
+                prices: { currency: 'EUR', elements: [{ amount: 1, price: 0.44 }, { amount: 10, price: 0.33 }] },
+            },
+            'PLN',
+        );
         expect(r.stock).toBe(100);
         expect(r.unitCost).toBe(0.44);
         expect(r.currency).toBe('EUR');
         expect(r.priceBreaks).toHaveLength(2);
+        expect(r.priceBreaks.every((b) => b.currency === 'EUR')).toBe(true);
+    });
+
+    it('falls back to the provided currency when a tier lacks one (never empty string)', () => {
+        const r = mapPriceBreaks({ symbol: 'x', prices: { elements: [{ amount: 1, price: 1 }] } }, 'EUR');
+        expect(r.currency).toBe('EUR');
+        expect(r.priceBreaks[0]?.currency).toBe('EUR');
     });
 
     it('picks a PDF datasheet (English preferred)', () => {

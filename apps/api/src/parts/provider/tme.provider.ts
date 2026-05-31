@@ -2,7 +2,7 @@
  * TmeProvider — implements PartProvider against the TME v2 REST API.
  * All TME shape knowledge lives here + tme-mapper.ts; other providers (DigiKey/LCSC) plug in later.
  */
-import { Injectable, NotFoundException } from '@nestjs/common';
+import { Injectable, Logger, NotFoundException } from '@nestjs/common';
 import { TmeClient } from '../tme/tme-client';
 import {
     type CatalogPart,
@@ -31,6 +31,7 @@ import {
 @Injectable()
 export class TmeProvider implements PartProvider {
     readonly name = 'tme';
+    private readonly logger = new Logger(TmeProvider.name);
 
     constructor(private readonly client: TmeClient) {}
 
@@ -46,6 +47,7 @@ export class TmeProvider implements PartProvider {
                 scope: ['products'],
                 manufacturer_id: params.manufacturerId,
                 category_id: params.categoryId,
+                page: params.page, // TME supports server-side paging (~20/page); undefined => page 1
             },
         );
         const elements = data.products?.elements ?? [];
@@ -59,7 +61,7 @@ export class TmeProvider implements PartProvider {
             manufacturers?: { elements?: TmeManufacturer[] };
             elements?: TmeManufacturer[];
         }>('/products/manufacturers', { country, language });
-        const list = data.manufacturers?.elements ?? data.elements ?? [];
+        const list = (data.manufacturers?.elements ?? data.elements ?? []).slice(0, 5000);
         return list.map(mapManufacturer).sort((a, b) => b.productsCount - a.productsCount);
     }
 
@@ -71,52 +73,60 @@ export class TmeProvider implements PartProvider {
             tree: 0,
         });
         const root = data.elements;
-        if (!root) return [];
+        if (!root) {
+            this.logger.warn('TME /products/categories/tree returned no root element');
+            return [];
+        }
         // Return the top-level categories (the root is the synthetic catalog root).
-        return (root.children ?? []).map(mapCategoryNode);
+        return (root.children ?? []).slice(0, 1000).map((c) => mapCategoryNode(c, 0));
     }
 
     async getProduct(symbol: string): Promise<CatalogPart> {
         const { country, language, currency } = this.client.defaults;
         const symbols = [symbol];
 
+        // `base` (search) is the primary lookup — let its failure surface (502). The parameters/data/
+        // files calls are best-effort enrichment: a transient failure there must not fail the whole
+        // request, so they degrade to empty.
         const [base, paramRes, dataRes, filesRes] = await Promise.all([
-            this.client
-                .get<{ products?: { elements?: TmeSearchElement[] } }>('/products/search', {
-                    country,
-                    language,
-                    phrase: symbol,
-                    scope: ['products'],
-                })
-                .catch(() => ({ products: { elements: [] as TmeSearchElement[] } })),
-            this.client.get<{ elements?: TmeParametersElement[] }>('/products/parameters', {
+            this.client.get<{ products?: { elements?: TmeSearchElement[] } }>('/products/search', {
                 country,
                 language,
-                symbols,
+                phrase: symbol,
+                scope: ['products'],
             }),
-            this.client.get<{ elements?: TmeDataElement[] }>('/products/data', {
-                country,
-                currency,
-                scope: ['prices', 'stock'],
-                symbols,
-            }),
+            this.client
+                .get<{ elements?: TmeParametersElement[] }>('/products/parameters', { country, language, symbols })
+                .catch(() => ({ elements: [] as TmeParametersElement[] })),
+            this.client
+                .get<{ elements?: TmeDataElement[] }>('/products/data', {
+                    country,
+                    currency,
+                    scope: ['prices', 'stock'],
+                    symbols,
+                })
+                .catch(() => ({ elements: [] as TmeDataElement[] })),
             this.client
                 .get<{ elements?: TmeFilesElement[] }>('/products/files', { country, language, symbols })
                 .catch(() => ({ elements: [] as TmeFilesElement[] })),
         ]);
 
-        const baseEl =
-            base.products?.elements?.find((e) => e.symbol === symbol) ?? base.products?.elements?.[0];
-        const paramEl = paramRes.elements?.find((e) => e.symbol === symbol) ?? paramRes.elements?.[0];
-        const dataEl = dataRes.elements?.find((e) => e.symbol === symbol) ?? dataRes.elements?.[0];
-        const filesEl = filesRes.elements?.find((e) => e.symbol === symbol) ?? filesRes.elements?.[0];
+        // Exact-symbol match only: never fall back to a fuzzy search hit, and never trust the
+        // parameters "echo" — TME returns a parameters element even for a non-existent symbol.
+        const baseEl = base.products?.elements?.find((e) => e.symbol === symbol);
+        const paramEl = paramRes.elements?.find((e) => e.symbol === symbol);
+        const dataEl = dataRes.elements?.find((e) => e.symbol === symbol);
+        const filesEl = filesRes.elements?.find((e) => e.symbol === symbol);
 
-        if (!baseEl && !paramEl && !dataEl) {
+        const hasParameters = (paramEl?.parameters?.elements?.length ?? 0) > 0;
+        const hasData =
+            !!dataEl && ((dataEl.prices?.elements?.length ?? 0) > 0 || typeof dataEl.stock_quantity === 'number');
+        if (!baseEl && !hasParameters && !hasData) {
             throw new NotFoundException(`Part not found: ${symbol}`);
         }
 
         const parameters = mapParameters(paramEl);
-        const { priceBreaks, unitCost, currency: priceCurrency, stock } = mapPriceBreaks(dataEl);
+        const { priceBreaks, unitCost, currency: priceCurrency, stock } = mapPriceBreaks(dataEl, currency);
         const light = baseEl ? mapSearchElementToPart(baseEl) : null;
 
         return {
@@ -131,7 +141,7 @@ export class TmeProvider implements PartProvider {
             priceBreaks,
             stock,
             unitCost,
-            currency: priceCurrency ?? currency,
+            currency: priceCurrency,
             supplier: this.name,
             supplierId: symbol,
         };

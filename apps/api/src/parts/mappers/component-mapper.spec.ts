@@ -69,4 +69,23 @@ describe('ComponentMapper', () => {
         expect(r.component?.type).toBe('diode');
         expect(r.component?.value).toBeUndefined();
     });
+
+    it('rejects a range value (not a single SPICE value)', () => {
+        const r = mapper.toComponent(part({ category: 'Resistors', parameters: [{ name: 'Resistance', value: '4.5...16' }] }));
+        expect(r.simulatable).toBe(false);
+        expect(r.component?.value).toBeUndefined();
+    });
+
+    it('extracts the nominal value, ignoring a tolerance suffix', () => {
+        const r = mapper.toComponent(part({ category: 'Resistors', parameters: [{ name: 'Resistance', value: '10kΩ ±1%' }] }));
+        expect(r.simulatable).toBe(true);
+        expect(r.component?.value).toBe('10K');
+    });
+
+    it('does not emit Infinity for an overflowing value', () => {
+        const huge = '1' + '0'.repeat(320) + 'K';
+        const r = mapper.toComponent(part({ category: 'Resistors', parameters: [{ name: 'Resistance', value: huge }] }));
+        expect(r.simulatable).toBe(false);
+        expect(r.component?.value).toBeUndefined();
+    });
 });
