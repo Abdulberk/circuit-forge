@@ -27,6 +27,18 @@ export const PinConnectionSchema = z.object({
 /**
  * Component schema
  */
+/**
+ * Sourcing / catalog metadata schema (real manufacturer part attached to a component)
+ */
+export const ComponentSourcingSchema = z.object({
+    supplier: z.string().min(1).max(40),
+    supplierId: z.string().min(1).max(100),
+    unitCost: z.number().nonnegative().optional(),
+    currency: z.string().max(8).optional(),
+    stock: z.number().int().nonnegative().optional(),
+    datasheetUrl: z.string().url().max(2000).optional(),
+});
+
 export const ComponentSchema = z.object({
     id: z.string().min(1).max(100),
     type: ComponentTypeSchema,
@@ -35,6 +47,11 @@ export const ComponentSchema = z.object({
     model: z.string().max(100).optional(),
     pins: z.array(PinConnectionSchema).min(1).max(20),
     properties: z.record(z.unknown()).optional(),
+    // Optional real-part / catalog metadata
+    mpn: z.string().max(100).optional(),
+    manufacturer: z.string().max(120).optional(),
+    footprint: z.string().max(50).optional(),
+    sourcing: ComponentSourcingSchema.optional(),
 });
 
 /**
