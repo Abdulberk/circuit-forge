@@ -98,6 +98,10 @@ interface Component {
   model?: string;                             // diodes only; omit to let eda-core inject DDEFAULT
   pins: { pinId: string; netId: string }[];   // connectivity is via pins → nets
   properties?: Record<string, unknown>;
+  // Optional real-part metadata (eda-core ≥1.1.0), set when created from the parts catalog
+  // (GET /parts/:symbol/component). Additive & backward-compatible; ignored by the netlist generator.
+  mpn?: string; manufacturer?: string; footprint?: string;
+  sourcing?: { supplier: string; supplierId: string; unitCost?: number; currency?: string; stock?: number; datasheetUrl?: string };
 }
 
 interface Net { id: string; name: string; isGround?: boolean; }
@@ -176,8 +180,15 @@ This section enumerates every screen the v1 frontend must ship, with its purpose
 | POST | `/edit-circuit` | JWT | AI dialog | Throttled 5/60s |
 | POST | `/explain-circuit` | JWT | AI dialog, Editor | Throttled 10/60s |
 | POST | `/design-circuit` | JWT | AI Design dialog | Agentic; throttled 3/60s; ~10–60s |
+| GET | `/parts/search` | JWT | Editor (part picker) | `?q=` (+ `manufacturerId?`/`categoryId?`) → real-part search; 30/60s |
+| GET | `/parts/manufacturers` | JWT | Editor (part picker) | Manufacturer facet `[{ id, name, productsCount }]`; 60/60s |
+| GET | `/parts/categories` | JWT | Editor (part picker) | Category tree facet (nested + counts); 60/60s |
+| GET | `/parts/:symbol` | JWT | Editor (part picker) | Part detail: parameters, price tiers, stock, datasheet; 30/60s |
+| GET | `/parts/:symbol/component` | JWT | Editor (part picker) | Part → CircuitJson component `{ simulatable, component?, reason?, catalog }`; 30/60s |
 
 > All AI endpoints (`/generate-circuit`, `/edit-circuit`, `/explain-circuit`, `/design-circuit`) are **built, deployed, and verified** in `apps/api/src/generation/` (Swagger tag `ai`). The frontend **consumes** them. Never ship an "AI coming soon" placeholder. Contracts are detailed in the Backend Integration Contract (§4) and AI Circuit Generation (§7); summarized inline below.
+
+> The **`/parts/*`** endpoints (Swagger tag `parts`, `apps/api/src/parts/`) are a **built, verified** real-component catalog backed by the TME distributor API (~1.3M parts, 1045 manufacturers) — they power a Flux-style **part picker** in the editor. Supplier credentials are **server-side only** (`TME_*`); the client never calls the distributor. Full contract in §4.4.11; the catalog→`CircuitJson` mapping and the new optional `Component` fields are in §6. Passives/diodes insert as simulatable components; ICs/transistors are catalog-only for now (`simulatable:false`, see §6.2).
 
 ---
 
@@ -1159,6 +1170,37 @@ Client notes:
 
 > **Documentation correctness:** these are **not** "to build" / "NEW" / "stub" work — they are live. The module is `apps/api/src/generation` (not `apps/api/src/ai`); the secret env var is `LLM_API_KEY` (not `ANTHROPIC_API_KEY`); the model is `claude-sonnet-4-6`.
 
+#### 4.4.11 Component catalog (parts) — `parts.controller.ts` (`JwtAuthGuard`, Swagger tag `parts`)
+
+A **built, verified** real-component catalog behind a supplier-agnostic provider (TME today; DigiKey/LCSC pluggable later). It powers a Flux-style **part picker**: search ~1.3M real manufacturer parts, filter by manufacturer/category facets, inspect parametrics + live pricing/stock + datasheet, and insert a real part as a `CircuitJson` component. Supplier credentials live in `TME_*` and are **server-side only** — the client never talks to the distributor.
+
+| Method | Path | Throttle | Request (query) | Response |
+|---|---|---|---|---|
+| GET | `/parts/search` | 30 / 60 s | `q` (1–100, **required**), `manufacturerId?`, `categoryId?`, `page?` (1–1000) | `{ items: CatalogPart[], page, pageSize, total? }` |
+| GET | `/parts/manufacturers` | 60 / 60 s | — | `ManufacturerRef[]` = `[{ id, name, productsCount }]` (sorted desc; ~1045) |
+| GET | `/parts/categories` | 60 / 60 s | — | `CategoryNode[]` (tree: `{ id, parentId, name, productsCount, children[] }`) |
+| GET | `/parts/:symbol` | 30 / 60 s | — | `CatalogPart` (full: `parameters`, `priceBreaks`, `stock`, `datasheetUrl`) |
+| GET | `/parts/:symbol/component` | 30 / 60 s | — | `{ simulatable, component?, reason?, catalog }` (see below) |
+
+`CatalogPart` = `{ mpn, manufacturer, description, category?, footprint?, photo?, datasheetUrl?, parameters: {name,value}[], priceBreaks: {amount,price,currency,special?}[], stock?, unitCost?, currency?, supplier, supplierId }`. In **search** results `parameters`/`priceBreaks` are empty (light rows); `GET /parts/:symbol` returns them populated. `supplierId` is the value to pass as `:symbol`.
+
+`GET /parts/:symbol/component` maps a catalog part to a (partial) `CircuitJson` component:
+
+```jsonc
+{ "simulatable": true,
+  "component": { "type": "resistor", "value": "10K", "footprint": "0603",
+                 "mpn": "WR06X1002FTL", "manufacturer": "WALSIN",
+                 "sourcing": { "supplier": "tme", "supplierId": "WR06X1002FTL",
+                               "unitCost": 0.04737, "currency": "EUR", "stock": 77991, "datasheetUrl": "https://…" } },
+  "reason": null,
+  "catalog": { /* the full CatalogPart */ } }
+```
+
+- The returned `component` is **partial — no `id`/`designator`/`pins`**. The editor assigns those on insert: generate the next free designator (`R1`, `R2`, …, must end in a digit) and wire pins from `COMPONENT_PINS[type]`. The `value`/`footprint`/`mpn`/`manufacturer`/`sourcing` are ready to merge straight onto the new `Component` (see §6.1).
+- **`simulatable`:** passives (R/L/C) and diodes map to a simulatable component (value parsed from the catalog parameters; footprint from the package parameter). **ICs/transistors are catalog-only** — `simulatable:false`, `component` omitted, with a human-readable `reason` — because `ComponentType` has no transistor/IC type yet (the active-component extension; see §6.2). Still let the user search/inspect them; just show a "view / BOM-only, not simulatable yet" affordance instead of an Insert action.
+- **UX — the Part Picker** (modal or editor side-panel): a debounced search box (respect the 30/60s throttle) + manufacturer & category facets (from the facet endpoints, each with product counts, à la Flux) → result list → detail pane (parameters, price tiers, stock, datasheet) → **Insert** calls `/parts/:symbol/component` and, when `simulatable`, drops the component into the editor with its sourcing metadata attached (feeds a future BOM view).
+- Errors map like any other endpoint (§4.5): config missing → `503`, distributor rejected/unreachable → `502`, unknown symbol → `404`, bad query → `400`.
+
 ---
 
 ### 4.5 Error envelope & how the client surfaces errors
@@ -1673,6 +1715,11 @@ interface Component {
   model?: string;           // max 100 chars; model name (diodes today; transistors later)
   pins: PinConnection[];    // 1..20 entries — ORDER IS SIGNIFICANT (see §6.2)
   properties?: Record<string, unknown>; // accepted by schema; NOT read by the netlist generator
+  // Optional real-part / catalog metadata (eda-core ≥1.1.0) — populated by GET /parts/:symbol/component:
+  mpn?: string;             // max 100 — Manufacturer Part Number, e.g. "NE555P"
+  manufacturer?: string;    // max 120 — e.g. "TEXAS INSTRUMENTS"
+  footprint?: string;       // max 50 — package/case, e.g. "0603", "SOIC-8"
+  sourcing?: ComponentSourcing; // { supplier, supplierId, unitCost?, currency?, stock?, datasheetUrl? }
 }
 
 interface PinConnection {
@@ -1694,6 +1741,8 @@ interface CircuitMetadata {
   updatedAt?: string;
 }
 ```
+
+> **Real-part metadata (eda-core ≥1.1.0):** `mpn`, `manufacturer`, `footprint`, and `sourcing` are **optional and additive** — existing circuits validate unchanged. They are filled when a component is inserted from the catalog (`GET /parts/:symbol/component`, §4.4.11) and are for the BOM/sourcing UI + round-trip persistence; the netlist generator ignores them. `ComponentSourcing` = `{ supplier, supplierId, unitCost?, currency?, stock?, datasheetUrl? }` (Zod: `supplier`/`supplierId` required bounded strings, `unitCost`/`stock` nonnegative, `datasheetUrl` a URL). Exported from eda-core as the `ComponentSourcing` type + `ComponentSourcingSchema`.
 
 **Exact bounds and patterns enforced by Zod** (do not relax these in the editor — mirror them so the user gets immediate feedback instead of a server 400):
 
