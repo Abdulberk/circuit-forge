@@ -337,15 +337,16 @@ Verify with `ngspice --version`. If ngspice is installed but not on PATH, set
 
 ---
 
-## 9. Known quirk — version sims without explicit probes return empty series
+## 9. Resolved quirk — version sims without explicit probes
 
-**Current-state behavior (not yet fixed).**
+**✅ Fixed** (in [runner.ts](../apps/worker-sim/src/simulation/runner.ts), lines ~118-123). This
+section documents the original quirk and the implemented fix.
 
-When a version-based simulation is created **without** explicitly supplying probes, the
-job **SUCCEEDS** and ngspice produces a valid `output.csv`, but the stored result has an
-**empty `series` and `metrics.pointsCount === 0`**.
+Previously, when a version-based simulation was created **without** explicitly supplying probes, the
+job SUCCEEDED and ngspice produced a valid `output.csv`, but the stored result had an **empty
+`series` and `metrics.pointsCount === 0`**.
 
-### Why
+### Why it happened
 
 1. The API's `SimulationService.createFromVersion`
    ([simulation.service.ts](../apps/api/src/simulation/simulation.service.ts)) calls
@@ -369,14 +370,20 @@ runs and the job is marked `SUCCEEDED` with a real `output.csv` — only the par
 callers typically pass an explicit netlist; the mismatch bites the version path where
 the netlist's default probes diverge from the empty `probeNames`.)
 
-### Suggested fix
+### Fix (implemented)
 
-Derive `probeNames` from the netlist in the worker/runner instead of trusting the
-(possibly empty) payload field — eda-core can extract the probe names emitted in the
-`wrdata` line. Concretely, in `runner.ts` parse the `wrdata` arguments out of the
-sanitized netlist (or have `generateNetlist` return the resolved probe list and propagate
-it through the queue payload) and feed those names to `parseSimulationOutput`. That keeps
-the parser's `probeNames` in lockstep with whatever probes the netlist actually wrote.
+The worker now derives `probeNames` from the netlist when the payload doesn't supply them, instead
+of trusting the (possibly empty) field. In [runner.ts](../apps/worker-sim/src/simulation/runner.ts):
+
+```ts
+const probeNames =
+    input.probeNames.length > 0 ? input.probeNames : extractProbes(sanitizedNetlist);
+const result = parseSimulationOutput(outputContent, probeNames, input.analysisType);
+```
+
+`extractProbes` (eda-core) parses the names out of the netlist's `wrdata` line, so the parser's
+`probeNames` stay in lockstep with whatever probes the netlist actually wrote — version/default sims
+now return populated `series`.
 
 ---
 

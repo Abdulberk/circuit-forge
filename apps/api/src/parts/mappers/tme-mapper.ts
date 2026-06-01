@@ -64,6 +64,8 @@ export function mapSearchElementToPart(el: TmeSearchElement) {
         manufacturer: el.manufacturer?.name ?? '',
         description: el.description ?? '',
         category: el.category?.name,
+        // Stable, locale-independent classification signal (preferred over the localized name).
+        categoryId: el.category?.id != null ? String(el.category.id) : undefined,
         photo: absoluteUrl(el.assets?.primary_photo?.thumbnail ?? el.assets?.primary_photo?.prime),
         parameters: [] as CatalogParameter[],
         priceBreaks: [] as PriceBreak[],

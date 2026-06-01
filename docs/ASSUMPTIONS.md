@@ -65,6 +65,7 @@ This document captures design decisions made during the implementation of the AI
 ### A13: Default Probes
 - **Decision**: If no probes specified, output all node voltages
 - **Rationale**: Better than no output; user can refine
+- **Status**: Implemented — when a request omits probe names, the worker derives them from the netlist's `wrdata` line via eda-core's `extractProbes` ([runner.ts](../apps/worker-sim/src/simulation/runner.ts)), so version/default sims return populated series.
 
 ### A14: Model Files Location
 - **Decision**: External models must be uploaded as Assets and referenced by s3Key
@@ -103,8 +104,9 @@ This document captures design decisions made during the implementation of the AI
 - **Rationale**: Better for real-time data; offset pagination can miss items
 
 ### A21: Rate Limiting
-- **Decision**: 120 requests per 60 seconds per user
+- **Decision**: 120 requests per 60 seconds (`medium` limiter; plus a `short` 10/1s)
 - **Rationale**: Generous for normal use; prevents abuse
+- **Status**: ⚠️ Configured but **NOT enforced**. `ThrottlerModule.forRoot(...)` and the per-route `@Throttle` decorators exist, but no `ThrottlerGuard` is registered (no global `APP_GUARD`, no `@UseGuards(ThrottlerGuard)`), so the limits are currently inert. Register `{ provide: APP_GUARD, useClass: ThrottlerGuard }` in [app.module.ts](../apps/api/src/app.module.ts) to enforce them.
 
 ### A22: Quick Simulation Scope
 - **Decision**: Quick sims (/simulations/quick) require authentication and count against user's first org
@@ -127,8 +129,8 @@ This document captures design decisions made during the implementation of the AI
 - **Rationale**: Tune in production; default works for development
 
 ### A26: Worker Concurrency
-- **Decision**: Single concurrent job per worker instance
-- **Rationale**: ngspice is CPU-bound; scale horizontally
+- **Decision**: `CONCURRENCY` jobs per worker instance — **default `2`** ([config.ts](../apps/worker-sim/src/config.ts): `CONCURRENCY.default('2')`), overridable via env
+- **Rationale**: ngspice is CPU-bound; keep small per-instance concurrency and scale horizontally
 
 ---
 
@@ -143,8 +145,8 @@ This document captures design decisions made during the implementation of the AI
 - **Rationale**: ngspice batch mode is sandboxed; focus on preventing injection
 
 ### A29: CORS
-- **Decision**: Disabled in MVP (no frontend); enable with allowlist when needed
-- **Rationale**: Backend-only focus; configure when frontend is added
+- **Decision**: CORS is **enabled** via `app.enableCors()` ([main.ts](../apps/api/src/main.ts)) with **default options (any origin reflected)** — no allowlist yet
+- **Rationale**: Unblocks a browser frontend during development. ⚠️ Before production, restrict to an explicit origin allowlist (e.g. a `CORS_ORIGINS` env) rather than reflecting any origin.
 
 ### A30: Audit Log Retention
 - **Decision**: No automatic purge in MVP

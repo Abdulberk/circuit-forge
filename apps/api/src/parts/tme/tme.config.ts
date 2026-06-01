@@ -17,6 +17,8 @@ export interface TmeConfig {
     currency: string;
     timeoutMs: number;
     maxConcurrency: number;
+    /** Safety cap on the manufacturers list returned to callers (TME returns a flat full list). */
+    maxManufacturers: number;
     /** TTL for reference data (manufacturers, categories). */
     referenceTtlMs: number;
     /** TTL for search-result caching. */
@@ -47,6 +49,7 @@ export function requireTmeConfig(config: ConfigService): TmeConfig {
         currency: config.get<string>('TME_DEFAULT_CURRENCY') ?? 'EUR',
         timeoutMs: num(config, 'TME_TIMEOUT_MS', 10_000),
         maxConcurrency: num(config, 'TME_MAX_CONCURRENCY', 4),
+        maxManufacturers: num(config, 'TME_MAX_MANUFACTURERS', 5000),
         referenceTtlMs: num(config, 'TME_REF_TTL_MS', 24 * 60 * 60 * 1000),
         searchTtlMs: num(config, 'TME_SEARCH_TTL_MS', 60 * 1000),
     };

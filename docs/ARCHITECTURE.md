@@ -26,7 +26,7 @@ BullMQ queue; a separate worker process consumes those jobs and shells out to th
 | **Redis** | BullMQ queue `simulations` | Job queue between API (producer) and worker (consumer) |
 | **MinIO / S3** | AWS SDK v3 (`@aws-sdk/client-s3`) | Object storage for asset files and large simulation results |
 | **eda-core** | [packages/eda-core](../packages/eda-core) | Pure-TS library: CircuitJson types, netlist generation, output parsing, ERC |
-| **llm-core** | [packages/llm-core](../packages/llm-core) | Stub library for future LLM circuit generation |
+| **llm-core** | [packages/llm-core](../packages/llm-core) | LLM circuit generation via the real Anthropic SDK (`@anthropic-ai/sdk`): `generateCircuit` / `editCircuit` / `fixCircuit` / `explainCircuit`, with JSON validation + a single repair retry |
 
 ### Diagram
 
@@ -139,7 +139,7 @@ circuit-forge/
 │   └── worker-sim/          # "@circuitforge/worker-sim" (BullMQ + ngspice)
 ├── packages/
 │   ├── eda-core/            # "@circuit-forge/eda-core"   (netlist/parse/ERC lib)
-│   └── llm-core/            # "@circuitforge/llm-core"   (stub)
+│   └── llm-core/            # "@circuitforge/llm-core"   (Anthropic SDK circuit gen)
 ├── infra/docker/           # api.Dockerfile, worker-sim.Dockerfile
 ├── docs/                   # this file + API/DATA_MODEL/etc.
 ├── docker-compose.yml
@@ -374,6 +374,16 @@ file is a harmless no-op.
 | `NODE_ENV` | Runtime environment | `development` | api, worker-sim |
 | `API_PORT` | Intended HTTP port (**not read** — see note) | `3000` | api (latent; see note) |
 | `API_HOST` | Intended bind host | `0.0.0.0` | api (declared only) |
+| `LLM_API_KEY` | Anthropic-compatible API key (**server-side only**) — required for `/generate-circuit` etc. | _(blank)_ | api ([generation.service.ts](../apps/api/src/generation/generation.service.ts)) → llm-core |
+| `LLM_BASE_URL` | LLM provider base URL (SDK appends `/v1/messages`) | `https://api.zentio.dev` | api → llm-core |
+| `LLM_MODEL` | Model id used for circuit generation | `claude-sonnet-4-6` | api → llm-core |
+| `LLM_USER_AGENT` | Override UA (gateway WAF blocks the SDK default) | `Mozilla/5.0 (circuit-forge)` | llm-core (optional) |
+| `TME_TOKEN` / `TME_SECRET` | TME v2 OAuth2 app credentials (**server-side only**) — required for `/parts/*` | _(blank)_ | api ([tme.config.ts](../apps/api/src/parts/tme/tme.config.ts)) |
+| `TME_BASE_URL` | TME API base URL | `https://api.tme.eu` | api (parts) |
+| `TME_DEFAULT_COUNTRY` / `_LANGUAGE` / `_CURRENCY` | Default market (pricing/availability + localized text) | `PL` / `en` / `EUR` | api (parts) |
+| `TME_TIMEOUT_MS` / `TME_MAX_CONCURRENCY` | Per-request timeout / concurrency cap (TME ~5 req/s) | `10000` / `4` | api (parts) |
+| `TME_MAX_MANUFACTURERS` | Cap on the manufacturers list (largest-by-count) | `5000` | api (parts) |
+| `TME_REF_TTL_MS` / `TME_SEARCH_TTL_MS` | Cache TTLs for reference data / search results | `86400000` / `60000` | api (parts) |
 
 Notes / caveats verified against source:
 

@@ -28,6 +28,7 @@ describe('tme-mapper', () => {
         expect(part.mpn).toBe('NE555P');
         expect(part.manufacturer).toBe('TEXAS INSTRUMENTS');
         expect(part.category).toBe('Watchdog');
+        expect(part.categoryId).toBe('1'); // stable id carried for classification
         expect(part.photo).toBe('https://cdn/x.jpg');
         expect(part.supplier).toBe('tme');
         expect(part.supplierId).toBe('NE555P');

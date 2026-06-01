@@ -127,14 +127,17 @@ function componentToSpice(
 ): string | null {
     const { type, designator, value, model, pins } = component;
 
-    // Ground is not a real component
-    if (type === 'ground') {
+    // Not emitted to SPICE: `ground` is node 0, `generic` is a catalog-only part with no simulatable
+    // model. Both are skipped (not an error) so a circuit can carry real parts that aren't simulatable.
+    if (type === 'ground' || type === 'generic') {
         return null;
     }
 
+    // Any type without a SPICE element prefix is non-emittable — skip it gracefully rather than throw,
+    // mirroring the parser/ERC which tolerate unknown types (keeps the netlist resilient).
     const prefix = SPICE_PREFIXES[type];
     if (!prefix) {
-        throw new Error(`Unknown component type: ${type}`);
+        return null;
     }
 
     // Get node names for pins
@@ -161,7 +164,8 @@ function componentToSpice(
             return `${designator} ${nodes.join(' ')} ${model || 'DDEFAULT'}`;
 
         default:
-            throw new Error(`Unsupported component type: ${type}`);
+            // Forward-compatible: a known-but-non-emittable type is skipped, not fatal.
+            return null;
     }
 }
 
