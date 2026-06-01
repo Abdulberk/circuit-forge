@@ -18,7 +18,7 @@ export type {
     Wire,
 } from './types/circuit';
 
-export { COMPONENT_PINS, SPICE_PREFIXES } from './types/circuit';
+export { COMPONENT_PINS, SPICE_PREFIXES, COMPONENT_TYPES, isSimulatable } from './types/circuit';
 
 export type {
     AnalysisConfig,

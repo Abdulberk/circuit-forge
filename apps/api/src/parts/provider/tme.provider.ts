@@ -56,13 +56,23 @@ export class TmeProvider implements PartProvider {
     }
 
     async getManufacturers(): Promise<ManufacturerRef[]> {
-        const { country, language } = this.client.defaults;
+        const { country, language, maxManufacturers } = this.client.defaults;
         const data = await this.client.get<{
             manufacturers?: { elements?: TmeManufacturer[] };
             elements?: TmeManufacturer[];
         }>('/products/manufacturers', { country, language });
-        const list = (data.manufacturers?.elements ?? data.elements ?? []).slice(0, 5000);
-        return list.map(mapManufacturer).sort((a, b) => b.productsCount - a.productsCount);
+        // Sort by product count FIRST, then cap — so the cap keeps the largest manufacturers, not an
+        // arbitrary slice of TME's response order.
+        const sorted = (data.manufacturers?.elements ?? data.elements ?? [])
+            .map(mapManufacturer)
+            .sort((a, b) => b.productsCount - a.productsCount);
+        if (sorted.length > maxManufacturers) {
+            this.logger.warn(
+                `TME returned ${sorted.length} manufacturers; truncating to TME_MAX_MANUFACTURERS=${maxManufacturers}`,
+            );
+            return sorted.slice(0, maxManufacturers);
+        }
+        return sorted;
     }
 
     async getCategories(): Promise<CategoryNode[]> {
@@ -134,6 +144,7 @@ export class TmeProvider implements PartProvider {
             manufacturer: light?.manufacturer ?? '',
             description: light?.description ?? '',
             category: light?.category,
+            categoryId: light?.categoryId,
             footprint: footprintFromParameters(parameters),
             photo: light?.photo,
             datasheetUrl: datasheetFromFiles(filesEl),

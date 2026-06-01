@@ -65,6 +65,20 @@ interface Component {
     model?: string;        // max 100 chars; model name (diodes)
     pins: PinConnection[]; // 1..20 entries
     properties?: Record<string, unknown>; // optional, schema only
+    // Optional real-part / catalog metadata (set when created from the parts catalog):
+    mpn?: string;          // max 100; manufacturer part number, e.g. "NE555P"
+    manufacturer?: string; // max 120; e.g. "TEXAS INSTRUMENTS"
+    footprint?: string;    // max 50; package/case, e.g. "0603", "SOIC-8"
+    sourcing?: ComponentSourcing;
+}
+
+interface ComponentSourcing {   // ComponentSourcingSchema in circuit.schema.ts
+    supplier: string;      // e.g. "tme"
+    supplierId: string;    // supplier's own part id (TME symbol)
+    unitCost?: number;     // price for qty 1, in `currency`
+    currency?: string;     // e.g. "EUR"
+    stock?: number;        // available quantity (int >= 0)
+    datasheetUrl?: string; // URL, max 2000
 }
 
 interface PinConnection {
@@ -74,7 +88,9 @@ interface PinConnection {
 ```
 
 > Note: `properties` exists in the Zod `ComponentSchema` and the `Component` interface, but
-> the netlist generator never reads it.
+> the netlist generator never reads it. The `mpn`/`manufacturer`/`footprint`/`sourcing` fields are
+> optional catalog metadata (validated by `ComponentSourcingSchema`); they are ignored by the netlist
+> generator and used only for the schematic/BOM. See §1.7 for the `generic` catalog-only type.
 
 ### 1.3 `Net`
 
@@ -177,14 +193,17 @@ canonical pin names from `COMPONENT_PINS`, and the line format from `componentTo
 | `current_source` | `I` | `['+','-']` | `I1 <n+> <n-> <value\|'DC 0'>` | value defaults to `DC 0` |
 | `diode` | `D` | `['anode','cathode']` | `D1 <anode> <cathode> <model\|'DDEFAULT'>` | uses `DDEFAULT` model if `model` is absent |
 | `ground` | `''` (none) | `['1']` | *(no line emitted)* | `componentToSpice` returns `null`; ground is realized as node `'0'` |
+| `generic` | `''` (none) | `[]` (from the catalog part) | *(no line emitted)* | **Catalog-only** placeholder for a real part with no simulatable model yet (IC/transistor/connector). Carries `mpn`/`manufacturer`/`sourcing`; skipped by the generator. Test with `isSimulatable()`. |
 
 Behavioral details from `componentToSpice()`:
 
-- `ground` components produce **no** netlist line (`return null`); they exist only to mark a
-  net as the `'0'` reference.
+- `ground` and `generic` components produce **no** netlist line (`return null`); ground marks the
+  `'0'` reference, `generic` is a catalog-only part excluded from simulation.
 - Nodes are emitted in the **order of the `pins` array** — `pins.map(pin => nodeMap.get(pin.netId))`.
   The generator does not reorder by `pinId`, so pin order in the array is significant.
-- An unknown `type` (no `SPICE_PREFIXES` entry) throws `Unknown component type: <type>`.
+- A non-emittable `type` (no `SPICE_PREFIXES` entry, or `ground`/`generic`) is **skipped**
+  (`return null`) — the generator no longer throws on it, so a circuit can carry real parts that
+  aren't simulatable. Use `isSimulatable(component)` to discriminate.
 - A pin referencing a net not present in the node map throws
   `Net not found: <netId> for component <designator>`.
 
@@ -786,24 +805,29 @@ whether each is a type-only export (`type`), value/function, class, const, or en
 
 ---
 
-## 9. `@circuitforge/llm-core` — Stub
+## 9. `@circuitforge/llm-core` — AI circuit generation (real Anthropic SDK)
 
 Source: [packages/llm-core/src/index.ts](../packages/llm-core/src/index.ts).
 
-**This package is a stub.** Its own header comment says: *"This is a stub implementation for
-future LLM integration."* No real model calls are made. It currently exposes:
+**This package is a working LLM integration**, not a stub. It calls an Anthropic-compatible model
+through the official `@anthropic-ai/sdk` (single-shot `messages.create`, system prompt sent with
+`cache_control: ephemeral`), validates the returned JSON against eda-core's `CircuitJsonSchema`, and
+performs one repair retry on invalid output before throwing. It exposes:
 
 | Export | Kind | Behavior |
 |--------|------|----------|
-| `LlmProvider` | interface | Contract: `generateCircuit(prompt) => Promise<CircuitJson>`, `explainCircuit(circuit) => Promise<string>`, `suggestImprovements(circuit) => Promise<string[]>`. |
-| `LlmConfig` | interface | `{ provider: 'openai' \| 'anthropic' \| 'local'; apiKey?; model?; maxTokens?; temperature? }`. |
-| `StubLlmProvider` | class | Implements `LlmProvider`; **every method throws** `Error('LLM integration not yet implemented. This is a stub provider.')`. Constructor accepts an optional `LlmConfig` but does nothing with it. |
-| `promptTemplates` | const | Three string templates (`generateCircuit`, `explainCircuit`, `suggestImprovements`) with `{{requirements}}` / `{{circuit}}` placeholders. Not wired to any model. |
-| `createLlmProvider` | fn | Factory that **always** returns a `StubLlmProvider(config)`, regardless of `config.provider`. |
+| `generateCircuit(input, config)` | fn | `input: { prompt; constraints? }` → `{ circuit, analysisConfig, explanation?, repaired }`. Builds a `CircuitJson` from a natural-language prompt. |
+| `editCircuit(input, config)` | fn | Apply a natural-language `instruction` to an existing `circuit` → updated `{ circuit, ... }`. |
+| `fixCircuit(input, config)` | fn | Repair a circuit given a problem description (used by the `/design-circuit` agentic loop). |
+| `explainCircuit(input, config)` | fn | Return a human-readable explanation of a circuit. |
+| `GenerateCircuitConfig` | interface | `{ apiKey; baseUrl?; model?; maxTokens?; userAgent? }`. Defaults: `baseUrl='https://api.zentio.dev'`, `model='claude-sonnet-4-6'`, `maxTokens=8192`, `userAgent='Mozilla/5.0 (circuit-forge)'`. |
+| `GenerateCircuitInput` / `FixCircuitInput` / `EditCircuitInput` / `ExplainCircuitInput` / `...Result` | interfaces | Typed I/O shapes for the four functions. |
+| `CircuitGenerationError` / `CircuitGenerationErrorCode` | class / type | Typed error (`'config' \| 'api_error' \| 'invalid_output'`); the API maps these to HTTP status codes. |
 
-It imports `CircuitJson` as a type from `@circuit-forge/eda-core` (internal `workspace:*`
-dependency). There is no networking, SDK usage, or environment-variable reading in this package
-as written.
+It imports `CircuitJson`/`CircuitJsonSchema` from `@circuit-forge/eda-core` (`workspace:*`). The API
+wires it via `GenerationService` (env: `LLM_API_KEY` / `LLM_BASE_URL` / `LLM_MODEL` / `LLM_USER_AGENT`).
+Known gap: the generator is **not yet grounded in the parts catalog** (no tool-use / real-MPN
+selection) — that is the next step (AI ↔ catalog grounding).
 
 ---
 

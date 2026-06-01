@@ -24,7 +24,8 @@ export interface CatalogPart {
     mpn: string;
     manufacturer: string;
     description: string;
-    category?: string;
+    category?: string; // human-readable (localized) category name
+    categoryId?: string; // stable, locale-independent category id — the reliable classification signal
     footprint?: string;
     photo?: string;
     datasheetUrl?: string;

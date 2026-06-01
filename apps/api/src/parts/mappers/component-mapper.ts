@@ -7,7 +7,7 @@
  * `simulatable: false`. The mapper deliberately does NOT assign id/designator/pins: the schematic
  * layer owns those (avoids designator collisions when the same part is placed multiple times).
  */
-import { Injectable } from '@nestjs/common';
+import { Injectable, Logger } from '@nestjs/common';
 import {
     parseSpiceValue,
     formatSpiceValue,
@@ -15,6 +15,7 @@ import {
     type ComponentSourcing,
 } from '@circuit-forge/eda-core';
 import type { CatalogParameter, CatalogPart } from '../provider/part-provider.interface';
+import { typeFromCategoryId } from './tme-category-map';
 
 /** A partial Component (no id/designator/pins — assigned by the schematic layer). */
 export interface PartialComponent {
@@ -42,15 +43,10 @@ const VALUE_PARAM: Partial<Record<ComponentType, RegExp>> = {
 
 @Injectable()
 export class ComponentMapper {
+    private readonly logger = new Logger(ComponentMapper.name);
+
     toComponent(part: CatalogPart): MappedComponent {
-        const type = this.inferType(part);
-        if (!type) {
-            return {
-                simulatable: false,
-                reason: `No CircuitJson component type for "${part.category ?? 'this part'}" — active/IC/connector parts are catalog-only (no simulatable model yet).`,
-                catalog: part,
-            };
-        }
+        const type = this.classify(part);
 
         const base: PartialComponent = {
             type,
@@ -60,7 +56,17 @@ export class ComponentMapper {
             sourcing: this.toSourcing(part),
         };
 
-        // Diodes are value-less (model-based); other inferred types are passives needing a value.
+        // Catalog-only: representable + placeable on a schematic/BOM, but not simulatable yet.
+        if (type === 'generic') {
+            return {
+                simulatable: false,
+                reason: `No simulatable model for "${part.category ?? 'this part'}" yet — placed as a catalog-only component.`,
+                component: base,
+                catalog: part,
+            };
+        }
+
+        // Diodes are value-less (model-based); other simulatable types are passives needing a value.
         if (type === 'diode') {
             return { simulatable: true, component: base, catalog: part };
         }
@@ -77,8 +83,45 @@ export class ComponentMapper {
         return { simulatable: true, component: { ...base, value }, catalog: part };
     }
 
-    private inferType(part: CatalogPart): ComponentType | null {
+    /**
+     * Classify a catalog part into a ComponentType. PRIMARY signal is the stable, locale-independent
+     * TME category id (typeFromCategoryId) — the reliable, industry-standard approach. The English
+     * keyword heuristic is only a fallback for category ids we haven't mapped yet, and unmapped ids are
+     * logged so the map can be extended. Returns `'generic'` for catalog-only parts.
+     */
+    private classify(part: CatalogPart): ComponentType {
+        // PRIMARY: stable category id (authoritative — includes explicit 'generic' for parts whose
+        // name would otherwise fool the text fallback, e.g. Zener diodes / resistor networks).
+        const byId = typeFromCategoryId(part.categoryId);
+        if (byId) return byId;
+
+        // FALLBACK: legacy English keyword heuristic, only when the category id is unmapped/absent.
+        const byText = this.inferTypeFromText(part);
+        if (byText) {
+            this.logger.debug(
+                `Classified ${part.supplierId} via text fallback (TME category ${part.categoryId ?? 'none'} ` +
+                    `"${part.category ?? ''}" unmapped) -> ${byText}`,
+            );
+            return byText;
+        }
+
+        if (part.categoryId) {
+            this.logger.debug(
+                `Unmapped TME category ${part.categoryId} "${part.category ?? ''}" -> generic (${part.supplierId})`,
+            );
+        }
+        return 'generic';
+    }
+
+    private inferTypeFromText(part: CatalogPart): ComponentType | null {
         const hay = `${part.category ?? ''} ${part.description ?? ''}`.toLowerCase();
+        // Safety guard: a name can contain a primitive keyword yet NOT be a single 2-terminal primitive
+        // (Zener/TVS clamps, bridges, modules, resistor/diode networks/arrays). For an UNMAPPED category
+        // we refuse to guess these — letting them fall to 'generic' (placeable, not mis-simulated) is
+        // safer than emitting wrong physics (e.g. a Zener as a plain DDEFAULT rectifier).
+        if (/\bzener|\btvs\b|transil|suppress|\bbridge\b|\bmodule|\barray\b|\bnetwork\b/.test(hay)) {
+            return null;
+        }
         if (/\bresistor/.test(hay)) return 'resistor';
         if (/\bcapacitor/.test(hay)) return 'capacitor';
         if (/\binductor|\bchoke|\bcoil/.test(hay)) return 'inductor';

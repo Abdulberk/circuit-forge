@@ -25,16 +25,28 @@ export interface CircuitMetadata {
 }
 
 /**
- * Component types supported in MVP
+ * Component types supported in MVP.
+ *
+ * The first group are SPICE-simulatable primitives. `generic` is a catalog-only placeholder for a
+ * real manufacturer part that has no simulatable representation yet (ICs, transistors, connectors,
+ * sensors, …): it carries full catalog/sourcing metadata and renders on a schematic/BOM, but is NOT
+ * emitted to the netlist. Test a component with `isSimulatable()` — never a hardcoded type list.
+ *
+ * This `as const` tuple is the SINGLE SOURCE OF TRUTH: the `ComponentType` union derives from it and
+ * the Zod `ComponentTypeSchema` is built from the same array, so the two can never drift.
  */
-export type ComponentType =
-    | 'resistor'
-    | 'capacitor'
-    | 'inductor'
-    | 'voltage_source'
-    | 'current_source'
-    | 'diode'
-    | 'ground';
+export const COMPONENT_TYPES = [
+    'resistor',
+    'capacitor',
+    'inductor',
+    'voltage_source',
+    'current_source',
+    'diode',
+    'ground',
+    'generic',
+] as const;
+
+export type ComponentType = (typeof COMPONENT_TYPES)[number];
 
 /**
  * Sourcing / catalog metadata for a real manufacturer part attached to a component.
@@ -108,7 +120,9 @@ export interface Viewport {
 export interface Position {
     x: number;
     y: number;
-    rotation?: number; // 0, 90, 180, 270
+    // Quarter-turn rotation as a string enum — matches PositionSchema (the runtime validator), which
+    // accepts only these literals. (Kept as strings, not numbers, so the type and the Zod schema agree.)
+    rotation?: '0' | '90' | '180' | '270';
 }
 
 /**
@@ -130,6 +144,7 @@ export const COMPONENT_PINS: Record<ComponentType, string[]> = {
     current_source: ['+', '-'],
     diode: ['anode', 'cathode'],
     ground: ['1'],
+    generic: [], // variable arity — pins come from the catalog part / schematic layer
 };
 
 /**
@@ -143,4 +158,14 @@ export const SPICE_PREFIXES: Record<ComponentType, string> = {
     current_source: 'I',
     diode: 'D',
     ground: '', // Ground is a special case (node 0)
+    generic: '', // Catalog-only — not emitted to SPICE
 };
+
+/**
+ * Whether a component can be emitted to a SPICE netlist. Catalog-only `generic` parts are not
+ * simulatable (and, once active-device support lands, model-based parts without a resolvable model
+ * will also be excluded here). Prefer this over comparing `type` against a hardcoded list.
+ */
+export function isSimulatable(component: Pick<Component, 'type'>): boolean {
+    return component.type !== 'generic';
+}

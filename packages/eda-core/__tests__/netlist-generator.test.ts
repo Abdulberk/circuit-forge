@@ -4,6 +4,7 @@
 import { generateNetlist, getNodeNames, validateNetlist } from '../src/netlist/generator';
 import type { NetlistOptions } from '../src/netlist/generator';
 import type { CircuitJson, Component, Net } from '../src/types/circuit';
+import { isSimulatable } from '../src/types/circuit';
 import type { TranAnalysis, AcAnalysis, DcAnalysis, OpAnalysis } from '../src/types/analysis';
 
 // Helper to create a component
@@ -238,6 +239,46 @@ describe('NetlistGenerator', () => {
             const netlist = generateNetlist(circuit, analysis, options);
 
             expect(netlist).toContain('.include "model.lib"');
+        });
+
+        it('should skip catalog-only generic components without throwing', () => {
+            const circuit: CircuitJson = {
+                version: '1.0',
+                components: [
+                    createComponent('R1', 'resistor', 'R1', '1k', [
+                        { pinId: '1', netId: 'vcc' },
+                        { pinId: '2', netId: '0' },
+                    ]),
+                    // A real catalog part with no simulatable model (e.g. an IC): must not break netlisting.
+                    {
+                        id: 'U1',
+                        type: 'generic',
+                        designator: 'U1',
+                        pins: [
+                            { pinId: '1', netId: 'vcc' },
+                            { pinId: '2', netId: '0' },
+                        ],
+                    },
+                ],
+                nets: [createNet('vcc', 'vcc'), createNet('0', '0', true)],
+            };
+
+            const analysis: TranAnalysis = { type: 'tran', stopTime: '1m' };
+
+            expect(() => generateNetlist(circuit, analysis)).not.toThrow();
+            const netlist = generateNetlist(circuit, analysis);
+            expect(netlist).toContain('R1');
+            // U1 is catalog-only → not emitted as a SPICE element line.
+            expect(netlist).not.toMatch(/^U1 /m);
+        });
+    });
+
+    describe('isSimulatable', () => {
+        it('is false for catalog-only generic parts, true for SPICE primitives', () => {
+            expect(isSimulatable({ type: 'generic' })).toBe(false);
+            expect(isSimulatable({ type: 'resistor' })).toBe(true);
+            expect(isSimulatable({ type: 'diode' })).toBe(true);
+            expect(isSimulatable({ type: 'voltage_source' })).toBe(true);
         });
     });
 

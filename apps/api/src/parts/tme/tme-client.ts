@@ -41,10 +41,10 @@ export class TmeClient {
         return this.limiter;
     }
 
-    /** Default market params (country/language/currency) for providers to merge into queries. */
-    get defaults(): { country: string; language: string; currency: string } {
-        const { country, language, currency } = this.conf;
-        return { country, language, currency };
+    /** Default market params + safety caps for providers to merge into queries. */
+    get defaults(): { country: string; language: string; currency: string; maxManufacturers: number } {
+        const { country, language, currency, maxManufacturers } = this.conf;
+        return { country, language, currency, maxManufacturers };
     }
 
     /** GET a TME endpoint and return the unwrapped `data`. Runs through the concurrency limiter,

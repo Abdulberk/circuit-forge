@@ -2,19 +2,13 @@
  * Zod schemas for circuit validation
  */
 import { z } from 'zod';
+import { COMPONENT_TYPES } from '../types/circuit';
 
 /**
- * Component type enum schema
+ * Component type enum schema — derived from the single-source `COMPONENT_TYPES` tuple in
+ * types/circuit.ts so the runtime enum and the TS union can never drift.
  */
-export const ComponentTypeSchema = z.enum([
-    'resistor',
-    'capacitor',
-    'inductor',
-    'voltage_source',
-    'current_source',
-    'diode',
-    'ground',
-]);
+export const ComponentTypeSchema = z.enum(COMPONENT_TYPES);
 
 /**
  * Pin connection schema
