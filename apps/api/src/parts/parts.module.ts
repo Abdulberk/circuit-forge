@@ -23,5 +23,7 @@ import { ComponentMapper } from './mappers/component-mapper';
         ComponentMapper,
         { provide: PART_PROVIDER, useExisting: TmeProvider },
     ],
+    // Exported so other modules (e.g. GenerationModule) can ground the AI in the live catalog.
+    exports: [PartsService],
 })
 export class PartsModule {}
