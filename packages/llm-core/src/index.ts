@@ -61,6 +61,45 @@ export interface GenerateCircuitConfig {
     userAgent?: string;
 }
 
+/**
+ * Executes a model tool call against the live catalog (injected by the host app so llm-core stays
+ * free of any distributor/NestJS dependency). Returns a JSON-serializable result.
+ */
+export type ToolExecutor = (toolName: string, input: Record<string, unknown>) => Promise<unknown>;
+
+export interface GroundingOptions {
+    /** When provided, generation runs as a tool-use loop that can search the live parts catalog. */
+    toolExecutor: ToolExecutor;
+}
+
+/** Model-facing tool schemas. Execution is delegated to the injected ToolExecutor. */
+const PART_TOOLS: Anthropic.Tool[] = [
+    {
+        name: 'search_parts',
+        description:
+            'Search the LIVE distributor catalog of real manufacturer parts. Use this to find a real ' +
+            'part that fits a component you are designing (by type/value/package), e.g. "10k 0603 ' +
+            'resistor", "100nF X7R capacitor", "LM7805 regulator". Returns candidates with their ' +
+            'supplierId, manufacturer part number (mpn), manufacturer and description.',
+        input_schema: {
+            type: 'object',
+            properties: { query: { type: 'string', description: 'Free-text part search phrase (<=100 chars).' } },
+            required: ['query'],
+        },
+    },
+    {
+        name: 'get_part_details',
+        description:
+            'Get full details for ONE catalog part by the supplierId returned from search_parts: ' +
+            'parameters, price tiers, stock, datasheet, footprint, and whether it is simulatable.',
+        input_schema: {
+            type: 'object',
+            properties: { supplierId: { type: 'string', description: 'A supplierId from a search_parts result.' } },
+            required: ['supplierId'],
+        },
+    },
+];
+
 export type CircuitGenerationErrorCode = 'config' | 'api_error' | 'invalid_output';
 
 /** Typed error so the API layer can map to the right HTTP status. */
@@ -94,13 +133,20 @@ function setup(config: GenerateCircuitConfig): Resolved {
     return { client, model: config.model || DEFAULT_MODEL, maxTokens: config.maxTokens || DEFAULT_MAX_TOKENS };
 }
 
-/** Generate a circuit (+ suggested analysis) from a natural-language prompt. */
+/**
+ * Generate a circuit (+ suggested analysis) from a natural-language prompt.
+ *
+ * When `grounding` is supplied, the model runs as a tool-use loop that searches the LIVE parts
+ * catalog (search_parts / get_part_details) and grounds components in real manufacturer parts
+ * (mpn/manufacturer). Without it, generation is a single-shot call as before (backward-compatible).
+ */
 export async function generateCircuit(
     input: GenerateCircuitInput,
     config: GenerateCircuitConfig,
+    grounding?: GroundingOptions,
 ): Promise<GenerateCircuitResult> {
     const r = setup(config);
-    return runWithRepair(r, buildGenerateMessage(input));
+    return runWithRepair(r, buildGenerateMessage(input), grounding);
 }
 
 /** Fix a circuit that failed/underperformed in simulation, given the problem description. */
@@ -154,10 +200,23 @@ export async function explainCircuit(
 
 // ---------------------------------------------------------------------------
 
-async function runWithRepair(r: Resolved, userContent: string): Promise<GenerateCircuitResult> {
+async function runWithRepair(
+    r: Resolved,
+    userContent: string,
+    grounding?: GroundingOptions,
+): Promise<GenerateCircuitResult> {
     const baseMessages: Anthropic.MessageParam[] = [{ role: 'user', content: userContent }];
 
-    const firstText = await callModel(r, SYSTEM_PROMPT, baseMessages);
+    // When grounded, run a tool-use loop with the catalog-aware system prompt; the model picks real
+    // parts. The repair retry below is always tool-less + plain prompt — it only fixes invalid JSON.
+    const useTools = !!grounding?.toolExecutor;
+    const genSystem = useTools ? `${SYSTEM_PROMPT}\n\n${GROUNDING_PROMPT}` : SYSTEM_PROMPT;
+    const firstText = await callModel(
+        r,
+        genSystem,
+        baseMessages,
+        useTools ? { tools: PART_TOOLS, executor: grounding!.toolExecutor } : undefined,
+    );
     const first = parseAndValidate(firstText);
     if (first.ok) return { ...first.value, repaired: false };
 
@@ -182,25 +241,60 @@ async function runWithRepair(r: Resolved, userContent: string): Promise<Generate
     );
 }
 
+/** Max model<->tool round-trips before we force a final (tool-less) answer. */
+const MAX_TOOL_ITERS = 5;
+/** Cap a single tool result so a chatty catalog response can't blow up the context. */
+const MAX_TOOL_RESULT_CHARS = 12000;
+
 async function callModel(
     r: Resolved,
     system: string,
     messages: Anthropic.MessageParam[],
+    opts?: { tools?: Anthropic.Tool[]; executor?: ToolExecutor },
 ): Promise<string> {
+    const useTools = !!(opts?.tools?.length && opts.executor);
+    const convo: Anthropic.MessageParam[] = [...messages];
     try {
-        const response = await r.client.messages.create({
-            model: r.model,
-            max_tokens: r.maxTokens,
-            system: [{ type: 'text', text: system, cache_control: { type: 'ephemeral' } }],
-            messages,
-        });
-        let text = '';
-        for (const block of response.content) {
-            if (block.type === 'text') text += (text ? '\n' : '') + block.text;
+        for (let iter = 0; ; iter++) {
+            // Offer tools until the cap; the final iteration runs tool-less to force a text answer.
+            const allowTools = useTools && iter < MAX_TOOL_ITERS;
+            const response = await r.client.messages.create({
+                model: r.model,
+                max_tokens: r.maxTokens,
+                system: [{ type: 'text', text: system, cache_control: { type: 'ephemeral' } }],
+                messages: convo,
+                ...(allowTools ? { tools: opts!.tools } : {}),
+            });
+
+            const toolUses = allowTools
+                ? response.content.filter((b): b is Anthropic.ToolUseBlock => b.type === 'tool_use')
+                : [];
+
+            if (toolUses.length === 0) {
+                let text = '';
+                for (const block of response.content) {
+                    if (block.type === 'text') text += (text ? '\n' : '') + block.text;
+                }
+                text = text.trim();
+                if (!text) throw new CircuitGenerationError('Model returned no text content.', 'invalid_output');
+                return text;
+            }
+
+            // Run each tool call and feed the results back for the next turn.
+            convo.push({ role: 'assistant', content: response.content });
+            const toolResults: Anthropic.ToolResultBlockParam[] = [];
+            for (const tu of toolUses) {
+                let content: string;
+                try {
+                    const out = await opts!.executor!(tu.name, (tu.input ?? {}) as Record<string, unknown>);
+                    content = JSON.stringify(out ?? null).slice(0, MAX_TOOL_RESULT_CHARS);
+                } catch (e) {
+                    content = JSON.stringify({ error: e instanceof Error ? e.message : String(e) });
+                }
+                toolResults.push({ type: 'tool_result', tool_use_id: tu.id, content });
+            }
+            convo.push({ role: 'user', content: toolResults });
         }
-        text = text.trim();
-        if (!text) throw new CircuitGenerationError('Model returned no text content.', 'invalid_output');
-        return text;
     } catch (err) {
         if (err instanceof CircuitGenerationError) throw err;
         const e = err as { status?: number; message?: string };
@@ -339,7 +433,10 @@ CircuitJson schema (every field validated; invalid output is rejected):
       "pins": [                              // 1..20 pins; each connects a named pin to a net
         { "pinId": "1", "netId": "in" },
         { "pinId": "2", "netId": "out" }
-      ]
+      ],
+      "mpn": "RC0603FR-0710KL",              // optional real-part metadata — set ONLY from a search tool result (never invent)
+      "manufacturer": "YAGEO",               // optional; from the catalog
+      "footprint": "0603"                    // optional; package/case from the catalog
     }
   ],
   "nets": [                                  // every netId referenced by a pin MUST exist here
@@ -373,3 +470,18 @@ Rules:
 - Pick a source and an analysis that actually excite the circuit (a transient on a purely-DC circuit just shows a flat line — use a SIN/PULSE source or an "op" analysis instead).
 - Keep the circuit minimal and physically sensible; pick reasonable real-world values.
 - If the request cannot be expressed with the component types above (e.g. transistors, op-amps, logic ICs), return a best-effort passive/diode approximation and explain the limitation in "explanation"; never invent unsupported component types.`;
+
+const GROUNDING_PROMPT = `PART SOURCING — tools available (use them):
+You have two tools backed by a LIVE distributor catalog of real manufacturer parts:
+- search_parts({ query }) — find real candidates (returns supplierId, mpn, manufacturer, description).
+- get_part_details({ supplierId }) — full detail incl. the normalized "value"/"type", parameters,
+  price, stock, datasheet, and a "simulatable" flag. simulatable:false means the part is catalog-only
+  (e.g. a transistor/IC not yet supported as a SPICE primitive) — you may still source it, but design
+  the simulatable circuit from the supported component types.
+
+Workflow: as you choose each component, call search_parts to find a real part that fits its
+type/value/package, then set that component's "mpn" and "manufacturer" (and "footprint" when known)
+from a REAL tool result. Prefer in-stock parts. You may call the tools several times to refine.
+NEVER invent an mpn/manufacturer — only use exact values returned by the tools; if nothing fits,
+omit those fields. The host attaches full pricing/stock afterwards, so you don't need to copy them.
+When finished, stop calling tools and return ONLY the JSON object specified above (no prose/fences).`;
