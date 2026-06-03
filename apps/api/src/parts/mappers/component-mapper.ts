@@ -90,6 +90,14 @@ export class ComponentMapper {
      * logged so the map can be extended. Returns `'generic'` for catalog-only parts.
      */
     private classify(part: CatalogPart): ComponentType {
+        // A part with no stable category id (e.g. a detail-only resolve that never matched a search
+        // element) loses the PRIMARY classifier and silently falls back to text — surface it as a warn
+        // so the degradation is observable rather than invisible.
+        if (!part.categoryId) {
+            this.logger.warn(
+                `Part ${part.supplierId} resolved without a category id — classification degraded to the text heuristic.`,
+            );
+        }
         // PRIMARY: stable category id (authoritative — includes explicit 'generic' for parts whose
         // name would otherwise fool the text fallback, e.g. Zener diodes / resistor networks).
         const byId = typeFromCategoryId(part.categoryId);

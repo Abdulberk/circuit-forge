@@ -18,6 +18,12 @@ jest.mock('@anthropic-ai/sdk', () => ({
 
 // Imported AFTER the mock is registered.
 import { GenerationService } from './generation.service';
+import { CatalogGroundingService } from './catalog-grounding.service';
+
+/** Build a GenerationService wired to a real CatalogGroundingService over a mocked PartsService. */
+function makeService(cfg: ConfigService, parts: unknown): GenerationService {
+    return new GenerationService(cfg, new CatalogGroundingService(cfg, parts as PartsService));
+}
 
 const VALID_CIRCUIT = {
     version: '1.0',
@@ -106,7 +112,7 @@ describe('GenerationService grounding (tool-use + sourcing enrichment)', () => {
             });
 
         const parts = makeParts();
-        const service = new GenerationService(makeConfig(), parts as unknown as PartsService);
+        const service = makeService(makeConfig(), parts);
 
         const result = await service.generate({ prompt: 'RC low-pass filter, 1kHz cutoff' } as any);
 
@@ -136,7 +142,7 @@ describe('GenerationService grounding (tool-use + sourcing enrichment)', () => {
         });
         const parts = makeParts();
         const cfg = { get: (k: string) => (k === 'LLM_API_KEY' ? 'test-key' : undefined) } as unknown as ConfigService;
-        const service = new GenerationService(cfg, parts as unknown as PartsService);
+        const service = makeService(cfg, parts);
 
         const result = await service.generate({ prompt: 'RC filter' } as any);
 
@@ -159,7 +165,7 @@ describe('GenerationService grounding (tool-use + sourcing enrichment)', () => {
             getComponent: jest.fn(),
             getProduct: jest.fn(),
         };
-        const service = new GenerationService(makeConfig(), parts as unknown as PartsService);
+        const service = makeService(makeConfig(), parts);
 
         const result = await service.generate({ prompt: 'RC filter' } as any);
 
@@ -176,7 +182,7 @@ describe('GenerationService grounding (tool-use + sourcing enrichment)', () => {
         mockCreate.mockResolvedValueOnce(jsonResponse(FINAL_JSON));
 
         const parts = makeParts();
-        const service = new GenerationService(makeConfig(), parts as unknown as PartsService);
+        const service = makeService(makeConfig(), parts);
 
         const result = await service.generate({ prompt: 'RC filter' } as any);
 
@@ -194,13 +200,60 @@ describe('GenerationService grounding (tool-use + sourcing enrichment)', () => {
             getComponent: jest.fn(),
             getProduct: jest.fn(),
         };
-        const service = new GenerationService(makeConfig(), parts as unknown as PartsService);
+        const service = makeService(makeConfig(), parts);
 
         const result = await service.generate({ prompt: 'RC filter' } as any);
 
         // The thrown error was fed back to the model as a tool_result, and generation still completed.
         const secondCallMessages = JSON.stringify(mockCreate.mock.calls[1][0].messages);
         expect(secondCallMessages).toContain('catalog upstream 502');
+        expect(result.circuit.components.length).toBeGreaterThan(0);
+    });
+
+    it('feeds get_part_details (simulatable + type + value + inStock) back to the model', async () => {
+        mockCreate
+            .mockResolvedValueOnce(toolUseResponse('tu1', 'get_part_details', { supplierId: 'SYM-RES-1' }))
+            .mockResolvedValueOnce(jsonResponse(FINAL_JSON));
+        const parts = makeParts();
+        const service = makeService(makeConfig(), parts);
+
+        await service.generate({ prompt: 'RC filter' } as any);
+
+        expect(parts.getComponent).toHaveBeenCalledWith('SYM-RES-1');
+        // The tool_result content is nested JSON (double-escaped in the messages dump), so assert on
+        // escaping-agnostic substrings — the point is these decision fields reach the model.
+        const fedBack = JSON.stringify(mockCreate.mock.calls[1][0].messages);
+        expect(fedBack).toContain('simulatable');
+        expect(fedBack).toContain('10K'); // normalized value surfaced to the model
+        expect(fedBack).toContain('inStock'); // stock 50000 -> inStock flag
+    });
+
+    it('returns an error tool_result for get_part_details with no supplierId (no catalog call)', async () => {
+        mockCreate
+            .mockResolvedValueOnce(toolUseResponse('tu1', 'get_part_details', {}))
+            .mockResolvedValueOnce(jsonResponse(FINAL_JSON));
+        const parts = makeParts();
+        const service = makeService(makeConfig(), parts);
+
+        await service.generate({ prompt: 'RC filter' } as any);
+
+        expect(parts.getComponent).not.toHaveBeenCalled();
+        expect(JSON.stringify(mockCreate.mock.calls[1][0].messages)).toContain('supplierId is required');
+    });
+
+    it('repairs an invalid grounded answer with a tool-less retry (repaired:true)', async () => {
+        mockCreate
+            .mockResolvedValueOnce(toolUseResponse('tu1', 'search_parts', { query: 'resistor' })) // grounded turn
+            .mockResolvedValueOnce(jsonResponse({ not: 'a circuit' })) // first answer: invalid
+            .mockResolvedValueOnce(jsonResponse(FINAL_JSON)); // repair: valid
+        const parts = makeParts();
+        const service = makeService(makeConfig(), parts);
+
+        const result = await service.generate({ prompt: 'RC filter' } as any);
+
+        expect(result.repaired).toBe(true);
+        expect(mockCreate).toHaveBeenCalledTimes(3);
+        expect(mockCreate.mock.calls[2][0].tools).toBeUndefined(); // repair retry is tool-less
         expect(result.circuit.components.length).toBeGreaterThan(0);
     });
 });

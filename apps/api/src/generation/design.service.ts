@@ -14,6 +14,7 @@ import { ConfigService } from '@nestjs/config';
 import { generateCircuit, fixCircuit, CircuitGenerationError } from '@circuitforge/llm-core';
 import { generateNetlist, type CircuitJson, type AnalysisConfig } from '@circuit-forge/eda-core';
 import { SimulationService } from '../simulation/simulation.service';
+import { CatalogGroundingService } from './catalog-grounding.service';
 import { DesignCircuitDto } from './dto';
 
 export interface RoundRecord {
@@ -31,6 +32,7 @@ export class DesignService {
     constructor(
         private readonly config: ConfigService,
         private readonly simulation: SimulationService,
+        private readonly grounding: CatalogGroundingService,
     ) {}
 
     async design(dto: DesignCircuitDto, userId: string) {
@@ -47,9 +49,11 @@ export class DesignService {
             userAgent: this.config.get<string>('LLM_USER_AGENT'),
         };
         const maxRounds = Math.min(Math.max(dto.maxRounds ?? 2, 1), 4);
+        // Ground the initial design in the live catalog (same as /generate-circuit) when configured.
+        const groundingOpts = this.grounding.grounding();
 
         try {
-            const gen = await generateCircuit({ prompt: dto.prompt, constraints: dto.constraints }, llmConfig);
+            const gen = await generateCircuit({ prompt: dto.prompt, constraints: dto.constraints }, llmConfig, groundingOpts);
             let circuit: CircuitJson = gen.circuit;
             let analysis: AnalysisConfig = gen.analysisConfig;
             let explanation = gen.explanation;
@@ -92,6 +96,8 @@ export class DesignService {
                 history.push({ round, status: status.status, pointsCount, jobId });
 
                 if (succeeded) {
+                    // Attach authoritative sourcing to the final, simulation-verified circuit.
+                    if (groundingOpts) await this.grounding.enrichSourcing(circuit);
                     return {
                         ok: true,
                         circuit,
@@ -114,6 +120,7 @@ export class DesignService {
             }
 
             // Budget exhausted without a clean run — return the best effort + history.
+            if (groundingOpts) await this.grounding.enrichSourcing(circuit);
             const last = history[history.length - 1];
             return {
                 ok: false,
