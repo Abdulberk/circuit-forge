@@ -2,7 +2,7 @@
  * SPICE Netlist Generator
  * Converts CircuitJson to ngspice-compatible netlist format
  */
-import type { CircuitJson, Component, Net } from '../types/circuit';
+import type { CircuitJson, Component, Net, ModelDef } from '../types/circuit';
 import type { AnalysisConfig } from '../types/analysis';
 import { SPICE_PREFIXES, COMPONENT_PINS } from '../types/circuit';
 import { analysisToSpice } from '../types/analysis';
@@ -98,10 +98,15 @@ export function generateNetlist(
         lines.push('');
     }
 
-    // Components
+    // Components. A model lookup lets subckt instances bind their nodes by pinId (the macromodel's
+    // declared port order) instead of trusting the authored pin-array order.
+    const modelMap = new Map<string, ModelDef>();
+    for (const m of circuit.models ?? []) {
+        if (!modelMap.has(m.name)) modelMap.set(m.name, m);
+    }
     lines.push('* Components');
     for (const component of circuit.components) {
-        const spiceLine = componentToSpice(component, nodeMap);
+        const spiceLine = componentToSpice(component, nodeMap, modelMap);
         if (spiceLine) {
             lines.push(spiceLine);
         }
@@ -156,6 +161,7 @@ function buildNodeMap(nets: Net[]): Map<string, string> {
 function componentToSpice(
     component: Component,
     nodeMap: Map<string, string>,
+    modelMap?: Map<string, ModelDef>,
 ): string | null {
     const { type, designator, value, model, pins } = component;
 
@@ -204,6 +210,24 @@ function componentToSpice(
             return `${designator} ${orderedNodes(component, nodeMap).join(' ')} ${model}`;
         }
 
+        // A subcircuit instance (e.g. an op-amp). Variable-arity: nodes are emitted in the AUTHORED pin
+        // order, which MUST match the referenced `.subckt` port order (the generator cannot reorder
+        // because the port names are macromodel-specific). The SPICE instance line must start with 'X',
+        // so one is prefixed when the (schematic) designator doesn't already — e.g. U1 -> XU1.
+        case 'subckt': {
+            if (!model) return null;
+            const inst = /^x/i.test(designator) ? designator : `X${designator}`;
+            // Bind nodes by the macromodel's declared port order (pinId) when it's known, so the authored
+            // pin-array order is irrelevant and a reordered-but-complete pin set still nets correctly
+            // (mirrors bjt/mosfet). Fall back to the authored order for an unknown / user-defined subckt.
+            const def = modelMap?.get(model);
+            const subcktNodes =
+                def?.ports && def.ports.length > 0
+                    ? nodesForPinOrder(component, nodeMap, def.ports)
+                    : nodes;
+            return `${inst} ${subcktNodes.join(' ')} ${model}`;
+        }
+
         default:
             // Forward-compatible: a known-but-non-emittable type is skipped, not fatal.
             return null;
@@ -215,8 +239,19 @@ function componentToSpice(
  * always emits `c b e` and a MOSFET `d g s b` regardless of the order pins were authored in.
  */
 function orderedNodes(component: Component, nodeMap: Map<string, string>): string[] {
-    const canonical = COMPONENT_PINS[component.type];
-    return canonical.map((pinId) => {
+    return nodesForPinOrder(component, nodeMap, COMPONENT_PINS[component.type]);
+}
+
+/**
+ * Resolve a component's nodes in an explicit pinId order (used for fixed-arity types via COMPONENT_PINS,
+ * and for subckt instances via the macromodel's declared port order). Throws if a required pin is absent.
+ */
+function nodesForPinOrder(
+    component: Component,
+    nodeMap: Map<string, string>,
+    pinIds: string[],
+): string[] {
+    return pinIds.map((pinId) => {
         const pin = component.pins.find((p) => p.pinId === pinId);
         if (!pin) {
             throw new Error(`Component ${component.designator} (${component.type}) is missing pin '${pinId}'`);

@@ -39,7 +39,7 @@ export const ComponentSchema = z.object({
     designator: z.string().regex(/^[A-Z][A-Z0-9]*[0-9]+$/i, 'Invalid designator format'),
     value: z.string().max(100).optional(),
     model: z.string().max(100).optional(),
-    pins: z.array(PinConnectionSchema).min(1).max(20),
+    pins: z.array(PinConnectionSchema).min(1).max(64), // up to wide multi-terminal subckt ICs
     properties: z.record(z.unknown()).optional(),
     // Optional real-part / catalog metadata
     mpn: z.string().max(100).optional(),
@@ -56,6 +56,8 @@ export const ModelDefSchema = z.object({
     device: z.enum(['bjt', 'mosfet', 'diode', 'subckt']),
     body: z.string().min(1).max(20000),
     tier: z.enum(['manufacturer', 'generic', 'ideal']).optional(),
+    // subckt only: pinIds in the macromodel's port order, so the generator binds nodes by pinId.
+    ports: z.array(z.string().min(1).max(50)).max(64).optional(),
 });
 
 /**

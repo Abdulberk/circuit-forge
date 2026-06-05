@@ -429,11 +429,11 @@ CircuitJson schema (every field validated; invalid output is rejected):
   "components": [                            // 1+ components
     {
       "id": "r1",                            // unique, lowercase recommended
-      "type": "resistor",                    // one of: resistor | capacitor | inductor | voltage_source | current_source | diode | bjt | mosfet | ground
+      "type": "resistor",                    // one of: resistor | capacitor | inductor | voltage_source | current_source | diode | bjt | mosfet | subckt | ground
       "designator": "R1",                    // matches /^[A-Z][A-Z0-9]*[0-9]+$/i  (e.g. R1, C1, L1, V1, I1, D1)
       "value": "10k",                        // optional; SPICE value string (see below). Omit for ground.
       "model": "...",                        // DO NOT SET for diodes — a default model is auto-supplied (see below)
-      "pins": [                              // 1..20 pins; each connects a named pin to a net
+      "pins": [                              // 1..64 pins; each connects a named pin to a net
         { "pinId": "1", "netId": "in" },
         { "pinId": "2", "netId": "out" }
       ],
@@ -466,6 +466,7 @@ Component conventions:
 - diode (D): pins "anode","cathode". OMIT the "model" field entirely — a built-in default diode model is supplied automatically.
 - bjt (Q): a bipolar transistor. pins "c","b","e" (collector, base, emitter). Set "model" to a built-in generic model by NAME: "QGENNPN" (NPN) or "QGENPNP" (PNP). The host supplies the model body — do NOT write a .model definition yourself.
 - mosfet (M): a MOSFET. pins "d","g","s","b" (drain, gate, source, bulk; tie bulk to source if unsure). Set "model" to "MGENNMOS" (N-channel) or "MGENPMOS" (P-channel).
+- subckt (X): a multi-terminal macromodel device. For an OP-AMP set "type":"subckt" and "model":"OPAMPGEN", and list pins in EXACTLY this order (the order IS the contract): pinId "out" (output), "in+" (non-inverting input), "in-" (inverting input), "vcc" (positive supply), "vee" (negative supply) — i.e. out, in+, in-, V+, V-. Always wire vcc/vee to real supply sources. The host supplies the macromodel body — never write a .subckt yourself.
 - ground: a single pin "1" connected to the ground net; no value.
 
 Rules:
@@ -474,7 +475,7 @@ Rules:
 - Include exactly one net with "isGround": true and tie the circuit's reference/ground node to it (via a ground component or a source's "-" pin).
 - Pick a source and an analysis that actually excite the circuit (a transient on a purely-DC circuit just shows a flat line — use a SIN/PULSE source or an "op" analysis instead).
 - Keep the circuit minimal and physically sensible; pick reasonable real-world values.
-- Transistors ARE supported (bjt/mosfet, generic models above). Op-amps, logic ICs and other complex parts are NOT yet — if the request needs one, return a best-effort approximation using the supported types (e.g. a transistor stage) and explain the limitation in "explanation"; never invent unsupported component types or model names.`;
+- Transistors (bjt/mosfet) AND op-amps (the OPAMPGEN subckt above) ARE supported — use the op-amp for amplifiers, active filters, integrators and comparators. Logic ICs, MCUs and other complex digital parts are NOT yet — if the request needs one, return a best-effort approximation using the supported types (e.g. a transistor or op-amp stage) and explain the limitation in "explanation"; never invent unsupported component types or model names.`;
 
 const GROUNDING_PROMPT = `PART SOURCING — tools available (use them):
 You have two tools backed by a LIVE distributor catalog of real manufacturer parts:

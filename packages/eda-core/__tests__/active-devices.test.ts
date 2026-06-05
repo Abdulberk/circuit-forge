@@ -6,7 +6,7 @@ import { generateNetlist } from '../src/netlist/generator';
 import { parseNetlist } from '../src/parser/netlist-parser';
 import { runErc } from '../src/erc/checker';
 import { ErcCode } from '../src/types/erc';
-import { GENERIC_MODELS, resolveModelForPart } from '../src/models/library';
+import { GENERIC_MODELS, resolveModelForPart, resolveGenericModels } from '../src/models/library';
 import { isSimulatable } from '../src/types/circuit';
 import type { CircuitJson, ModelDef } from '../src/types/circuit';
 import type { TranAnalysis } from '../src/types/analysis';
@@ -180,9 +180,107 @@ describe('active devices', () => {
         });
     });
 
-    it('bjt/mosfet are simulatable types; generic is not', () => {
+    it('bjt/mosfet/subckt are simulatable types; generic is not', () => {
         expect(isSimulatable({ type: 'bjt' })).toBe(true);
         expect(isSimulatable({ type: 'mosfet' })).toBe(true);
+        expect(isSimulatable({ type: 'subckt' })).toBe(true);
         expect(isSimulatable({ type: 'generic' })).toBe(false);
+    });
+
+    describe('subckt (op-amp)', () => {
+        // Inverting amp built around the generic OPAMPGEN. Op-amp pins authored in the contract order
+        // out, in+, in-, vcc, vee. designator U1 (schematic) must be emitted as XU1 (SPICE 'X' prefix).
+        function opampCircuit(model?: string): CircuitJson {
+            return {
+                version: '1.0',
+                components: [
+                    { id: 'vp', type: 'voltage_source', designator: 'V1', value: 'DC 15', pins: [
+                        { pinId: '+', netId: 'vcc' }, { pinId: '-', netId: 'gnd' }] },
+                    { id: 'vn', type: 'voltage_source', designator: 'V2', value: 'DC -15', pins: [
+                        { pinId: '+', netId: 'vee' }, { pinId: '-', netId: 'gnd' }] },
+                    { id: 'rg', type: 'resistor', designator: 'RG1', value: '1k', pins: [
+                        { pinId: '1', netId: 'in' }, { pinId: '2', netId: 'inv' }] },
+                    { id: 'rf', type: 'resistor', designator: 'RF1', value: '10k', pins: [
+                        { pinId: '1', netId: 'inv' }, { pinId: '2', netId: 'out' }] },
+                    { id: 'u1', type: 'subckt', designator: 'U1', model, pins: [
+                        { pinId: 'out', netId: 'out' }, { pinId: 'in+', netId: 'gnd' }, { pinId: 'in-', netId: 'inv' },
+                        { pinId: 'vcc', netId: 'vcc' }, { pinId: 'vee', netId: 'vee' }] },
+                    { id: 'vin', type: 'voltage_source', designator: 'V3', value: 'SIN(0 0.5 1k)', pins: [
+                        { pinId: '+', netId: 'in' }, { pinId: '-', netId: 'gnd' }] },
+                ],
+                nets: [
+                    { id: 'vcc', name: 'VCC' }, { id: 'vee', name: 'VEE' }, { id: 'in', name: 'IN' },
+                    { id: 'inv', name: 'INV' }, { id: 'out', name: 'OUT' }, { id: 'gnd', name: 'GND', isGround: true },
+                ],
+                models: model === 'OPAMPGEN' ? [GENERIC_MODELS.opamp!] : undefined,
+            };
+        }
+
+        it('emits an X-prefixed instance (U1 -> XU1) in macromodel port order + the .subckt body once', () => {
+            const netlist = generateNetlist(opampCircuit('OPAMPGEN'), TRAN);
+            expect(netlist).toContain('.subckt OPAMPGEN out inp inn vcc vee');
+            expect(netlist.match(/\.subckt OPAMPGEN/g)!.length).toBe(1); // body emitted exactly once
+            const x = netlist.split('\n').find((l) => l.startsWith('XU1 '))!;
+            expect(x).toBeTruthy();
+            const parts = x.split(/\s+/); // XU1 <out> <in+> <in-> <vcc> <vee> OPAMPGEN
+            expect(parts.length).toBe(7); // designator + 5 nodes + model
+            expect(parts[parts.length - 1]).toBe('OPAMPGEN');
+            expect(parts[2]).toBe('0'); // in+ (2nd port) tied to ground
+        });
+
+        it('binds subckt nodes by macromodel PORT order — a reordered pin array nets identically', () => {
+            const canonical = opampCircuit('OPAMPGEN');
+            const shuffled = opampCircuit('OPAMPGEN');
+            // same five (correct) pins, deliberately authored OUT of the contract order:
+            shuffled.components.find((c) => c.id === 'u1')!.pins = [
+                { pinId: 'in-', netId: 'inv' },
+                { pinId: 'vee', netId: 'vee' },
+                { pinId: 'out', netId: 'out' },
+                { pinId: 'in+', netId: 'gnd' },
+                { pinId: 'vcc', netId: 'vcc' },
+            ];
+            const xCanon = generateNetlist(canonical, TRAN).split('\n').find((l) => l.startsWith('XU1 '))!;
+            const xShuf = generateNetlist(shuffled, TRAN).split('\n').find((l) => l.startsWith('XU1 '))!;
+            expect(xShuf).toBe(xCanon); // pinId binding => authored array order is irrelevant
+            expect(xShuf.split(/\s+/)[2]).toBe('0'); // in+ still resolves to ground
+        });
+
+        it('throws when a subckt is missing a port its macromodel requires', () => {
+            const c = opampCircuit('OPAMPGEN');
+            const u = c.components.find((x) => x.id === 'u1')!;
+            u.pins = u.pins.filter((p) => p.pinId !== 'vee'); // drop a required port
+            expect(() => generateNetlist(c, TRAN)).toThrow(/missing pin 'vee'/);
+        });
+
+        it('skips a subckt with no model (cannot emit a valid instance)', () => {
+            const netlist = generateNetlist(opampCircuit(undefined), TRAN);
+            expect(netlist).not.toMatch(/^XU1 /m);
+        });
+
+        it('round-trips an X line through the parser (variable arity, index-based pinIds)', () => {
+            const result = parseNetlist('XU1 out 0 inv vcc vee OPAMPGEN\n.end');
+            const u = result.circuit.components.find((c) => c.designator === 'XU1')!;
+            expect(u.type).toBe('subckt');
+            expect(u.model).toBe('OPAMPGEN');
+            expect(u.pins.map((p) => p.netId)).toEqual(['out', '0', 'inv', 'vcc', 'vee']);
+            expect(u.pins.map((p) => p.pinId)).toEqual(['1', '2', '3', '4', '5']);
+        });
+
+        it('ERC flags a subckt with no model as MODEL_REQUIRED, but never a pin-count mismatch', () => {
+            const issues = runErc(opampCircuit(undefined)).issues;
+            expect(issues.some((i) => i.code === ErcCode.MODEL_REQUIRED && i.relatedIds.includes('u1'))).toBe(true);
+            // variable arity -> subckt is exempt from the pin-count check
+            expect(issues.some((i) => i.code === ErcCode.PIN_COUNT_MISMATCH && i.relatedIds.includes('u1'))).toBe(false);
+        });
+
+        it('library resolves OPAMPGEN and the host injects its body by name', () => {
+            expect(GENERIC_MODELS.opamp!.name).toBe('OPAMPGEN');
+            expect(GENERIC_MODELS.opamp!.device).toBe('subckt');
+            const extra = resolveGenericModels({
+                components: [{ id: 'u1', type: 'subckt', designator: 'U1', model: 'OPAMPGEN', pins: [] }],
+                models: [],
+            });
+            expect(extra.map((m) => m.name)).toContain('OPAMPGEN');
+        });
     });
 });

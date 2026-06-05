@@ -28,6 +28,7 @@ const PREFIX_TO_TYPE: Record<string, ComponentType> = {
     D: 'diode',
     Q: 'bjt',
     M: 'mosfet',
+    X: 'subckt',
 };
 
 /**
@@ -254,6 +255,23 @@ function parseComponentLine(
                     { pinId: 's', netId: s },
                     { pinId: 'b', netId: bulk },
                 ],
+            };
+            break;
+        }
+
+        case 'subckt': {
+            // Format: Xname n1 n2 ... nN subcktName  (variable-arity; the LAST token is the model name).
+            // Port names aren't recoverable from the instance line, so pins get index-based ids in order.
+            const model = parts[parts.length - 1];
+            const nodeTokens = parts.slice(1, parts.length - 1);
+            nodeTokens.forEach((n) => nets.push(n));
+
+            component = {
+                id,
+                type,
+                designator,
+                model,
+                pins: nodeTokens.map((netId, idx) => ({ pinId: String(idx + 1), netId })),
             };
             break;
         }

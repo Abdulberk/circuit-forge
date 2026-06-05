@@ -36,6 +36,37 @@ export const GENERIC_MODELS: Record<string, ModelDef> = {
         tier: 'generic',
         body: '.model MGENPMOS PMOS(LEVEL=1 VTO=-2.0 KP=10u GAMMA=0 LAMBDA=0.02 CGSO=5p CGDO=2p)',
     },
+    // Generic behavioral op-amp macromodel (a `.subckt`, not a `.model`). Authored, license-clean.
+    // Ports (MUST be wired in this order): out, in+ , in-, V+ , V- .
+    //   Gm   : transconductance input stage (1 mA/V) — current drive bounds the clamp current,
+    //          which is what makes the rail limiter converge cleanly under saturation.
+    //   Rpole/Cp : dominant pole — DC gain = Gm*Rpole = 1e5 (100 dB), pole ~100 Hz, GBW ~10 MHz.
+    //   Dhi/Dlo  : clamp the high-impedance node to the supply rails => the output saturates near
+    //              vcc/vee instead of swinging unbounded (realistic comparator / overdrive behaviour).
+    //   Ebuf/Rout: unity output buffer with a finite (50 Ω) output impedance.
+    // 'generic' fidelity: correct first-order behaviour for amplifiers / active filters / comparators
+    // (gain, bandwidth, saturation) — NOT a specific part's measured macromodel.
+    opamp: {
+        name: 'OPAMPGEN',
+        device: 'subckt',
+        tier: 'generic',
+        // pinIds in the .subckt port order — the generator binds by these, so the AI/caller may author
+        // the op-amp's pins in any order and the netlist still wires out/in+/in-/V+/V- correctly.
+        ports: ['out', 'in+', 'in-', 'vcc', 'vee'],
+        body: [
+            '.subckt OPAMPGEN out inp inn vcc vee',
+            'Rin   inp inn 2Meg',
+            'Gm    0 n2 inp inn 1e-3',
+            'Rpole n2 0 1e8',
+            'Cp    n2 0 16p',
+            'Dhi   n2 vcc DCLMP',
+            'Dlo   vee n2 DCLMP',
+            'Ebuf  n3 0 n2 0 1',
+            'Rout  n3 out 50',
+            '.model DCLMP D(IS=1e-12 N=1)',
+            '.ends',
+        ].join('\n'),
+    },
 };
 
 export interface ResolveModelInput {
