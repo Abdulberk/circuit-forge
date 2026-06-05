@@ -95,6 +95,22 @@ describe('ComponentMapper', () => {
         expect(r.component?.value).toBeUndefined();
     });
 
+    it('maps an NPN transistor (category 112833) to a simulatable bjt with a generic model', () => {
+        const r = mapper.toComponent(part({ category: 'NPN SMD transistors', categoryId: '112833', description: 'BC847 NPN' }));
+        expect(r.simulatable).toBe(true);
+        expect(r.component?.type).toBe('bjt');
+        expect(r.component?.model).toBe('QGENNPN'); // polarity from the category -> NPN generic model
+        expect(r.modelDef?.name).toBe('QGENNPN'); // body returned so the assembler can add it to circuit.models
+        expect(r.modelDef?.device).toBe('bjt');
+    });
+
+    it('maps a P-channel MOSFET (category 112828) to a simulatable mosfet with a PMOS model', () => {
+        const r = mapper.toComponent(part({ category: 'SMD P channel transistors', categoryId: '112828' }));
+        expect(r.component?.type).toBe('mosfet');
+        expect(r.component?.model).toBe('MGENPMOS');
+        expect(r.modelDef?.name).toBe('MGENPMOS');
+    });
+
     it('rejects a range value (not a single SPICE value)', () => {
         const r = mapper.toComponent(part({ category: 'Resistors', parameters: [{ name: 'Resistance', value: '4.5...16' }] }));
         expect(r.simulatable).toBe(false);

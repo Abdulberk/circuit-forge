@@ -22,6 +22,7 @@ import {
 } from '@circuitforge/llm-core';
 import { safeValidateCircuitJson, type CircuitJson } from '@circuit-forge/eda-core';
 import { CatalogGroundingService } from './catalog-grounding.service';
+import { attachGenericModels } from './model-resolution';
 import { GenerateCircuitDto, EditCircuitDto, ExplainCircuitDto } from './dto';
 
 @Injectable()
@@ -75,6 +76,10 @@ export class GenerationService {
     private async runCircuit(fn: () => Promise<GenerateCircuitResult>) {
         try {
             const r = await fn();
+            // Inject the bodies of any generic active-device models the circuit references (bjt/mosfet)
+            // on EVERY producing path — generate AND edit — so the result is a self-contained,
+            // simulatable circuit. (Edit can add a transistor whose .model body the LLM must not author.)
+            attachGenericModels(r.circuit);
             return {
                 circuit: r.circuit,
                 analysisConfig: r.analysisConfig,

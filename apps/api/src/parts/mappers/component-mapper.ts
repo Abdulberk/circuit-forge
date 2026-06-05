@@ -11,16 +11,19 @@ import { Injectable, Logger } from '@nestjs/common';
 import {
     parseSpiceValue,
     formatSpiceValue,
+    resolveModelForPart,
     type ComponentType,
     type ComponentSourcing,
+    type ModelDef,
 } from '@circuit-forge/eda-core';
 import type { CatalogParameter, CatalogPart } from '../provider/part-provider.interface';
-import { typeFromCategoryId } from './tme-category-map';
+import { typeFromCategoryId, subtypeFromCategoryId } from './tme-category-map';
 
 /** A partial Component (no id/designator/pins — assigned by the schematic layer). */
 export interface PartialComponent {
     type: ComponentType;
     value?: string;
+    model?: string; // SPICE model name for active devices (resolved from the generic library)
     footprint?: string;
     mpn?: string;
     manufacturer?: string;
@@ -31,6 +34,8 @@ export interface MappedComponent {
     simulatable: boolean;
     reason?: string;
     component?: PartialComponent;
+    /** The generic model body to add to circuit.models when this part is placed (active devices). */
+    modelDef?: ModelDef;
     catalog: CatalogPart;
 }
 
@@ -69,6 +74,26 @@ export class ComponentMapper {
         // Diodes are value-less (model-based); other simulatable types are passives needing a value.
         if (type === 'diode') {
             return { simulatable: true, component: base, catalog: part };
+        }
+
+        // Active devices (bjt/mosfet): resolve a generic SPICE model by polarity (from the category).
+        if (type === 'bjt' || type === 'mosfet') {
+            const subtype = subtypeFromCategoryId(part.categoryId);
+            const modelDef = resolveModelForPart({ type, subtype, mpn: part.mpn });
+            if (!modelDef) {
+                return {
+                    simulatable: false,
+                    reason: `No generic ${type} model available — placed as catalog-only.`,
+                    component: base,
+                    catalog: part,
+                };
+            }
+            return {
+                simulatable: true,
+                component: { ...base, model: modelDef.name },
+                modelDef,
+                catalog: part,
+            };
         }
 
         const value = this.extractValue(type, part.parameters);

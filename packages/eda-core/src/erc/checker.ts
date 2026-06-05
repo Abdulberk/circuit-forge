@@ -16,7 +16,10 @@ const EXPECTED_PIN_COUNTS: Record<string, number> = {
     voltage_source: 2,
     current_source: 2,
     diode: 2,
+    bjt: 3,
+    mosfet: 4,
     ground: 1,
+    // `generic` is intentionally absent (variable arity) — pin-count check is skipped for it.
 };
 
 /**
@@ -36,6 +39,7 @@ export function runErc(circuit: CircuitJson): ErcResult {
     issues.push(...checkFloatingNodes(circuit));
     issues.push(...checkPinCounts(circuit));
     issues.push(...checkComponentValues(circuit));
+    issues.push(...checkModelResolution(circuit));
     issues.push(...checkVoltageSourceShorts(circuit));
     issues.push(...checkNetConnections(circuit));
     issues.push(...checkActiveSources(circuit));
@@ -210,8 +214,10 @@ function checkComponentValues(circuit: CircuitJson): ErcIssue[] {
     // Components that require values
     const requiresValue = ['resistor', 'capacitor', 'inductor', 'voltage_source', 'current_source'];
 
-    // Components that require models
-    const requiresModel = ['diode'];
+    // Diode has a built-in default model (DDEFAULT) — a missing model is only a warning.
+    const modelWithDefault = ['diode'];
+    // Active devices have NO safe default — a missing model is an error (they'd be dropped from sim).
+    const modelRequired = ['bjt', 'mosfet'];
 
     for (const component of circuit.components) {
         // Check for missing values
@@ -225,13 +231,62 @@ function checkComponentValues(circuit: CircuitJson): ErcIssue[] {
             );
         }
 
-        // Check for missing models (warning level)
-        if (requiresModel.includes(component.type) && !component.model) {
+        // Diode without a model: warning (a default is supplied).
+        if (modelWithDefault.includes(component.type) && !component.model) {
             issues.push(
                 createIssue(
                     ErcCode.MISSING_MODEL,
                     [component.id],
                     `${component.designator || component.id} will use default model`,
+                ),
+            );
+        }
+
+        // Active device without a model: error (no default — it can't be simulated).
+        if (modelRequired.includes(component.type) && !component.model) {
+            issues.push(
+                createIssue(
+                    ErcCode.MODEL_REQUIRED,
+                    [component.id],
+                    `${component.designator || component.id} (${component.type})`,
+                ),
+            );
+        }
+    }
+
+    return issues;
+}
+
+/**
+ * The built-in default diode model name. Always available to the generator (emitted when a diode has
+ * no explicit model), so it counts as "resolved" even though it never appears in circuit.models.
+ */
+const BUILTIN_MODEL_NAMES = new Set(['DDEFAULT']);
+
+/**
+ * Check that every model NAME a component references is actually defined.
+ *
+ * A component can carry a `model` name (diode/bjt/mosfet) that must resolve to a `.model`/`.subckt`
+ * body in `circuit.models` (or a built-in like DDEFAULT). The generator emits the device line trusting
+ * the name — a missing definition produces a netlist ngspice rejects ("unable to find definition of
+ * model X"). MODEL_REQUIRED only catches an ABSENT name; this catches a PRESENT-but-undefined one.
+ * Warning (not error): an included model library could still satisfy it at simulation time.
+ */
+function checkModelResolution(circuit: CircuitJson): ErcIssue[] {
+    const issues: ErcIssue[] = [];
+
+    const defined = new Set<string>(BUILTIN_MODEL_NAMES);
+    for (const m of circuit.models ?? []) {
+        defined.add(m.name);
+    }
+
+    for (const component of circuit.components) {
+        if (component.model && !defined.has(component.model)) {
+            issues.push(
+                createIssue(
+                    ErcCode.UNRESOLVED_MODEL,
+                    [component.id],
+                    `${component.designator || component.id} references model "${component.model}"`,
                 ),
             );
         }

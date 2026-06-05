@@ -4,7 +4,7 @@
  */
 import type { CircuitJson, Component, Net } from '../types/circuit';
 import type { AnalysisConfig } from '../types/analysis';
-import { SPICE_PREFIXES } from '../types/circuit';
+import { SPICE_PREFIXES, COMPONENT_PINS } from '../types/circuit';
 import { analysisToSpice } from '../types/analysis';
 import { sanitizeNodeName, validateIncludePaths } from './sanitizer';
 
@@ -44,6 +44,12 @@ export function generateNetlist(
     // Build node map
     const nodeMap = buildNodeMap(circuit.nets);
 
+    // Track every emitted .model/.subckt name -> body so we (a) dedup identical definitions and
+    // (b) refuse to SILENTLY drop a conflicting body that reuses a name (which would emit only the
+    // first and simulate the wrong device). The reserved default diode model seeds the map so a
+    // caller-supplied 'DDEFAULT' can't produce a duplicate card or shadow the built-in defaults.
+    const emittedModels = new Map<string, string>();
+
     // Check if we need default diode model
     const needsDiodeModel = circuit.components.some(
         (c) => c.type === 'diode' && !c.model,
@@ -52,6 +58,32 @@ export function generateNetlist(
         lines.push('* Default diode model');
         lines.push(DEFAULT_DIODE_MODEL);
         lines.push('');
+        emittedModels.set('DDEFAULT', DEFAULT_DIODE_MODEL);
+    }
+
+    // Circuit-level model/subckt definitions (active devices reference these by name). Emitted once,
+    // before the component lines that reference them. A repeated name with an identical body is a
+    // harmless duplicate (dropped); a repeated name with a DIFFERENT body is a hard error.
+    if (circuit.models && circuit.models.length > 0) {
+        const modelLines: string[] = [];
+        for (const m of circuit.models) {
+            const existing = emittedModels.get(m.name);
+            if (existing !== undefined) {
+                if (existing !== m.body) {
+                    throw new Error(
+                        `Conflicting definitions for model '${m.name}': the same name is defined with two different bodies.`,
+                    );
+                }
+                continue; // identical duplicate — already emitted
+            }
+            emittedModels.set(m.name, m.body);
+            modelLines.push(m.body);
+        }
+        if (modelLines.length > 0) {
+            lines.push('* Models');
+            lines.push(...modelLines);
+            lines.push('');
+        }
     }
 
     // Include files (with validation)
@@ -163,10 +195,38 @@ function componentToSpice(
         case 'diode':
             return `${designator} ${nodes.join(' ')} ${model || 'DDEFAULT'}`;
 
+        // Active devices are model-based. Nodes are emitted in the canonical pin order (c b e / d g s b)
+        // resolved by pinId, NOT by the authored array order. Without a model name the device can't be
+        // a valid SPICE line, so skip it (ERC flags MODEL_REQUIRED).
+        case 'bjt':
+        case 'mosfet': {
+            if (!model) return null;
+            return `${designator} ${orderedNodes(component, nodeMap).join(' ')} ${model}`;
+        }
+
         default:
             // Forward-compatible: a known-but-non-emittable type is skipped, not fatal.
             return null;
     }
+}
+
+/**
+ * Resolve a fixed-arity component's nodes in the canonical COMPONENT_PINS order (by pinId), so a BJT
+ * always emits `c b e` and a MOSFET `d g s b` regardless of the order pins were authored in.
+ */
+function orderedNodes(component: Component, nodeMap: Map<string, string>): string[] {
+    const canonical = COMPONENT_PINS[component.type];
+    return canonical.map((pinId) => {
+        const pin = component.pins.find((p) => p.pinId === pinId);
+        if (!pin) {
+            throw new Error(`Component ${component.designator} (${component.type}) is missing pin '${pinId}'`);
+        }
+        const node = nodeMap.get(pin.netId);
+        if (!node) {
+            throw new Error(`Net not found: ${pin.netId} for component ${component.designator}`);
+        }
+        return node;
+    });
 }
 
 /**

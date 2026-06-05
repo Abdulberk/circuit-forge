@@ -21,6 +21,9 @@ export const ERC_DESCRIPTIONS: Record<ErcCode, string> = {
     [ErcCode.INVALID_VALUE]: 'Component has invalid or unparseable value',
     [ErcCode.PIN_COUNT_MISMATCH]: 'Component has incorrect number of pins for its type',
     [ErcCode.MISSING_MODEL]: 'Component requires a model but none specified',
+    [ErcCode.MODEL_REQUIRED]: 'Active device has no model and no default — it cannot be simulated',
+    [ErcCode.UNRESOLVED_MODEL]:
+        'Component references a model that is not defined in the circuit (must be supplied by an included model library)',
     [ErcCode.UNCONNECTED_NET]: 'Net defined but not connected to any components',
     [ErcCode.NET_HAS_SINGLE_PIN]: 'Net has only one pin connection (dead end)',
     [ErcCode.EMPTY_CIRCUIT]: 'Circuit contains no components',
@@ -41,6 +44,10 @@ export const ERC_SEVERITIES: Record<ErcCode, ErcSeverity> = {
     [ErcCode.INVALID_VALUE]: 'error',
     [ErcCode.PIN_COUNT_MISMATCH]: 'error',
     [ErcCode.MISSING_MODEL]: 'warning',
+    [ErcCode.MODEL_REQUIRED]: 'error',
+    // A present-but-undefined model name may still be satisfied by a `.include`d library at sim time,
+    // so this is a warning (observable), not a hard error.
+    [ErcCode.UNRESOLVED_MODEL]: 'warning',
     [ErcCode.UNCONNECTED_NET]: 'info',
     [ErcCode.NET_HAS_SINGLE_PIN]: 'warning',
     [ErcCode.EMPTY_CIRCUIT]: 'error',

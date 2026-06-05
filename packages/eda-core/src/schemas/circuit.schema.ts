@@ -49,6 +49,16 @@ export const ComponentSchema = z.object({
 });
 
 /**
+ * SPICE model/subckt definition schema (referenced by Component.model for active devices).
+ */
+export const ModelDefSchema = z.object({
+    name: z.string().min(1).max(100),
+    device: z.enum(['bjt', 'mosfet', 'diode', 'subckt']),
+    body: z.string().min(1).max(20000),
+    tier: z.enum(['manufacturer', 'generic', 'ideal']).optional(),
+});
+
+/**
  * Net schema
  */
 export const NetSchema = z.object({
@@ -75,6 +85,7 @@ export const CircuitJsonSchema = z.object({
     version: z.string().regex(/^\d+\.\d+$/),
     components: z.array(ComponentSchema).max(1000),
     nets: z.array(NetSchema).max(1000),
+    models: z.array(ModelDefSchema).max(200).optional(),
     metadata: CircuitMetadataSchema.optional(),
 });
 

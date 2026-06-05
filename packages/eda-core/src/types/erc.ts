@@ -23,6 +23,8 @@ export enum ErcCode {
     INVALID_VALUE = 'ERC031',
     PIN_COUNT_MISMATCH = 'ERC032',
     MISSING_MODEL = 'ERC033',
+    MODEL_REQUIRED = 'ERC034',
+    UNRESOLVED_MODEL = 'ERC035',
 
     // Net issues
     UNCONNECTED_NET = 'ERC040',

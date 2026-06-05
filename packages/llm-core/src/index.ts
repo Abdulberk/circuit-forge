@@ -429,7 +429,7 @@ CircuitJson schema (every field validated; invalid output is rejected):
   "components": [                            // 1+ components
     {
       "id": "r1",                            // unique, lowercase recommended
-      "type": "resistor",                    // one of: resistor | capacitor | inductor | voltage_source | current_source | diode | ground
+      "type": "resistor",                    // one of: resistor | capacitor | inductor | voltage_source | current_source | diode | bjt | mosfet | ground
       "designator": "R1",                    // matches /^[A-Z][A-Z0-9]*[0-9]+$/i  (e.g. R1, C1, L1, V1, I1, D1)
       "value": "10k",                        // optional; SPICE value string (see below). Omit for ground.
       "model": "...",                        // DO NOT SET for diodes — a default model is auto-supplied (see below)
@@ -463,7 +463,9 @@ Component conventions:
 - inductor (L): two pins "1","2"; value in henries, e.g. "1m", "10u".
 - voltage_source (V): pins "+","-"; value e.g. "DC 5", "SIN(0 5 1k)", "PULSE(0 5 0 1u 1u 5m 10m)".
 - current_source (I): pins "+","-"; value e.g. "DC 1m".
-- diode (D): pins "anode","cathode". OMIT the "model" field entirely — a built-in default diode model is supplied automatically. Custom .model definitions are NOT supported via CircuitJson, so never set a model name (it would reference an undefined model and the simulation fails).
+- diode (D): pins "anode","cathode". OMIT the "model" field entirely — a built-in default diode model is supplied automatically.
+- bjt (Q): a bipolar transistor. pins "c","b","e" (collector, base, emitter). Set "model" to a built-in generic model by NAME: "QGENNPN" (NPN) or "QGENPNP" (PNP). The host supplies the model body — do NOT write a .model definition yourself.
+- mosfet (M): a MOSFET. pins "d","g","s","b" (drain, gate, source, bulk; tie bulk to source if unsure). Set "model" to "MGENNMOS" (N-channel) or "MGENPMOS" (P-channel).
 - ground: a single pin "1" connected to the ground net; no value.
 
 Rules:
@@ -472,7 +474,7 @@ Rules:
 - Include exactly one net with "isGround": true and tie the circuit's reference/ground node to it (via a ground component or a source's "-" pin).
 - Pick a source and an analysis that actually excite the circuit (a transient on a purely-DC circuit just shows a flat line — use a SIN/PULSE source or an "op" analysis instead).
 - Keep the circuit minimal and physically sensible; pick reasonable real-world values.
-- If the request cannot be expressed with the component types above (e.g. transistors, op-amps, logic ICs), return a best-effort passive/diode approximation and explain the limitation in "explanation"; never invent unsupported component types.`;
+- Transistors ARE supported (bjt/mosfet, generic models above). Op-amps, logic ICs and other complex parts are NOT yet — if the request needs one, return a best-effort approximation using the supported types (e.g. a transistor stage) and explain the limitation in "explanation"; never invent unsupported component types or model names.`;
 
 const GROUNDING_PROMPT = `PART SOURCING — tools available (use them):
 You have two tools backed by a LIVE distributor catalog of real manufacturer parts:
