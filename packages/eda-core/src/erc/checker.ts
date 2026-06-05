@@ -5,6 +5,7 @@
 import type { CircuitJson, Component } from '../types/circuit';
 import { ErcCode, ErcSeverity, ErcResult, ErcIssue } from '../types/erc';
 import { ERC_DESCRIPTIONS, ERC_SEVERITIES } from './codes';
+import { buildZenerModel } from '../models/library';
 
 /**
  * Expected pin counts for each component type
@@ -16,6 +17,7 @@ const EXPECTED_PIN_COUNTS: Record<string, number> = {
     voltage_source: 2,
     current_source: 2,
     diode: 2,
+    zener: 2,
     bjt: 3,
     mosfet: 4,
     ground: 1,
@@ -211,8 +213,9 @@ function checkPinCounts(circuit: CircuitJson): ErcIssue[] {
 function checkComponentValues(circuit: CircuitJson): ErcIssue[] {
     const issues: ErcIssue[] = [];
 
-    // Components that require values
-    const requiresValue = ['resistor', 'capacitor', 'inductor', 'voltage_source', 'current_source'];
+    // Components that require values (a zener's `value` is its breakdown voltage — without it no model
+    // can be generated, so it's a hard error like a missing passive value).
+    const requiresValue = ['resistor', 'capacitor', 'inductor', 'voltage_source', 'current_source', 'zener'];
 
     // Diode has a built-in default model (DDEFAULT) — a missing model is only a warning.
     const modelWithDefault = ['diode'];
@@ -228,6 +231,19 @@ function checkComponentValues(circuit: CircuitJson): ErcIssue[] {
                     ErcCode.MISSING_VALUE,
                     [component.id],
                     `${component.designator || component.id} (${component.type})`,
+                ),
+            );
+        }
+
+        // A zener's value must parse to a breakdown voltage. A present-but-unparseable value (an MPN,
+        // a spec string, a range) would otherwise generate no model and be silently dropped from the
+        // netlist — surface it as an error instead.
+        if (component.type === 'zener' && component.value && !buildZenerModel(component.value)) {
+            issues.push(
+                createIssue(
+                    ErcCode.INVALID_VALUE,
+                    [component.id],
+                    `${component.designator || component.id}: "${component.value}" is not a valid breakdown voltage`,
                 ),
             );
         }

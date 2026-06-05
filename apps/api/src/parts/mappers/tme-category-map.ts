@@ -102,16 +102,20 @@ export const TME_CATEGORY_TYPE: Record<string, ComponentType> = {
     //     them to 'generic' makes the structured map authoritative and blocks the wrong text guess.
     //     These get proper models once active/multi-terminal device support lands. ---
     '112321': 'generic', // Resistor networks (multi-element)
-    '100257': 'generic', // Zener diodes (clamp — not a plain rectifier)
-    '100576': 'generic', // SMD Zener diodes
-    '100254': 'generic', // THT Zener diodes
-    '112799': 'generic', // Stud mounting Zener diodes
+    // Zener diodes -> 'zener' (the same SPICE D device with a breakdown model generated from the
+    // catalog's Zener voltage). The component-mapper falls back to 'generic' if no voltage is found.
+    '100257': 'zener', // Zener diodes
+    '100576': 'zener', // SMD Zener diodes
+    '100254': 'zener', // THT Zener diodes
+    '112799': 'zener', // Stud mounting Zener diodes
     '100253': 'generic', // Protection diodes
-    '112800': 'generic', // TVS SMD diodes
-    '112801': 'generic', // Unidirectional TVS SMD diodes
+    // TVS: a UNIDIRECTIONAL TVS clamps like a Zener at its breakdown voltage -> 'zener'. Bidirectional
+    // and unspecified TVS need back-to-back clamps (a subckt), so they stay catalog-only 'generic'.
+    '112800': 'generic', // TVS SMD diodes (direction unspecified)
+    '112801': 'zener', // Unidirectional TVS SMD diodes
     '112802': 'generic', // Bidirectional TVS SMD diodes
-    '112803': 'generic', // TVS THT diodes
-    '112804': 'generic', // Unidirectional TVS THT diodes
+    '112803': 'generic', // TVS THT diodes (direction unspecified)
+    '112804': 'zener', // Unidirectional TVS THT diodes
     '112805': 'generic', // Bidirectional TVS THT diodes
     '113178': 'generic', // Protection diodes - arrays
     '112806': 'generic', // Special diodes

@@ -6,7 +6,7 @@ import { generateNetlist } from '../src/netlist/generator';
 import { parseNetlist } from '../src/parser/netlist-parser';
 import { runErc } from '../src/erc/checker';
 import { ErcCode } from '../src/types/erc';
-import { GENERIC_MODELS, resolveModelForPart, resolveGenericModels } from '../src/models/library';
+import { GENERIC_MODELS, resolveModelForPart, resolveGenericModels, buildZenerModel } from '../src/models/library';
 import { isSimulatable } from '../src/types/circuit';
 import type { CircuitJson, ModelDef } from '../src/types/circuit';
 import type { TranAnalysis } from '../src/types/analysis';
@@ -281,6 +281,87 @@ describe('active devices', () => {
                 models: [],
             });
             expect(extra.map((m) => m.name)).toContain('OPAMPGEN');
+        });
+    });
+
+    describe('zener (parametric breakdown model)', () => {
+        const OP: TranAnalysis = { type: 'tran', stopTime: '1m' };
+        // Shunt regulator: 12V -> 1k -> reg; zener clamps reg to Vz. Zener pins authored cathode-first
+        // to prove canonical anode,cathode binding (polarity is what makes a zener clamp).
+        function zenerCircuit(value?: string): CircuitJson {
+            return {
+                version: '1.0',
+                components: [
+                    { id: 'v1', type: 'voltage_source', designator: 'V1', value: 'DC 12', pins: [
+                        { pinId: '+', netId: 'vin' }, { pinId: '-', netId: 'gnd' }] },
+                    { id: 'r1', type: 'resistor', designator: 'R1', value: '1k', pins: [
+                        { pinId: '1', netId: 'vin' }, { pinId: '2', netId: 'reg' }] },
+                    { id: 'dz', type: 'zener', designator: 'DZ1', value, pins: [
+                        { pinId: 'cathode', netId: 'reg' }, { pinId: 'anode', netId: 'gnd' }] },
+                ],
+                nets: [{ id: 'vin', name: 'VIN' }, { id: 'reg', name: 'REG' }, { id: 'gnd', name: 'GND', isGround: true }],
+            };
+        }
+
+        it('builds a parametric breakdown model from the voltage (incl. 5V1 notation), rejects junk', () => {
+            expect(buildZenerModel('5.1')!.name).toBe('DZ5P1');
+            expect(buildZenerModel('5.1')!.body).toContain('BV=5.1');
+            expect(buildZenerModel('5.1')!.device).toBe('diode');
+            expect(buildZenerModel('5V1')!.name).toBe('DZ5P1'); // European Zener notation
+            expect(buildZenerModel('12V')!.name).toBe('DZ12');
+            expect(buildZenerModel('5.1V')!.name).toBe('DZ5P1'); // trailing unit
+            expect(buildZenerModel('abc')).toBeNull();
+            expect(buildZenerModel('0')).toBeNull();
+            // Strict whole-string parse: never prefix-parse an MPN, a multi-token spec, or a range.
+            expect(buildZenerModel('1N4733A')).toBeNull(); // a real 5.1V Zener MPN — must NOT become 1V
+            expect(buildZenerModel('5V1 0.5W')).toBeNull(); // Vz + power rating — ambiguous, reject
+            expect(buildZenerModel('4.5...16')).toBeNull(); // a range — reject (not a single voltage)
+            expect(buildZenerModel('-5')).toBeNull();
+        });
+
+        it('ERC flags a present-but-unparseable zener value as INVALID_VALUE (not silently dropped)', () => {
+            const c = zenerCircuit('1N4733A'); // value present (truthy) but not a parseable voltage
+            const issues = runErc(c).issues;
+            const iv = issues.find((i) => i.code === ErcCode.INVALID_VALUE && i.relatedIds.includes('dz'));
+            expect(iv).toBeTruthy();
+            expect(iv!.severity).toBe('error');
+            expect(issues.some((i) => i.code === ErcCode.MISSING_VALUE && i.relatedIds.includes('dz'))).toBe(false);
+        });
+
+        it('emits a generated .model from value + a D-line in canonical anode,cathode order', () => {
+            const netlist = generateNetlist(zenerCircuit('5.1'), OP);
+            expect(netlist).toContain('.model DZ5P1 D(');
+            expect(netlist).toContain('BV=5.1');
+            const d = netlist.split('\n').find((l) => l.startsWith('DZ1 '))!;
+            const parts = d.split(/\s+/); // DZ1 <anode> <cathode> DZ5P1
+            expect(parts[parts.length - 1]).toBe('DZ5P1');
+            expect(parts[1]).toBe('0'); // anode -> ground first, despite cathode being authored first
+        });
+
+        it('de-dupes identical Vz and emits distinct models for distinct Vz', () => {
+            const c = zenerCircuit('5.1');
+            c.components.push({ id: 'dz2', type: 'zener', designator: 'DZ2', value: '5.1', pins: [
+                { pinId: 'anode', netId: 'gnd' }, { pinId: 'cathode', netId: 'reg' }] });
+            c.components.push({ id: 'dz3', type: 'zener', designator: 'DZ3', value: '12', pins: [
+                { pinId: 'anode', netId: 'gnd' }, { pinId: 'cathode', netId: 'reg' }] });
+            const netlist = generateNetlist(c, OP);
+            expect(netlist.match(/\.model DZ5P1 /g)!.length).toBe(1); // shared across DZ1+DZ2
+            expect(netlist.match(/\.model DZ12 /g)!.length).toBe(1);
+        });
+
+        it('skips a value-less zener and ERC flags MISSING_VALUE (not UNRESOLVED_MODEL)', () => {
+            const netlist = generateNetlist(zenerCircuit(undefined), OP);
+            expect(netlist).not.toMatch(/^DZ1 /m);
+            const issues = runErc(zenerCircuit(undefined)).issues;
+            expect(issues.some((i) => i.code === ErcCode.MISSING_VALUE && i.relatedIds.includes('dz'))).toBe(true);
+            expect(issues.some((i) => i.code === ErcCode.UNRESOLVED_MODEL)).toBe(false);
+        });
+
+        it('zener is a simulatable type with a 2-pin ERC count', () => {
+            expect(isSimulatable({ type: 'zener' })).toBe(true);
+            const c = zenerCircuit('5.1');
+            (c.components.find((x) => x.id === 'dz')!).pins = [{ pinId: 'anode', netId: 'gnd' }]; // 1 pin
+            expect(runErc(c).issues.some((i) => i.code === ErcCode.PIN_COUNT_MISMATCH)).toBe(true);
         });
     });
 });

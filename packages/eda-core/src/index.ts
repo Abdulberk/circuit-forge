@@ -27,6 +27,7 @@ export {
     resolveModelForPart,
     genericModelByName,
     resolveGenericModels,
+    buildZenerModel,
     type ResolveModelInput,
 } from './models/library';
 

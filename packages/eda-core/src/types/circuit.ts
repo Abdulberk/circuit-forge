@@ -48,6 +48,7 @@ export const COMPONENT_TYPES = [
     'voltage_source',
     'current_source',
     'diode',
+    'zener',
     'bjt',
     'mosfet',
     'subckt',
@@ -172,6 +173,7 @@ export const COMPONENT_PINS: Record<ComponentType, string[]> = {
     voltage_source: ['+', '-'],
     current_source: ['+', '-'],
     diode: ['anode', 'cathode'],
+    zener: ['anode', 'cathode'], // SPICE D device; the breakdown voltage rides in `value`
     bjt: ['c', 'b', 'e'], // SPICE Q: collector base emitter (canonical node order)
     mosfet: ['d', 'g', 's', 'b'], // SPICE M: drain gate source bulk
     subckt: [], // variable arity — pins are emitted in AUTHORED order to match the .subckt port order
@@ -189,6 +191,7 @@ export const SPICE_PREFIXES: Record<ComponentType, string> = {
     voltage_source: 'V',
     current_source: 'I',
     diode: 'D',
+    zener: 'D', // a Zener is the same SPICE diode device, with a breakdown (BV) model
     bjt: 'Q',
     mosfet: 'M',
     subckt: 'X', // SPICE subcircuit instance call

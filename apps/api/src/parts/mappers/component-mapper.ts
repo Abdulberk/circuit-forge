@@ -12,6 +12,7 @@ import {
     parseSpiceValue,
     formatSpiceValue,
     resolveModelForPart,
+    buildZenerModel,
     type ComponentType,
     type ComponentSourcing,
     type ModelDef,
@@ -74,6 +75,21 @@ export class ComponentMapper {
         // Diodes are value-less (model-based); other simulatable types are passives needing a value.
         if (type === 'diode') {
             return { simulatable: true, component: base, catalog: part };
+        }
+
+        // Zener (and unidirectional TVS): the breakdown voltage IS the value; the netlist generator
+        // builds the SPICE breakdown model from it. No parseable voltage -> catalog-only (not simulated).
+        if (type === 'zener') {
+            const vz = this.extractZenerVoltage(part.parameters);
+            if (!vz || !buildZenerModel(vz)) {
+                return {
+                    simulatable: false,
+                    reason: 'Could not determine the Zener breakdown voltage from the catalog parameters.',
+                    component: base,
+                    catalog: part,
+                };
+            }
+            return { simulatable: true, component: { ...base, value: vz }, catalog: part };
         }
 
         // Active devices (bjt/mosfet): resolve a generic SPICE model by polarity (from the category).
@@ -160,6 +176,20 @@ export class ComponentMapper {
         if (/\binductor|\bchoke|\bcoil/.test(hay)) return 'inductor';
         if (/\bdiode/.test(hay)) return 'diode';
         return null;
+    }
+
+    /**
+     * Pull the Zener/breakdown voltage from the catalog parameters. Specific-to-general: match only an
+     * unambiguous breakdown/Zener-voltage name and explicitly EXCLUDE the look-alikes that would build a
+     * clamp at the wrong voltage — a TVS reverse STAND-OFF (VRWM), a rectifier's max reverse (VRRM), and
+     * tolerance / temperature-coefficient rows. For a TVS, breakdown (VBR) is the right BV, not VRWM/VCL.
+     */
+    private extractZenerVoltage(params: CatalogParameter[]): string | undefined {
+        const EXCLUDE =
+            /toleranc|temperat|coefficient|stand.?off|vrwm|vrrm|maximum reverse|peak reverse|repetitive|reverse current|leakage|power|dissipation|%/i;
+        const PREFER = /\bzener voltage\b|\bvz\b|nominal zener|breakdown voltage|\bvbr\b|\bv\(br\)\b/i;
+        const p = params.find((q) => PREFER.test(q.name) && !EXCLUDE.test(q.name));
+        return p?.value || undefined;
     }
 
     private extractValue(type: ComponentType, params: CatalogParameter[]): string | undefined {

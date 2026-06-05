@@ -6,6 +6,7 @@ import type { CircuitJson, Component, Net, ModelDef } from '../types/circuit';
 import type { AnalysisConfig } from '../types/analysis';
 import { SPICE_PREFIXES, COMPONENT_PINS } from '../types/circuit';
 import { analysisToSpice } from '../types/analysis';
+import { buildZenerModel } from '../models/library';
 import { sanitizeNodeName, validateIncludePaths } from './sanitizer';
 
 /**
@@ -84,6 +85,31 @@ export function generateNetlist(
             lines.push(...modelLines);
             lines.push('');
         }
+    }
+
+    // Zener models: generated parametrically from each zener component's breakdown voltage (`value`),
+    // deduped by name (same voltage -> one model) and conflict-checked against everything above.
+    const zenerLines: string[] = [];
+    for (const c of circuit.components) {
+        if (c.type !== 'zener') continue;
+        const zm = c.value ? buildZenerModel(c.value) : null;
+        if (!zm) continue; // a value-less / unparseable zener is skipped here and flagged by ERC
+        const existing = emittedModels.get(zm.name);
+        if (existing !== undefined) {
+            if (existing !== zm.body) {
+                throw new Error(
+                    `Conflicting definitions for model '${zm.name}': the same name is defined with two different bodies.`,
+                );
+            }
+            continue;
+        }
+        emittedModels.set(zm.name, zm.body);
+        zenerLines.push(zm.body);
+    }
+    if (zenerLines.length > 0) {
+        lines.push('* Zener models');
+        lines.push(...zenerLines);
+        lines.push('');
     }
 
     // Include files (with validation)
@@ -200,6 +226,16 @@ function componentToSpice(
 
         case 'diode':
             return `${designator} ${nodes.join(' ')} ${model || 'DDEFAULT'}`;
+
+        // A Zener is the SPICE diode device with a breakdown model generated from `value` (the Zener
+        // voltage). Nodes are emitted in canonical anode,cathode order (by pinId) so polarity — which
+        // is what makes a Zener clamp/regulate — is correct regardless of the authored pin order.
+        case 'zener': {
+            if (!value) return null;
+            const zm = buildZenerModel(value);
+            if (!zm) return null;
+            return `${designator} ${orderedNodes(component, nodeMap).join(' ')} ${zm.name}`;
+        }
 
         // Active devices are model-based. Nodes are emitted in the canonical pin order (c b e / d g s b)
         // resolved by pinId, NOT by the authored array order. Without a model name the device can't be
