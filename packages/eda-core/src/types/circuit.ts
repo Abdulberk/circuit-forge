@@ -31,8 +31,10 @@ export interface CircuitMetadata {
  *
  * The first group are SPICE-simulatable primitives: passives (R/L/C), sources (V/I), diode, ground,
  * and the active devices bjt (Q) and mosfet (M). Active devices are model-based — they reference a
- * `.model` by name (resolved from CircuitJson.models or an .include'd library). `generic` is a
- * catalog-only placeholder for a real part with no simulatable representation yet (op-amps/ICs,
+ * `.model` by name (resolved from CircuitJson.models or an .include'd library). `subckt` (X) is a
+ * multi-terminal device defined by a `.subckt` macromodel (e.g. an op-amp); its pins are variable-arity
+ * and are emitted in the AUTHORED order, which MUST match the macromodel's port order. `generic` is a
+ * catalog-only placeholder for a real part with no simulatable representation yet (logic ICs/MCUs,
  * connectors, sensors, …): it carries full catalog/sourcing metadata and renders on a schematic/BOM,
  * but is NOT emitted to the netlist. Test a component with `isSimulatable()` — never a hardcoded list.
  *
@@ -48,6 +50,7 @@ export const COMPONENT_TYPES = [
     'diode',
     'bjt',
     'mosfet',
+    'subckt',
     'ground',
     'generic',
 ] as const;
@@ -64,6 +67,14 @@ export interface ModelDef {
     body: string; // the literal SPICE line(s): ".model QGENNPN NPN(...)" or ".subckt ... .ends"
     /** Fidelity of this model relative to the real part (Flux-style honesty). */
     tier?: 'manufacturer' | 'generic' | 'ideal';
+    /**
+     * For a `subckt`: the component pinIds in the macromodel's PORT order (i.e. matching the order of
+     * the `.subckt` declaration line). When present, the generator binds nodes BY pinId in this order —
+     * so the authored pin-array order no longer matters and a caller/LLM that supplies the right pins
+     * in any order still nets correctly (mirroring the canonical ordering of bjt/mosfet). A subckt
+     * whose model has no `ports` falls back to the authored pin-array order.
+     */
+    ports?: string[];
 }
 
 /**
@@ -163,6 +174,7 @@ export const COMPONENT_PINS: Record<ComponentType, string[]> = {
     diode: ['anode', 'cathode'],
     bjt: ['c', 'b', 'e'], // SPICE Q: collector base emitter (canonical node order)
     mosfet: ['d', 'g', 's', 'b'], // SPICE M: drain gate source bulk
+    subckt: [], // variable arity — pins are emitted in AUTHORED order to match the .subckt port order
     ground: ['1'],
     generic: [], // variable arity — pins come from the catalog part / schematic layer
 };
@@ -179,15 +191,16 @@ export const SPICE_PREFIXES: Record<ComponentType, string> = {
     diode: 'D',
     bjt: 'Q',
     mosfet: 'M',
+    subckt: 'X', // SPICE subcircuit instance call
     ground: '', // Ground is a special case (node 0)
     generic: '', // Catalog-only — not emitted to SPICE
 };
 
 /**
  * Whether a component TYPE can be emitted to a SPICE netlist. Catalog-only `generic` parts are not
- * simulatable. (Active devices bjt/mosfet ARE simulatable types — they emit a Q/M line; whether a
- * specific one has a resolvable model is a separate concern surfaced by ERC.) Prefer this over
- * comparing `type` against a hardcoded list.
+ * simulatable. (Active/model-based devices bjt/mosfet/subckt ARE simulatable types — they emit a
+ * Q/M/X line; whether a specific one has a resolvable model is a separate concern surfaced by ERC.)
+ * Prefer this over comparing `type` against a hardcoded list.
  */
 export function isSimulatable(component: Pick<Component, 'type'>): boolean {
     return component.type !== 'generic';

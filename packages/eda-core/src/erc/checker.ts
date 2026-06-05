@@ -216,8 +216,9 @@ function checkComponentValues(circuit: CircuitJson): ErcIssue[] {
 
     // Diode has a built-in default model (DDEFAULT) — a missing model is only a warning.
     const modelWithDefault = ['diode'];
-    // Active devices have NO safe default — a missing model is an error (they'd be dropped from sim).
-    const modelRequired = ['bjt', 'mosfet'];
+    // Active / model-based devices have NO safe default — a missing model is an error (they'd be
+    // dropped from the netlist). A subckt instance is meaningless without the macromodel name.
+    const modelRequired = ['bjt', 'mosfet', 'subckt'];
 
     for (const component of circuit.components) {
         // Check for missing values

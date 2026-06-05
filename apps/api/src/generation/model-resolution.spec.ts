@@ -50,4 +50,23 @@ describe('attachGenericModels', () => {
         attachGenericModels(circuit);
         expect(circuit.models!.length).toBe(n);
     });
+
+    it('injects the OPAMPGEN .subckt body for an op-amp (subckt) component', () => {
+        const circuit: CircuitJson = {
+            version: '1.0',
+            components: [
+                { id: 'u1', type: 'subckt', designator: 'U1', model: 'OPAMPGEN', pins: [
+                    { pinId: 'out', netId: 'out' }, { pinId: 'in+', netId: '0' }, { pinId: 'in-', netId: 'inv' },
+                    { pinId: 'vcc', netId: 'vcc' }, { pinId: 'vee', netId: 'vee' }] },
+            ],
+            nets: [
+                { id: 'out', name: 'OUT' }, { id: 'inv', name: 'INV' }, { id: 'vcc', name: 'VCC' },
+                { id: 'vee', name: 'VEE' }, { id: '0', name: '0', isGround: true }],
+        };
+        attachGenericModels(circuit);
+        const m = circuit.models?.find((x) => x.name === 'OPAMPGEN');
+        expect(m).toBeTruthy();
+        expect(m!.device).toBe('subckt');
+        expect(m!.body).toContain('.subckt OPAMPGEN');
+    });
 });
