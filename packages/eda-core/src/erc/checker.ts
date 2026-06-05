@@ -20,6 +20,7 @@ const EXPECTED_PIN_COUNTS: Record<string, number> = {
     zener: 2,
     bjt: 3,
     mosfet: 4,
+    jfet: 3,
     ground: 1,
     // `generic` is intentionally absent (variable arity) — pin-count check is skipped for it.
 };
@@ -221,7 +222,7 @@ function checkComponentValues(circuit: CircuitJson): ErcIssue[] {
     const modelWithDefault = ['diode'];
     // Active / model-based devices have NO safe default — a missing model is an error (they'd be
     // dropped from the netlist). A subckt instance is meaningless without the macromodel name.
-    const modelRequired = ['bjt', 'mosfet', 'subckt'];
+    const modelRequired = ['bjt', 'mosfet', 'jfet', 'subckt'];
 
     for (const component of circuit.components) {
         // Check for missing values
