@@ -89,6 +89,44 @@ export function resolveModelForPart(input: ResolveModelInput): ModelDef | null {
     return null;
 }
 
+/**
+ * Parse a breakdown-voltage string into volts. Accepts a plain number ("5.1"), a trailing-unit form
+ * ("5.1V", "12 V"), the European Zener notation ("5V1" = 5.1 V), and a comma decimal ("5,1").
+ * Returns null when it isn't a positive voltage.
+ */
+function parseBreakdownVolts(vz: string | number): number | null {
+    if (typeof vz === 'number') return Number.isFinite(vz) && vz > 0 ? vz : null;
+    let s = String(vz).trim().replace(',', '.');
+    const vNotation = s.match(/^(\d+)[vV](\d+)$/); // 5V1 -> 5.1
+    if (vNotation) s = `${vNotation[1]}.${vNotation[2]}`;
+    else s = s.replace(/\s*[vV]\s*$/, ''); // strip a single trailing volt unit
+    // After normalization the WHOLE remaining string must be ONE clean positive number. Using a strict
+    // test + Number() (not parseFloat, which is a prefix parser) rejects MPNs ("1N4733A"->1), multi-token
+    // spec strings ("5V1 0.5W"->5) and ranges ("4.5...16"->4.5) instead of silently taking a wrong value.
+    if (!/^\d*\.?\d+$/.test(s)) return null;
+    const v = Number(s);
+    return Number.isFinite(v) && v > 0 ? v : null;
+}
+
+/**
+ * Build a generic Zener `.model` from a breakdown voltage. A Zener is the ordinary SPICE diode device
+ * with reverse breakdown enabled via BV (the breakdown voltage) and IBV (the test current at which BV
+ * holds). This is PARAMETRIC — one template yields a model for any voltage — so we never hand-author a
+ * model per Zener value. The name encodes the voltage (5.1 -> DZ5P1) so distinct voltages get distinct,
+ * dedup-able models. Returns null when `vz` isn't a positive voltage.
+ */
+export function buildZenerModel(vz: string | number): ModelDef | null {
+    const v = parseBreakdownVolts(vz);
+    if (v === null) return null;
+    const name = `DZ${String(v).replace(/\./g, 'P')}`; // 5.1 -> DZ5P1, 12 -> DZ12
+    return {
+        name,
+        device: 'diode',
+        tier: 'generic',
+        body: `.model ${name} D(IS=1e-14 N=1 RS=1 BV=${v} IBV=5m)`,
+    };
+}
+
 const GENERIC_MODELS_BY_NAME: Record<string, ModelDef> = Object.fromEntries(
     Object.values(GENERIC_MODELS).map((m) => [m.name, m]),
 );

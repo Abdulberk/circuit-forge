@@ -64,11 +64,56 @@ describe('ComponentMapper', () => {
         expect(r.component?.type).toBe('resistor');
     });
 
-    it('does NOT misclassify a Zener as a plain diode (the category map overrides the text fallback)', () => {
-        // Text "diode" would wrongly hit the diode branch; categoryId 100257 (Zener) maps to generic.
+    it('maps a Zener (category 100257) WITH a breakdown voltage to a simulatable zener carrying Vz', () => {
+        const r = mapper.toComponent(part({
+            category: 'Zener diodes', categoryId: '100257', description: 'BZX 5.1V Zener',
+            parameters: [{ name: 'Zener voltage Vz', value: '5.1V' }],
+        }));
+        expect(r.component?.type).toBe('zener');
+        expect(r.simulatable).toBe(true);
+        expect(r.component?.value).toBe('5.1V'); // raw Vz; the netlist generator builds the model from it
+    });
+
+    it('maps a Zener with NO usable voltage to a catalog-only (non-simulatable) zener, never a plain diode', () => {
+        // categoryId 100257 is authoritative -> 'zener' (not the 'diode' the text would suggest). Without
+        // a parseable Vz we cannot build a breakdown model, so it stays placeable-but-not-simulatable.
         const r = mapper.toComponent(part({ category: 'Zener diodes', categoryId: '100257', description: 'BZX Zener diode' }));
-        expect(r.component?.type).toBe('generic');
+        expect(r.component?.type).toBe('zener');
         expect(r.simulatable).toBe(false);
+        expect(r.reason).toMatch(/breakdown voltage/i);
+    });
+
+    it('picks the breakdown voltage (VBR), not a TVS reverse stand-off (VRWM)', () => {
+        const r = mapper.toComponent(part({
+            category: 'Unidirectional TVS SMD diodes', categoryId: '112801', description: 'SMAJ',
+            parameters: [
+                { name: 'Reverse stand-off voltage VRWM', value: '5.0V' },
+                { name: 'Breakdown voltage VBR', value: '6.4V' },
+            ],
+        }));
+        expect(r.component?.type).toBe('zener');
+        expect(r.simulatable).toBe(true);
+        expect(r.component?.value).toBe('6.4V'); // VBR, NOT the 5.0V stand-off
+    });
+
+    it('does NOT build a Zener from a rectifier max-reverse (VRRM) parameter', () => {
+        const r = mapper.toComponent(part({
+            category: 'Zener diodes', categoryId: '100257',
+            parameters: [{ name: 'Maximum reverse voltage VRRM', value: '75V' }],
+        }));
+        expect(r.component?.type).toBe('zener');
+        expect(r.simulatable).toBe(false); // VRRM is not a Zener voltage -> not picked
+    });
+
+    it('ignores a tolerance row and picks the actual Zener voltage', () => {
+        const r = mapper.toComponent(part({
+            category: 'Zener diodes', categoryId: '100257',
+            parameters: [
+                { name: 'Tolerance of Zener voltage', value: '5%' },
+                { name: 'Zener voltage Vz', value: '5.1V' },
+            ],
+        }));
+        expect(r.component?.value).toBe('5.1V');
     });
 
     it('text fallback refuses to guess a clamp/network part even with an UNMAPPED category id', () => {
