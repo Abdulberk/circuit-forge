@@ -8,6 +8,7 @@ export type {
     CircuitJson,
     Component,
     ComponentSourcing,
+    ModelDef,
     Net,
     PinConnection,
     ComponentType,
@@ -19,6 +20,15 @@ export type {
 } from './types/circuit';
 
 export { COMPONENT_PINS, SPICE_PREFIXES, COMPONENT_TYPES, isSimulatable } from './types/circuit';
+
+// Active-device model library (generic, license-clean SPICE models + resolvers)
+export {
+    GENERIC_MODELS,
+    resolveModelForPart,
+    genericModelByName,
+    resolveGenericModels,
+    type ResolveModelInput,
+} from './models/library';
 
 export type {
     AnalysisConfig,
@@ -49,6 +59,7 @@ export {
     CircuitJsonSchema,
     ComponentSchema,
     ComponentSourcingSchema,
+    ModelDefSchema,
     NetSchema,
     ComponentTypeSchema,
     PinConnectionSchema,

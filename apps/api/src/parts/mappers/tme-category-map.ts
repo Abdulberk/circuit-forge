@@ -83,6 +83,20 @@ export const TME_CATEGORY_TYPE: Record<string, ComponentType> = {
     '112797': 'diode', // THT Schottky diodes
     '112798': 'diode', // Stud mounting Schottky diodes
 
+    // --- Bipolar transistors (single NPN/PNP) -> bjt. Darlington/complementary/IGBT stay generic. ---
+    '112833': 'bjt', // NPN SMD transistors
+    '100180': 'bjt', // NPN THT transistors
+    '112832': 'bjt', // PNP SMD transistors
+    '100591': 'bjt', // PNP THT transistors
+
+    // --- MOSFETs (single N/P channel) -> mosfet. Multi-channel/modules stay generic. ---
+    '100309': 'mosfet', // N channel transistors
+    '112826': 'mosfet', // SMD N channel transistors
+    '112827': 'mosfet', // THT N channel transistors
+    '100592': 'mosfet', // P channel transistors
+    '112828': 'mosfet', // SMD P channel transistors
+    '112829': 'mosfet', // THT P channel transistors
+
     // --- Intentionally catalog-only: structurally NOT a single SPICE primitive, but whose names would
     //     fool the text fallback (a Zener says "diode", a resistor network says "resistor"). Mapping
     //     them to 'generic' makes the structured map authoritative and blocks the wrong text guess.
@@ -113,4 +127,27 @@ export const TME_CATEGORY_TYPE: Record<string, ComponentType> = {
 export function typeFromCategoryId(categoryId: string | undefined): ComponentType | undefined {
     if (!categoryId) return undefined;
     return TME_CATEGORY_TYPE[categoryId];
+}
+
+/**
+ * Polarity/class of an active-device category, used to pick the right generic model
+ * (npn/pnp for bjt, nmos/pmos for mosfet). Keyed by the same stable TME category ids.
+ */
+export const TME_ACTIVE_SUBTYPE: Record<string, 'npn' | 'pnp' | 'nmos' | 'pmos'> = {
+    '112833': 'npn', // NPN SMD transistors
+    '100180': 'npn', // NPN THT transistors
+    '112832': 'pnp', // PNP SMD transistors
+    '100591': 'pnp', // PNP THT transistors
+    '100309': 'nmos', // N channel transistors
+    '112826': 'nmos', // SMD N channel transistors
+    '112827': 'nmos', // THT N channel transistors
+    '100592': 'pmos', // P channel transistors
+    '112828': 'pmos', // SMD P channel transistors
+    '112829': 'pmos', // THT P channel transistors
+};
+
+/** Active-device polarity for a category id, or undefined. */
+export function subtypeFromCategoryId(categoryId: string | undefined): string | undefined {
+    if (!categoryId) return undefined;
+    return TME_ACTIVE_SUBTYPE[categoryId];
 }

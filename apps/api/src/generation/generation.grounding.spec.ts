@@ -94,6 +94,31 @@ const FINAL_JSON = {
     explanation: 'RC low-pass with a real Yageo resistor.',
 };
 
+/** An edit result that ADDS an NPN stage referencing a generic model NAME but (correctly) no body. */
+const EDITED_WITH_BJT = {
+    circuit: {
+        version: '1.0',
+        components: [
+            { id: 'v1', type: 'voltage_source', designator: 'V1', value: 'DC 5', pins: [
+                { pinId: '+', netId: 'vcc' }, { pinId: '-', netId: 'gnd' }] },
+            { id: 'rc', type: 'resistor', designator: 'RC1', value: '1k', pins: [
+                { pinId: '1', netId: 'vcc' }, { pinId: '2', netId: 'col' }] },
+            { id: 'q1', type: 'bjt', designator: 'Q1', model: 'QGENNPN', pins: [
+                { pinId: 'c', netId: 'col' }, { pinId: 'b', netId: 'base' }, { pinId: 'e', netId: 'gnd' }] },
+            { id: 'vb', type: 'voltage_source', designator: 'V2', value: 'DC 0.7', pins: [
+                { pinId: '+', netId: 'base' }, { pinId: '-', netId: 'gnd' }] },
+            { id: 'gnd', type: 'ground', designator: 'GND1', pins: [{ pinId: '1', netId: 'gnd' }] },
+        ],
+        nets: [
+            { id: 'vcc', name: 'VCC' }, { id: 'col', name: 'COL' }, { id: 'base', name: 'BASE' },
+            { id: 'gnd', name: 'GND', isGround: true },
+        ],
+        // NOTE: no `models` array — the LLM is instructed never to author .model bodies itself.
+    },
+    analysisConfig: { type: 'tran', stopTime: '5m', stepTime: '20u' },
+    explanation: 'Added an NPN common-emitter stage.',
+};
+
 describe('GenerationService grounding (tool-use + sourcing enrichment)', () => {
     beforeEach(() => mockCreate.mockReset());
 
@@ -239,6 +264,25 @@ describe('GenerationService grounding (tool-use + sourcing enrichment)', () => {
 
         expect(parts.getComponent).not.toHaveBeenCalled();
         expect(JSON.stringify(mockCreate.mock.calls[1][0].messages)).toContain('supplierId is required');
+    });
+
+    it('edit path injects generic model bodies so an edited transistor circuit is self-contained', async () => {
+        // The LLM returns an edited circuit that ADDS a BJT referencing QGENNPN but (correctly) carries
+        // no `models` array. generate() and edit() share runCircuit(), which must attach the body so the
+        // result netlists into a valid, simulatable circuit (no dangling .model reference).
+        mockCreate.mockResolvedValueOnce(jsonResponse(EDITED_WITH_BJT));
+        const service = makeService(makeConfig(), makeParts());
+
+        const result = await service.edit({
+            circuit: VALID_CIRCUIT,
+            instruction: 'add an NPN common-emitter stage',
+        } as any);
+
+        const q1 = result.circuit.components.find((c) => c.id === 'q1')!;
+        expect(q1.model).toBe('QGENNPN');
+        const injected = result.circuit.models?.find((m) => m.name === 'QGENNPN');
+        expect(injected).toBeTruthy();
+        expect(injected!.body).toContain('.model QGENNPN NPN(');
     });
 
     it('repairs an invalid grounded answer with a tool-less retry (repaired:true)', async () => {

@@ -10,6 +10,8 @@ export interface CircuitJson {
     version: string;
     components: Component[];
     nets: Net[];
+    /** SPICE model/subckt definitions referenced by components' `model` field (active devices). */
+    models?: ModelDef[];
     metadata?: CircuitMetadata;
 }
 
@@ -25,12 +27,14 @@ export interface CircuitMetadata {
 }
 
 /**
- * Component types supported in MVP.
+ * Component types.
  *
- * The first group are SPICE-simulatable primitives. `generic` is a catalog-only placeholder for a
- * real manufacturer part that has no simulatable representation yet (ICs, transistors, connectors,
- * sensors, …): it carries full catalog/sourcing metadata and renders on a schematic/BOM, but is NOT
- * emitted to the netlist. Test a component with `isSimulatable()` — never a hardcoded type list.
+ * The first group are SPICE-simulatable primitives: passives (R/L/C), sources (V/I), diode, ground,
+ * and the active devices bjt (Q) and mosfet (M). Active devices are model-based — they reference a
+ * `.model` by name (resolved from CircuitJson.models or an .include'd library). `generic` is a
+ * catalog-only placeholder for a real part with no simulatable representation yet (op-amps/ICs,
+ * connectors, sensors, …): it carries full catalog/sourcing metadata and renders on a schematic/BOM,
+ * but is NOT emitted to the netlist. Test a component with `isSimulatable()` — never a hardcoded list.
  *
  * This `as const` tuple is the SINGLE SOURCE OF TRUTH: the `ComponentType` union derives from it and
  * the Zod `ComponentTypeSchema` is built from the same array, so the two can never drift.
@@ -42,11 +46,25 @@ export const COMPONENT_TYPES = [
     'voltage_source',
     'current_source',
     'diode',
+    'bjt',
+    'mosfet',
     'ground',
     'generic',
 ] as const;
 
 export type ComponentType = (typeof COMPONENT_TYPES)[number];
+
+/**
+ * A SPICE model definition (a `.model` card or `.subckt` body) referenced by name from a component's
+ * `model` field. Lives at circuit level so a body is emitted once and shared across placements.
+ */
+export interface ModelDef {
+    name: string; // referenced by Component.model, e.g. "QGENNPN"
+    device: 'bjt' | 'mosfet' | 'diode' | 'subckt';
+    body: string; // the literal SPICE line(s): ".model QGENNPN NPN(...)" or ".subckt ... .ends"
+    /** Fidelity of this model relative to the real part (Flux-style honesty). */
+    tier?: 'manufacturer' | 'generic' | 'ideal';
+}
 
 /**
  * Sourcing / catalog metadata for a real manufacturer part attached to a component.
@@ -143,6 +161,8 @@ export const COMPONENT_PINS: Record<ComponentType, string[]> = {
     voltage_source: ['+', '-'],
     current_source: ['+', '-'],
     diode: ['anode', 'cathode'],
+    bjt: ['c', 'b', 'e'], // SPICE Q: collector base emitter (canonical node order)
+    mosfet: ['d', 'g', 's', 'b'], // SPICE M: drain gate source bulk
     ground: ['1'],
     generic: [], // variable arity — pins come from the catalog part / schematic layer
 };
@@ -157,14 +177,17 @@ export const SPICE_PREFIXES: Record<ComponentType, string> = {
     voltage_source: 'V',
     current_source: 'I',
     diode: 'D',
+    bjt: 'Q',
+    mosfet: 'M',
     ground: '', // Ground is a special case (node 0)
     generic: '', // Catalog-only — not emitted to SPICE
 };
 
 /**
- * Whether a component can be emitted to a SPICE netlist. Catalog-only `generic` parts are not
- * simulatable (and, once active-device support lands, model-based parts without a resolvable model
- * will also be excluded here). Prefer this over comparing `type` against a hardcoded list.
+ * Whether a component TYPE can be emitted to a SPICE netlist. Catalog-only `generic` parts are not
+ * simulatable. (Active devices bjt/mosfet ARE simulatable types — they emit a Q/M line; whether a
+ * specific one has a resolvable model is a separate concern surfaced by ERC.) Prefer this over
+ * comparing `type` against a hardcoded list.
  */
 export function isSimulatable(component: Pick<Component, 'type'>): boolean {
     return component.type !== 'generic';

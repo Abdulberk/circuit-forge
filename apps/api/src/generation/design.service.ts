@@ -15,6 +15,7 @@ import { generateCircuit, fixCircuit, CircuitGenerationError } from '@circuitfor
 import { generateNetlist, type CircuitJson, type AnalysisConfig } from '@circuit-forge/eda-core';
 import { SimulationService } from '../simulation/simulation.service';
 import { CatalogGroundingService } from './catalog-grounding.service';
+import { attachGenericModels } from './model-resolution';
 import { DesignCircuitDto } from './dto';
 
 export interface RoundRecord {
@@ -55,6 +56,7 @@ export class DesignService {
         try {
             const gen = await generateCircuit({ prompt: dto.prompt, constraints: dto.constraints }, llmConfig, groundingOpts);
             let circuit: CircuitJson = gen.circuit;
+            attachGenericModels(circuit); // inject bjt/mosfet model bodies BEFORE the netlist is built
             let analysis: AnalysisConfig = gen.analysisConfig;
             let explanation = gen.explanation;
             const history: RoundRecord[] = [];
@@ -149,6 +151,7 @@ export class DesignService {
         llmConfig: Parameters<typeof fixCircuit>[1],
     ): Promise<{ circuit: CircuitJson; analysis: AnalysisConfig; explanation?: string }> {
         const fixed = await fixCircuit({ circuit, analysisConfig: analysis, problem }, llmConfig);
+        attachGenericModels(fixed.circuit); // re-inject model bodies after a fix round
         return { circuit: fixed.circuit, analysis: fixed.analysisConfig, explanation: fixed.explanation };
     }
 

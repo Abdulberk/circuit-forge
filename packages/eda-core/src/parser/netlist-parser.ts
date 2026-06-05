@@ -26,6 +26,8 @@ const PREFIX_TO_TYPE: Record<string, ComponentType> = {
     V: 'voltage_source',
     I: 'current_source',
     D: 'diode',
+    Q: 'bjt',
+    M: 'mosfet',
 };
 
 /**
@@ -203,6 +205,54 @@ function parseComponentLine(
                 pins: [
                     { pinId: 'anode', netId: anode },
                     { pinId: 'cathode', netId: cathode },
+                ],
+            };
+            break;
+        }
+
+        case 'bjt': {
+            // Format: Q1 nc nb ne model  (collector base emitter)
+            const c = parts[1] || '0';
+            const b = parts[2] || '0';
+            const e = parts[3] || '0';
+            const model = parts[4];
+
+            nets.push(c, b, e);
+
+            component = {
+                id,
+                type,
+                designator,
+                model,
+                pins: [
+                    { pinId: 'c', netId: c },
+                    { pinId: 'b', netId: b },
+                    { pinId: 'e', netId: e },
+                ],
+            };
+            break;
+        }
+
+        case 'mosfet': {
+            // Format: M1 nd ng ns nb model  (drain gate source bulk)
+            const d = parts[1] || '0';
+            const g = parts[2] || '0';
+            const s = parts[3] || '0';
+            const bulk = parts[4] || '0';
+            const model = parts[5];
+
+            nets.push(d, g, s, bulk);
+
+            component = {
+                id,
+                type,
+                designator,
+                model,
+                pins: [
+                    { pinId: 'd', netId: d },
+                    { pinId: 'g', netId: g },
+                    { pinId: 's', netId: s },
+                    { pinId: 'b', netId: bulk },
                 ],
             };
             break;
