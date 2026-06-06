@@ -258,6 +258,19 @@ function componentToSpice(
         return `${inst} ${orderedNodes(component, nodeMap).join(' ')} Z0=${tl.z0} ${spec}`;
     }
 
+    // Arbitrary behavioral source: `B<inst> + - V=<expr>` (or I=<expr>). The expression's v(...) node
+    // references use the circuit's net IDs and are rewritten to the sanitized SPICE node names; i(...)
+    // (a device-by-name reference) is left untouched. Instance name is B-prefixed if needed.
+    if (type === 'bsource') {
+        // Require a single-line V=/I= expression with a NON-EMPTY right-hand side (a bare "V=" emits an
+        // empty B-card that fatally aborts ngspice). A newline could inject a netlist line. Skip here +
+        // flag in ERC otherwise.
+        if (!value || /[\r\n]/.test(value) || !/^\s*[VI]\s*=\s*\S/i.test(value)) return null;
+        const inst = /^b/i.test(designator) ? designator : `B${designator}`;
+        const [np, nn] = orderedNodes(component, nodeMap);
+        return `${inst} ${np} ${nn} ${rewriteExprNodeRefs(value, nodeMap)}`;
+    }
+
     // Any type without a SPICE element prefix is non-emittable — skip it gracefully rather than throw,
     // mirroring the parser/ERC which tolerate unknown types (keeps the netlist resilient).
     const prefix = SPICE_PREFIXES[type];
@@ -372,6 +385,29 @@ function nodesForPinOrder(
             throw new Error(`Net not found: ${pin.netId} for component ${component.designator}`);
         }
         return node;
+    });
+}
+
+/**
+ * Rewrite the `v(...)` node references inside a behavioral-source (B) expression from the circuit's net
+ * IDs to the sanitized SPICE node names (the rest of the netlist uses sanitized names, so an un-rewritten
+ * `v(in)` would reference a non-existent node). `i(...)` references a DEVICE by name (not a net), so it is
+ * left untouched; unknown/literal args (numbers, '0') pass through.
+ */
+function rewriteExprNodeRefs(expr: string, nodeMap: Map<string, string>): string {
+    // ngspice node names are case-insensitive, so resolve the expression's net id case-insensitively
+    // (the AI may write v(IN) for net "in"); otherwise the un-rewritten ref would be a phantom node.
+    const lc = new Map<string, string>();
+    for (const [netId, node] of nodeMap) lc.set(netId.toLowerCase(), node);
+    return expr.replace(/\bv\s*\(\s*([^)]*)\)/gi, (_m, args: string) => {
+        const mapped = args
+            .split(',')
+            .map((a) => {
+                const id = a.trim();
+                return lc.get(id.toLowerCase()) ?? id; // unknown/literal args (numbers, '0') pass through
+            })
+            .join(',');
+        return `V(${mapped})`;
     });
 }
 

@@ -722,4 +722,61 @@ describe('active devices', () => {
             expect(runErc(c).issues.some((i) => i.code === ErcCode.PIN_COUNT_MISMATCH && i.relatedIds.includes('t1'))).toBe(true);
         });
     });
+
+    describe('behavioral source (B)', () => {
+        const OP: TranAnalysis = { type: 'tran', stopTime: '1m' };
+        function bCircuit(value?: string): CircuitJson {
+            return {
+                version: '1.0',
+                components: [
+                    { id: 'v1', type: 'voltage_source', designator: 'V1', value: 'DC 3', pins: [
+                        { pinId: '+', netId: 'in' }, { pinId: '-', netId: 'gnd' }] },
+                    { id: 'b1', type: 'bsource', designator: 'B1', value, pins: [
+                        { pinId: '+', netId: 'out' }, { pinId: '-', netId: 'gnd' }] },
+                    { id: 'rl', type: 'resistor', designator: 'RL1', value: '1k', pins: [
+                        { pinId: '1', netId: 'out' }, { pinId: '2', netId: 'gnd' }] },
+                ],
+                nets: [{ id: 'in', name: 'IN' }, { id: 'out', name: 'OUT' }, { id: 'gnd', name: 'GND', isGround: true }],
+            };
+        }
+
+        it('rewrites v(netId) refs to sanitized SPICE nodes (and leaves i(...) untouched)', () => {
+            const b = generateNetlist(bCircuit('V=v(in)*v(in) + i(V1)'), OP).split('\n').find((l) => l.startsWith('B1 '))!;
+            expect(b).not.toMatch(/v\(in\)/); // the raw circuit net id must not survive
+            expect(b).toMatch(/V\(\S*in\S*\)\s*\*\s*V\(\S*in\S*\)/i); // v(in) -> V(<sanitized in>)
+            expect(b).toMatch(/i\(V1\)/i); // device-by-name current ref left as-is
+        });
+
+        it('resolves v(...) refs case-insensitively (ngspice nodes are case-insensitive)', () => {
+            // the expr writes V(IN) but the net id is 'in' — must resolve to the sanitized node, not a phantom
+            const upper = generateNetlist(bCircuit('V=V(IN)*2'), OP).split('\n').find((l) => l.startsWith('B1 '))!;
+            const lower = generateNetlist(bCircuit('V=v(in)*2'), OP).split('\n').find((l) => l.startsWith('B1 '))!;
+            expect(upper).toBe(lower); // V(IN) and v(in) produce the same resolved node ref
+            expect(upper).not.toMatch(/\(\s*IN\s*\)/); // the raw wrong-case id must not survive
+        });
+
+        it('round-trips a B line through the parser (+,- pins, value preserved)', () => {
+            const r = parseNetlist('B1 out 0 V=v(in)*2\n.end').circuit.components.find((c) => c.designator === 'B1')!;
+            expect(r.type).toBe('bsource');
+            expect(r.pins.map((p) => p.pinId)).toEqual(['+', '-']);
+            expect(r.value).toBe('V=v(in)*2');
+        });
+
+        it('is a 2-pin simulatable type; ERC flags a missing / malformed / multi-line value', () => {
+            expect(isSimulatable({ type: 'bsource' })).toBe(true);
+            expect(runErc(bCircuit(undefined)).issues.some((i) => i.code === ErcCode.MISSING_VALUE && i.relatedIds.includes('b1'))).toBe(true);
+            expect(runErc(bCircuit('v(in)*2')).issues.some((i) => i.code === ErcCode.INVALID_VALUE && i.relatedIds.includes('b1'))).toBe(true); // no V=/I=
+            expect(runErc(bCircuit('V=')).issues.some((i) => i.code === ErcCode.INVALID_VALUE && i.relatedIds.includes('b1'))).toBe(true); // empty RHS -> ngspice would fatally abort
+            expect(runErc(bCircuit('V=v(in)\n.malicious')).issues.some((i) => i.code === ErcCode.INVALID_VALUE && i.relatedIds.includes('b1'))).toBe(true); // newline
+            const c = bCircuit('V=v(in)');
+            (c.components.find((x) => x.id === 'b1')!).pins = [{ pinId: '+', netId: 'out' }]; // 1 pin
+            expect(runErc(c).issues.some((i) => i.code === ErcCode.PIN_COUNT_MISMATCH && i.relatedIds.includes('b1'))).toBe(true);
+        });
+
+        it('does not emit a malformed / injection value (skipped, surfaced by ERC instead)', () => {
+            expect(generateNetlist(bCircuit('V=v(in)\n.tran 1 1'), OP)).not.toMatch(/^B1 /m); // newline-injection blocked
+            expect(generateNetlist(bCircuit('garbage'), OP)).not.toMatch(/^B1 /m); // no V=/I= prefix
+            expect(generateNetlist(bCircuit('V='), OP)).not.toMatch(/^B1 /m); // empty RHS skipped
+        });
+    });
 });

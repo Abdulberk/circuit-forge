@@ -20,6 +20,7 @@ const EXPECTED_PIN_COUNTS: Record<string, number> = {
     current_source: 2,
     vcvs: 4,
     vccs: 4,
+    bsource: 2,
     switch: 4,
     diode: 2,
     zener: 2,
@@ -300,6 +301,28 @@ function checkComponentValues(circuit: CircuitJson): ErcIssue[] {
                     `${component.designator || component.id} (transmission line) needs positive z0 + (td or f)`,
                 ),
             );
+        }
+
+        // A behavioral source needs a single-line "V=<expr>" or "I=<expr>" value.
+        if (component.type === 'bsource') {
+            const v = component.value?.trim();
+            if (!v) {
+                issues.push(
+                    createIssue(
+                        ErcCode.MISSING_VALUE,
+                        [component.id],
+                        `${component.designator || component.id} (behavioral source) needs a "V=<expr>" or "I=<expr>" value`,
+                    ),
+                );
+            } else if (!/^[VI]\s*=\s*\S/i.test(v) || /[\r\n]/.test(component.value!)) {
+                issues.push(
+                    createIssue(
+                        ErcCode.INVALID_VALUE,
+                        [component.id],
+                        `${component.designator || component.id}: behavioral source value must be "V=<expr>" or "I=<expr>" (non-empty) on one line`,
+                    ),
+                );
+            }
         }
 
         // Diode without a model: warning (a default is supplied).
