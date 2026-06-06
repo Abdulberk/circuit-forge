@@ -1828,7 +1828,7 @@ interface CircuitMetadata {
 
 ### 6.2 Supported component types & SPICE mapping
 
-The full enum (`ComponentTypeSchema` and `ComponentType`, both derived from the single-source `COMPONENT_TYPES` tuple in `circuit.ts`) is these seven SPICE-simulatable values **plus `'generic'`** — a catalog-only type (variable pins, no SPICE prefix) that the netlist generator skips. The editor's palette MUST be built from `ComponentType` — never a hand-maintained list — but should offer only the simulatable types (filter with `isSimulatable`); `'generic'` parts come from the part picker, not the palette. The SPICE prefix per type comes from `SPICE_PREFIXES`, the canonical pin names from `COMPONENT_PINS`, and the emitted line from the worker's `componentToSpice()` (which returns nothing for `'generic'`).
+The full enum (`ComponentTypeSchema` and `ComponentType`, both derived from the single-source `COMPONENT_TYPES` tuple in `circuit.ts`) now covers the broad SPICE-simulatable device set in the table below **plus `'generic'`** — a catalog-only type (variable pins, no SPICE prefix) that the netlist generator skips. The editor's palette MUST be built from `ComponentType` — never a hand-maintained list — but should offer only the simulatable types (filter with `isSimulatable`); `'generic'` parts come from the part picker, not the palette. The SPICE prefix per type comes from `SPICE_PREFIXES`, the canonical pin names from `COMPONENT_PINS`, and the emitted line from the worker's `componentToSpice()` (which returns `null` for `'generic'`).
 
 | `type` | SPICE prefix (`SPICE_PREFIXES`) | Canonical pins (`COMPONENT_PINS`) — order matters | Generated SPICE line | Notes |
 |---|---|---|---|---|
@@ -1838,18 +1838,30 @@ The full enum (`ComponentTypeSchema` and `ComponentType`, both derived from the 
 | `voltage_source` | `V` | `['+','-']` | `V1 <n+> <n-> <value\|'DC 0'>` | value defaults to `DC 0`; value carries the waveform: `DC 5`, `AC 1`, `SIN(0 1 1k)`, `PULSE(...)` |
 | `current_source` | `I` | `['+','-']` | `I1 <n+> <n-> <value\|'DC 0'>` | value defaults to `DC 0` |
 | `diode` | `D` | `['anode','cathode']` | `D1 <anode> <cathode> <model\|'DDEFAULT'>` | uses the built-in `DDEFAULT` model when `model` is absent |
+| `zener` | `D` | `['anode','cathode']` | `D1 <anode> <cathode> <DZ…>` | breakdown `.model` **generated from `value`** (Zener voltage) |
+| `bjt` | `Q` | `['c','b','e']` | `Q1 <c> <b> <e> <model>` | requires a model; generic `QGENNPN`/`QGENPNP` |
+| `mosfet` | `M` | `['d','g','s','b']` | `M1 <d> <g> <s> <b> <model>` | requires a model; generic `MGENNMOS`/`MGENPMOS` |
+| `jfet` | `J` | `['d','g','s']` | `J1 <d> <g> <s> <model>` | requires a model; generic `JGENNJF`/`JGENPJF` |
+| `vcvs` | `E` | `['+','-','c+','c-']` | `E1 <+> <-> <c+> <c-> <gain>` | linear V-controlled **voltage** source; `value` = gain |
+| `vccs` | `G` | `['+','-','c+','c-']` | `G1 <+> <-> <c+> <c-> <gm>` | V-controlled **current** source; `value` = transconductance |
+| `bsource` | `B` | `['+','-']` | `B1 <+> <-> V=<expr>` (or `I=`) | arbitrary behavioral source; `v(netId)` in `value` is rewritten to SPICE nodes |
+| `switch` | `S` | `['+','-','c+','c-']` | `S1 <+> <-> <c+> <c-> <model>` | V-controlled switch; generic `SWGEN` |
+| `transformer` | *(composite)* | `['p+','p-','s+','s-']` | expands to `L…P`/`L…S` + `K…` | coupled windings; params in `properties` (Lp/Ls/coupling) |
+| `tline` | `T` | `['a+','a-','b+','b-']` | `T1 <a+> <a-> <b+> <b-> Z0=.. TD=..` | lossless line; params in `properties` (z0 + td, or f[+nl]) |
+| `subckt` | `X` | `[]` (macromodel ports) | `X1 <ports…> <model>` | `.subckt` macromodel (e.g. op-amp `OPAMPGEN`); pins bound by the model's `ports` |
 | `ground` | `''` (none) | `['1']` | *(no line emitted)* | `componentToSpice` returns `null`; ground only marks a net as node `'0'` |
 
-**Pin-order rule (must be respected by the editor's UI and any auto-wiring):** the generator emits nodes as `pins.map(pin => nodeMap.get(pin.netId))` — it does **not** reorder by `pinId`. The *position of an entry in the `pins` array* determines which SPICE terminal it is. For polarized parts this is electrically significant — for a `voltage_source` the first pin entry is `+`, the second is `-`. **Always keep `pins` in `COMPONENT_PINS[type]` order**, and render/label terminals from `COMPONENT_PINS` so the array order and the visible labels never diverge.
+**Pin rule (must be respected by the editor's UI and any auto-wiring):** always keep each component's `pins` in `COMPONENT_PINS[type]` order and render/label terminals from `COMPONENT_PINS`, so the array order and the visible labels never diverge. Two-terminal passives, sources, `diode`/`zener` and `bsource` are emitted in the **authored array order** — for a `voltage_source` the first entry is `+`, the second `-`, which is electrically significant. The model-based devices (`bjt`/`mosfet`/`jfet`/`switch`), the controlled sources (`vcvs`/`vccs`), `transformer` and `tline` are bound **by `pinId`** in a canonical order, and a `subckt` by its model's declared `ports` — so authored order can't silently mis-wire those, but the correct pinIds must all be present (a missing required pin throws).
 
 **The diode "omit model" rule (do not invent a model name).** Diodes are special: when the editor does not have a specific model for a diode, it MUST simply **omit the `model` field**. The backend's netlist generator injects the built-in `DDEFAULT` model automatically (`.model DDEFAULT D(...)`), so an emitted diode without a model still simulates. The same rule applies to AI output — the generation endpoints (see AI Circuit Generation, §7) deliberately omit `model` on diodes and eda-core fills in `DDEFAULT`. Never hard-code a fake model string client-side.
 
-**Richer devices (transistors / op-amps / logic) — explicit gap.** The canonical model has **no** structured BJT / MOSFET / op-amp / logic primitive. `Component.model` exists and the type comment hints at transistors, but there is no `transistor` enum value, and `componentToSpice` handles only the seven types above (an unknown `type` throws `Unknown component type: <type>`). Two representation strategies:
+**Richer devices are now first-class (the earlier "transistors/op-amps don't exist" gap is closed).** `ComponentType` includes structured `bjt`, `mosfet`, `jfet`, `vcvs`, `vccs`, `bsource`, `switch`, `transformer`, `tline`, `zener`, and `subckt` (op-amp / IC macromodels). `componentToSpice` emits each of them and returns `null` (it no longer throws) for a non-emittable type. Model-based devices reference a model **by name**; eda-core ships a curated generic library (`QGENNPN`/`QGENPNP`, `MGENNMOS`/`MGENPMOS`, `JGENNJF`/`JGENPJF`, op-amp `OPAMPGEN`, `SWGEN`, …) and generates parametric models (a `zener` from its breakdown voltage). So the editor can offer all of these as **structured** palette items.
 
-- **(A) Extend the structured model** — add e.g. `'nmos' | 'pmos' | 'npn' | 'pnp' | 'opamp'` to `ComponentType` + `COMPONENT_PINS` + `SPICE_PREFIXES` + `componentToSpice` (and the ERC `EXPECTED_PIN_COUNTS` + importer `PREFIX_TO_TYPE`). This keeps everything validated and round-trippable, but it is a **shared-package change** (eda-core + API + worker), not a frontend-only one.
-- **(B) Raw-netlist escape hatch** — advanced devices flow through the raw-netlist path (`POST /simulations/quick`, see the Backend Integration Contract, §4) and/or `.include` of an uploaded SPICE model `Asset`. This unblocks the frontend without touching eda-core but bypasses structured editing and ERC.
+Still NOT structured — use the escape hatch: **IGBT / thyristor** (planned as `subckt` macromodels), **pure digital/logic**, and an **exact manufacturer model** for a specific MPN.
 
-**Recommendation:** ship v1 with the seven structured types for the visual editor, and expose (B) as an "advanced / paste netlist" mode. Treat any `ComponentType` extension as a coordinated cross-package task. **Do not let the frontend invent transistor shapes locally** — that recreates the exact drift this section exists to prevent.
+- **Escape hatch / long tail** — a user can upload a SPICE model `Asset` and attach it to a run via `modelAssetIds` (the worker `.include`s it; see §4), and any unsupported device can flow through the raw-netlist path (`POST /simulations/quick`). This bypasses structured editing/ERC but unblocks the long tail.
+
+**Build the palette from `ComponentType` + `isSimulatable`** — never a hand-maintained list, and never invent device shapes locally (that recreates the exact drift this section exists to prevent). A `ComponentType` extension remains a coordinated eda-core + API + worker change.
 
 ---
 
