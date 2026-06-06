@@ -59,6 +59,9 @@ export interface GenerateCircuitConfig {
     maxTokens?: number;
     /** Override the User-Agent (the provider's WAF blocks the SDK's default UA). */
     userAgent?: string;
+    /** Max model<->tool round-trips before forcing a tool-less final answer (default 5). Raise it (~10)
+     *  when the simulate-and-fix loop is enabled so verification iterations don't starve catalog search. */
+    maxToolIters?: number;
 }
 
 /**
@@ -68,8 +71,13 @@ export interface GenerateCircuitConfig {
 export type ToolExecutor = (toolName: string, input: Record<string, unknown>) => Promise<unknown>;
 
 export interface GroundingOptions {
-    /** When provided, generation runs as a tool-use loop that can search the live parts catalog. */
+    /** Dispatches every offered tool by name (search_parts / get_part_details / simulate_circuit). */
     toolExecutor: ToolExecutor;
+    /** Offer the live-catalog tools (search_parts/get_part_details). Defaults to true when omitted
+     *  (backward compatible: a bare { toolExecutor } means catalog grounding, as before). */
+    catalog?: boolean;
+    /** Offer the simulate_circuit verify-and-fix tool. */
+    simulate?: boolean;
 }
 
 /** Model-facing tool schemas. Execution is delegated to the injected ToolExecutor. */
@@ -100,6 +108,31 @@ const PART_TOOLS: Anthropic.Tool[] = [
     },
 ];
 
+/** Verify-and-fix tool: runs ERC + ngspice on a proposed circuit and returns a compact report. */
+const SIMULATE_TOOL: Anthropic.Tool = {
+    name: 'simulate_circuit',
+    description:
+        'Verify a circuit by running ERC + an ngspice simulation and getting back a compact report: ERC ' +
+        'errors/warnings, whether it simulated, any solver error, and per-node measurements (min/max/' +
+        'final/peak-to-peak). Call this with your CURRENT proposed circuit BEFORE returning the final ' +
+        'answer; if it reports ERC errors, a convergence failure, or implausible measurements, FIX the ' +
+        'circuit and call again. Pass the analysis you intend, or omit it for a quick DC operating-point check.',
+    input_schema: {
+        type: 'object',
+        properties: {
+            circuit: {
+                type: 'object',
+                description: 'The full CircuitJson to verify (same shape as the "circuit" in your final answer).',
+            },
+            analysis: {
+                type: 'object',
+                description: 'Optional AnalysisConfig (tran/ac/dc/op). Omit for a DC operating-point sanity check.',
+            },
+        },
+        required: ['circuit'],
+    },
+};
+
 export type CircuitGenerationErrorCode = 'config' | 'api_error' | 'invalid_output';
 
 /** Typed error so the API layer can map to the right HTTP status. */
@@ -118,6 +151,7 @@ interface Resolved {
     client: Anthropic;
     model: string;
     maxTokens: number;
+    maxToolIters: number;
 }
 
 function setup(config: GenerateCircuitConfig): Resolved {
@@ -130,7 +164,12 @@ function setup(config: GenerateCircuitConfig): Resolved {
         // Neutral UA — the gateway's WAF blocks the SDK's default "Anthropic/JS" User-Agent.
         defaultHeaders: { 'User-Agent': config.userAgent || DEFAULT_USER_AGENT },
     });
-    return { client, model: config.model || DEFAULT_MODEL, maxTokens: config.maxTokens || DEFAULT_MAX_TOKENS };
+    return {
+        client,
+        model: config.model || DEFAULT_MODEL,
+        maxTokens: config.maxTokens || DEFAULT_MAX_TOKENS,
+        maxToolIters: config.maxToolIters ?? MAX_TOOL_ITERS,
+    };
 }
 
 /**
@@ -207,15 +246,21 @@ async function runWithRepair(
 ): Promise<GenerateCircuitResult> {
     const baseMessages: Anthropic.MessageParam[] = [{ role: 'user', content: userContent }];
 
-    // When grounded, run a tool-use loop with the catalog-aware system prompt; the model picks real
-    // parts. The repair retry below is always tool-less + plain prompt — it only fixes invalid JSON.
-    const useTools = !!grounding?.toolExecutor;
-    const genSystem = useTools ? `${SYSTEM_PROMPT}\n\n${GROUNDING_PROMPT}` : SYSTEM_PROMPT;
+    // When grounded, run a tool-use loop. The host enables capabilities independently: catalog search
+    // (search_parts/get_part_details) and/or simulate_circuit (verify-and-fix). A bare { toolExecutor }
+    // means catalog-only, as before. The repair retry below is always tool-less + plain prompt.
+    const catalog = grounding ? grounding.catalog !== false : false;
+    const simulate = !!grounding?.simulate;
+    const tools = [...(catalog ? PART_TOOLS : []), ...(simulate ? [SIMULATE_TOOL] : [])];
+    const genSystem =
+        SYSTEM_PROMPT +
+        (catalog ? `\n\n${GROUNDING_PROMPT}` : '') +
+        (simulate ? `\n\n${VERIFY_PROMPT}` : '');
     const firstText = await callModel(
         r,
         genSystem,
         baseMessages,
-        useTools ? { tools: PART_TOOLS, executor: grounding!.toolExecutor } : undefined,
+        tools.length > 0 ? { tools, executor: grounding!.toolExecutor } : undefined,
     );
     const first = parseAndValidate(firstText);
     if (first.ok) return { ...first.value, repaired: false };
@@ -257,7 +302,7 @@ async function callModel(
     try {
         for (let iter = 0; ; iter++) {
             // Offer tools until the cap; the final iteration runs tool-less to force a text answer.
-            const allowTools = useTools && iter < MAX_TOOL_ITERS;
+            const allowTools = useTools && iter < r.maxToolIters;
             const response = await r.client.messages.create({
                 model: r.model,
                 max_tokens: r.maxTokens,
@@ -504,3 +549,21 @@ You may call the tools several times to refine.
 NEVER invent an mpn/manufacturer — only use exact values returned by the tools; if nothing fits,
 omit those fields. The host attaches full pricing/stock afterwards, so you don't need to copy them.
 When finished, stop calling tools and return ONLY the JSON object specified above (no prose/fences).`;
+
+const VERIFY_PROMPT = `CIRCUIT VERIFICATION — simulate before you answer (use this tool):
+You have a simulate_circuit({ circuit, analysis? }) tool that runs ERC + an ngspice simulation on a
+circuit and returns a compact report: ercErrors / ercWarnings (code + message + relatedIds), simStatus
+('ok' | 'failed'), runError, and per-node measurements { node, min, max, final, pp }.
+
+Workflow: BEFORE returning your final JSON, call simulate_circuit with your CURRENT circuit. Then:
+- Fix every ercError (e.g. NO_GROUND, a floating/single-pin net, a missing model/value) and simulate again.
+- If simStatus is 'failed', read runError: a convergence failure or "no output" usually means a wrong
+  topology (no DC path, a floating node, a source loop) — fix the topology, don't resubmit the same circuit.
+- Sanity-check the measurements: a node pinned at the rail that should swing, a 0 V output, or a value far
+  outside the expected range means the design is wrong — fix and re-simulate.
+- Omit "analysis" for a quick DC operating-point check (always converges); pass a tran/ac/dc analysis to
+  verify dynamic behavior (a transient on a purely-DC circuit just shows a flat line).
+- Iterate until it simulates cleanly. If a circuit legitimately cannot be made to converge, return it with
+  the limitation explained in "explanation" rather than looping forever on the same topology.
+The simulator attaches generic model bodies for you — never author .model/.subckt bodies yourself.
+When satisfied, stop calling tools and return ONLY the JSON object specified above (no prose/fences).`;

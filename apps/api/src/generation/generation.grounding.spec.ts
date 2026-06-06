@@ -19,10 +19,19 @@ jest.mock('@anthropic-ai/sdk', () => ({
 // Imported AFTER the mock is registered.
 import { GenerationService } from './generation.service';
 import { CatalogGroundingService } from './catalog-grounding.service';
+import type { CircuitSimulatorService } from './circuit-simulator.service';
 
-/** Build a GenerationService wired to a real CatalogGroundingService over a mocked PartsService. */
-function makeService(cfg: ConfigService, parts: unknown): GenerationService {
-    return new GenerationService(cfg, new CatalogGroundingService(cfg, parts as PartsService));
+/** A stub simulator. Default: unavailable (so existing catalog-only tests are unchanged). */
+function makeSimulator(opts?: { available?: boolean; simulate?: jest.Mock }): CircuitSimulatorService {
+    return {
+        available: () => opts?.available ?? false,
+        simulate: opts?.simulate ?? jest.fn(),
+    } as unknown as CircuitSimulatorService;
+}
+
+/** Build a GenerationService wired to a real CatalogGroundingService over a mocked PartsService + simulator. */
+function makeService(cfg: ConfigService, parts: unknown, simulator: CircuitSimulatorService = makeSimulator()): GenerationService {
+    return new GenerationService(cfg, new CatalogGroundingService(cfg, parts as PartsService, simulator));
 }
 
 const VALID_CIRCUIT = {
@@ -283,6 +292,39 @@ describe('GenerationService grounding (tool-use + sourcing enrichment)', () => {
         const injected = result.circuit.models?.find((m) => m.name === 'QGENNPN');
         expect(injected).toBeTruthy();
         expect(injected!.body).toContain('.model QGENNPN NPN(');
+    });
+
+    it('runs the verify-and-fix loop: simulate → ERC error → fix → simulate clean → finalize', async () => {
+        // The model verifies its circuit, gets an ERC error back, fixes it, verifies again (clean), then
+        // returns the final JSON. Proves simulate_circuit is offered and dispatched to the simulator twice.
+        const simulate = jest
+            .fn()
+            .mockResolvedValueOnce({ simStatus: 'failed', ercErrors: [{ code: 'ERC001', message: 'No ground node', relatedIds: [] }], ercWarnings: [], measurements: [], nodeCount: 0 })
+            .mockResolvedValueOnce({ simStatus: 'ok', ercErrors: [], ercWarnings: [], measurements: [{ node: 'x_out', min: 0, max: 5, final: 2.5, pp: 5 }], nodeCount: 2 });
+        mockCreate
+            .mockResolvedValueOnce(toolUseResponse('s1', 'simulate_circuit', { circuit: VALID_CIRCUIT })) // 1st verify → ERC error
+            .mockResolvedValueOnce(toolUseResponse('s2', 'simulate_circuit', { circuit: VALID_CIRCUIT })) // re-verify after fix → ok
+            .mockResolvedValueOnce(jsonResponse(FINAL_JSON)); // finalize
+
+        const service = makeService(makeConfig(), makeParts(), makeSimulator({ available: true, simulate }));
+        const result = await service.generate({ prompt: 'A 5V regulated supply' } as any);
+
+        // simulate_circuit was offered as a tool...
+        expect(mockCreate.mock.calls[0][0].tools.map((t: { name: string }) => t.name)).toContain('simulate_circuit');
+        // ...and the model's two simulate calls were dispatched to the simulator.
+        expect(simulate).toHaveBeenCalledTimes(2);
+        // The ERC-error result was fed back so the model could fix it.
+        expect(JSON.stringify(mockCreate.mock.calls[1][0].messages)).toContain('ERC001');
+        expect(result.circuit.components.length).toBeGreaterThan(0);
+    });
+
+    it('does NOT offer simulate_circuit when ngspice is unavailable (catalog still offered)', async () => {
+        mockCreate.mockResolvedValueOnce(jsonResponse(FINAL_JSON));
+        const service = makeService(makeConfig(), makeParts(), makeSimulator({ available: false }));
+        await service.generate({ prompt: 'RC filter' } as any);
+        const tools = (mockCreate.mock.calls[0][0].tools ?? []).map((t: { name: string }) => t.name);
+        expect(tools).not.toContain('simulate_circuit');
+        expect(tools).toContain('search_parts'); // catalog grounding is independent and still on
     });
 
     it('repairs an invalid grounded answer with a tool-less retry (repaired:true)', async () => {

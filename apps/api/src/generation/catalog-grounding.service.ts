@@ -9,8 +9,9 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import type { GroundingOptions, ToolExecutor } from '@circuitforge/llm-core';
-import type { CircuitJson, ComponentSourcing } from '@circuit-forge/eda-core';
+import type { CircuitJson, ComponentSourcing, AnalysisConfig } from '@circuit-forge/eda-core';
 import { PartsService } from '../parts/parts.service';
+import { CircuitSimulatorService } from './circuit-simulator.service';
 
 @Injectable()
 export class CatalogGroundingService {
@@ -19,21 +20,29 @@ export class CatalogGroundingService {
     constructor(
         private readonly config: ConfigService,
         private readonly parts: PartsService,
+        private readonly simulator: CircuitSimulatorService,
     ) {}
 
     /**
-     * Grounding options for an AI generation call, or undefined when the catalog isn't configured
-     * (then generation runs ungrounded — the same fallback both endpoints rely on).
+     * Grounding options for an AI generation call, or undefined when NEITHER capability is available.
+     * Catalog grounding (search_parts/get_part_details) is enabled when TME is configured; simulation
+     * verification (simulate_circuit) when an ngspice binary is configured. They are independent — the
+     * loop runs if either is present — and both /generate-circuit and /design-circuit get them for free.
      */
     grounding(): GroundingOptions | undefined {
-        return this.config.get<string>('TME_TOKEN') && this.config.get<string>('TME_SECRET')
-            ? { toolExecutor: this.buildToolExecutor() }
-            : undefined;
+        const catalog = !!(this.config.get<string>('TME_TOKEN') && this.config.get<string>('TME_SECRET'));
+        const simulate = this.simulator.available();
+        if (!catalog && !simulate) return undefined;
+        return { catalog, simulate, toolExecutor: this.buildToolExecutor() };
     }
 
-    /** Maps the model's tool calls onto the live PartsService. Returns compact, JSON-safe results. */
+    /** Dispatches the model's tool calls: catalog lookups → PartsService, simulate_circuit → ngspice. */
     private buildToolExecutor(): ToolExecutor {
         return async (name, input) => {
+            if (name === 'simulate_circuit') {
+                if (!input.circuit || typeof input.circuit !== 'object') return { error: 'circuit is required' };
+                return this.simulator.simulate(input.circuit, input.analysis as AnalysisConfig | undefined);
+            }
             if (name === 'search_parts') {
                 const q = String(input.query ?? '').trim().slice(0, 100);
                 if (!q) return { items: [] };

@@ -36,9 +36,12 @@ export class GenerationService {
         const cfg = this.requireLlmConfig();
         // Ground the model in the live catalog when configured; otherwise generate ungrounded.
         const grounding = this.grounding.grounding();
+        // Give the simulate-and-fix loop more tool round-trips so verification iterations don't starve
+        // catalog search (the loop still terminates at the cap with a forced tool-less final answer).
+        const genCfg = grounding?.simulate ? { ...cfg, maxToolIters: 10 } : cfg;
 
         const result = await this.runCircuit(() =>
-            generateCircuit({ prompt: dto.prompt, constraints: dto.constraints }, cfg, grounding),
+            generateCircuit({ prompt: dto.prompt, constraints: dto.constraints }, genCfg, grounding),
         );
 
         // Best-effort: attach authoritative sourcing for any real MPNs the model picked (never throws).

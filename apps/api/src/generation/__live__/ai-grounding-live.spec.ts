@@ -22,6 +22,7 @@ import { ConfigService } from '@nestjs/config';
 import { generateNetlist, type CircuitJson, type AnalysisConfig } from '@circuit-forge/eda-core';
 import { GenerationService } from '../generation.service';
 import { CatalogGroundingService } from '../catalog-grounding.service';
+import { CircuitSimulatorService } from '../circuit-simulator.service';
 import { PartsService } from '../../parts/parts.service';
 import { TtlCache } from '../../parts/cache/ttl-cache';
 import { ComponentMapper } from '../../parts/mappers/component-mapper';
@@ -90,7 +91,7 @@ function assertSimulatable(circuit: CircuitJson, analysis: AnalysisConfig, label
             config,
             new ComponentMapper(),
         );
-        gen = new GenerationService(config, new CatalogGroundingService(config, parts));
+        gen = new GenerationService(config, new CatalogGroundingService(config, parts, new CircuitSimulatorService(config)));
     });
 
     jest.setTimeout(240_000);
