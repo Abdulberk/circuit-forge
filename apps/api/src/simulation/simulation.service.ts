@@ -17,10 +17,6 @@ const MAX_MODEL_ASSETS = 32;
 /** Filenames the worker uses for its own job artifacts — an uploaded model must never shadow them. */
 const RESERVED_JOB_FILES = new Set(['circuit.cir', 'output.csv', 'stdout.log']);
 
-/** Filenames the worker writes into the per-job dir (netlist + ngspice outputs) — a model asset must
- * not use one of these names or it would clobber a job file. See worker-sim runner.ts. */
-const RESERVED_JOB_FILES = new Set(['circuit.cir', 'output.csv', 'stdout.log']);
-
 @Injectable()
 export class SimulationService {
     private readonly logger = new Logger(SimulationService.name);
@@ -154,7 +150,8 @@ export class SimulationService {
     ): Promise<{ s3Keys: string[]; includeFiles: string[] }> {
         const ids = Array.from(new Set((assetIds ?? []).filter((x) => typeof x === 'string' && x.length > 0)));
         if (ids.length === 0) return { s3Keys: [], includeFiles: [] };
-        // Bound the fan-out: each asset is a separate S3 download in the worker.
+        // Bound the fan-out (defense-in-depth; the DTO also caps via @ArrayMaxSize): each asset is a
+        // separate S3 download in the worker, and the service must not trust a direct caller.
         if (ids.length > MAX_MODEL_ASSETS) {
             throw new BadRequestException(`Too many model assets requested (max ${MAX_MODEL_ASSETS}).`);
         }
@@ -176,11 +173,6 @@ export class SimulationService {
             // Must be a bare, sandbox-safe filename — it is written into the job dir and `.include`d.
             if (!/^[A-Za-z0-9_.\-]+$/.test(filename) || filename.includes('..')) {
                 throw new BadRequestException(`Model asset has an unsafe filename: "${filename}"`);
-            }
-            // The worker writes model files into the same job dir as (and AFTER) the netlist + outputs;
-            // a model named like a job file would clobber it. Reserve those names.
-            if (RESERVED_JOB_FILES.has(filename.toLowerCase())) {
-                throw new BadRequestException(`Model filename "${filename}" is reserved by the simulator; rename the asset.`);
             }
             // Never let an uploaded file clobber the worker's own job files (the runner writes the
             // netlist FIRST, then model files — a model named circuit.cir would overwrite the netlist).
