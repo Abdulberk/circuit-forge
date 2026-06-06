@@ -7,6 +7,7 @@ import { GenerationService } from './generation.service';
 import { DesignController } from './design.controller';
 import { DesignService } from './design.service';
 import { CatalogGroundingService } from './catalog-grounding.service';
+import { CircuitSimulatorService } from './circuit-simulator.service';
 import { SimulationModule } from '../simulation/simulation.module';
 import { PartsModule } from '../parts/parts.module';
 
@@ -16,6 +17,6 @@ import { PartsModule } from '../parts/parts.module';
     // PartsModule provides PartsService so generation can ground the AI in the live parts catalog.
     imports: [SimulationModule, PartsModule],
     controllers: [GenerationController, DesignController],
-    providers: [GenerationService, DesignService, CatalogGroundingService],
+    providers: [GenerationService, DesignService, CatalogGroundingService, CircuitSimulatorService],
 })
 export class GenerationModule {}
