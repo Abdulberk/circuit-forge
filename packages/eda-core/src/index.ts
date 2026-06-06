@@ -29,7 +29,9 @@ export {
     resolveGenericModels,
     buildZenerModel,
     normalizeControlledSourceGain,
+    parseTransformerParams,
     type ResolveModelInput,
+    type TransformerParams,
 } from './models/library';
 
 export type {

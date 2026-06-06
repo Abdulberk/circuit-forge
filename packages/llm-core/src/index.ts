@@ -429,7 +429,7 @@ CircuitJson schema (every field validated; invalid output is rejected):
   "components": [                            // 1+ components
     {
       "id": "r1",                            // unique, lowercase recommended
-      "type": "resistor",                    // one of: resistor | capacitor | inductor | voltage_source | current_source | vcvs | vccs | diode | zener | bjt | mosfet | jfet | subckt | ground
+      "type": "resistor",                    // one of: resistor | capacitor | inductor | transformer | voltage_source | current_source | vcvs | vccs | diode | zener | bjt | mosfet | jfet | subckt | ground
       "designator": "R1",                    // matches /^[A-Z][A-Z0-9]*[0-9]+$/i  (e.g. R1, C1, L1, V1, I1, D1)
       "value": "10k",                        // optional; SPICE value string (see below). Omit for ground.
       "model": "...",                        // DO NOT SET for diodes — a default model is auto-supplied (see below)
@@ -461,6 +461,7 @@ Component conventions:
 - resistor (R): two pins "1","2"; value in ohms, e.g. "10k", "1Meg", "470".
 - capacitor (C): two pins "1","2"; value in farads, e.g. "100n", "10u", "1p".
 - inductor (L): two pins "1","2"; value in henries, e.g. "1m", "10u".
+- transformer (T): two magnetically-coupled windings. pins "p+","p-" (primary) and "s+","s-" (secondary); "p+"/"s+" are the dotted (in-phase) terminals. Do NOT use "value"; instead put winding inductances in "properties", e.g. "properties": { "primaryInductance": "10m", "secondaryInductance": "2.5m", "coupling": "0.99" } (henries as plain SPICE values; coupling 0..1, default ~0.999). The turns ratio is sqrt(Lp/Ls), so a 2:1 step-down uses Lp=4*Ls.
 - voltage_source (V): pins "+","-"; value e.g. "DC 5", "SIN(0 5 1k)", "PULSE(0 5 0 1u 1u 5m 10m)".
 - current_source (I): pins "+","-"; value e.g. "DC 1m".
 - vcvs (E): an ideal voltage-controlled voltage source (ideal voltage amplifier). pins "+","-" (output) and "c+","c-" (the sensed control voltage). "value" is the voltage gain V/V as a PLAIN NUMBER, e.g. "100" or "1e3" — NOT a "DC ..." source function. Output V(+,-) = value * V(c+,c-).

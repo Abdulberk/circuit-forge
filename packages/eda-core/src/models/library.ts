@@ -133,6 +133,13 @@ function parseBreakdownVolts(vz: string | number): number | null {
 /** A single SPICE numeric token: optional sign, mantissa, exponent, and engineering suffix. */
 const NUMERIC_TOKEN = /^[+-]?(\d+\.?\d*|\.\d+)([eE][+-]?\d+)?(meg|[tgkmunpf])?$/i;
 
+/** True iff `s` is a single SPICE value with a strictly positive magnitude (e.g. "10m" yes, "-1"/"0" no). */
+function isPositiveSpiceValue(s: string): boolean {
+    if (!NUMERIC_TOKEN.test(s) || s.trim().startsWith('-')) return false;
+    const mantissa = s.trim().replace(/^\+/, '').replace(/(meg|[tgkmunpf])$/i, '');
+    return parseFloat(mantissa) > 0; // engineering suffix is a positive multiplier, so sign is in mantissa
+}
+
 /**
  * Normalize a controlled-source (E/G) gain / transconductance. ngspice's LINEAR dependent source is
  * `Exxx n+ n- nc+ nc- VALUE` where VALUE must be a SINGLE real number — any extra token (an accidental
@@ -143,6 +150,46 @@ const NUMERIC_TOKEN = /^[+-]?(\d+\.?\d*|\.\d+)([eE][+-]?\d+)?(meg|[tgkmunpf])?$/
 export function normalizeControlledSourceGain(raw: string): string | null {
     const s = raw.trim().replace(/^dc\s+/i, '');
     return NUMERIC_TOKEN.test(s) ? s : null;
+}
+
+/** Validated transformer winding inductances + coupling, ready to emit as two L's + a K statement. */
+export interface TransformerParams {
+    lp: string; // primary winding inductance (SPICE value, e.g. "10m")
+    ls: string; // secondary winding inductance
+    k: string; // coupling coefficient in (0, 1]
+}
+
+/**
+ * Read + validate a transformer's parameters from a component's `properties`. A transformer is two
+ * magnetically-coupled inductors: the turns ratio follows from sqrt(Lp/Ls). Both winding inductances are
+ * required (single positive SPICE values); coupling is optional and defaults to a tight 0.999, and when
+ * given must be a real in (0, 1]. Returns null (caller skips emission; ERC flags it) on anything invalid.
+ */
+export function parseTransformerParams(props: Record<string, unknown> | undefined): TransformerParams | null {
+    const str = (key: string): string | undefined => {
+        const v = props?.[key];
+        if (typeof v === 'string') return v.trim();
+        if (typeof v === 'number' && Number.isFinite(v)) return String(v);
+        return undefined;
+    };
+    const lp = str('primaryInductance');
+    const ls = str('secondaryInductance');
+    // Winding inductances must be STRICTLY POSITIVE SPICE values: a negative one makes the coupled
+    // inductance matrix non-positive-definite (garbage solution) and a zero one is a degenerate winding
+    // that transfers nothing — both pass ngspice's parser, so they must be rejected here.
+    if (!lp || !ls || !isPositiveSpiceValue(lp) || !isPositiveSpiceValue(ls)) return null;
+
+    // Coupling is dimensionless in (0, 1]; default a tight 0.999. Validate as a CLEAN decimal (no
+    // engineering suffix, no JS-coercible junk like "0x1") AND in range, then emit that exact token.
+    const rawK = str('coupling');
+    let k = '0.999';
+    if (rawK !== undefined) {
+        if (!/^(\d+\.?\d*|\.\d+)([eE][+-]?\d+)?$/.test(rawK)) return null;
+        const kv = Number(rawK);
+        if (!Number.isFinite(kv) || kv <= 0 || kv > 1) return null;
+        k = rawK;
+    }
+    return { lp, ls, k };
 }
 
 export function buildZenerModel(vz: string | number): ModelDef | null {

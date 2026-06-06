@@ -6,7 +6,7 @@ import type { CircuitJson, Component, Net, ModelDef } from '../types/circuit';
 import type { AnalysisConfig } from '../types/analysis';
 import { SPICE_PREFIXES, COMPONENT_PINS } from '../types/circuit';
 import { analysisToSpice } from '../types/analysis';
-import { buildZenerModel, normalizeControlledSourceGain } from '../models/library';
+import { buildZenerModel, normalizeControlledSourceGain, parseTransformerParams } from '../models/library';
 import { sanitizeNodeName, validateIncludePaths } from './sanitizer';
 
 /**
@@ -130,13 +130,30 @@ export function generateNetlist(
     for (const m of circuit.models ?? []) {
         if (!modelMap.has(m.name)) modelMap.set(m.name, m);
     }
-    lines.push('* Components');
+    const componentLines: string[] = [];
     for (const component of circuit.components) {
         const spiceLine = componentToSpice(component, nodeMap, modelMap);
-        if (spiceLine) {
-            lines.push(spiceLine);
+        if (Array.isArray(spiceLine)) {
+            componentLines.push(...spiceLine); // composite device (e.g. transformer) emits several lines
+        } else if (spiceLine) {
+            componentLines.push(spiceLine);
         }
     }
+    // No two emitted devices may share a name — ngspice would silently redefine the first. This catches
+    // a composite device's derived sub-element names (e.g. transformer T1 -> LT1P/RT1P/KT1) colliding
+    // with a user-authored component's designator.
+    const seenDevices = new Set<string>();
+    for (const cl of componentLines) {
+        const name = cl.split(/\s+/)[0] ?? '';
+        if (seenDevices.has(name)) {
+            throw new Error(
+                `Duplicate device name '${name}' in the netlist — a designator or transformer sub-element collides with another component.`,
+            );
+        }
+        seenDevices.add(name);
+    }
+    lines.push('* Components');
+    lines.push(...componentLines);
     lines.push('');
 
     // Analysis
@@ -188,13 +205,46 @@ function componentToSpice(
     component: Component,
     nodeMap: Map<string, string>,
     modelMap?: Map<string, ModelDef>,
-): string | null {
+): string | string[] | null {
     const { type, designator, value, model, pins } = component;
 
     // Not emitted to SPICE: `ground` is node 0, `generic` is a catalog-only part with no simulatable
     // model. Both are skipped (not an error) so a circuit can carry real parts that aren't simulatable.
     if (type === 'ground' || type === 'generic') {
         return null;
+    }
+
+    // Transformer = two magnetically-coupled inductor windings. It is a COMPOSITE: one component expands
+    // to two L lines (primary/secondary, across p+,p- and s+,s-) plus a K coupling statement. Nodes are
+    // bound by pinId (canonical p+,p-,s+,s-) so winding polarity/dot-sense is correct regardless of the
+    // authored pin order. Sub-element names derive from the designator (T1 -> LT1P, LT1S, KT1).
+    if (type === 'transformer') {
+        const tp = parseTransformerParams(component.properties);
+        if (!tp) return null; // ERC flags missing/invalid winding inductances
+        const [pp, pn, sp, sn] = orderedNodes(component, nodeMap);
+        const lPri = `L${designator}P`;
+        const lSec = `L${designator}S`;
+        // A tiny series winding resistance (DCR) gives each winding a finite DC path. Without it an ideal
+        // source driving an ideal inductor makes the MNA matrix structurally singular (ngspice limps
+        // through gmin-stepping or fails to converge). 1 mΩ is negligible at signal levels but removes
+        // the singularity. Internal nodes carry the L->R series connection.
+        const RSER = '1m';
+        const pMid = `${designator}_wp`;
+        const sMid = `${designator}_ws`;
+        const out = [
+            `${lPri} ${pp} ${pMid} ${tp.lp}`,
+            `R${designator}P ${pMid} ${pn} ${RSER}`,
+            `${lSec} ${sp} ${sMid} ${tp.ls}`,
+            `R${designator}S ${sMid} ${sn} ${RSER}`,
+            `K${designator} ${lPri} ${lSec} ${tp.k}`,
+        ];
+        // A galvanically-isolated winding (NEITHER terminal at ground) has no DC reference, so the MNA
+        // matrix is singular (the whole point of many transformers is isolation, so this is common).
+        // Tie each isolated winding to ground through a very large bleeder (negligible load) to anchor it.
+        const BLEED = '1G';
+        if (pp !== '0' && pn !== '0') out.push(`R${designator}PG ${pn} 0 ${BLEED}`);
+        if (sp !== '0' && sn !== '0') out.push(`R${designator}SG ${sn} 0 ${BLEED}`);
+        return out;
     }
 
     // Any type without a SPICE element prefix is non-emittable — skip it gracefully rather than throw,

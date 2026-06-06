@@ -45,6 +45,7 @@ export const COMPONENT_TYPES = [
     'resistor',
     'capacitor',
     'inductor',
+    'transformer',
     'voltage_source',
     'current_source',
     'vcvs',
@@ -173,6 +174,8 @@ export const COMPONENT_PINS: Record<ComponentType, string[]> = {
     resistor: ['1', '2'],
     capacitor: ['1', '2'],
     inductor: ['1', '2'],
+    // Two magnetically-coupled windings. Dotted terminals are p+ and s+ (same winding sense).
+    transformer: ['p+', 'p-', 's+', 's-'],
     voltage_source: ['+', '-'],
     current_source: ['+', '-'],
     // Linear controlled sources: output pair (+,-) then the controlling voltage pair (c+,c-).
@@ -195,6 +198,7 @@ export const SPICE_PREFIXES: Record<ComponentType, string> = {
     resistor: 'R',
     capacitor: 'C',
     inductor: 'L',
+    transformer: '', // composite: expands to two L windings + a K coupling (handled before this map)
     voltage_source: 'V',
     current_source: 'I',
     vcvs: 'E', // voltage-controlled voltage source

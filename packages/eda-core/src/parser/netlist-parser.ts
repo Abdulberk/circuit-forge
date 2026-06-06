@@ -70,6 +70,15 @@ export function parseNetlist(netlist: string): NetlistParseResult {
             continue;
         }
 
+        // Mutual coupling (Kxxx Ly Lz coeff) couples existing inductors by name — it is a relationship,
+        // not a standalone component, so it can't be reconstructed into a CircuitJson component. A
+        // generated transformer round-trips as its raw windings; the coupling is export-only. Skip it
+        // with an explicit note rather than a misleading "could not parse" error.
+        if (/^k/i.test(line)) {
+            warnings.push(`Line ${i + 1}: mutual coupling not imported (export-only): ${line}`);
+            continue;
+        }
+
         // Parse component
         const parsed = parseComponentLine(line, componentCounter);
         if (parsed) {
