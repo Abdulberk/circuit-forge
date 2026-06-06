@@ -154,6 +154,11 @@ export class SimulationService {
     ): Promise<{ s3Keys: string[]; includeFiles: string[] }> {
         const ids = Array.from(new Set((assetIds ?? []).filter((x) => typeof x === 'string' && x.length > 0)));
         if (ids.length === 0) return { s3Keys: [], includeFiles: [] };
+        // Defense-in-depth cap (the DTO also bounds this via @ArrayMaxSize, but the service must not
+        // trust a direct caller): too many assets => too many worker S3 downloads.
+        if (ids.length > 32) {
+            throw new BadRequestException('Too many model assets attached (max 32).');
+        }
         // Bound the fan-out: each asset is a separate S3 download in the worker.
         if (ids.length > MAX_MODEL_ASSETS) {
             throw new BadRequestException(`Too many model assets requested (max ${MAX_MODEL_ASSETS}).`);
