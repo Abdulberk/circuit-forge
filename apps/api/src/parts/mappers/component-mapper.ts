@@ -92,8 +92,10 @@ export class ComponentMapper {
             return { simulatable: true, component: { ...base, value: vz }, catalog: part };
         }
 
-        // Active devices (bjt/mosfet): resolve a generic SPICE model by polarity (from the category).
-        if (type === 'bjt' || type === 'mosfet') {
+        // Active devices (bjt/mosfet/jfet): resolve a generic SPICE model by polarity (from the
+        // category). (JFET catalog categories aren't mapped to 'jfet' yet — that's a TME-id follow-up —
+        // but the resolution path is ready, and the AI generator can already emit jfet directly.)
+        if (type === 'bjt' || type === 'mosfet' || type === 'jfet') {
             const subtype = subtypeFromCategoryId(part.categoryId);
             const modelDef = resolveModelForPart({ type, subtype, mpn: part.mpn });
             if (!modelDef) {

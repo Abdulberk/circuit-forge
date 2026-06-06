@@ -429,7 +429,7 @@ CircuitJson schema (every field validated; invalid output is rejected):
   "components": [                            // 1+ components
     {
       "id": "r1",                            // unique, lowercase recommended
-      "type": "resistor",                    // one of: resistor | capacitor | inductor | voltage_source | current_source | diode | zener | bjt | mosfet | subckt | ground
+      "type": "resistor",                    // one of: resistor | capacitor | inductor | voltage_source | current_source | diode | zener | bjt | mosfet | jfet | subckt | ground
       "designator": "R1",                    // matches /^[A-Z][A-Z0-9]*[0-9]+$/i  (e.g. R1, C1, L1, V1, I1, D1)
       "value": "10k",                        // optional; SPICE value string (see below). Omit for ground.
       "model": "...",                        // DO NOT SET for diodes — a default model is auto-supplied (see below)
@@ -467,6 +467,7 @@ Component conventions:
 - zener (D): a Zener diode. pins "anode","cathode". Set "value" to the breakdown (Zener) voltage in volts, as a plain number string e.g. "5.1" or "12". For clamping/regulation the CATHODE connects to the higher-voltage node (it conducts in reverse above Vz). OMIT "model" — the host generates the breakdown model from "value".
 - bjt (Q): a bipolar transistor. pins "c","b","e" (collector, base, emitter). Set "model" to a built-in generic model by NAME: "QGENNPN" (NPN) or "QGENPNP" (PNP). The host supplies the model body — do NOT write a .model definition yourself.
 - mosfet (M): a MOSFET. pins "d","g","s","b" (drain, gate, source, bulk; tie bulk to source if unsure). Set "model" to "MGENNMOS" (N-channel) or "MGENPMOS" (P-channel).
+- jfet (J): a junction FET. pins "d","g","s" (drain, gate, source). Set "model" to "JGENNJF" (N-channel) or "JGENPJF" (P-channel). JFETs are depletion-mode (conduct at Vgs=0); bias the gate accordingly. The host supplies the model body.
 - subckt (X): a multi-terminal macromodel device. For an OP-AMP set "type":"subckt" and "model":"OPAMPGEN", and list pins in EXACTLY this order (the order IS the contract): pinId "out" (output), "in+" (non-inverting input), "in-" (inverting input), "vcc" (positive supply), "vee" (negative supply) — i.e. out, in+, in-, V+, V-. Always wire vcc/vee to real supply sources. The host supplies the macromodel body — never write a .subckt yourself.
 - ground: a single pin "1" connected to the ground net; no value.
 

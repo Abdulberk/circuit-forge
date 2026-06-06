@@ -135,11 +135,40 @@ describe('active devices', () => {
         expect(q.pins.map((p) => p.pinId)).toEqual(['c', 'b', 'e']);
     });
 
+    it('emits a JFET in canonical d,g,s order (by pinId) + round-trips through the parser', () => {
+        const circuit: CircuitJson = {
+            version: '1.0',
+            components: [
+                // authored source, gate, drain — generator must reorder to d,g,s
+                { id: 'j1', type: 'jfet', designator: 'J1', model: 'JGENNJF', pins: [
+                    { pinId: 's', netId: 'gnd' }, { pinId: 'g', netId: 'in' }, { pinId: 'd', netId: 'out' }] },
+                { id: 'v1', type: 'voltage_source', designator: 'V1', value: 'DC 5', pins: [
+                    { pinId: '+', netId: 'out' }, { pinId: '-', netId: 'gnd' }] },
+            ],
+            nets: [{ id: 'in', name: 'IN' }, { id: 'out', name: 'OUT' }, { id: 'gnd', name: 'GND', isGround: true }],
+            models: [GENERIC_MODELS.njf!],
+        };
+        const netlist = generateNetlist(circuit, TRAN);
+        expect(netlist).toContain('.model JGENNJF NJF(');
+        const j = netlist.split('\n').find((l) => l.startsWith('J1 '))!;
+        const parts = j.split(/\s+/); // J1 <d> <g> <s> JGENNJF (5 tokens)
+        expect(parts[4]).toBe('JGENNJF');
+        expect(parts[3]).toBe('0'); // source (authored 1st) reordered into the LAST node slot
+        expect(parts[1]).not.toBe('0'); // drain slot is not ground
+
+        const rt = parseNetlist('J1 nd ng ns JGENNJF\n.end').circuit.components.find((c) => c.designator === 'J1')!;
+        expect(rt.type).toBe('jfet');
+        expect(rt.model).toBe('JGENNJF');
+        expect(rt.pins.map((p) => p.pinId)).toEqual(['d', 'g', 's']);
+    });
+
     describe('library', () => {
         it('resolves generic models by polarity', () => {
             expect(resolveModelForPart({ type: 'bjt', subtype: 'npn' })!.name).toBe('QGENNPN');
             expect(resolveModelForPart({ type: 'bjt', subtype: 'pnp' })!.name).toBe('QGENPNP');
             expect(resolveModelForPart({ type: 'mosfet', subtype: 'pmos' })!.name).toBe('MGENPMOS');
+            expect(resolveModelForPart({ type: 'jfet', subtype: 'pjf' })!.name).toBe('JGENPJF');
+            expect(resolveModelForPart({ type: 'jfet' })!.name).toBe('JGENNJF'); // default n-channel
             expect(resolveModelForPart({ type: 'bjt' })!.name).toBe('QGENNPN'); // default npn
             expect(resolveModelForPart({ type: 'resistor' })).toBeNull();
         });
@@ -180,11 +209,28 @@ describe('active devices', () => {
         });
     });
 
-    it('bjt/mosfet/subckt are simulatable types; generic is not', () => {
+    it('bjt/mosfet/jfet/subckt are simulatable types; generic is not', () => {
         expect(isSimulatable({ type: 'bjt' })).toBe(true);
         expect(isSimulatable({ type: 'mosfet' })).toBe(true);
+        expect(isSimulatable({ type: 'jfet' })).toBe(true);
         expect(isSimulatable({ type: 'subckt' })).toBe(true);
         expect(isSimulatable({ type: 'generic' })).toBe(false);
+    });
+
+    it('ERC flags a JFET with no model (MODEL_REQUIRED) and a wrong pin count', () => {
+        const c: CircuitJson = {
+            version: '1.0',
+            components: [
+                { id: 'j1', type: 'jfet', designator: 'J1', pins: [ // no model + only 2 pins
+                    { pinId: 'd', netId: 'out' }, { pinId: 's', netId: 'gnd' }] },
+                { id: 'v1', type: 'voltage_source', designator: 'V1', value: 'DC 5', pins: [
+                    { pinId: '+', netId: 'out' }, { pinId: '-', netId: 'gnd' }] },
+            ],
+            nets: [{ id: 'out', name: 'OUT' }, { id: 'gnd', name: 'GND', isGround: true }],
+        };
+        const issues = runErc(c).issues;
+        expect(issues.some((i) => i.code === ErcCode.MODEL_REQUIRED && i.relatedIds.includes('j1'))).toBe(true);
+        expect(issues.some((i) => i.code === ErcCode.PIN_COUNT_MISMATCH && i.relatedIds.includes('j1'))).toBe(true);
     });
 
     describe('subckt (op-amp)', () => {

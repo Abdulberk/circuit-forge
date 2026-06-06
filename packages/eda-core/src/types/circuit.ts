@@ -51,6 +51,7 @@ export const COMPONENT_TYPES = [
     'zener',
     'bjt',
     'mosfet',
+    'jfet',
     'subckt',
     'ground',
     'generic',
@@ -64,7 +65,7 @@ export type ComponentType = (typeof COMPONENT_TYPES)[number];
  */
 export interface ModelDef {
     name: string; // referenced by Component.model, e.g. "QGENNPN"
-    device: 'bjt' | 'mosfet' | 'diode' | 'subckt';
+    device: 'bjt' | 'mosfet' | 'jfet' | 'diode' | 'subckt';
     body: string; // the literal SPICE line(s): ".model QGENNPN NPN(...)" or ".subckt ... .ends"
     /** Fidelity of this model relative to the real part (Flux-style honesty). */
     tier?: 'manufacturer' | 'generic' | 'ideal';
@@ -176,6 +177,7 @@ export const COMPONENT_PINS: Record<ComponentType, string[]> = {
     zener: ['anode', 'cathode'], // SPICE D device; the breakdown voltage rides in `value`
     bjt: ['c', 'b', 'e'], // SPICE Q: collector base emitter (canonical node order)
     mosfet: ['d', 'g', 's', 'b'], // SPICE M: drain gate source bulk
+    jfet: ['d', 'g', 's'], // SPICE J: drain gate source
     subckt: [], // variable arity — pins are emitted in AUTHORED order to match the .subckt port order
     ground: ['1'],
     generic: [], // variable arity — pins come from the catalog part / schematic layer
@@ -194,6 +196,7 @@ export const SPICE_PREFIXES: Record<ComponentType, string> = {
     zener: 'D', // a Zener is the same SPICE diode device, with a breakdown (BV) model
     bjt: 'Q',
     mosfet: 'M',
+    jfet: 'J', // SPICE J: junction FET
     subckt: 'X', // SPICE subcircuit instance call
     ground: '', // Ground is a special case (node 0)
     generic: '', // Catalog-only — not emitted to SPICE

@@ -36,6 +36,20 @@ export const GENERIC_MODELS: Record<string, ModelDef> = {
         tier: 'generic',
         body: '.model MGENPMOS PMOS(LEVEL=1 VTO=-2.0 KP=10u GAMMA=0 LAMBDA=0.02 CGSO=5p CGDO=2p)',
     },
+    njf: {
+        name: 'JGENNJF',
+        device: 'jfet',
+        tier: 'generic',
+        // Generic N-channel JFET (e.g. 2N5457/J201 class): depletion-mode, negative pinch-off VTO.
+        body: '.model JGENNJF NJF(VTO=-2.0 BETA=1m LAMBDA=2m RD=10 RS=10 CGS=4p CGD=4p)',
+    },
+    pjf: {
+        name: 'JGENPJF',
+        device: 'jfet',
+        tier: 'generic',
+        // Generic P-channel JFET (e.g. 2N5460 class): positive pinch-off VTO, lower BETA.
+        body: '.model JGENPJF PJF(VTO=2.0 BETA=0.5m LAMBDA=2m RD=10 RS=10 CGS=4p CGD=4p)',
+    },
     // Generic behavioral op-amp macromodel (a `.subckt`, not a `.model`). Authored, license-clean.
     // Ports (MUST be wired in this order): out, in+ , in-, V+ , V- .
     //   Gm   : transconductance input stage (1 mA/V) — current drive bounds the clamp current,
@@ -71,7 +85,7 @@ export const GENERIC_MODELS: Record<string, ModelDef> = {
 
 export interface ResolveModelInput {
     type: ComponentType;
-    /** Device polarity/class hint from the catalog taxonomy: 'npn'|'pnp'|'nmos'|'pmos'. */
+    /** Device polarity/class hint from the catalog taxonomy: 'npn'|'pnp'|'nmos'|'pmos'|'njf'|'pjf'. */
     subtype?: string;
     /** Manufacturer part number (reserved for a future exact-MPN model map). */
     mpn?: string;
@@ -86,6 +100,7 @@ export function resolveModelForPart(input: ResolveModelInput): ModelDef | null {
     const sub = input.subtype?.toLowerCase();
     if (input.type === 'bjt') return GENERIC_MODELS[sub === 'pnp' ? 'pnp' : 'npn'] ?? null;
     if (input.type === 'mosfet') return GENERIC_MODELS[sub === 'pmos' ? 'pmos' : 'nmos'] ?? null;
+    if (input.type === 'jfet') return GENERIC_MODELS[sub === 'pjf' || sub === 'pjfet' ? 'pjf' : 'njf'] ?? null;
     return null;
 }
 

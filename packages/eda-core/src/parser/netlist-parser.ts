@@ -28,6 +28,7 @@ const PREFIX_TO_TYPE: Record<string, ComponentType> = {
     D: 'diode',
     Q: 'bjt',
     M: 'mosfet',
+    J: 'jfet',
     X: 'subckt',
 };
 
@@ -254,6 +255,29 @@ function parseComponentLine(
                     { pinId: 'g', netId: g },
                     { pinId: 's', netId: s },
                     { pinId: 'b', netId: bulk },
+                ],
+            };
+            break;
+        }
+
+        case 'jfet': {
+            // Format: J1 nd ng ns model  (drain gate source)
+            const d = parts[1] || '0';
+            const g = parts[2] || '0';
+            const s = parts[3] || '0';
+            const model = parts[4];
+
+            nets.push(d, g, s);
+
+            component = {
+                id,
+                type,
+                designator,
+                model,
+                pins: [
+                    { pinId: 'd', netId: d },
+                    { pinId: 'g', netId: g },
+                    { pinId: 's', netId: s },
                 ],
             };
             break;

@@ -237,11 +237,12 @@ function componentToSpice(
             return `${designator} ${orderedNodes(component, nodeMap).join(' ')} ${zm.name}`;
         }
 
-        // Active devices are model-based. Nodes are emitted in the canonical pin order (c b e / d g s b)
-        // resolved by pinId, NOT by the authored array order. Without a model name the device can't be
-        // a valid SPICE line, so skip it (ERC flags MODEL_REQUIRED).
+        // Active devices are model-based. Nodes are emitted in the canonical pin order (bjt c,b,e /
+        // mosfet d,g,s,b / jfet d,g,s) resolved by pinId, NOT by the authored array order. Without a
+        // model name the device can't be a valid SPICE line, so skip it (ERC flags MODEL_REQUIRED).
         case 'bjt':
-        case 'mosfet': {
+        case 'mosfet':
+        case 'jfet': {
             if (!model) return null;
             return `${designator} ${orderedNodes(component, nodeMap).join(' ')} ${model}`;
         }
