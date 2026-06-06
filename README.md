@@ -11,7 +11,7 @@ A backend system for AI-assisted circuit design and **SPICE-based simulation**. 
 - **Multi-tenant REST API** (NestJS) — organizations, projects, versioned circuits, templates, model assets, and simulations, secured with JWT + RBAC.
 - **Async simulation pipeline** — API enqueues jobs on a BullMQ/Redis queue; a dedicated worker runs **ngspice** in an isolated, sandboxed per-job directory and stores results in Postgres or S3/MinIO.
 - **EDA core library** (`@circuit-forge/eda-core`):
-  - Circuit-JSON → SPICE **netlist generation** for a broad device set — R/L/C, transformers & lossless transmission lines, independent + controlled (E/G) + arbitrary behavioral (B) sources, diodes/Zener, BJT/MOSFET/JFET, voltage-controlled switches, and op-amp/IC `.subckt` macromodels — backed by a curated generic **model library**, plus control block and probes.
+  - Circuit-JSON → SPICE **netlist generation** for a broad device set — R/L/C, transformers & lossless transmission lines, independent + controlled (E/G) + arbitrary behavioral (B) sources, diodes/Zener, BJT/MOSFET/JFET, voltage-controlled switches, thyristors/SCR, IGBTs, and op-amp/IC `.subckt` macromodels — backed by a curated generic **model library**, plus control block and probes.
   - **SPICE security/sanitization** — reserved-word & node-name sanitization, shell-metacharacter rejection, `.include` path whitelisting.
   - **ERC** (Electrical Rule Check) with coded findings.
   - **Result parsing** — ngspice CSV / raw ASCII → typed series.

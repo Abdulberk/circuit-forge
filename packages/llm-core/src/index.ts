@@ -474,7 +474,10 @@ Component conventions:
 - bjt (Q): a bipolar transistor. pins "c","b","e" (collector, base, emitter). Set "model" to a built-in generic model by NAME: "QGENNPN" (NPN) or "QGENPNP" (PNP). The host supplies the model body — do NOT write a .model definition yourself.
 - mosfet (M): a MOSFET. pins "d","g","s","b" (drain, gate, source, bulk; tie bulk to source if unsure). Set "model" to "MGENNMOS" (N-channel) or "MGENPMOS" (P-channel).
 - jfet (J): a junction FET. pins "d","g","s" (drain, gate, source). Set "model" to "JGENNJF" (N-channel) or "JGENPJF" (P-channel). JFETs are depletion-mode (conduct at Vgs=0); bias the gate accordingly. The host supplies the model body.
-- subckt (X): a multi-terminal macromodel device. For an OP-AMP set "type":"subckt" and "model":"OPAMPGEN", and list pins in EXACTLY this order (the order IS the contract): pinId "out" (output), "in+" (non-inverting input), "in-" (inverting input), "vcc" (positive supply), "vee" (negative supply) — i.e. out, in+, in-, V+, V-. Always wire vcc/vee to real supply sources. The host supplies the macromodel body — never write a .subckt yourself.
+- subckt (X): a multi-terminal macromodel device. Set "type":"subckt", a "model" name below, and list pins in EXACTLY the model's port order (the order IS the contract). The host supplies the macromodel body — never write a .subckt yourself. Available generic macromodels:
+  - OP-AMP: "model":"OPAMPGEN", pins in order "out","in+","in-","vcc","vee" (output, non-inverting in, inverting in, +supply, -supply). Always wire vcc/vee to real supply sources. Use for amplifiers, active filters, integrators, comparators.
+  - THYRISTOR/SCR: "model":"SCRGEN", pins in order "anode","gate","cathode". Blocks until a gate pulse triggers it, then latches on until the anode current drops (phase control, crowbar, latching loads).
+  - IGBT: "model":"IGBTGEN", pins in order "c","g","e" (collector, gate, emitter). Gate-voltage controlled (~4.5 V threshold); use for power switching.
 - ground: a single pin "1" connected to the ground net; no value.
 
 Rules:
@@ -483,7 +486,7 @@ Rules:
 - Include exactly one net with "isGround": true and tie the circuit's reference/ground node to it (via a ground component or a source's "-" pin).
 - Pick a source and an analysis that actually excite the circuit (a transient on a purely-DC circuit just shows a flat line — use a SIN/PULSE source or an "op" analysis instead).
 - Keep the circuit minimal and physically sensible; pick reasonable real-world values.
-- Transistors (bjt/mosfet) AND op-amps (the OPAMPGEN subckt above) ARE supported — use the op-amp for amplifiers, active filters, integrators and comparators. Logic ICs, MCUs and other complex digital parts are NOT yet — if the request needs one, return a best-effort approximation using the supported types (e.g. a transistor or op-amp stage) and explain the limitation in "explanation"; never invent unsupported component types or model names.`;
+- Transistors (bjt/mosfet/jfet), op-amps (OPAMPGEN), thyristors/SCR (SCRGEN) and IGBTs (IGBTGEN) ARE supported, plus switches, zeners, transformers, transmission lines and behavioral (B) sources. Logic ICs, MCUs and other complex DIGITAL parts are NOT yet — if the request needs one, return a best-effort approximation using the supported types and explain the limitation in "explanation"; never invent unsupported component types or model names.`;
 
 const GROUNDING_PROMPT = `PART SOURCING — tools available (use them):
 You have two tools backed by a LIVE distributor catalog of real manufacturer parts:

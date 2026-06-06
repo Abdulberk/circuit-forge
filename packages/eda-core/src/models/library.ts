@@ -89,6 +89,62 @@ export const GENERIC_MODELS: Record<string, ModelDef> = {
             '.ends',
         ].join('\n'),
     },
+    // Generic thyristor / SCR — a behavioral latch: a voltage-controlled switch (anode→cathode) gated
+    // by a self-holding control node. The control B-source latches HIGH when the gate-cathode drive
+    // exceeds ~0.8 V, and STAYS high as long as the conduction current keeps the sense drop above the
+    // holding threshold (50 µV across Rsense=1 Ω ⇒ a ~50 µA holding-current floor, covering sensitive-
+    // gate parts) — so it keeps conducting after the gate is removed and commutates OFF on its own when
+    // the anode current collapses (natural turn-off, no spurious re-trigger). Rgk is a high-impedance
+    // (1 MΩ) gate reference: it gives the gate node a DC path (no floating-node singularity) without
+    // forming a divider that would swallow a current-limited gate drive through a series resistor. The
+    // Rc/Cc lag breaks the latch's algebraic feedback loop for clean convergence; the B-source drives
+    // ctrl to 5 V so even sub-microsecond gate pulses charge it past the switch threshold and latch.
+    // Dak gives the ~0.8 V forward on-state offset (and reverse-blocks). Preferred over the two-
+    // transistor regenerative model, which self-latches at leakage (no clean blocking state) and stalls
+    // the timestep on the abrupt latch transition. 'generic' fidelity (no dv/dt or di/dt dynamics).
+    // Ports: anode, gate, cathode.
+    scr: {
+        name: 'SCRGEN',
+        device: 'subckt',
+        tier: 'generic',
+        ports: ['anode', 'gate', 'cathode'],
+        body: [
+            '.subckt SCRGEN anode gate cathode',
+            'Dak   anode ai DSCR',
+            'Sw    ai swk ctrl 0 SWSCR',
+            'Rsense swk cathode 1',
+            'Rgk   gate cathode 1meg',
+            'Bctrl cl 0 V = ( (v(gate,cathode) > 0.8) || ((v(ctrl) > 0.5) && (v(swk,cathode) > 50u)) ) ? 5 : 0',
+            'Rc    cl ctrl 1k',
+            'Cc    ctrl 0 1n',
+            '.model SWSCR SW(VT=0.5 VH=0.2 RON=0.5 ROFF=1meg)',
+            '.model DSCR D(IS=1e-12 N=1)',
+            '.ends',
+        ].join('\n'),
+    },
+    // Generic IGBT — a gate-threshold (~4.5 V) MOSFET input stage with a series offset diode that
+    // approximates the collector-emitter saturation offset. Switches the collector-emitter path on/off
+    // with the gate voltage. KP=5 sizes the saturation-current ceiling for power-switch currents
+    // (Id_max = (KP/2)(Vge-VTO)^2 ⇒ ~15 A at the recommended Vge=10 V drive); at light loads the
+    // on-state Vce is a soft saturation (~0.7–1.2 V), not a fixed Vce(sat). Rge is a high-value (100 MΩ)
+    // gate-emitter reference so an undriven/floating gate net is not a singular node (mirrors SCRGEN's
+    // gate reference); it is electrically negligible for a real driven gate. 'generic' fidelity
+    // (no tail current / dynamic model / reverse-blocking). Ports: c, g, e.
+    igbt: {
+        name: 'IGBTGEN',
+        device: 'subckt',
+        tier: 'generic',
+        ports: ['c', 'g', 'e'],
+        body: [
+            '.subckt IGBTGEN c g e',
+            'M1 cm g e e MGIG',
+            'D1 c cm DIG',
+            'Rge g e 100meg',
+            '.model MGIG NMOS(LEVEL=1 VTO=4.5 KP=5)',
+            '.model DIG D(IS=1e-12 N=1)',
+            '.ends',
+        ].join('\n'),
+    },
 };
 
 export interface ResolveModelInput {
