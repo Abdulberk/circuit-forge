@@ -122,8 +122,16 @@ interface SimulationJobPayload {
 ```
 
 The API populates this in `SimulationService.createFromVersion` / `createQuickSim`
-(job name `'simulation'`). Note: the API currently does **not** populate `modelAssets`
-in either path — it is wired through the worker but unused by the present API code.
+(job name `'simulation'`). Both paths accept an optional `modelAssetIds: string[]` (uploaded
+SPICE_MODEL asset IDs); `resolveModelAssets` scopes them to the request's org, validates each
+filename (sandbox-safe, non-reserved, collision-free, capped at 32), and:
+- populates `payload.modelAssets` with the resolved S3 keys (the worker downloads them into the
+  job dir), and
+- for version-based sims, passes the filenames as `includeFiles` so `generateNetlist` emits a
+  `.include "<file>"` for each. (Quick-sim takes a raw netlist, so the caller must already
+  `.include` the model by filename; only `modelAssets` is wired there.)
+A component's `model` must match a name defined *inside* the uploaded file; the filename only
+drives the `.include`.
 
 ---
 

@@ -1,7 +1,7 @@
 /**
  * Simulation DTOs
  */
-import { IsObject, IsString, IsArray, IsOptional } from 'class-validator';
+import { IsObject, IsString, IsArray, IsOptional, ArrayMaxSize } from 'class-validator';
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 
 export class CreateSimulationDto {
@@ -14,6 +14,17 @@ export class CreateSimulationDto {
     @IsString({ each: true })
     @IsOptional()
     probes?: string[];
+
+    @ApiPropertyOptional({
+        description:
+            'IDs of uploaded SPICE_MODEL assets (this org) to .include in the netlist — for parts using a custom/manufacturer model. The asset filename must match the .include reference; a component’s `model` must match a name defined inside the uploaded file.',
+        example: ['7b2c…'],
+    })
+    @IsArray()
+    @IsString({ each: true })
+    @ArrayMaxSize(32)
+    @IsOptional()
+    modelAssetIds?: string[];
 }
 
 export class QuickSimulationDto {
@@ -25,4 +36,15 @@ export class QuickSimulationDto {
     @IsObject()
     @IsOptional()
     analysisConfig?: Record<string, unknown>;
+
+    @ApiPropertyOptional({
+        description:
+            'IDs of uploaded SPICE_MODEL assets (this org) to make available to the run. The netlist must `.include` each asset by its filename.',
+        example: ['7b2c…'],
+    })
+    @IsArray()
+    @IsString({ each: true })
+    @ArrayMaxSize(32)
+    @IsOptional()
+    modelAssetIds?: string[];
 }
