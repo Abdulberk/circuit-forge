@@ -27,6 +27,7 @@ const PREFIX_TO_TYPE: Record<string, ComponentType> = {
     I: 'current_source',
     E: 'vcvs',
     G: 'vccs',
+    B: 'bsource',
     S: 'switch',
     D: 'diode',
     Q: 'bjt',
@@ -224,6 +225,27 @@ function parseComponentLine(
                     { pinId: '-', netId: on },
                     { pinId: 'c+', netId: cp },
                     { pinId: 'c-', netId: cn },
+                ],
+            };
+            break;
+        }
+
+        case 'bsource': {
+            // Format: B1 n+ n- V=<expr>  (or I=<expr>) — arbitrary behavioral source.
+            const np = parts[1] || '0';
+            const nn = parts[2] || '0';
+            const value = parts.slice(3).join(' ');
+
+            nets.push(np, nn);
+
+            component = {
+                id,
+                type,
+                designator,
+                value,
+                pins: [
+                    { pinId: '+', netId: np },
+                    { pinId: '-', netId: nn },
                 ],
             };
             break;
