@@ -779,4 +779,101 @@ describe('active devices', () => {
             expect(generateNetlist(bCircuit('V='), OP)).not.toMatch(/^B1 /m); // empty RHS skipped
         });
     });
+
+    describe('thyristor / SCR (SCRGEN subckt macromodel)', () => {
+        const OP: TranAnalysis = { type: 'tran', stopTime: '60u' };
+        // Anode fed from a 10V rail through a series R; a brief gate pulse should latch it on. Pins
+        // authored OUT of contract order to prove port-binding is by pinId, not array position.
+        function scrCircuit(model?: string): CircuitJson {
+            return {
+                version: '1.0',
+                components: [
+                    { id: 'v1', type: 'voltage_source', designator: 'V1', value: 'DC 10', pins: [
+                        { pinId: '+', netId: 'aa' }, { pinId: '-', netId: 'gnd' }] },
+                    { id: 'ra', type: 'resistor', designator: 'RA1', value: '100', pins: [
+                        { pinId: '1', netId: 'aa' }, { pinId: '2', netId: 'a' }] },
+                    { id: 'vg', type: 'voltage_source', designator: 'V2', value: 'PULSE(0 3 5u 0.1u 0.1u 2u 500u)', pins: [
+                        { pinId: '+', netId: 'g' }, { pinId: '-', netId: 'gnd' }] },
+                    { id: 'x1', type: 'subckt', designator: 'X1', model, pins: [
+                        { pinId: 'gate', netId: 'g' }, { pinId: 'cathode', netId: 'gnd' }, { pinId: 'anode', netId: 'a' }] },
+                ],
+                nets: [{ id: 'aa', name: 'AA' }, { id: 'a', name: 'A' }, { id: 'g', name: 'G' }, { id: 'gnd', name: 'GND', isGround: true }],
+                models: model === 'SCRGEN' ? [GENERIC_MODELS.scr!] : undefined,
+            };
+        }
+
+        it('emits an X instance in macromodel PORT order + the .subckt body exactly once', () => {
+            const netlist = generateNetlist(scrCircuit('SCRGEN'), OP);
+            expect(netlist).toContain('.subckt SCRGEN anode gate cathode');
+            expect(netlist.match(/\.subckt SCRGEN/g)!.length).toBe(1);
+            const x = netlist.split('\n').find((l) => l.startsWith('X1 '))!;
+            const parts = x.split(/\s+/); // X1 <anode> <gate> <cathode> SCRGEN
+            expect(parts.length).toBe(5);
+            expect(parts[parts.length - 1]).toBe('SCRGEN');
+            expect(parts[3]).toBe('0'); // cathode -> ground regardless of authored order
+        });
+
+        it('binds nodes by PORT order — a reordered pin array nets identically', () => {
+            const shuffled = scrCircuit('SCRGEN');
+            shuffled.components.find((c) => c.id === 'x1')!.pins = [
+                { pinId: 'anode', netId: 'a' }, { pinId: 'gate', netId: 'g' }, { pinId: 'cathode', netId: 'gnd' }];
+            const xCanon = generateNetlist(scrCircuit('SCRGEN'), OP).split('\n').find((l) => l.startsWith('X1 '))!;
+            const xShuf = generateNetlist(shuffled, OP).split('\n').find((l) => l.startsWith('X1 '))!;
+            expect(xShuf).toBe(xCanon);
+        });
+
+        it('library resolves SCRGEN by name and the host injects its body', () => {
+            expect(GENERIC_MODELS.scr!.name).toBe('SCRGEN');
+            expect(GENERIC_MODELS.scr!.device).toBe('subckt');
+            expect(GENERIC_MODELS.scr!.ports).toEqual(['anode', 'gate', 'cathode']);
+            const extra = resolveGenericModels({
+                components: [{ id: 'x1', type: 'subckt', designator: 'X1', model: 'SCRGEN', pins: [] }],
+                models: [],
+            });
+            expect(extra.map((m) => m.name)).toContain('SCRGEN');
+        });
+    });
+
+    describe('IGBT (IGBTGEN subckt macromodel)', () => {
+        const OP: TranAnalysis = { type: 'tran', stopTime: '30u' };
+        function igbtCircuit(model?: string): CircuitJson {
+            return {
+                version: '1.0',
+                components: [
+                    { id: 'v1', type: 'voltage_source', designator: 'V1', value: 'DC 10', pins: [
+                        { pinId: '+', netId: 'cc' }, { pinId: '-', netId: 'gnd' }] },
+                    { id: 'rc', type: 'resistor', designator: 'RC1', value: '100', pins: [
+                        { pinId: '1', netId: 'cc' }, { pinId: '2', netId: 'c' }] },
+                    { id: 'vg', type: 'voltage_source', designator: 'V2', value: 'PULSE(0 10 5u 0.1u 0.1u 7u 500u)', pins: [
+                        { pinId: '+', netId: 'g' }, { pinId: '-', netId: 'gnd' }] },
+                    { id: 'x1', type: 'subckt', designator: 'X1', model, pins: [
+                        { pinId: 'c', netId: 'c' }, { pinId: 'g', netId: 'g' }, { pinId: 'e', netId: 'gnd' }] },
+                ],
+                nets: [{ id: 'cc', name: 'CC' }, { id: 'c', name: 'C' }, { id: 'g', name: 'G' }, { id: 'gnd', name: 'GND', isGround: true }],
+                models: model === 'IGBTGEN' ? [GENERIC_MODELS.igbt!] : undefined,
+            };
+        }
+
+        it('emits an X instance in c/g/e port order + the .subckt body once', () => {
+            const netlist = generateNetlist(igbtCircuit('IGBTGEN'), OP);
+            expect(netlist).toContain('.subckt IGBTGEN c g e');
+            expect(netlist.match(/\.subckt IGBTGEN/g)!.length).toBe(1);
+            const x = netlist.split('\n').find((l) => l.startsWith('X1 '))!;
+            const parts = x.split(/\s+/); // X1 <c> <g> <e> IGBTGEN
+            expect(parts.length).toBe(5);
+            expect(parts[parts.length - 1]).toBe('IGBTGEN');
+            expect(parts[3]).toBe('0'); // emitter -> ground
+        });
+
+        it('library resolves IGBTGEN by name and the host injects its body', () => {
+            expect(GENERIC_MODELS.igbt!.name).toBe('IGBTGEN');
+            expect(GENERIC_MODELS.igbt!.device).toBe('subckt');
+            expect(GENERIC_MODELS.igbt!.ports).toEqual(['c', 'g', 'e']);
+            const extra = resolveGenericModels({
+                components: [{ id: 'x1', type: 'subckt', designator: 'X1', model: 'IGBTGEN', pins: [] }],
+                models: [],
+            });
+            expect(extra.map((m) => m.name)).toContain('IGBTGEN');
+        });
+    });
 });

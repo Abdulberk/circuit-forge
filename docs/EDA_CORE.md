@@ -202,7 +202,7 @@ canonical pin names from `COMPONENT_PINS`, and the line format from `componentTo
 | `switch` | `S` | `['+','-','c+','c-']` | `S1 <+> <-> <c+> <c-> <model>` | voltage-controlled switch; requires a model; generic `SWGEN` (RON/ROFF + hysteresis) |
 | `transformer` | *(composite)* | `['p+','p-','s+','s-']` | expands to `L…P`/`L…S` + `K…` (+ series DCR; bleeders for isolated windings) | two magnetically-coupled windings; params in `properties` (Lp/Ls/coupling). See §2.2 |
 | `tline` | `T` | `['a+','a-','b+','b-']` | `T1 <a+> <a-> <b+> <b-> Z0=.. TD=..` (or `F=.. NL=..`) | lossless line; params in `properties` (z0 + td, or the frequency form) |
-| `subckt` | `X` | `[]` (macromodel ports) | `X1 <ports…> <model>` | multi-terminal `.subckt` macromodel (e.g. op-amp `OPAMPGEN`); pins bound by the model's declared `ports`; requires a model |
+| `subckt` | `X` | `[]` (macromodel ports) | `X1 <ports…> <model>` | multi-terminal `.subckt` macromodel; pins bound by the model's declared `ports`; requires a model. Generic bodies: op-amp `OPAMPGEN` (out,in+,in-,vcc,vee), thyristor/SCR `SCRGEN` (anode,gate,cathode), IGBT `IGBTGEN` (c,g,e) |
 | `ground` | `''` (none) | `['1']` | *(no line emitted)* | `componentToSpice` returns `null`; ground is realized as node `'0'` |
 | `generic` | `''` (none) | `[]` (from the catalog part) | *(no line emitted)* | **Catalog-only** placeholder for a real part with no simulatable model yet (IC/transistor/connector). Carries `mpn`/`manufacturer`/`sourcing`; skipped by the generator. Test with `isSimulatable()`. |
 
@@ -288,8 +288,10 @@ by **name** in its element line; the body is emitted once, before the components
   ```
 - **Curated generic library** (`models/library.ts`, `GENERIC_MODELS`) — license-clean, family-generic,
   honest `tier:'generic'` bodies the AI/mapper references by name: BJT `QGENNPN`/`QGENPNP`, MOSFET
-  `MGENNMOS`/`MGENPMOS`, JFET `JGENNJF`/`JGENPJF`, op-amp `OPAMPGEN` (a behavioral `.subckt`), and
-  switch `SWGEN`. `resolveGenericModels(circuit)` injects the bodies for any referenced generic name
+  `MGENNMOS`/`MGENPMOS`, JFET `JGENNJF`/`JGENPJF`, op-amp `OPAMPGEN` (a behavioral `.subckt`),
+  switch `SWGEN`, thyristor/SCR `SCRGEN` (a behavioral switch+latch: blocks, latches on a gate pulse,
+  holds, then commutates off when the anode current collapses) and IGBT `IGBTGEN` (gate-threshold
+  MOSFET + offset diode). `resolveGenericModels(circuit)` injects the bodies for any referenced generic name
   not already in `circuit.models`; `circuit.models` bodies are emitted deduped by name and a *conflicting*
   body sharing a name is a hard error.
 - **Parametric models** — a `zener` has no stored model: `buildZenerModel(value)` generates a breakdown
