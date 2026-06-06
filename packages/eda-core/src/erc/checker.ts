@@ -19,6 +19,7 @@ const EXPECTED_PIN_COUNTS: Record<string, number> = {
     current_source: 2,
     vcvs: 4,
     vccs: 4,
+    switch: 4,
     diode: 2,
     zener: 2,
     bjt: 3,
@@ -225,7 +226,7 @@ function checkComponentValues(circuit: CircuitJson): ErcIssue[] {
     const modelWithDefault = ['diode'];
     // Active / model-based devices have NO safe default — a missing model is an error (they'd be
     // dropped from the netlist). A subckt instance is meaningless without the macromodel name.
-    const modelRequired = ['bjt', 'mosfet', 'jfet', 'subckt'];
+    const modelRequired = ['bjt', 'mosfet', 'jfet', 'subckt', 'switch'];
 
     for (const component of circuit.components) {
         // Check for missing values

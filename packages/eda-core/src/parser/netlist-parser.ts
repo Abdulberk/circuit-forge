@@ -27,6 +27,7 @@ const PREFIX_TO_TYPE: Record<string, ComponentType> = {
     I: 'current_source',
     E: 'vcvs',
     G: 'vccs',
+    S: 'switch',
     D: 'diode',
     Q: 'bjt',
     M: 'mosfet',
@@ -197,6 +198,31 @@ function parseComponentLine(
                 pins: [
                     { pinId: '+', netId: nodePos },
                     { pinId: '-', netId: nodeNeg },
+                ],
+            };
+            break;
+        }
+
+        case 'switch': {
+            // Format: S1 n+ n- nc+ nc- model   (voltage-controlled switch)
+            const op = parts[1] || '0';
+            const on = parts[2] || '0';
+            const cp = parts[3] || '0';
+            const cn = parts[4] || '0';
+            const model = parts[5];
+
+            nets.push(op, on, cp, cn);
+
+            component = {
+                id,
+                type,
+                designator,
+                model,
+                pins: [
+                    { pinId: '+', netId: op },
+                    { pinId: '-', netId: on },
+                    { pinId: 'c+', netId: cp },
+                    { pinId: 'c-', netId: cn },
                 ],
             };
             break;

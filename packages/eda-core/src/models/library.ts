@@ -50,6 +50,14 @@ export const GENERIC_MODELS: Record<string, ModelDef> = {
         // Generic P-channel JFET (e.g. 2N5460 class): positive pinch-off VTO, lower BETA.
         body: '.model JGENPJF PJF(VTO=2.0 BETA=0.5m LAMBDA=2m RD=10 RS=10 CGS=4p CGD=4p)',
     },
+    vswitch: {
+        name: 'SWGEN',
+        device: 'switch',
+        tier: 'generic',
+        // Generic voltage-controlled switch: closes (RON=1Ω) when the control voltage rises above
+        // VT+VH=3V, opens (ROFF=1MΩ) below VT-VH=2V. The hysteresis prevents chatter near threshold.
+        body: '.model SWGEN SW(VT=2.5 VH=0.5 RON=1 ROFF=1Meg)',
+    },
     // Generic behavioral op-amp macromodel (a `.subckt`, not a `.model`). Authored, license-clean.
     // Ports (MUST be wired in this order): out, in+ , in-, V+ , V- .
     //   Gm   : transconductance input stage (1 mA/V) — current drive bounds the clamp current,
@@ -101,6 +109,7 @@ export function resolveModelForPart(input: ResolveModelInput): ModelDef | null {
     if (input.type === 'bjt') return GENERIC_MODELS[sub === 'pnp' ? 'pnp' : 'npn'] ?? null;
     if (input.type === 'mosfet') return GENERIC_MODELS[sub === 'pmos' ? 'pmos' : 'nmos'] ?? null;
     if (input.type === 'jfet') return GENERIC_MODELS[sub === 'pjf' || sub === 'pjfet' ? 'pjf' : 'njf'] ?? null;
+    if (input.type === 'switch') return GENERIC_MODELS.vswitch ?? null;
     return null;
 }
 
