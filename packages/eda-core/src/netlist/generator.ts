@@ -178,10 +178,23 @@ export function generateNetlist(
     lines.push(analysisToSpice(effectiveAnalysis));
     lines.push('');
 
-    // Control block for output. Caller-supplied current probes name a device by its designator, so remap
-    // i(<designator>) to the emitted instance name (mirrors the .dc remap above); v(...) is left as-is.
+    // Control block for output. Caller-supplied probes reference a device by its designator (i(<dev>)) or
+    // a node by its net id/name (v(<net>)); remap both to the names actually emitted (the device may have
+    // been prefixed, the node sanitized) so they resolve in ngspice instead of yielding "no such vector".
+    // Default probes (already sanitized) and any already-correct reference pass through unchanged.
+    const netRefToNode = new Map<string, string>();
+    for (const net of circuit.nets) {
+        const node = nodeMap.get(net.id);
+        if (node && net.name) netRefToNode.set(net.name.toLowerCase(), node); // names first…
+    }
+    for (const net of circuit.nets) {
+        const node = nodeMap.get(net.id);
+        if (node) netRefToNode.set(net.id.toLowerCase(), node); // …ids win on collision (ids are unique/authoritative)
+    }
     const rawProbes = options.probes || generateDefaultProbes(circuit, nodeMap);
-    const probes = rawProbes.map((p) => rewriteProbeDeviceRefs(p, designatorToInstance));
+    const probes = rawProbes
+        .map((p) => rewriteProbeNodeRefs(rewriteProbeDeviceRefs(p, designatorToInstance), netRefToNode))
+        .filter((p) => p.trim().length > 0); // a probe that reduced to nothing (e.g. v(gnd)) is dropped
     lines.push('* Control block');
     lines.push('.control');
     lines.push('  set filetype=ascii');
@@ -240,12 +253,35 @@ function spiceInstanceName(designator: string, prefix: string): string {
  * Rewrite device-by-name current references — i(<designator>) — in a probe so they point at the SPICE
  * instance name actually emitted (which spiceInstanceName may have prefixed/sanitized, e.g. "FB1"→"LFB1",
  * "Z1"→"DZ1"). `map` is keyed by the lower-cased schematic designator. v(...) node references are left
- * untouched (nodes go through a separate sanitization), as is any i(...) arg that isn't a known device.
+ * untouched (handled by rewriteProbeNodeRefs), as is any i(...) arg that isn't a known device.
  */
 function rewriteProbeDeviceRefs(probe: string, map: Map<string, string>): string {
     return probe.replace(/\bi\s*\(\s*([^)]+?)\s*\)/gi, (whole, name: string) => {
         const mapped = map.get(name.trim().toLowerCase());
         return mapped ? `i(${mapped})` : whole;
+    });
+}
+
+/**
+ * Rewrite node references — v(<net>) and the differential v(<net>,<net>) — in a probe so they point at
+ * the sanitized SPICE node name actually emitted (e.g. net "rail"→"nrail", reserved "out"→"x_out"). A
+ * caller naturally writes v(rail)/v(out) using the circuit's net id (or name), but ngspice only knows the
+ * sanitized node, so the raw reference resolves to "no such vector". `map` is keyed by the lower-cased net
+ * id AND net name (id wins on collision). Each comma-separated arg is mapped independently; an arg that is
+ * already a sanitized node (or otherwise unknown) is left as-is, so default/correct probes are untouched.
+ */
+function rewriteProbeNodeRefs(probe: string, map: Map<string, string>): string {
+    return probe.replace(/\bv\s*\(\s*([^)]+?)\s*\)/gi, (whole, inner: string) => {
+        const parts = inner.split(',').map((p) => p.trim());
+        const mapped = parts.map((p) => map.get(p.toLowerCase()) ?? p);
+        // ngspice has no voltage vector for ground (node 0): a v(node,gnd) differential is just the
+        // single-ended v(node), and a pure-ground probe v(gnd)/v(0) is meaningless — emitting either
+        // v(0) or v(node,0) errors with "no such vector 0" and aborts the WHOLE wrdata, killing every
+        // other probe on the line. So drop ground args; a probe that reduces to nothing is dropped.
+        const nonGround = mapped.filter((a) => a !== '0');
+        const unchanged = nonGround.length === parts.length && nonGround.every((a, i) => a === parts[i]);
+        if (unchanged) return whole; // no remap and no ground arg — preserve the original text verbatim
+        return nonGround.length === 0 ? '' : `v(${nonGround.join(',')})`;
     });
 }
 

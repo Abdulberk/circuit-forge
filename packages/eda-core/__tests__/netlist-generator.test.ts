@@ -133,7 +133,9 @@ describe('NetlistGenerator', () => {
 
             const netlist = generateNetlist(circuit, analysis, options);
 
-            expect(netlist).toContain('v(vcc)');
+            // "vcc" is a reserved word, so its node is sanitized to "x_vcc"; the caller's v(vcc) probe is
+            // remapped to v(x_vcc) (else it would resolve to "no such vector" in ngspice).
+            expect(netlist).toContain('v(x_vcc)');
             expect(netlist).toContain('i(V1)');
         });
 
@@ -338,7 +340,7 @@ describe('NetlistGenerator', () => {
             expect(netlist).toMatch(/wrdata .*i\(LFB1\)/); // probe remapped to the emitted name
             expect(netlist).not.toMatch(/i\(FB1\)/); // the un-prefixed reference must not survive
             expect(netlist).toMatch(/i\(V1\)/); // conventional designator left as-is
-            expect(netlist).toMatch(/v\(a\)/); // node probe untouched
+            expect(netlist).toMatch(/v\(na\)/); // node probe v(a) remapped to its sanitized node "na"
         });
 
         it('remaps a .dc sweep source to the emitted (prefixed) device name', () => {
@@ -387,6 +389,74 @@ describe('NetlistGenerator', () => {
                 nets: [createNet('in', 'in'), createNet('mid', 'mid'), createNet('0', '0', true)],
             };
             expect(() => generateNetlist(circuit, { type: 'tran', stopTime: '1m' })).toThrow(/[Dd]uplicate device name/);
+        });
+
+        it('remaps caller-supplied v(<net>) probes to the sanitized node (id, name, reserved word, differential)', () => {
+            // A caller writes v(rail)/v(out) using the circuit's net id, but ngspice only knows the
+            // sanitized node ("rail"->"nrail", reserved "out"->"x_out"). The probe must be remapped, or it
+            // resolves to "no such vector". Differential v(a,b) and a probe already using the node are also
+            // handled. (i(...) and unknown args are left untouched.)
+            const circuit: CircuitJson = {
+                version: '1.0',
+                components: [
+                    createComponent('v1', 'voltage_source', 'V1', 'DC 5', [
+                        { pinId: '+', netId: 'rail' },
+                        { pinId: '-', netId: '0' },
+                    ]),
+                    createComponent('r1', 'resistor', 'R1', '1k', [
+                        { pinId: '1', netId: 'rail' },
+                        { pinId: '2', netId: 'out' },
+                    ]),
+                    createComponent('r2', 'resistor', 'R2', '1k', [
+                        { pinId: '1', netId: 'out' },
+                        { pinId: '2', netId: '0' },
+                    ]),
+                ],
+                nets: [createNet('rail', 'rail'), createNet('out', 'out'), createNet('0', '0', true)],
+            };
+            const netlist = generateNetlist(circuit, { type: 'tran', stopTime: '1m' }, {
+                probes: ['v(rail)', 'v(out)', 'v(rail,out)', 'v(nrail)', 'i(V1)'],
+            });
+            const wr = netlist.split('\n').find((l) => l.includes('wrdata'))!;
+            expect(wr).toContain('v(nrail)'); // net id "rail" -> node "nrail"
+            expect(wr).toContain('v(x_out)'); // reserved-word net "out" -> node "x_out"
+            expect(wr).toContain('v(nrail,x_out)'); // differential, both args remapped
+            expect(wr).toContain('i(V1)'); // current probe untouched here
+            expect(wr).not.toMatch(/v\(rail\)/); // raw net id must not survive
+            expect(wr).not.toMatch(/v\(out\)/);
+        });
+
+        it('drops ground from probes (ngspice has no v(0)); v(node,gnd) reduces to v(node)', () => {
+            // Ground is the implicit reference: v(0)/v(node,0) errors with "no such vector 0" and aborts the
+            // ENTIRE wrdata. So a ground arg is dropped — v(out,gnd)->v(out) — and a pure-ground probe is
+            // omitted, while every other probe on the line survives.
+            const circuit: CircuitJson = {
+                version: '1.0',
+                components: [
+                    createComponent('v1', 'voltage_source', 'V1', 'DC 8', [
+                        { pinId: '+', netId: 'out' },
+                        { pinId: '-', netId: 'gnd' },
+                    ]),
+                    createComponent('r1', 'resistor', 'R1', '1k', [
+                        { pinId: '1', netId: 'out' },
+                        { pinId: '2', netId: 'mid' },
+                    ]),
+                    createComponent('r2', 'resistor', 'R2', '1k', [
+                        { pinId: '1', netId: 'mid' },
+                        { pinId: '2', netId: 'gnd' },
+                    ]),
+                ],
+                nets: [createNet('out', 'out'), createNet('mid', 'mid'), createNet('gnd', 'gnd', true)],
+            };
+            const netlist = generateNetlist(circuit, { type: 'tran', stopTime: '1m' }, {
+                probes: ['v(mid)', 'v(out,gnd)', 'v(gnd)'],
+            });
+            const wr = netlist.split('\n').find((l) => l.includes('wrdata'))!;
+            expect(wr).toContain('v(nmid)'); // ordinary probe kept
+            expect(wr).toContain('v(x_out)'); // v(out,gnd) reduced to single-ended v(out)->v(x_out)
+            expect(wr).not.toMatch(/,\s*0\)/); // no v(...,0) differential-against-ground
+            expect(wr).not.toMatch(/v\(0\)/); // no scalar v(0)
+            expect(wr).not.toMatch(/v\(gnd\)/); // pure-ground probe dropped entirely
         });
 
         it('strips token-breaking characters from a designator (no phantom node)', () => {
