@@ -11,12 +11,12 @@ A backend system for AI-assisted circuit design and **SPICE-based simulation**. 
 - **Multi-tenant REST API** (NestJS) — organizations, projects, versioned circuits, templates, model assets, and simulations, secured with JWT + RBAC.
 - **Async simulation pipeline** — API enqueues jobs on a BullMQ/Redis queue; a dedicated worker runs **ngspice** in an isolated, sandboxed per-job directory and stores results in Postgres or S3/MinIO.
 - **EDA core library** (`@circuit-forge/eda-core`):
-  - Circuit-JSON → SPICE **netlist generation** (with control block, probes, default diode model).
+  - Circuit-JSON → SPICE **netlist generation** for a broad device set — R/L/C, transformers & lossless transmission lines, independent + controlled (E/G) + arbitrary behavioral (B) sources, diodes/Zener, BJT/MOSFET/JFET, voltage-controlled switches, and op-amp/IC `.subckt` macromodels — backed by a curated generic **model library**, plus control block and probes.
   - **SPICE security/sanitization** — reserved-word & node-name sanitization, shell-metacharacter rejection, `.include` path whitelisting.
   - **ERC** (Electrical Rule Check) with coded findings.
   - **Result parsing** — ngspice CSV / raw ASCII → typed series.
   - **Zod schemas** for circuit and analysis config (transient / AC / DC / operating point).
-- **LLM core** (`@circuitforge/llm-core`) — integration stub for AI circuit generation.
+- **LLM core** (`@circuitforge/llm-core`) — AI circuit generation via Claude using a native **tool-use loop grounded in the live parts catalog** (the model searches/inspects real parts before specifying components, so outputs carry real MPNs + sourcing).
 - **Auth & security** — Argon2 password hashing, JWT access + refresh tokens, per-org roles (OWNER/ADMIN/MEMBER), `class-validator` + Zod input validation, rate limiting, simulation timeout & output caps.
 - **Local infra via Docker Compose** — Postgres, Redis, MinIO (+ auto bucket creation).
 - **Demo seed** — ready-to-use user, org, 5 circuit templates, and a sample project.
@@ -93,7 +93,7 @@ circuit-forge/
 │  │     ├─ types/                 # circuit / analysis / erc / simulation
 │  │     ├─ utils/                 # unit-parser.ts
 │  │     └─ index.ts               # public API surface
-│  └─ llm-core/                    # LLM integration (stub)
+│  └─ llm-core/                    # AI generation (Claude tool-use + catalog grounding)
 │     └─ src/index.ts
 ├─ infra/
 │  └─ docker/                      # api.Dockerfile + worker-sim.Dockerfile

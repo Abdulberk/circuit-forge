@@ -6,8 +6,8 @@ circuit-forge monorepo:
 - **`@circuit-forge/eda-core`** — the canonical circuit model, SPICE netlist generation,
   netlist sanitization/security, simulation-output parsing, netlist parsing, Electrical
   Rule Check (ERC), Zod validation schemas, and unit utilities.
-- **`@circuitforge/llm-core`** — currently a **stub** for future LLM-driven circuit
-  generation.
+- **`@circuitforge/llm-core`** — a working AI circuit-generation package (Claude via a native
+  tool-use loop grounded in the live parts catalog). See §"llm-core" below.
 
 Every statement below is derived strictly from the source. Primary files:
 
@@ -192,6 +192,17 @@ canonical pin names from `COMPONENT_PINS`, and the line format from `componentTo
 | `voltage_source` | `V` | `['+','-']` | `V1 <n+> <n-> <value\|'DC 0'>` | value defaults to `DC 0` |
 | `current_source` | `I` | `['+','-']` | `I1 <n+> <n-> <value\|'DC 0'>` | value defaults to `DC 0` |
 | `diode` | `D` | `['anode','cathode']` | `D1 <anode> <cathode> <model\|'DDEFAULT'>` | uses `DDEFAULT` model if `model` is absent |
+| `zener` | `D` | `['anode','cathode']` | `D1 <anode> <cathode> <DZ…>` | a diode with a breakdown `.model` **generated from `value`** (the Zener voltage); bound by pinId. See §2.2 |
+| `bjt` | `Q` | `['c','b','e']` | `Q1 <c> <b> <e> <model>` | bound by pinId (canonical c,b,e); **requires a model** (ERC `MODEL_REQUIRED`); generic `QGENNPN`/`QGENPNP` |
+| `mosfet` | `M` | `['d','g','s','b']` | `M1 <d> <g> <s> <b> <model>` | canonical d,g,s,b; requires a model; generic `MGENNMOS`/`MGENPMOS` |
+| `jfet` | `J` | `['d','g','s']` | `J1 <d> <g> <s> <model>` | canonical d,g,s; requires a model; generic `JGENNJF`/`JGENPJF` |
+| `vcvs` | `E` | `['+','-','c+','c-']` | `E1 <+> <-> <c+> <c-> <gain>` | linear voltage-controlled **voltage** source; `value` = gain, normalized to a bare number |
+| `vccs` | `G` | `['+','-','c+','c-']` | `G1 <+> <-> <c+> <c-> <gm>` | voltage-controlled **current** source; `value` = transconductance |
+| `bsource` | `B` | `['+','-']` | `B1 <+> <-> V=<expr>` (or `I=`) | arbitrary behavioral source; `v(netId)` refs in the expression are rewritten to sanitized node names |
+| `switch` | `S` | `['+','-','c+','c-']` | `S1 <+> <-> <c+> <c-> <model>` | voltage-controlled switch; requires a model; generic `SWGEN` (RON/ROFF + hysteresis) |
+| `transformer` | *(composite)* | `['p+','p-','s+','s-']` | expands to `L…P`/`L…S` + `K…` (+ series DCR; bleeders for isolated windings) | two magnetically-coupled windings; params in `properties` (Lp/Ls/coupling). See §2.2 |
+| `tline` | `T` | `['a+','a-','b+','b-']` | `T1 <a+> <a-> <b+> <b-> Z0=.. TD=..` (or `F=.. NL=..`) | lossless line; params in `properties` (z0 + td, or the frequency form) |
+| `subckt` | `X` | `[]` (macromodel ports) | `X1 <ports…> <model>` | multi-terminal `.subckt` macromodel (e.g. op-amp `OPAMPGEN`); pins bound by the model's declared `ports`; requires a model |
 | `ground` | `''` (none) | `['1']` | *(no line emitted)* | `componentToSpice` returns `null`; ground is realized as node `'0'` |
 | `generic` | `''` (none) | `[]` (from the catalog part) | *(no line emitted)* | **Catalog-only** placeholder for a real part with no simulatable model yet (IC/transistor/connector). Carries `mpn`/`manufacturer`/`sourcing`; skipped by the generator. Test with `isSimulatable()`. |
 
@@ -199,8 +210,13 @@ Behavioral details from `componentToSpice()`:
 
 - `ground` and `generic` components produce **no** netlist line (`return null`); ground marks the
   `'0'` reference, `generic` is a catalog-only part excluded from simulation.
-- Nodes are emitted in the **order of the `pins` array** — `pins.map(pin => nodeMap.get(pin.netId))`.
-  The generator does not reorder by `pinId`, so pin order in the array is significant.
+- Node ordering depends on the device. 2-terminal passives, sources, `diode`/`zener` and `bsource`
+  emit nodes in the **authored `pins` order**. The fixed-arity model-based devices (`bjt`/`mosfet`/
+  `jfet`/`switch`), the controlled sources (`vcvs`/`vccs`), the `transformer` and the `tline` are
+  bound **by `pinId`** in a canonical order (`orderedNodes` over `COMPONENT_PINS`); a `subckt` is
+  bound by its model's declared `ports`. For those, authored array order is irrelevant — a missing
+  required pin throws. (Composites like `transformer` emit several lines; `componentToSpice` may return
+  a `string[]`, and the generator rejects a duplicate emitted device name.)
 - A non-emittable `type` (no `SPICE_PREFIXES` entry, or `ground`/`generic`) is **skipped**
   (`return null`) — the generator no longer throws on it, so a circuit can carry real parts that
   aren't simulatable. Use `isSimulatable(component)` to discriminate.
@@ -261,14 +277,25 @@ For each net:
 `getNodeNames(circuit)` is a public helper returning `Array.from(buildNodeMap(...).values())`
 — all unique SPICE node names (including `'0'` if a ground net exists).
 
-### 2.2 Default diode model
+### 2.2 Device models
 
-```spice
-.model DDEFAULT D(IS=1e-14 N=1.05 RS=10 BV=100 IBV=1e-10)
-```
+A model-based device (`diode`/`bjt`/`mosfet`/`jfet`/`switch`/`subckt`) references a `.model`/`.subckt`
+by **name** in its element line; the body is emitted once, before the components.
 
-Emitted once if at least one diode lacks an explicit `model`. Diodes without a model reference
-`DDEFAULT` in their element line.
+- **Default diode model** — emitted once if any `diode` lacks an explicit `model`:
+  ```spice
+  .model DDEFAULT D(IS=1e-14 N=1.05 RS=10 BV=100 IBV=1e-10)
+  ```
+- **Curated generic library** (`models/library.ts`, `GENERIC_MODELS`) — license-clean, family-generic,
+  honest `tier:'generic'` bodies the AI/mapper references by name: BJT `QGENNPN`/`QGENPNP`, MOSFET
+  `MGENNMOS`/`MGENPMOS`, JFET `JGENNJF`/`JGENPJF`, op-amp `OPAMPGEN` (a behavioral `.subckt`), and
+  switch `SWGEN`. `resolveGenericModels(circuit)` injects the bodies for any referenced generic name
+  not already in `circuit.models`; `circuit.models` bodies are emitted deduped by name and a *conflicting*
+  body sharing a name is a hard error.
+- **Parametric models** — a `zener` has no stored model: `buildZenerModel(value)` generates a breakdown
+  `.model DZ… D(BV=…)` from its voltage. A `transformer` expands into two coupled inductors + a `K` line.
+- **User-supplied models** — `.include`d via `NetlistOptions.includeFiles`; an active device may reference
+  a name defined only in an included library (ERC warns `UNRESOLVED_MODEL`, it isn't a hard error).
 
 ### 2.3 The `.control` block
 
@@ -464,13 +491,18 @@ Behavior:
 
 - **Title**: the first line is used as the title if it does not start with `.` or `*`.
 - **Designator prefix → type** mapping (`PREFIX_TO_TYPE`, first character upper-cased):
-  `R`→resistor, `C`→capacitor, `L`→inductor, `V`→voltage_source, `I`→current_source,
-  `D`→diode. Unknown prefixes are skipped and recorded as a warning
-  (`Line N: Could not parse: ...`).
-- Component lines need ≥3 whitespace tokens. Per type:
+  `R`→resistor, `C`→capacitor, `L`→inductor, `V`→voltage_source, `I`→current_source, `D`→diode,
+  `Q`→bjt, `M`→mosfet, `J`→jfet, `E`→vcvs, `G`→vccs, `B`→bsource, `S`→switch, `T`→tline, `X`→subckt.
+  Unknown prefixes — and the `K` mutual-coupling statement (export-only; not reconstructed) — are
+  skipped and recorded as a warning (`Line N: ...`).
+- Component lines need ≥3 whitespace tokens. Per type (selected):
   - R/C/L → pins `1`/`2`, `value = parts.slice(3).join(' ') || '0'`.
   - V/I → pins `+`/`-`, `value = parts.slice(3).join(' ') || 'DC 0'`.
-  - D → pins `anode`/`cathode`, `model = parts[3]` (may be undefined).
+  - D → pins `anode`/`cathode`, `model = parts[3]` (a Zener round-trips as a plain `diode`).
+  - Q/M/J → pins c,b,e / d,g,s,b / d,g,s; `model` = last token.
+  - E/G/S → pins `+`,`-`,`c+`,`c-` (+ gain or model); B → pins `+`,`-`, `value` = the `V=`/`I=` expression.
+  - T → pins a+,a-,b+,b- with `Z0`/`TD`/`F`/`NL` parsed into `properties`; X → variable (index-based) pins + model.
+    A truncated or keyword-bearing line is **rejected with a warning** rather than producing phantom nodes.
 - Generated component `id` is `<prefix-lower><counter>` (e.g. `r1`, `r2`).
 - **Nets** are collected from referenced node tokens; a net is `isGround` when its name is `'0'`
   or (case-insensitive) `gnd`.
