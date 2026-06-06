@@ -5,7 +5,7 @@
 import type { CircuitJson, Component } from '../types/circuit';
 import { ErcCode, ErcSeverity, ErcResult, ErcIssue } from '../types/erc';
 import { ERC_DESCRIPTIONS, ERC_SEVERITIES } from './codes';
-import { buildZenerModel, normalizeControlledSourceGain } from '../models/library';
+import { buildZenerModel, normalizeControlledSourceGain, parseTransformerParams } from '../models/library';
 
 /**
  * Expected pin counts for each component type
@@ -14,6 +14,7 @@ const EXPECTED_PIN_COUNTS: Record<string, number> = {
     resistor: 2,
     capacitor: 2,
     inductor: 2,
+    transformer: 4, // p+,p-,s+,s-
     voltage_source: 2,
     current_source: 2,
     vcvs: 4,
@@ -264,6 +265,22 @@ function checkComponentValues(circuit: CircuitJson): ErcIssue[] {
                     ErcCode.INVALID_VALUE,
                     [component.id],
                     `${component.designator || component.id}: "${component.value}" is not a valid gain (must be a single number)`,
+                ),
+            );
+        }
+
+        // A transformer needs valid (positive) primary + secondary winding inductances (in `properties`);
+        // without them no coupled-inductor pair can be emitted, so it would silently vanish. A negative /
+        // zero / malformed value is present-but-INVALID; entirely absent params are MISSING.
+        if (component.type === 'transformer' && !parseTransformerParams(component.properties)) {
+            const props = component.properties;
+            // Both keys present but unparseable -> present-but-INVALID; a missing key -> MISSING.
+            const bothPresent = !!props && 'primaryInductance' in props && 'secondaryInductance' in props;
+            issues.push(
+                createIssue(
+                    bothPresent ? ErcCode.INVALID_VALUE : ErcCode.MISSING_VALUE,
+                    [component.id],
+                    `${component.designator || component.id} (transformer) needs positive primaryInductance + secondaryInductance (+ optional coupling 0..1)`,
                 ),
             );
         }

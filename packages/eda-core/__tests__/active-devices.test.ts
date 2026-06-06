@@ -6,7 +6,7 @@ import { generateNetlist } from '../src/netlist/generator';
 import { parseNetlist } from '../src/parser/netlist-parser';
 import { runErc } from '../src/erc/checker';
 import { ErcCode } from '../src/types/erc';
-import { GENERIC_MODELS, resolveModelForPart, resolveGenericModels, buildZenerModel, normalizeControlledSourceGain } from '../src/models/library';
+import { GENERIC_MODELS, resolveModelForPart, resolveGenericModels, buildZenerModel, normalizeControlledSourceGain, parseTransformerParams } from '../src/models/library';
 import { isSimulatable } from '../src/types/circuit';
 import type { CircuitJson, ModelDef } from '../src/types/circuit';
 import type { TranAnalysis } from '../src/types/analysis';
@@ -310,6 +310,110 @@ describe('active devices', () => {
         const issues = runErc(c).issues;
         expect(issues.some((i) => i.code === ErcCode.MODEL_REQUIRED && i.relatedIds.includes('j1'))).toBe(true);
         expect(issues.some((i) => i.code === ErcCode.PIN_COUNT_MISMATCH && i.relatedIds.includes('j1'))).toBe(true);
+    });
+
+    describe('transformer (coupled inductors)', () => {
+        function xfmrCircuit(props?: Record<string, unknown>): CircuitJson {
+            return {
+                version: '1.0',
+                components: [
+                    { id: 'v1', type: 'voltage_source', designator: 'V1', value: 'SIN(0 1 50k)', pins: [
+                        { pinId: '+', netId: 'prim' }, { pinId: '-', netId: 'gnd' }] },
+                    // pins authored shuffled to prove canonical p+,p-,s+,s- binding
+                    { id: 't1', type: 'transformer', designator: 'T1', properties: props, pins: [
+                        { pinId: 's+', netId: 'sec' }, { pinId: 'p-', netId: 'gnd' },
+                        { pinId: 's-', netId: 'gnd' }, { pinId: 'p+', netId: 'prim' }] },
+                    { id: 'rl', type: 'resistor', designator: 'RL1', value: '10k', pins: [
+                        { pinId: '1', netId: 'sec' }, { pinId: '2', netId: 'gnd' }] },
+                ],
+                nets: [{ id: 'prim', name: 'PRIM' }, { id: 'sec', name: 'SEC' }, { id: 'gnd', name: 'GND', isGround: true }],
+            };
+        }
+
+        it('parses winding params: requires both inductances, defaults coupling, rejects bad k', () => {
+            expect(parseTransformerParams({ primaryInductance: '100m', secondaryInductance: '25m' })).toEqual({
+                lp: '100m', ls: '25m', k: '0.999',
+            });
+            expect(parseTransformerParams({ primaryInductance: '10m', secondaryInductance: '10m', coupling: '0.95' })!.k).toBe('0.95');
+            expect(parseTransformerParams({ primaryInductance: '10m' })).toBeNull(); // missing secondary
+            expect(parseTransformerParams({ primaryInductance: '10m', secondaryInductance: 'abc' })).toBeNull();
+            expect(parseTransformerParams({ primaryInductance: '10m', secondaryInductance: '10m', coupling: '1.5' })).toBeNull();
+            expect(parseTransformerParams({ primaryInductance: '10m', secondaryInductance: '10m', coupling: '0' })).toBeNull();
+            // strictly-positive windings: a negative or zero inductance is non-physical and is rejected
+            expect(parseTransformerParams({ primaryInductance: '-10m', secondaryInductance: '25m' })).toBeNull();
+            expect(parseTransformerParams({ primaryInductance: '0', secondaryInductance: '25m' })).toBeNull();
+            // a JS-coercible but non-decimal coupling ("0x1" -> Number 1) must NOT slip through
+            expect(parseTransformerParams({ primaryInductance: '10m', secondaryInductance: '10m', coupling: '0x1' })).toBeNull();
+        });
+
+        it('expands one transformer into two coupled windings (L+series-R) + a K statement, bound by pinId', () => {
+            const TRAN1: TranAnalysis = { type: 'tran', stopTime: '60u', stepTime: '0.1u' };
+            const netlist = generateNetlist(xfmrCircuit({ primaryInductance: '100m', secondaryInductance: '25m', coupling: '0.99' }), TRAN1);
+            const lp = netlist.split('\n').find((l) => l.startsWith('LT1P '))!;
+            const ls = netlist.split('\n').find((l) => l.startsWith('LT1S '))!;
+            const k = netlist.split('\n').find((l) => l.startsWith('KT1 '))!;
+            expect(lp.split(/\s+/)[1]).toBe('nprim'); // p+ -> primary net (despite being authored last)
+            expect(lp).toContain('100m');
+            expect(ls).toContain('25m');
+            expect(k).toBe('KT1 LT1P LT1S 0.99'); // K couples the two winding inductors
+            // a tiny series winding resistance is emitted for DC-path conditioning
+            expect(netlist).toMatch(/^RT1P .* 1m$/m);
+            expect(netlist).toMatch(/^RT1S .* 1m$/m);
+        });
+
+        it('ERC flags a transformer with missing/invalid winding params + the wrong pin count', () => {
+            // a missing key -> MISSING_VALUE
+            expect(runErc(xfmrCircuit({ primaryInductance: '10m' })).issues
+                .some((i) => i.code === ErcCode.MISSING_VALUE && i.relatedIds.includes('t1'))).toBe(true);
+            // both present but non-physical (negative) -> INVALID_VALUE
+            expect(runErc(xfmrCircuit({ primaryInductance: '-10m', secondaryInductance: '25m' })).issues
+                .some((i) => i.code === ErcCode.INVALID_VALUE && i.relatedIds.includes('t1'))).toBe(true);
+            const c = xfmrCircuit({ primaryInductance: '10m', secondaryInductance: '10m' });
+            (c.components.find((x) => x.id === 't1')!).pins = [
+                { pinId: 'p+', netId: 'prim' }, { pinId: 'p-', netId: 'gnd' }]; // only 2 of 4
+            expect(runErc(c).issues.some((i) => i.code === ErcCode.PIN_COUNT_MISMATCH && i.relatedIds.includes('t1'))).toBe(true);
+        });
+
+        it('transformer is a simulatable type', () => {
+            expect(isSimulatable({ type: 'transformer' })).toBe(true);
+        });
+
+        it('emits a bleeder to ground for an ISOLATED secondary (no DC reference otherwise)', () => {
+            const TRAN1: TranAnalysis = { type: 'tran', stopTime: '60u', stepTime: '1u' };
+            // secondary on floating nets sa/sb (neither is ground) -> needs a bleeder; primary is grounded.
+            const c: CircuitJson = {
+                version: '1.0',
+                components: [
+                    { id: 'v1', type: 'voltage_source', designator: 'V1', value: 'SIN(0 1 50k)', pins: [
+                        { pinId: '+', netId: 'prim' }, { pinId: '-', netId: 'gnd' }] },
+                    { id: 't1', type: 'transformer', designator: 'T1', properties: { primaryInductance: '100m', secondaryInductance: '25m' }, pins: [
+                        { pinId: 'p+', netId: 'prim' }, { pinId: 'p-', netId: 'gnd' },
+                        { pinId: 's+', netId: 'sa' }, { pinId: 's-', netId: 'sb' }] },
+                    { id: 'rl', type: 'resistor', designator: 'RL1', value: '1k', pins: [
+                        { pinId: '1', netId: 'sa' }, { pinId: '2', netId: 'sb' }] },
+                ],
+                nets: [{ id: 'prim', name: 'PRIM' }, { id: 'sa', name: 'SA' }, { id: 'sb', name: 'SB' }, { id: 'gnd', name: 'GND', isGround: true }],
+            };
+            const netlist = generateNetlist(c, TRAN1);
+            expect(netlist).toMatch(/^RT1SG \S+ 0 1G$/m); // isolated secondary tied to ground via a 1G bleeder
+            expect(netlist).not.toMatch(/^RT1PG /m); // primary is grounded -> no primary bleeder
+        });
+
+        it('throws when a transformer sub-element name collides with another component', () => {
+            const c = xfmrCircuit({ primaryInductance: '10m', secondaryInductance: '10m' });
+            // a user inductor named LT1P collides with transformer T1's primary winding name
+            c.components.push({ id: 'lx', type: 'inductor', designator: 'LT1P', value: '1m', pins: [
+                { pinId: '1', netId: 'sec' }, { pinId: '2', netId: 'gnd' }] });
+            const TRAN1: TranAnalysis = { type: 'tran', stopTime: '1m' };
+            expect(() => generateNetlist(c, TRAN1)).toThrow(/Duplicate device name 'LT1P'/);
+        });
+
+        it('parser skips a mutual-coupling K line (export-only) instead of failing to parse it', () => {
+            const r = parseNetlist('LT1P a b 100m\nLT1S c d 25m\nKT1 LT1P LT1S 0.99\n.end');
+            expect(r.circuit.components.filter((x) => x.type === 'inductor').length).toBe(2);
+            expect(r.warnings.some((w) => /coupling not imported/i.test(w))).toBe(true);
+            expect(r.circuit.nets.some((n) => /lt1/i.test(n.id))).toBe(false); // no phantom net from the K line
+        });
     });
 
     describe('subckt (op-amp)', () => {
