@@ -47,6 +47,8 @@ export const COMPONENT_TYPES = [
     'inductor',
     'voltage_source',
     'current_source',
+    'vcvs',
+    'vccs',
     'diode',
     'zener',
     'bjt',
@@ -173,6 +175,9 @@ export const COMPONENT_PINS: Record<ComponentType, string[]> = {
     inductor: ['1', '2'],
     voltage_source: ['+', '-'],
     current_source: ['+', '-'],
+    // Linear controlled sources: output pair (+,-) then the controlling voltage pair (c+,c-).
+    vcvs: ['+', '-', 'c+', 'c-'], // SPICE E: V_out = gain * V(c+,c-)
+    vccs: ['+', '-', 'c+', 'c-'], // SPICE G: I_out = gm  * V(c+,c-)
     diode: ['anode', 'cathode'],
     zener: ['anode', 'cathode'], // SPICE D device; the breakdown voltage rides in `value`
     bjt: ['c', 'b', 'e'], // SPICE Q: collector base emitter (canonical node order)
@@ -192,6 +197,8 @@ export const SPICE_PREFIXES: Record<ComponentType, string> = {
     inductor: 'L',
     voltage_source: 'V',
     current_source: 'I',
+    vcvs: 'E', // voltage-controlled voltage source
+    vccs: 'G', // voltage-controlled current source
     diode: 'D',
     zener: 'D', // a Zener is the same SPICE diode device, with a breakdown (BV) model
     bjt: 'Q',

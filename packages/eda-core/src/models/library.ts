@@ -130,6 +130,21 @@ function parseBreakdownVolts(vz: string | number): number | null {
  * model per Zener value. The name encodes the voltage (5.1 -> DZ5P1) so distinct voltages get distinct,
  * dedup-able models. Returns null when `vz` isn't a positive voltage.
  */
+/** A single SPICE numeric token: optional sign, mantissa, exponent, and engineering suffix. */
+const NUMERIC_TOKEN = /^[+-]?(\d+\.?\d*|\.\d+)([eE][+-]?\d+)?(meg|[tgkmunpf])?$/i;
+
+/**
+ * Normalize a controlled-source (E/G) gain / transconductance. ngspice's LINEAR dependent source is
+ * `Exxx n+ n- nc+ nc- VALUE` where VALUE must be a SINGLE real number — any extra token (an accidental
+ * "DC " prefix, or a POLY/VALUE=/{expr} keyword form) flips ngspice into the behavioral parser and
+ * FATALLY aborts the whole run. So: tolerate a stray leading "DC ", then require a single numeric token.
+ * Returns the clean token, or null if it isn't a bare gain (caller skips emission; ERC flags it).
+ */
+export function normalizeControlledSourceGain(raw: string): string | null {
+    const s = raw.trim().replace(/^dc\s+/i, '');
+    return NUMERIC_TOKEN.test(s) ? s : null;
+}
+
 export function buildZenerModel(vz: string | number): ModelDef | null {
     const v = parseBreakdownVolts(vz);
     if (v === null) return null;

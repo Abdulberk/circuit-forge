@@ -429,7 +429,7 @@ CircuitJson schema (every field validated; invalid output is rejected):
   "components": [                            // 1+ components
     {
       "id": "r1",                            // unique, lowercase recommended
-      "type": "resistor",                    // one of: resistor | capacitor | inductor | voltage_source | current_source | diode | zener | bjt | mosfet | jfet | subckt | ground
+      "type": "resistor",                    // one of: resistor | capacitor | inductor | voltage_source | current_source | vcvs | vccs | diode | zener | bjt | mosfet | jfet | subckt | ground
       "designator": "R1",                    // matches /^[A-Z][A-Z0-9]*[0-9]+$/i  (e.g. R1, C1, L1, V1, I1, D1)
       "value": "10k",                        // optional; SPICE value string (see below). Omit for ground.
       "model": "...",                        // DO NOT SET for diodes — a default model is auto-supplied (see below)
@@ -463,6 +463,8 @@ Component conventions:
 - inductor (L): two pins "1","2"; value in henries, e.g. "1m", "10u".
 - voltage_source (V): pins "+","-"; value e.g. "DC 5", "SIN(0 5 1k)", "PULSE(0 5 0 1u 1u 5m 10m)".
 - current_source (I): pins "+","-"; value e.g. "DC 1m".
+- vcvs (E): an ideal voltage-controlled voltage source (ideal voltage amplifier). pins "+","-" (output) and "c+","c-" (the sensed control voltage). "value" is the voltage gain V/V as a PLAIN NUMBER, e.g. "100" or "1e3" — NOT a "DC ..." source function. Output V(+,-) = value * V(c+,c-).
+- vccs (G): a voltage-controlled current source (transconductance). pins "+","-" (output) and "c+","c-" (control). "value" is the transconductance in siemens as a PLAIN NUMBER, e.g. "1m" — NOT a "DC ..." form. Output current = value * V(c+,c-).
 - diode (D): pins "anode","cathode". OMIT the "model" field entirely — a built-in default diode model is supplied automatically.
 - zener (D): a Zener diode. pins "anode","cathode". Set "value" to the breakdown (Zener) voltage in volts, as a plain number string e.g. "5.1" or "12". For clamping/regulation the CATHODE connects to the higher-voltage node (it conducts in reverse above Vz). OMIT "model" — the host generates the breakdown model from "value".
 - bjt (Q): a bipolar transistor. pins "c","b","e" (collector, base, emitter). Set "model" to a built-in generic model by NAME: "QGENNPN" (NPN) or "QGENPNP" (PNP). The host supplies the model body — do NOT write a .model definition yourself.
