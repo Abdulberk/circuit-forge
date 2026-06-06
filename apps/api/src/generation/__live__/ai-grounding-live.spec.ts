@@ -12,6 +12,7 @@ import { resolve } from 'path';
 import { ConfigService } from '@nestjs/config';
 import { GenerationService } from '../generation.service';
 import { CatalogGroundingService } from '../catalog-grounding.service';
+import { CircuitSimulatorService } from '../circuit-simulator.service';
 import { PartsService } from '../../parts/parts.service';
 import { TtlCache } from '../../parts/cache/ttl-cache';
 import { ComponentMapper } from '../../parts/mappers/component-mapper';
@@ -52,7 +53,7 @@ function loadRealEnv(): boolean {
             config,
             new ComponentMapper(),
         );
-        gen = new GenerationService(config, new CatalogGroundingService(config, parts));
+        gen = new GenerationService(config, new CatalogGroundingService(config, parts, new CircuitSimulatorService(config)));
     });
 
     jest.setTimeout(180_000);

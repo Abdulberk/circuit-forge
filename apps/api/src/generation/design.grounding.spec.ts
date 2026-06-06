@@ -18,6 +18,10 @@ jest.mock('@anthropic-ai/sdk', () => ({
 
 import { DesignService } from './design.service';
 import { CatalogGroundingService } from './catalog-grounding.service';
+import type { CircuitSimulatorService } from './circuit-simulator.service';
+
+/** Stub simulator — unavailable, so these catalog-focused design tests are unchanged. */
+const noSimulator = { available: () => false, simulate: jest.fn() } as unknown as CircuitSimulatorService;
 
 const VALID_CIRCUIT = {
     version: '1.0',
@@ -74,7 +78,7 @@ describe('DesignService grounding (flagship /design-circuit)', () => {
         });
         const cfg = makeConfig();
         const parts = makeParts();
-        const service = new DesignService(cfg, makeSim(), new CatalogGroundingService(cfg, parts as unknown as PartsService));
+        const service = new DesignService(cfg, makeSim(), new CatalogGroundingService(cfg, parts as unknown as PartsService, noSimulator));
 
         const result = await service.design({ prompt: 'RC low-pass 1kHz', maxRounds: 1 } as never, 'user-1');
 
