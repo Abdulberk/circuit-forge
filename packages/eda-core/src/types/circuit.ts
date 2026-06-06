@@ -50,6 +50,7 @@ export const COMPONENT_TYPES = [
     'current_source',
     'vcvs',
     'vccs',
+    'switch',
     'diode',
     'zener',
     'bjt',
@@ -68,7 +69,7 @@ export type ComponentType = (typeof COMPONENT_TYPES)[number];
  */
 export interface ModelDef {
     name: string; // referenced by Component.model, e.g. "QGENNPN"
-    device: 'bjt' | 'mosfet' | 'jfet' | 'diode' | 'subckt';
+    device: 'bjt' | 'mosfet' | 'jfet' | 'diode' | 'subckt' | 'switch';
     body: string; // the literal SPICE line(s): ".model QGENNPN NPN(...)" or ".subckt ... .ends"
     /** Fidelity of this model relative to the real part (Flux-style honesty). */
     tier?: 'manufacturer' | 'generic' | 'ideal';
@@ -181,6 +182,7 @@ export const COMPONENT_PINS: Record<ComponentType, string[]> = {
     // Linear controlled sources: output pair (+,-) then the controlling voltage pair (c+,c-).
     vcvs: ['+', '-', 'c+', 'c-'], // SPICE E: V_out = gain * V(c+,c-)
     vccs: ['+', '-', 'c+', 'c-'], // SPICE G: I_out = gm  * V(c+,c-)
+    switch: ['+', '-', 'c+', 'c-'], // SPICE S: voltage-controlled switch across (+,-), sensed at (c+,c-)
     diode: ['anode', 'cathode'],
     zener: ['anode', 'cathode'], // SPICE D device; the breakdown voltage rides in `value`
     bjt: ['c', 'b', 'e'], // SPICE Q: collector base emitter (canonical node order)
@@ -203,6 +205,7 @@ export const SPICE_PREFIXES: Record<ComponentType, string> = {
     current_source: 'I',
     vcvs: 'E', // voltage-controlled voltage source
     vccs: 'G', // voltage-controlled current source
+    switch: 'S', // voltage-controlled switch (model-based)
     diode: 'D',
     zener: 'D', // a Zener is the same SPICE diode device, with a breakdown (BV) model
     bjt: 'Q',

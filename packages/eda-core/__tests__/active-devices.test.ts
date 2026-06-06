@@ -593,4 +593,57 @@ describe('active devices', () => {
             expect(runErc(c).issues.some((i) => i.code === ErcCode.PIN_COUNT_MISMATCH)).toBe(true);
         });
     });
+
+    describe('switch (voltage-controlled)', () => {
+        const TR: TranAnalysis = { type: 'tran', stopTime: '80u', stepTime: '0.5u' };
+        function swCircuit(model?: string): CircuitJson {
+            return {
+                version: '1.0',
+                components: [
+                    { id: 'vdd', type: 'voltage_source', designator: 'V1', value: 'DC 5', pins: [
+                        { pinId: '+', netId: 'vdd' }, { pinId: '-', netId: 'gnd' }] },
+                    { id: 'vc', type: 'voltage_source', designator: 'V2', value: 'PULSE(0 5 0 1u 1u 20u 40u)', pins: [
+                        { pinId: '+', netId: 'ctrl' }, { pinId: '-', netId: 'gnd' }] },
+                    // control pins authored FIRST to prove canonical +,-,c+,c- binding
+                    { id: 's1', type: 'switch', designator: 'S1', model, pins: [
+                        { pinId: 'c+', netId: 'ctrl' }, { pinId: 'c-', netId: 'gnd' },
+                        { pinId: '+', netId: 'vdd' }, { pinId: '-', netId: 'out' }] },
+                    { id: 'rl', type: 'resistor', designator: 'RL1', value: '1k', pins: [
+                        { pinId: '1', netId: 'out' }, { pinId: '2', netId: 'gnd' }] },
+                ],
+                nets: [{ id: 'vdd', name: 'VDD' }, { id: 'ctrl', name: 'CTRL' }, { id: 'out', name: 'OUT' }, { id: 'gnd', name: 'GND', isGround: true }],
+                models: model === 'SWGEN' ? [GENERIC_MODELS.vswitch!] : undefined,
+            };
+        }
+
+        it('emits a switch in canonical +,-,c+,c- order + the model body once', () => {
+            const netlist = generateNetlist(swCircuit('SWGEN'), TR);
+            expect(netlist).toContain('.model SWGEN SW(');
+            const s = netlist.split('\n').find((l) => l.startsWith('S1 '))!;
+            const parts = s.split(/\s+/); // S1 <+> <-> <c+> <c-> SWGEN  (6 tokens)
+            expect(parts.length).toBe(6);
+            expect(parts[parts.length - 1]).toBe('SWGEN');
+            expect(parts[4]).toBe('0'); // c- -> ground (despite control pins being authored first)
+            expect(parts[1]).not.toBe('0'); // the + (switched) terminal is vdd, not ground
+        });
+
+        it('round-trips an S line through the parser (+,-,c+,c- pins)', () => {
+            const s = parseNetlist('S1 a b c d SWGEN\n.end').circuit.components.find((c) => c.designator === 'S1')!;
+            expect(s.type).toBe('switch');
+            expect(s.model).toBe('SWGEN');
+            expect(s.pins.map((p) => p.pinId)).toEqual(['+', '-', 'c+', 'c-']);
+        });
+
+        it('resolves the generic switch model and is a 4-pin, model-required type', () => {
+            expect(GENERIC_MODELS.vswitch!.name).toBe('SWGEN');
+            expect(GENERIC_MODELS.vswitch!.device).toBe('switch');
+            expect(resolveModelForPart({ type: 'switch' })!.name).toBe('SWGEN');
+            expect(isSimulatable({ type: 'switch' })).toBe(true);
+            const issues = runErc(swCircuit(undefined)).issues; // no model
+            expect(issues.some((i) => i.code === ErcCode.MODEL_REQUIRED && i.relatedIds.includes('s1'))).toBe(true);
+            const c = swCircuit('SWGEN');
+            (c.components.find((x) => x.id === 's1')!).pins = [{ pinId: '+', netId: 'vdd' }, { pinId: '-', netId: 'out' }];
+            expect(runErc(c).issues.some((i) => i.code === ErcCode.PIN_COUNT_MISMATCH && i.relatedIds.includes('s1'))).toBe(true);
+        });
+    });
 });

@@ -304,7 +304,8 @@ function componentToSpice(
         // model name the device can't be a valid SPICE line, so skip it (ERC flags MODEL_REQUIRED).
         case 'bjt':
         case 'mosfet':
-        case 'jfet': {
+        case 'jfet':
+        case 'switch': {
             if (!model) return null;
             return `${designator} ${orderedNodes(component, nodeMap).join(' ')} ${model}`;
         }
