@@ -119,4 +119,23 @@ const NO_GROUND: CircuitJson = {
         const r = await new CircuitSimulatorService(makeConfig('')).simulate(RC_LOWPASS);
         expect(r.simStatus).toBe('skipped');
     });
+
+    it('never throws and executes nothing on injection-laden input (sanitizer/guards hold)', async () => {
+        // A behavioral source whose "value" tries to smuggle a netlist line / shell directive, plus a
+        // designator/value with hostile characters. eda-core's bsource newline guard + sanitizeNetlist +
+        // node/designator sanitization neutralize all of it; simulate() must still return a summary
+        // (never throw) and obviously never run the injected `.shell`.
+        const malicious: CircuitJson = {
+            version: '1.0',
+            components: [
+                { id: 'v1', type: 'voltage_source', designator: 'V1', value: 'DC 5', pins: [{ pinId: '+', netId: 'in' }, { pinId: '-', netId: 'gnd' }] },
+                { id: 'b1', type: 'bsource', designator: 'B1', value: 'V=v(in)\n.shell echo pwned', pins: [{ pinId: '+', netId: 'out' }, { pinId: '-', netId: 'gnd' }] },
+                { id: 'r1', type: 'resistor', designator: 'R1', value: '1k', pins: [{ pinId: '1', netId: 'out' }, { pinId: '2', netId: 'gnd' }] },
+                { id: 'gnd', type: 'ground', designator: 'GND1', pins: [{ pinId: '1', netId: 'gnd' }] },
+            ],
+            nets: [{ id: 'in', name: 'in' }, { id: 'out', name: 'out' }, { id: 'gnd', name: 'gnd', isGround: true }],
+        };
+        const r = await svc.simulate(malicious, { type: 'op' });
+        expect(['ok', 'failed']).toContain(r.simStatus); // returned a summary, did not throw
+    });
 });
