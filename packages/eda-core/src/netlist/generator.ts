@@ -6,7 +6,7 @@ import type { CircuitJson, Component, Net, ModelDef } from '../types/circuit';
 import type { AnalysisConfig } from '../types/analysis';
 import { SPICE_PREFIXES, COMPONENT_PINS } from '../types/circuit';
 import { analysisToSpice } from '../types/analysis';
-import { buildZenerModel, normalizeControlledSourceGain, parseTransformerParams } from '../models/library';
+import { buildZenerModel, normalizeControlledSourceGain, parseTransformerParams, parseTransmissionLineParams } from '../models/library';
 import { sanitizeNodeName, validateIncludePaths } from './sanitizer';
 
 /**
@@ -245,6 +245,17 @@ function componentToSpice(
         if (pp !== '0' && pn !== '0') out.push(`R${designator}PG ${pn} 0 ${BLEED}`);
         if (sp !== '0' && sn !== '0') out.push(`R${designator}SG ${sn} 0 ${BLEED}`);
         return out;
+    }
+
+    // Lossless transmission line: `T<inst> a+ a- b+ b- Z0=.. TD=..`. Nodes bound canonically by pinId so
+    // the two ports are correct regardless of authored order; the instance name must start with 'T', so
+    // prefix one when the (schematic) designator doesn't (e.g. U1 -> TU1).
+    if (type === 'tline') {
+        const tl = parseTransmissionLineParams(component.properties);
+        if (!tl) return null; // ERC flags missing/invalid Z0/TD(or F)
+        const inst = /^t/i.test(designator) ? designator : `T${designator}`;
+        const spec = tl.td ? `TD=${tl.td}` : `F=${tl.f}${tl.nl ? ` NL=${tl.nl}` : ''}`;
+        return `${inst} ${orderedNodes(component, nodeMap).join(' ')} Z0=${tl.z0} ${spec}`;
     }
 
     // Any type without a SPICE element prefix is non-emittable — skip it gracefully rather than throw,

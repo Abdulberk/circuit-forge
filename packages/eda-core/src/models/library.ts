@@ -142,11 +142,14 @@ function parseBreakdownVolts(vz: string | number): number | null {
 /** A single SPICE numeric token: optional sign, mantissa, exponent, and engineering suffix. */
 const NUMERIC_TOKEN = /^[+-]?(\d+\.?\d*|\.\d+)([eE][+-]?\d+)?(meg|[tgkmunpf])?$/i;
 
-/** True iff `s` is a single SPICE value with a strictly positive magnitude (e.g. "10m" yes, "-1"/"0" no). */
+/**
+ * True iff `s` is a single SPICE value with a strictly positive magnitude. Mirrors ngspice's lexer: a
+ * number, optional exponent, optional engineering scale-factor, then any IGNORED trailing unit letters —
+ * so the idiomatic "10ns" / "75ohm" / "1uF" are accepted (ngspice reads "5ns" as 5n). "-1"/"0"/"abc" no.
+ */
 function isPositiveSpiceValue(s: string): boolean {
-    if (!NUMERIC_TOKEN.test(s) || s.trim().startsWith('-')) return false;
-    const mantissa = s.trim().replace(/^\+/, '').replace(/(meg|[tgkmunpf])$/i, '');
-    return parseFloat(mantissa) > 0; // engineering suffix is a positive multiplier, so sign is in mantissa
+    const m = /^\+?(\d+\.?\d*|\.\d+)([eE][+-]?\d+)?(meg|[tgkmunpf])?[a-zΩµμ]*$/i.exec(s.trim());
+    return m ? parseFloat(m[1]!) > 0 : false; // scale factor is a positive multiplier; sign lives in the mantissa
 }
 
 /**
@@ -199,6 +202,47 @@ export function parseTransformerParams(props: Record<string, unknown> | undefine
         k = rawK;
     }
     return { lp, ls, k };
+}
+
+/**
+ * Validated lossless transmission-line parameters. The propagation is given EITHER by an explicit delay
+ * `td` (the common form, emitted as `TD=`) OR by a frequency `f` with optional normalized length `nl`
+ * (emitted as `F=` [`NL=`]). `z0` (characteristic impedance) is always required.
+ */
+export interface TransmissionLineParams {
+    z0: string;
+    td?: string;
+    f?: string;
+    nl?: string;
+}
+
+/**
+ * Read + validate a lossless transmission line's parameters from a component's `properties`. `z0`
+ * (accepts `impedance`) is required + positive; the line is specified by EITHER `td` (accepts `delay`)
+ * OR `f` (accepts `frequency`) with optional `nl` — mirroring ngspice's two lossless-line forms. Values
+ * may carry trailing units (e.g. "10ns", "50ohm"). Returns null (caller skips; ERC flags) otherwise.
+ */
+export function parseTransmissionLineParams(
+    props: Record<string, unknown> | undefined,
+): TransmissionLineParams | null {
+    const str = (key: string): string | undefined => {
+        const v = props?.[key];
+        if (typeof v === 'string') return v.trim();
+        if (typeof v === 'number' && Number.isFinite(v)) return String(v);
+        return undefined;
+    };
+    const z0 = str('z0') ?? str('impedance');
+    if (!z0 || !isPositiveSpiceValue(z0)) return null;
+
+    const td = str('td') ?? str('delay');
+    if (td) return isPositiveSpiceValue(td) ? { z0, td } : null;
+
+    const f = str('f') ?? str('frequency');
+    if (f && isPositiveSpiceValue(f)) {
+        const nl = str('nl');
+        return nl && isPositiveSpiceValue(nl) ? { z0, f, nl } : { z0, f };
+    }
+    return null; // neither a valid td nor a valid f
 }
 
 export function buildZenerModel(vz: string | number): ModelDef | null {
