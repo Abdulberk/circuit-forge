@@ -271,6 +271,145 @@ describe('NetlistGenerator', () => {
             // U1 is catalog-only → not emitted as a SPICE element line.
             expect(netlist).not.toMatch(/^U1 /m);
         });
+
+        it('emits the correct SPICE device letter when a designator does not match the prefix', () => {
+            // SPICE keys a device on its first letter. A Zener's device letter is 'D', but its natural
+            // designator is "Z1" — emitting "Z1 …" verbatim is an invalid element (no 'Z' device exists),
+            // so the generator must prepend 'D' -> "DZ1". A diode designated "CR1" must become "DCR1"
+            // (else it parses as a capacitor). Conventional designators (already starting with the prefix)
+            // must pass through UNCHANGED.
+            const circuit: CircuitJson = {
+                version: '1.0',
+                components: [
+                    createComponent('z1', 'zener', 'Z1', '5.1', [
+                        { pinId: 'anode', netId: '0' },
+                        { pinId: 'cathode', netId: 'in' },
+                    ]),
+                    createComponent('d1', 'diode', 'CR1', undefined, [
+                        { pinId: 'anode', netId: 'in' },
+                        { pinId: 'cathode', netId: 'out' },
+                    ]),
+                    createComponent('d2', 'diode', 'D9', undefined, [
+                        { pinId: 'anode', netId: 'out' },
+                        { pinId: 'cathode', netId: '0' },
+                    ]),
+                    createComponent('r1', 'resistor', 'R1', '1k', [
+                        { pinId: '1', netId: 'in' },
+                        { pinId: '2', netId: '0' },
+                    ]),
+                ],
+                nets: [createNet('in', 'in'), createNet('out', 'out'), createNet('0', '0', true)],
+            };
+            const netlist = generateNetlist(circuit, { type: 'tran', stopTime: '1m' });
+            // Zener: "Z1" -> "DZ1", referencing its generated breakdown model (a real 'D' device).
+            const zLine = netlist.split('\n').find((l) => /DZ1\s/i.test(l) && /Z1/i.test(l));
+            expect(zLine).toBeTruthy();
+            expect(zLine!.startsWith('DZ1')).toBe(true);
+            expect(netlist).not.toMatch(/^Z1 /m); // never an invalid bare 'Z' device
+            // Diode "CR1" -> "DCR1" (would otherwise parse as a capacitor).
+            expect(netlist).toMatch(/^DCR1 /m);
+            expect(netlist).not.toMatch(/^CR1 /m);
+            // Conventional designators are untouched.
+            expect(netlist).toMatch(/^D9 /m);
+            expect(netlist).toMatch(/^R1 /m);
+        });
+
+        it('remaps i(<designator>) probes to the emitted (prefixed) device name', () => {
+            // An inductor designated "FB1" (ferrite-bead convention) emits as "LFB1"; a caller-supplied
+            // current probe i(FB1) must be rewritten to i(LFB1) or ngspice reports "i(FB1) not available".
+            const circuit: CircuitJson = {
+                version: '1.0',
+                components: [
+                    createComponent('v1', 'voltage_source', 'V1', 'DC 5', [
+                        { pinId: '+', netId: 'a' },
+                        { pinId: '-', netId: '0' },
+                    ]),
+                    createComponent('l1', 'inductor', 'FB1', '1u', [
+                        { pinId: '1', netId: 'a' },
+                        { pinId: '2', netId: '0' },
+                    ]),
+                ],
+                nets: [createNet('a', 'a'), createNet('0', '0', true)],
+            };
+            const netlist = generateNetlist(circuit, { type: 'tran', stopTime: '1m' }, {
+                probes: ['i(FB1)', 'v(a)', 'i(V1)'],
+            });
+            expect(netlist).toMatch(/^LFB1 /m); // device emitted prefixed
+            expect(netlist).toMatch(/wrdata .*i\(LFB1\)/); // probe remapped to the emitted name
+            expect(netlist).not.toMatch(/i\(FB1\)/); // the un-prefixed reference must not survive
+            expect(netlist).toMatch(/i\(V1\)/); // conventional designator left as-is
+            expect(netlist).toMatch(/v\(a\)/); // node probe untouched
+        });
+
+        it('remaps a .dc sweep source to the emitted (prefixed) device name', () => {
+            // A voltage source designated "BAT1" emits as "VBAT1"; the sweep card must name VBAT1, not
+            // BAT1, else ngspice aborts with "BAT1 is not in the circuit".
+            const circuit: CircuitJson = {
+                version: '1.0',
+                components: [
+                    createComponent('v1', 'voltage_source', 'BAT1', 'DC 0', [
+                        { pinId: '+', netId: 'in' },
+                        { pinId: '-', netId: '0' },
+                    ]),
+                    createComponent('r1', 'resistor', 'R1', '1k', [
+                        { pinId: '1', netId: 'in' },
+                        { pinId: '2', netId: '0' },
+                    ]),
+                ],
+                nets: [createNet('in', 'in'), createNet('0', '0', true)],
+            };
+            const dc: DcAnalysis = { type: 'dc', source: 'BAT1', startVal: '0', stopVal: '5', increment: '1' };
+            const netlist = generateNetlist(circuit, dc);
+            expect(netlist).toMatch(/^VBAT1 /m); // device emitted prefixed
+            expect(netlist).toMatch(/^\.dc VBAT1 /m); // sweep references the emitted name
+            expect(netlist).not.toMatch(/\.dc BAT1 /m);
+        });
+
+        it('throws on case-insensitive duplicate device names (ngspice is case-insensitive)', () => {
+            // "d1" and "D1" are distinct strings but the same ngspice device — must be caught at generation
+            // with a clear error, not leak to ngspice's opaque "device already exists, bail out".
+            const circuit: CircuitJson = {
+                version: '1.0',
+                components: [
+                    createComponent('v1', 'voltage_source', 'V1', 'DC 1', [
+                        { pinId: '+', netId: 'in' },
+                        { pinId: '-', netId: '0' },
+                    ]),
+                    createComponent('d1', 'diode', 'd1', undefined, [
+                        { pinId: 'anode', netId: 'in' },
+                        { pinId: 'cathode', netId: 'mid' },
+                    ]),
+                    createComponent('d2', 'diode', 'D1', undefined, [
+                        { pinId: 'anode', netId: 'mid' },
+                        { pinId: 'cathode', netId: '0' },
+                    ]),
+                ],
+                nets: [createNet('in', 'in'), createNet('mid', 'mid'), createNet('0', '0', true)],
+            };
+            expect(() => generateNetlist(circuit, { type: 'tran', stopTime: '1m' })).toThrow(/[Dd]uplicate device name/);
+        });
+
+        it('strips token-breaking characters from a designator (no phantom node)', () => {
+            // "C 1" would otherwise emit `C 1 <n1> <n2> 100n`, parsed as device C wired to a phantom node
+            // "1"; sanitization yields a single-token "C1".
+            const circuit: CircuitJson = {
+                version: '1.0',
+                components: [
+                    createComponent('v1', 'voltage_source', 'V1', 'DC 1', [
+                        { pinId: '+', netId: 'a' },
+                        { pinId: '-', netId: '0' },
+                    ]),
+                    createComponent('c1', 'capacitor', 'C 1', '100n', [
+                        { pinId: '1', netId: 'a' },
+                        { pinId: '2', netId: '0' },
+                    ]),
+                ],
+                nets: [createNet('a', 'a'), createNet('0', '0', true)],
+            };
+            const netlist = generateNetlist(circuit, { type: 'tran', stopTime: '1m' });
+            expect(netlist).toMatch(/^C1 na 0 100n$/m); // single token, correct nodes
+            expect(netlist).not.toMatch(/^C 1 /m);
+        });
     });
 
     describe('isSimulatable', () => {
