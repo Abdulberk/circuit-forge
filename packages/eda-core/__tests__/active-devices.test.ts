@@ -6,7 +6,7 @@ import { generateNetlist } from '../src/netlist/generator';
 import { parseNetlist } from '../src/parser/netlist-parser';
 import { runErc } from '../src/erc/checker';
 import { ErcCode } from '../src/types/erc';
-import { GENERIC_MODELS, resolveModelForPart, resolveGenericModels, buildZenerModel, normalizeControlledSourceGain, parseTransformerParams } from '../src/models/library';
+import { GENERIC_MODELS, resolveModelForPart, resolveGenericModels, buildZenerModel, normalizeControlledSourceGain, parseTransformerParams, parseTransmissionLineParams } from '../src/models/library';
 import { isSimulatable } from '../src/types/circuit';
 import type { CircuitJson, ModelDef } from '../src/types/circuit';
 import type { TranAnalysis } from '../src/types/analysis';
@@ -644,6 +644,82 @@ describe('active devices', () => {
             const c = swCircuit('SWGEN');
             (c.components.find((x) => x.id === 's1')!).pins = [{ pinId: '+', netId: 'vdd' }, { pinId: '-', netId: 'out' }];
             expect(runErc(c).issues.some((i) => i.code === ErcCode.PIN_COUNT_MISMATCH && i.relatedIds.includes('s1'))).toBe(true);
+        });
+    });
+
+    describe('transmission line (lossless T)', () => {
+        function tlineCircuit(props?: Record<string, unknown>): CircuitJson {
+            return {
+                version: '1.0',
+                components: [
+                    { id: 'v1', type: 'voltage_source', designator: 'V1', value: 'PULSE(0 1 0 0.1n 0.1n 5n 20n)', pins: [
+                        { pinId: '+', netId: 'src' }, { pinId: '-', netId: 'gnd' }] },
+                    { id: 'rs', type: 'resistor', designator: 'RS1', value: '50', pins: [
+                        { pinId: '1', netId: 'src' }, { pinId: '2', netId: 'pa' }] },
+                    // pins authored shuffled to prove canonical a+,a-,b+,b- binding
+                    { id: 't1', type: 'tline', designator: 'T1', properties: props, pins: [
+                        { pinId: 'b+', netId: 'pb' }, { pinId: 'a-', netId: 'gnd' },
+                        { pinId: 'b-', netId: 'gnd' }, { pinId: 'a+', netId: 'pa' }] },
+                    { id: 'rl', type: 'resistor', designator: 'RL1', value: '50', pins: [
+                        { pinId: '1', netId: 'pb' }, { pinId: '2', netId: 'gnd' }] },
+                ],
+                nets: [{ id: 'src', name: 'SRC' }, { id: 'pa', name: 'PA' }, { id: 'pb', name: 'PB' }, { id: 'gnd', name: 'GND', isGround: true }],
+            };
+        }
+        const TR: TranAnalysis = { type: 'tran', stopTime: '25n', stepTime: '0.1n' };
+
+        it('parses z0+td, accepts impedance/delay aliases, rejects missing/non-positive', () => {
+            expect(parseTransmissionLineParams({ z0: '50', td: '10n' })).toEqual({ z0: '50', td: '10n' });
+            expect(parseTransmissionLineParams({ impedance: '75', delay: '1u' })).toEqual({ z0: '75', td: '1u' });
+            expect(parseTransmissionLineParams({ z0: '50' })).toBeNull(); // missing td/f
+            expect(parseTransmissionLineParams({ z0: '-50', td: '10n' })).toBeNull();
+            expect(parseTransmissionLineParams({ z0: '0', td: '10n' })).toBeNull();
+            // trailing units are accepted (ngspice reads "10ns" as 10n, "50ohm" as 50) — the idiomatic form
+            expect(parseTransmissionLineParams({ z0: '50ohm', td: '10ns' })).toEqual({ z0: '50ohm', td: '10ns' });
+            // frequency form (F + optional normalized length NL), the alternate ngspice lossless-line spec
+            expect(parseTransmissionLineParams({ z0: '50', f: '100Meg', nl: '0.25' })).toEqual({ z0: '50', f: '100Meg', nl: '0.25' });
+            expect(parseTransmissionLineParams({ z0: '50', f: '1G' })).toEqual({ z0: '50', f: '1G' });
+        });
+
+        it('emits T<inst> a+ a- b+ b- Z0=.. TD=.. in canonical pin order', () => {
+            const t = generateNetlist(tlineCircuit({ z0: '50', td: '5n' }), TR).split('\n').find((l) => l.startsWith('T1 '))!;
+            expect(t).toMatch(/^T1 \S+ 0 \S+ 0 Z0=50 TD=5n$/);
+            const parts = t.split(/\s+/); // T1 a+ a- b+ b- Z0=50 TD=5n
+            expect(parts[2]).toBe('0'); // a- -> ground
+            expect(parts[4]).toBe('0'); // b- -> ground
+            expect(parts[1]).not.toBe('0'); // a+ is pa, not ground (despite being authored last)
+        });
+
+        it('round-trips a T line (a+,a-,b+,b- pins + z0/td properties)', () => {
+            const r = parseNetlist('T1 pa 0 pb 0 Z0=50 TD=5n\n.end');
+            const t = r.circuit.components.find((c) => c.designator === 'T1')!;
+            expect(t.type).toBe('tline');
+            expect(t.pins.map((p) => p.pinId)).toEqual(['a+', 'a-', 'b+', 'b-']);
+            expect(t.properties).toMatchObject({ z0: '50', td: '5n' });
+        });
+
+        it('supports the F=/NL= frequency form (emit + round-trip), not just TD', () => {
+            const t = generateNetlist(tlineCircuit({ z0: '50', f: '100Meg', nl: '0.25' }), TR)
+                .split('\n').find((l) => l.startsWith('T1 '))!;
+            expect(t).toMatch(/Z0=50 F=100Meg NL=0\.25$/);
+            const rt = parseNetlist('T1 pa 0 pb 0 Z0=50 F=100Meg NL=0.25\n.end').circuit.components.find((c) => c.type === 'tline')!;
+            expect(rt.properties).toMatchObject({ z0: '50', f: '100Meg', nl: '0.25' });
+        });
+
+        it('parser rejects a truncated T line (param leaked into a node slot) instead of inventing nodes', () => {
+            const r = parseNetlist('T1 pa 0 Z0=50 TD=5n\n.end'); // only 2 real nodes
+            expect(r.circuit.components.some((c) => c.type === 'tline')).toBe(false);
+            expect(r.circuit.nets.some((n) => /z0|=|td/i.test(n.id))).toBe(false); // no phantom 'Z0=50' net
+            expect(r.warnings.length).toBeGreaterThan(0);
+        });
+
+        it('is a simulatable 4-pin type; ERC flags missing params', () => {
+            expect(isSimulatable({ type: 'tline' })).toBe(true);
+            expect(runErc(tlineCircuit({ z0: '50' })).issues // missing td
+                .some((i) => i.code === ErcCode.MISSING_VALUE && i.relatedIds.includes('t1'))).toBe(true);
+            const c = tlineCircuit({ z0: '50', td: '5n' });
+            (c.components.find((x) => x.id === 't1')!).pins = [{ pinId: 'a+', netId: 'pa' }, { pinId: 'a-', netId: 'gnd' }];
+            expect(runErc(c).issues.some((i) => i.code === ErcCode.PIN_COUNT_MISMATCH && i.relatedIds.includes('t1'))).toBe(true);
         });
     });
 });

@@ -46,6 +46,7 @@ export const COMPONENT_TYPES = [
     'capacitor',
     'inductor',
     'transformer',
+    'tline',
     'voltage_source',
     'current_source',
     'vcvs',
@@ -177,6 +178,8 @@ export const COMPONENT_PINS: Record<ComponentType, string[]> = {
     inductor: ['1', '2'],
     // Two magnetically-coupled windings. Dotted terminals are p+ and s+ (same winding sense).
     transformer: ['p+', 'p-', 's+', 's-'],
+    // Lossless transmission line: port A (a+,a-) and port B (b+,b-); characteristic impedance + delay.
+    tline: ['a+', 'a-', 'b+', 'b-'],
     voltage_source: ['+', '-'],
     current_source: ['+', '-'],
     // Linear controlled sources: output pair (+,-) then the controlling voltage pair (c+,c-).
@@ -201,6 +204,7 @@ export const SPICE_PREFIXES: Record<ComponentType, string> = {
     capacitor: 'C',
     inductor: 'L',
     transformer: '', // composite: expands to two L windings + a K coupling (handled before this map)
+    tline: 'T', // lossless transmission line
     voltage_source: 'V',
     current_source: 'I',
     vcvs: 'E', // voltage-controlled voltage source

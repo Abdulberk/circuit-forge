@@ -33,6 +33,7 @@ const PREFIX_TO_TYPE: Record<string, ComponentType> = {
     M: 'mosfet',
     J: 'jfet',
     X: 'subckt',
+    T: 'tline',
 };
 
 /**
@@ -347,6 +348,45 @@ function parseComponentLine(
                     { pinId: 'd', netId: d },
                     { pinId: 'g', netId: g },
                     { pinId: 's', netId: s },
+                ],
+            };
+            break;
+        }
+
+        case 'tline': {
+            // Format: T1 a+ a- b+ b- Z0=<z> TD=<t>   (or the F=/NL= frequency form)
+            const ap = parts[1] || '0';
+            const an = parts[2] || '0';
+            const bp = parts[3] || '0';
+            const bn = parts[4] || '0';
+            // A '=' in a node slot means the line is truncated (a param leaked into the node positions);
+            // reject so it surfaces as a parse warning instead of inventing phantom nodes from keywords.
+            if ([ap, an, bp, bn].some((n) => n.includes('='))) {
+                return null;
+            }
+            nets.push(ap, an, bp, bn);
+
+            const rest = parts.slice(5).join(' ');
+            const z0 = /\bZ0\s*=\s*(\S+)/i.exec(rest)?.[1];
+            const td = /\bTD\s*=\s*(\S+)/i.exec(rest)?.[1];
+            const f = /\bF\s*=\s*(\S+)/i.exec(rest)?.[1];
+            const nl = /\bNL\s*=\s*(\S+)/i.exec(rest)?.[1];
+
+            component = {
+                id,
+                type,
+                designator,
+                properties: {
+                    ...(z0 ? { z0 } : {}),
+                    ...(td ? { td } : {}),
+                    ...(f ? { f } : {}),
+                    ...(nl ? { nl } : {}),
+                },
+                pins: [
+                    { pinId: 'a+', netId: ap },
+                    { pinId: 'a-', netId: an },
+                    { pinId: 'b+', netId: bp },
+                    { pinId: 'b-', netId: bn },
                 ],
             };
             break;

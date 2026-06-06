@@ -30,8 +30,10 @@ export {
     buildZenerModel,
     normalizeControlledSourceGain,
     parseTransformerParams,
+    parseTransmissionLineParams,
     type ResolveModelInput,
     type TransformerParams,
+    type TransmissionLineParams,
 } from './models/library';
 
 export type {

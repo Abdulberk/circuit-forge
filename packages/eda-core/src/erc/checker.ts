@@ -5,7 +5,7 @@
 import type { CircuitJson, Component } from '../types/circuit';
 import { ErcCode, ErcSeverity, ErcResult, ErcIssue } from '../types/erc';
 import { ERC_DESCRIPTIONS, ERC_SEVERITIES } from './codes';
-import { buildZenerModel, normalizeControlledSourceGain, parseTransformerParams } from '../models/library';
+import { buildZenerModel, normalizeControlledSourceGain, parseTransformerParams, parseTransmissionLineParams } from '../models/library';
 
 /**
  * Expected pin counts for each component type
@@ -15,6 +15,7 @@ const EXPECTED_PIN_COUNTS: Record<string, number> = {
     capacitor: 2,
     inductor: 2,
     transformer: 4, // p+,p-,s+,s-
+    tline: 4, // a+,a-,b+,b-
     voltage_source: 2,
     current_source: 2,
     vcvs: 4,
@@ -282,6 +283,21 @@ function checkComponentValues(circuit: CircuitJson): ErcIssue[] {
                     bothPresent ? ErcCode.INVALID_VALUE : ErcCode.MISSING_VALUE,
                     [component.id],
                     `${component.designator || component.id} (transformer) needs positive primaryInductance + secondaryInductance (+ optional coupling 0..1)`,
+                ),
+            );
+        }
+
+        // A transmission line needs a valid (positive) characteristic impedance + either a delay (td) or
+        // a frequency (f) form (in `properties`).
+        if (component.type === 'tline' && !parseTransmissionLineParams(component.properties)) {
+            const props = component.properties;
+            const hasZ = !!props && ('z0' in props || 'impedance' in props);
+            const hasSpec = !!props && ('td' in props || 'delay' in props || 'f' in props || 'frequency' in props);
+            issues.push(
+                createIssue(
+                    hasZ && hasSpec ? ErcCode.INVALID_VALUE : ErcCode.MISSING_VALUE,
+                    [component.id],
+                    `${component.designator || component.id} (transmission line) needs positive z0 + (td or f)`,
                 ),
             );
         }
