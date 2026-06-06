@@ -131,23 +131,33 @@ export function generateNetlist(
         if (!modelMap.has(m.name)) modelMap.set(m.name, m);
     }
     const componentLines: string[] = [];
+    // Maps each component's schematic designator (lower-cased) to the SPICE instance name actually
+    // emitted (which spiceInstanceName may have prefixed/sanitized). Reference sites that name a device
+    // by its designator — current probes i(<dev>), a .dc sweep <source> — are remapped through this so
+    // they point at the real emitted name. For a composite device (transformer) the first emitted
+    // sub-element name is used.
+    const designatorToInstance = new Map<string, string>();
     for (const component of circuit.components) {
         const spiceLine = componentToSpice(component, nodeMap, modelMap);
-        if (Array.isArray(spiceLine)) {
-            componentLines.push(...spiceLine); // composite device (e.g. transformer) emits several lines
-        } else if (spiceLine) {
-            componentLines.push(spiceLine);
+        const emitted = Array.isArray(spiceLine) ? spiceLine : spiceLine ? [spiceLine] : [];
+        const emittedName = emitted[0]?.split(/\s+/)[0];
+        if (emittedName && component.designator) {
+            designatorToInstance.set(component.designator.toLowerCase(), emittedName);
         }
+        componentLines.push(...emitted); // a composite device (e.g. transformer) emits several lines
     }
     // No two emitted devices may share a name — ngspice would silently redefine the first. This catches
     // a composite device's derived sub-element names (e.g. transformer T1 -> LT1P/RT1P/KT1) colliding
-    // with a user-authored component's designator.
+    // with a user-authored component's designator. ngspice device names are CASE-INSENSITIVE, so the
+    // check must be too — otherwise "d1" and "D1" (or a prefixed "Dz1" vs an authored "DZ1") slip past
+    // here and abort the whole run later with ngspice's opaque "device already exists, bail out".
     const seenDevices = new Set<string>();
     for (const cl of componentLines) {
-        const name = cl.split(/\s+/)[0] ?? '';
+        const rawName = cl.split(/\s+/)[0] ?? '';
+        const name = rawName.toLowerCase();
         if (seenDevices.has(name)) {
             throw new Error(
-                `Duplicate device name '${name}' in the netlist — a designator or transformer sub-element collides with another component.`,
+                `Duplicate device name '${rawName}' in the netlist — a designator or transformer sub-element collides with another component (ngspice device names are case-insensitive).`,
             );
         }
         seenDevices.add(name);
@@ -156,13 +166,22 @@ export function generateNetlist(
     lines.push(...componentLines);
     lines.push('');
 
-    // Analysis
+    // Analysis. A .dc sweep names its swept device by the schematic designator; remap it to the emitted
+    // SPICE instance name (the device may have been prefixed, e.g. source "BAT1" -> "VBAT1"), else ngspice
+    // fatally aborts with "<source> is not in the circuit".
+    let effectiveAnalysis = analysis;
+    if (analysis.type === 'dc' && analysis.source) {
+        const mapped = designatorToInstance.get(analysis.source.toLowerCase());
+        if (mapped) effectiveAnalysis = { ...analysis, source: mapped };
+    }
     lines.push('* Analysis');
-    lines.push(analysisToSpice(analysis));
+    lines.push(analysisToSpice(effectiveAnalysis));
     lines.push('');
 
-    // Control block for output
-    const probes = options.probes || generateDefaultProbes(circuit, nodeMap);
+    // Control block for output. Caller-supplied current probes name a device by its designator, so remap
+    // i(<designator>) to the emitted instance name (mirrors the .dc remap above); v(...) is left as-is.
+    const rawProbes = options.probes || generateDefaultProbes(circuit, nodeMap);
+    const probes = rawProbes.map((p) => rewriteProbeDeviceRefs(p, designatorToInstance));
     lines.push('* Control block');
     lines.push('.control');
     lines.push('  set filetype=ascii');
@@ -196,6 +215,38 @@ function buildNodeMap(nets: Net[]): Map<string, string> {
     }
 
     return nodeMap;
+}
+
+/**
+ * SPICE identifies a device by the FIRST letter of its name (R=resistor, D=diode, Q=BJT, …). The
+ * schematic designator usually already starts with that letter, but it need not: a Zener's natural
+ * designator is "Z1" while its SPICE device letter is "D", and diodes are often "CR1"/"LED1". Emitting
+ * the designator verbatim would then yield an invalid or misparsed element ("Z1" is not a SPICE device;
+ * "CR1" would parse as a capacitor). Prepend the device's SPICE prefix whenever the designator doesn't
+ * already start with it (case-insensitive), so the emitted element type is always correct regardless of
+ * the schematic naming convention.
+ *
+ * The designator is first stripped to a single SPICE-safe token: SPICE tokenizes a card on whitespace,
+ * so a designator with an internal space (e.g. "C 1") would shift the node columns and wire the device
+ * to a phantom node — strip whitespace and other token-breaking characters first (mirrors node-name
+ * sanitization), so the emitted element is always well-formed.
+ */
+function spiceInstanceName(designator: string, prefix: string): string {
+    const safe = designator.replace(/[^A-Za-z0-9_]/g, '');
+    return safe.toLowerCase().startsWith(prefix.toLowerCase()) ? safe : `${prefix}${safe}`;
+}
+
+/**
+ * Rewrite device-by-name current references — i(<designator>) — in a probe so they point at the SPICE
+ * instance name actually emitted (which spiceInstanceName may have prefixed/sanitized, e.g. "FB1"→"LFB1",
+ * "Z1"→"DZ1"). `map` is keyed by the lower-cased schematic designator. v(...) node references are left
+ * untouched (nodes go through a separate sanitization), as is any i(...) arg that isn't a known device.
+ */
+function rewriteProbeDeviceRefs(probe: string, map: Map<string, string>): string {
+    return probe.replace(/\bi\s*\(\s*([^)]+?)\s*\)/gi, (whole, name: string) => {
+        const mapped = map.get(name.trim().toLowerCase());
+        return mapped ? `i(${mapped})` : whole;
+    });
 }
 
 /**
@@ -253,7 +304,7 @@ function componentToSpice(
     if (type === 'tline') {
         const tl = parseTransmissionLineParams(component.properties);
         if (!tl) return null; // ERC flags missing/invalid Z0/TD(or F)
-        const inst = /^t/i.test(designator) ? designator : `T${designator}`;
+        const inst = spiceInstanceName(designator, 'T');
         const spec = tl.td ? `TD=${tl.td}` : `F=${tl.f}${tl.nl ? ` NL=${tl.nl}` : ''}`;
         return `${inst} ${orderedNodes(component, nodeMap).join(' ')} Z0=${tl.z0} ${spec}`;
     }
@@ -266,7 +317,7 @@ function componentToSpice(
         // empty B-card that fatally aborts ngspice). A newline could inject a netlist line. Skip here +
         // flag in ERC otherwise.
         if (!value || /[\r\n]/.test(value) || !/^\s*[VI]\s*=\s*\S/i.test(value)) return null;
-        const inst = /^b/i.test(designator) ? designator : `B${designator}`;
+        const inst = spiceInstanceName(designator, 'B');
         const [np, nn] = orderedNodes(component, nodeMap);
         return `${inst} ${np} ${nn} ${rewriteExprNodeRefs(value, nodeMap)}`;
     }
@@ -292,11 +343,11 @@ function componentToSpice(
         case 'resistor':
         case 'capacitor':
         case 'inductor':
-            return `${designator} ${nodes.join(' ')} ${value || '0'}`;
+            return `${spiceInstanceName(designator, prefix)} ${nodes.join(' ')} ${value || '0'}`;
 
         case 'voltage_source':
         case 'current_source':
-            return `${designator} ${nodes.join(' ')} ${value || 'DC 0'}`;
+            return `${spiceInstanceName(designator, prefix)} ${nodes.join(' ')} ${value || 'DC 0'}`;
 
         // Linear voltage-controlled sources. Nodes are bound by pinId in canonical order
         // (out+ out- ctrl+ ctrl-) so authored order is irrelevant; `value` is the gain (E, V/V) or the
@@ -307,11 +358,11 @@ function componentToSpice(
             // reinterpret the line as a behavioral source and fatally abort the run. Normalize, else skip.
             const gain = value ? normalizeControlledSourceGain(value) : null;
             if (!gain) return null;
-            return `${designator} ${orderedNodes(component, nodeMap).join(' ')} ${gain}`;
+            return `${spiceInstanceName(designator, prefix)} ${orderedNodes(component, nodeMap).join(' ')} ${gain}`;
         }
 
         case 'diode':
-            return `${designator} ${nodes.join(' ')} ${model || 'DDEFAULT'}`;
+            return `${spiceInstanceName(designator, prefix)} ${nodes.join(' ')} ${model || 'DDEFAULT'}`;
 
         // A Zener is the SPICE diode device with a breakdown model generated from `value` (the Zener
         // voltage). Nodes are emitted in canonical anode,cathode order (by pinId) so polarity — which
@@ -320,7 +371,9 @@ function componentToSpice(
             if (!value) return null;
             const zm = buildZenerModel(value);
             if (!zm) return null;
-            return `${designator} ${orderedNodes(component, nodeMap).join(' ')} ${zm.name}`;
+            // A Zener's SPICE device letter is 'D' even though its designator is naturally "Z…"/"ZD…";
+            // spiceInstanceName prepends the 'D' so the element is a real diode, not an invalid 'Z' device.
+            return `${spiceInstanceName(designator, prefix)} ${orderedNodes(component, nodeMap).join(' ')} ${zm.name}`;
         }
 
         // Active devices are model-based. Nodes are emitted in the canonical pin order (bjt c,b,e /
@@ -331,7 +384,7 @@ function componentToSpice(
         case 'jfet':
         case 'switch': {
             if (!model) return null;
-            return `${designator} ${orderedNodes(component, nodeMap).join(' ')} ${model}`;
+            return `${spiceInstanceName(designator, prefix)} ${orderedNodes(component, nodeMap).join(' ')} ${model}`;
         }
 
         // A subcircuit instance (e.g. an op-amp). Variable-arity: nodes are emitted in the AUTHORED pin
@@ -340,7 +393,7 @@ function componentToSpice(
         // so one is prefixed when the (schematic) designator doesn't already — e.g. U1 -> XU1.
         case 'subckt': {
             if (!model) return null;
-            const inst = /^x/i.test(designator) ? designator : `X${designator}`;
+            const inst = spiceInstanceName(designator, 'X');
             // Bind nodes by the macromodel's declared port order (pinId) when it's known, so the authored
             // pin-array order is irrelevant and a reordered-but-complete pin set still nets correctly
             // (mirrors bjt/mosfet). Fall back to the authored order for an unknown / user-defined subckt.
