@@ -28,6 +28,7 @@ export class SimulationController {
             dto.analysisConfig,
             dto.probes,
             user.id,
+            dto.modelAssetIds,
         );
     }
 
@@ -38,7 +39,7 @@ export class SimulationController {
         @Body() dto: QuickSimulationDto,
         @CurrentUser() user: { id: string },
     ) {
-        return this.simulationService.createQuickSim(dto.netlist, dto.analysisConfig, user.id);
+        return this.simulationService.createQuickSim(dto.netlist, dto.analysisConfig, user.id, dto.modelAssetIds);
     }
 
     @Get('simulations/:jobId')
