@@ -6,7 +6,7 @@ import type { CircuitJson, Component, Net, ModelDef } from '../types/circuit';
 import type { AnalysisConfig } from '../types/analysis';
 import { SPICE_PREFIXES, COMPONENT_PINS } from '../types/circuit';
 import { analysisToSpice } from '../types/analysis';
-import { buildZenerModel } from '../models/library';
+import { buildZenerModel, normalizeControlledSourceGain } from '../models/library';
 import { sanitizeNodeName, validateIncludePaths } from './sanitizer';
 
 /**
@@ -223,6 +223,18 @@ function componentToSpice(
         case 'voltage_source':
         case 'current_source':
             return `${designator} ${nodes.join(' ')} ${value || 'DC 0'}`;
+
+        // Linear voltage-controlled sources. Nodes are bound by pinId in canonical order
+        // (out+ out- ctrl+ ctrl-) so authored order is irrelevant; `value` is the gain (E, V/V) or the
+        // transconductance (G, A/V). Without it the line is incomplete, so skip (ERC flags MISSING_VALUE).
+        case 'vcvs':
+        case 'vccs': {
+            // The gain MUST be a single real number; a stray "DC "/keyword/expression would make ngspice
+            // reinterpret the line as a behavioral source and fatally abort the run. Normalize, else skip.
+            const gain = value ? normalizeControlledSourceGain(value) : null;
+            if (!gain) return null;
+            return `${designator} ${orderedNodes(component, nodeMap).join(' ')} ${gain}`;
+        }
 
         case 'diode':
             return `${designator} ${nodes.join(' ')} ${model || 'DDEFAULT'}`;

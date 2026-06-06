@@ -28,6 +28,7 @@ export {
     genericModelByName,
     resolveGenericModels,
     buildZenerModel,
+    normalizeControlledSourceGain,
     type ResolveModelInput,
 } from './models/library';
 

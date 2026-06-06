@@ -6,7 +6,7 @@ import { generateNetlist } from '../src/netlist/generator';
 import { parseNetlist } from '../src/parser/netlist-parser';
 import { runErc } from '../src/erc/checker';
 import { ErcCode } from '../src/types/erc';
-import { GENERIC_MODELS, resolveModelForPart, resolveGenericModels, buildZenerModel } from '../src/models/library';
+import { GENERIC_MODELS, resolveModelForPart, resolveGenericModels, buildZenerModel, normalizeControlledSourceGain } from '../src/models/library';
 import { isSimulatable } from '../src/types/circuit';
 import type { CircuitJson, ModelDef } from '../src/types/circuit';
 import type { TranAnalysis } from '../src/types/analysis';
@@ -209,12 +209,91 @@ describe('active devices', () => {
         });
     });
 
-    it('bjt/mosfet/jfet/subckt are simulatable types; generic is not', () => {
+    it('bjt/mosfet/jfet/subckt/vcvs/vccs are simulatable types; generic is not', () => {
         expect(isSimulatable({ type: 'bjt' })).toBe(true);
         expect(isSimulatable({ type: 'mosfet' })).toBe(true);
         expect(isSimulatable({ type: 'jfet' })).toBe(true);
         expect(isSimulatable({ type: 'subckt' })).toBe(true);
+        expect(isSimulatable({ type: 'vcvs' })).toBe(true);
+        expect(isSimulatable({ type: 'vccs' })).toBe(true);
         expect(isSimulatable({ type: 'generic' })).toBe(false);
+    });
+
+    describe('controlled sources (VCVS / VCCS)', () => {
+        // Output pair + control pair; control pins authored FIRST to prove canonical (+,-,c+,c-) binding.
+        function csCircuit(type: 'vcvs' | 'vccs', value?: string): CircuitJson {
+            return {
+                version: '1.0',
+                components: [
+                    { id: 'vin', type: 'voltage_source', designator: 'V1', value: 'SIN(0 0.1 1k)', pins: [
+                        { pinId: '+', netId: 'in' }, { pinId: '-', netId: 'gnd' }] },
+                    { id: 'e1', type, designator: type === 'vcvs' ? 'E1' : 'G1', value, pins: [
+                        { pinId: 'c+', netId: 'in' }, { pinId: 'c-', netId: 'gnd' },
+                        { pinId: '+', netId: 'out' }, { pinId: '-', netId: 'gnd' }] },
+                    { id: 'rl', type: 'resistor', designator: 'RL1', value: '1k', pins: [
+                        { pinId: '1', netId: 'out' }, { pinId: '2', netId: 'gnd' }] },
+                ],
+                nets: [{ id: 'in', name: 'IN' }, { id: 'out', name: 'OUT' }, { id: 'gnd', name: 'GND', isGround: true }],
+            };
+        }
+
+        it('emits E/G with 4 nodes in canonical (out+,out-,c+,c-) order + the gain value', () => {
+            const e = generateNetlist(csCircuit('vcvs', '10'), TRAN).split('\n').find((l) => l.startsWith('E1 '))!;
+            const ep = e.split(/\s+/); // E1 <out+> <out-> <c+> <c-> 10  (6 tokens)
+            expect(ep.length).toBe(6);
+            expect(ep[ep.length - 1]).toBe('10');
+            expect(ep[2]).toBe('0'); // out- -> ground (despite control pins authored first)
+            expect(ep[4]).toBe('0'); // c- -> ground
+            const g = generateNetlist(csCircuit('vccs', '1m'), TRAN).split('\n').find((l) => l.startsWith('G1 '))!;
+            expect(g.split(/\s+/).pop()).toBe('1m');
+        });
+
+        it('round-trips E/G through the parser (+,-,c+,c- pins)', () => {
+            const e = parseNetlist('E1 op on cp cn 100\n.end').circuit.components.find((c) => c.designator === 'E1')!;
+            expect(e.type).toBe('vcvs');
+            expect(e.value).toBe('100');
+            expect(e.pins.map((p) => p.pinId)).toEqual(['+', '-', 'c+', 'c-']);
+            const g = parseNetlist('G1 op on cp cn 1m\n.end').circuit.components.find((c) => c.designator === 'G1')!;
+            expect(g.type).toBe('vccs');
+        });
+
+        it('ERC flags a value-less controlled source (MISSING_VALUE) and a wrong pin count', () => {
+            const issues = runErc(csCircuit('vcvs', undefined)).issues;
+            expect(issues.some((i) => i.code === ErcCode.MISSING_VALUE && i.relatedIds.includes('e1'))).toBe(true);
+            const c = csCircuit('vcvs', '10');
+            (c.components.find((x) => x.id === 'e1')!).pins = [
+                { pinId: '+', netId: 'out' }, { pinId: '-', netId: 'gnd' }]; // only 2 of 4 pins
+            expect(runErc(c).issues.some((i) => i.code === ErcCode.PIN_COUNT_MISMATCH && i.relatedIds.includes('e1'))).toBe(true);
+        });
+
+        it('normalizes a controlled-source gain: tolerates a stray "DC", rejects keyword/expression forms', () => {
+            expect(normalizeControlledSourceGain('10')).toBe('10');
+            expect(normalizeControlledSourceGain('1e3')).toBe('1e3');
+            expect(normalizeControlledSourceGain('1m')).toBe('1m');
+            expect(normalizeControlledSourceGain('DC 100')).toBe('100'); // tolerated stray prefix
+            expect(normalizeControlledSourceGain('POLY(1) in 0 0 2')).toBeNull();
+            expect(normalizeControlledSourceGain('VALUE = {5*V(in)}')).toBeNull();
+            expect(normalizeControlledSourceGain('DC')).toBeNull();
+        });
+
+        it('a "DC "-prefixed gain is emitted as a bare number (would otherwise crash ngspice)', () => {
+            const e = generateNetlist(csCircuit('vcvs', 'DC 10'), TRAN).split('\n').find((l) => l.startsWith('E1 '))!;
+            expect(e.split(/\s+/).pop()).toBe('10'); // 'DC ' stripped -> valid linear VCVS
+        });
+
+        it('skips a keyword-form gain in the generator and flags it INVALID_VALUE in ERC', () => {
+            const c = csCircuit('vcvs', 'POLY(1) in 0 0 2');
+            expect(generateNetlist(c, TRAN)).not.toMatch(/^E1 /m); // not emitted (would crash ngspice)
+            const issues = runErc(c).issues;
+            expect(issues.some((i) => i.code === ErcCode.INVALID_VALUE && i.relatedIds.includes('e1'))).toBe(true);
+        });
+
+        it('parser skips a non-linear (POLY/VALUE=) controlled source instead of inventing phantom nodes', () => {
+            const r = parseNetlist('E1 out 0 POLY(1) in 0 0 2\n.end');
+            expect(r.circuit.components.some((c) => c.type === 'vcvs')).toBe(false);
+            expect(r.circuit.nets.some((n) => /poly/i.test(n.id))).toBe(false); // no phantom 'POLY(1)' net
+            expect(r.warnings.length).toBeGreaterThan(0);
+        });
     });
 
     it('ERC flags a JFET with no model (MODEL_REQUIRED) and a wrong pin count', () => {

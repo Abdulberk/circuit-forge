@@ -5,7 +5,7 @@
 import type { CircuitJson, Component } from '../types/circuit';
 import { ErcCode, ErcSeverity, ErcResult, ErcIssue } from '../types/erc';
 import { ERC_DESCRIPTIONS, ERC_SEVERITIES } from './codes';
-import { buildZenerModel } from '../models/library';
+import { buildZenerModel, normalizeControlledSourceGain } from '../models/library';
 
 /**
  * Expected pin counts for each component type
@@ -16,6 +16,8 @@ const EXPECTED_PIN_COUNTS: Record<string, number> = {
     inductor: 2,
     voltage_source: 2,
     current_source: 2,
+    vcvs: 4,
+    vccs: 4,
     diode: 2,
     zener: 2,
     bjt: 3,
@@ -216,7 +218,7 @@ function checkComponentValues(circuit: CircuitJson): ErcIssue[] {
 
     // Components that require values (a zener's `value` is its breakdown voltage — without it no model
     // can be generated, so it's a hard error like a missing passive value).
-    const requiresValue = ['resistor', 'capacitor', 'inductor', 'voltage_source', 'current_source', 'zener'];
+    const requiresValue = ['resistor', 'capacitor', 'inductor', 'voltage_source', 'current_source', 'zener', 'vcvs', 'vccs'];
 
     // Diode has a built-in default model (DDEFAULT) — a missing model is only a warning.
     const modelWithDefault = ['diode'];
@@ -245,6 +247,23 @@ function checkComponentValues(circuit: CircuitJson): ErcIssue[] {
                     ErcCode.INVALID_VALUE,
                     [component.id],
                     `${component.designator || component.id}: "${component.value}" is not a valid breakdown voltage`,
+                ),
+            );
+        }
+
+        // A controlled source's gain/transconductance must be a single real number; a present-but-invalid
+        // value (a "DC "/keyword/expression form) would otherwise be skipped here and crash ngspice if it
+        // reached a netlist. Surface it as an error.
+        if (
+            (component.type === 'vcvs' || component.type === 'vccs') &&
+            component.value &&
+            !normalizeControlledSourceGain(component.value)
+        ) {
+            issues.push(
+                createIssue(
+                    ErcCode.INVALID_VALUE,
+                    [component.id],
+                    `${component.designator || component.id}: "${component.value}" is not a valid gain (must be a single number)`,
                 ),
             );
         }

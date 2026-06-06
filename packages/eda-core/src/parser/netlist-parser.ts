@@ -25,6 +25,8 @@ const PREFIX_TO_TYPE: Record<string, ComponentType> = {
     L: 'inductor',
     V: 'voltage_source',
     I: 'current_source',
+    E: 'vcvs',
+    G: 'vccs',
     D: 'diode',
     Q: 'bjt',
     M: 'mosfet',
@@ -186,6 +188,38 @@ function parseComponentLine(
                 pins: [
                     { pinId: '+', netId: nodePos },
                     { pinId: '-', netId: nodeNeg },
+                ],
+            };
+            break;
+        }
+
+        case 'vcvs':
+        case 'vccs': {
+            // Only the LINEAR form is supported on import. A POLY / VALUE= / {expr} (behavioral) form
+            // would bind keywords as phantom control nodes, so skip it (the caller logs a parse warning)
+            // instead of silently corrupting the circuit.
+            if (/\b(poly|value)\b|[={}]/i.test(line)) {
+                return null;
+            }
+            // Format: E1/G1 out+ out- ctrl+ ctrl- gain   (linear voltage-controlled source)
+            const op = parts[1] || '0';
+            const on = parts[2] || '0';
+            const cp = parts[3] || '0';
+            const cn = parts[4] || '0';
+            const value = parts.slice(5).join(' ') || '0';
+
+            nets.push(op, on, cp, cn);
+
+            component = {
+                id,
+                type,
+                designator,
+                value,
+                pins: [
+                    { pinId: '+', netId: op },
+                    { pinId: '-', netId: on },
+                    { pinId: 'c+', netId: cp },
+                    { pinId: 'c-', netId: cn },
                 ],
             };
             break;
