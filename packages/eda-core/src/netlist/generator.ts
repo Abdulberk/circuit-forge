@@ -192,7 +192,9 @@ export function generateNetlist(
         if (node) netRefToNode.set(net.id.toLowerCase(), node); // …ids win on collision (ids are unique/authoritative)
     }
     const rawProbes = options.probes || generateDefaultProbes(circuit, nodeMap);
-    const probes = rawProbes.map((p) => rewriteProbeNodeRefs(rewriteProbeDeviceRefs(p, designatorToInstance), netRefToNode));
+    const probes = rawProbes
+        .map((p) => rewriteProbeNodeRefs(rewriteProbeDeviceRefs(p, designatorToInstance), netRefToNode))
+        .filter((p) => p.trim().length > 0); // a probe that reduced to nothing (e.g. v(gnd)) is dropped
     lines.push('* Control block');
     lines.push('.control');
     lines.push('  set filetype=ascii');
@@ -270,16 +272,16 @@ function rewriteProbeDeviceRefs(probe: string, map: Map<string, string>): string
  */
 function rewriteProbeNodeRefs(probe: string, map: Map<string, string>): string {
     return probe.replace(/\bv\s*\(\s*([^)]+?)\s*\)/gi, (whole, inner: string) => {
-        let changed = false;
-        const parts = inner.split(',').map((p) => {
-            const mapped = map.get(p.trim().toLowerCase());
-            if (mapped) {
-                changed = true;
-                return mapped;
-            }
-            return p.trim();
-        });
-        return changed ? `v(${parts.join(',')})` : whole;
+        const parts = inner.split(',').map((p) => p.trim());
+        const mapped = parts.map((p) => map.get(p.toLowerCase()) ?? p);
+        // ngspice has no voltage vector for ground (node 0): a v(node,gnd) differential is just the
+        // single-ended v(node), and a pure-ground probe v(gnd)/v(0) is meaningless — emitting either
+        // v(0) or v(node,0) errors with "no such vector 0" and aborts the WHOLE wrdata, killing every
+        // other probe on the line. So drop ground args; a probe that reduces to nothing is dropped.
+        const nonGround = mapped.filter((a) => a !== '0');
+        const unchanged = nonGround.length === parts.length && nonGround.every((a, i) => a === parts[i]);
+        if (unchanged) return whole; // no remap and no ground arg — preserve the original text verbatim
+        return nonGround.length === 0 ? '' : `v(${nonGround.join(',')})`;
     });
 }
 

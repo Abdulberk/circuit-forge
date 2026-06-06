@@ -426,6 +426,39 @@ describe('NetlistGenerator', () => {
             expect(wr).not.toMatch(/v\(out\)/);
         });
 
+        it('drops ground from probes (ngspice has no v(0)); v(node,gnd) reduces to v(node)', () => {
+            // Ground is the implicit reference: v(0)/v(node,0) errors with "no such vector 0" and aborts the
+            // ENTIRE wrdata. So a ground arg is dropped — v(out,gnd)->v(out) — and a pure-ground probe is
+            // omitted, while every other probe on the line survives.
+            const circuit: CircuitJson = {
+                version: '1.0',
+                components: [
+                    createComponent('v1', 'voltage_source', 'V1', 'DC 8', [
+                        { pinId: '+', netId: 'out' },
+                        { pinId: '-', netId: 'gnd' },
+                    ]),
+                    createComponent('r1', 'resistor', 'R1', '1k', [
+                        { pinId: '1', netId: 'out' },
+                        { pinId: '2', netId: 'mid' },
+                    ]),
+                    createComponent('r2', 'resistor', 'R2', '1k', [
+                        { pinId: '1', netId: 'mid' },
+                        { pinId: '2', netId: 'gnd' },
+                    ]),
+                ],
+                nets: [createNet('out', 'out'), createNet('mid', 'mid'), createNet('gnd', 'gnd', true)],
+            };
+            const netlist = generateNetlist(circuit, { type: 'tran', stopTime: '1m' }, {
+                probes: ['v(mid)', 'v(out,gnd)', 'v(gnd)'],
+            });
+            const wr = netlist.split('\n').find((l) => l.includes('wrdata'))!;
+            expect(wr).toContain('v(nmid)'); // ordinary probe kept
+            expect(wr).toContain('v(x_out)'); // v(out,gnd) reduced to single-ended v(out)->v(x_out)
+            expect(wr).not.toMatch(/,\s*0\)/); // no v(...,0) differential-against-ground
+            expect(wr).not.toMatch(/v\(0\)/); // no scalar v(0)
+            expect(wr).not.toMatch(/v\(gnd\)/); // pure-ground probe dropped entirely
+        });
+
         it('strips token-breaking characters from a designator (no phantom node)', () => {
             // "C 1" would otherwise emit `C 1 <n1> <n2> 100n`, parsed as device C wired to a phantom node
             // "1"; sanitization yields a single-token "C1".
