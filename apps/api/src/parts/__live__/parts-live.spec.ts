@@ -84,13 +84,19 @@ function loadRealCreds(): boolean {
         expect(d!.mapped.component?.value).toBeUndefined();
     });
 
-    // --- Classification: catalog-only 'generic' (the active-component gap) --------------------------
-    it('classifies a real NPN transistor (BC547) as catalog-only generic', async () => {
+    // --- Classification: active devices are now simulatable (model resolved by polarity) ------------
+    it('classifies a real NPN transistor (BC547) as a SIMULATABLE bjt with a generic model attached', async () => {
+        // Since active-device simulation shipped, a real transistor category maps to `bjt` and the mapper
+        // resolves a generic SPICE model by polarity (QGENNPN/QGENPNP) — so a part the AI grounds a design
+        // in is directly simulatable, not a catalog-only stand-in.
         const q = await classifyFirst('BC547');
-        expect(q!.mapped.component?.type).toBe('generic');
-        expect(q!.mapped.simulatable).toBe(false);
-        expect(q!.mapped.component?.mpn).toBeTruthy(); // still placeable: carries catalog metadata
+        expect(q!.mapped.component?.type).toBe('bjt');
+        expect(q!.mapped.simulatable).toBe(true);
+        expect(q!.mapped.component?.model).toBeTruthy(); // a generic NPN/PNP model name
+        expect(q!.mapped.component?.mpn).toBeTruthy(); // still carries catalog metadata for the BOM
     });
+
+    // --- Classification: catalog-only 'generic' (parts with no SPICE model yet) ---------------------
 
     it('classifies a real op-amp / timer IC (NE555) as catalog-only generic', async () => {
         const ic = await classifyFirst('NE555');
