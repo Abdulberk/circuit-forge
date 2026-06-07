@@ -30,6 +30,12 @@ export enum ErcCode {
     UNCONNECTED_NET = 'ERC040',
     NET_HAS_SINGLE_PIN = 'ERC041',
 
+    // Digital / mixed-signal
+    DIGITAL_PIN_SHAPE = 'ERC060', // a gate/flip-flop is missing a required pin (e.g. no output / too few inputs)
+    FLOATING_DIGITAL_INPUT = 'ERC061', // a digital input net has no driver (would be an unknown 'U' state)
+    DIGITAL_BUS_CONTENTION = 'ERC062', // two or more digital outputs drive the same net
+    MIXED_DRIVER_CONFLICT = 'ERC063', // a digital output and an analog source drive the same net
+
     // General
     EMPTY_CIRCUIT = 'ERC050',
     NO_ACTIVE_COMPONENTS = 'ERC051',

@@ -3,6 +3,7 @@
  * Validates circuits for common electrical issues
  */
 import type { CircuitJson, Component } from '../types/circuit';
+import { isDigitalType, isLogicGateType, isSingleInputGate, digitalPinRole } from '../types/circuit';
 import { ErcCode, ErcSeverity, ErcResult, ErcIssue } from '../types/erc';
 import { ERC_DESCRIPTIONS, ERC_SEVERITIES } from './codes';
 import { buildZenerModel, normalizeControlledSourceGain, parseTransformerParams, parseTransmissionLineParams } from '../models/library';
@@ -52,6 +53,7 @@ export function runErc(circuit: CircuitJson): ErcResult {
     issues.push(...checkVoltageSourceShorts(circuit));
     issues.push(...checkNetConnections(circuit));
     issues.push(...checkActiveSources(circuit));
+    issues.push(...checkDigitalConnectivity(circuit));
 
     // Categorize by severity
     const errors = issues.filter((i) => i.severity === 'error');
@@ -154,6 +156,7 @@ function checkFloatingNodes(circuit: CircuitJson): ErcIssue[] {
     // Build net connection map
     const netPinCount = new Map<string, number>();
     const netComponents = new Map<string, string[]>();
+    const netPins = new Map<string, { type: Component['type']; pinId: string }[]>();
 
     for (const component of circuit.components) {
         for (const pin of component.pins) {
@@ -162,6 +165,9 @@ function checkFloatingNodes(circuit: CircuitJson): ErcIssue[] {
                 const components = netComponents.get(pin.netId) || [];
                 components.push(component.id);
                 netComponents.set(pin.netId, components);
+                const pins = netPins.get(pin.netId) || [];
+                pins.push({ type: component.type, pinId: pin.pinId });
+                netPins.set(pin.netId, pins);
             }
         }
     }
@@ -179,6 +185,12 @@ function checkFloatingNodes(circuit: CircuitJson): ErcIssue[] {
         if (pinCount === 0) {
             issues.push(createIssue(ErcCode.UNCONNECTED_NET, [net.id], `Net "${net.name || net.id}"`));
         } else if (pinCount === 1) {
+            // A driven digital OUTPUT observed on its own net (a counter/register terminal output) is not a
+            // dead end — planMixedSignal bridges it to an analog node for probing. Don't flag it.
+            const lone = (netPins.get(net.id) || [])[0];
+            if (lone && digitalPinRole(lone.type, lone.pinId) === 'source') {
+                continue;
+            }
             issues.push(
                 createIssue(
                     ErcCode.NET_HAS_SINGLE_PIN,
@@ -208,6 +220,106 @@ function checkPinCounts(circuit: CircuitJson): ErcIssue[] {
                     `${component.designator || component.id}: expected ${expected} pins, got ${component.pins.length}`,
                 ),
             );
+        }
+    }
+
+    return issues;
+}
+
+/**
+ * Digital / mixed-signal checks (no-op for analog-only circuits):
+ *  - pin shape: a gate needs exactly one `out` and enough `in*` (1 for not/buffer, 2+ for others); a dff
+ *    needs d/clk/q/qb (set/rst are optional — auto-tied by the generator);
+ *  - floating digital input: a digital-input net with no driver at all (an undriven digital input is 'U');
+ *  - bus contention: two or more digital OUTPUTS driving one net (needs a tri-state/bus, not in PR1);
+ *  - mixed-driver conflict: a digital output and an analog source fighting over the same net.
+ */
+function checkDigitalConnectivity(circuit: CircuitJson): ErcIssue[] {
+    const issues: ErcIssue[] = [];
+    if (!circuit.components.some((c) => isDigitalType(c.type))) return issues;
+
+    // 1) Pin shape.
+    for (const c of circuit.components) {
+        if (isLogicGateType(c.type)) {
+            const inputPins = c.pins.filter((p) => /^in\d+$/i.test(p.pinId)).map((p) => p.pinId.toLowerCase());
+            const inputs = inputPins.length;
+            const distinctInputs = new Set(inputPins).size;
+            const outputs = c.pins.filter((p) => p.pinId === 'out').length;
+            // not/buffer take EXACTLY one input (scalar port); other gates take >=2. A duplicate `in*` pinId
+            // would silently collapse to one net during emission, so flag it too.
+            const okInputs = isSingleInputGate(c.type) ? inputs === 1 : inputs >= 2;
+            if (outputs !== 1 || !okInputs || distinctInputs !== inputs) {
+                const reason =
+                    distinctInputs !== inputs
+                        ? 'has duplicate input pin ids'
+                        : `needs ${isSingleInputGate(c.type) ? 'exactly one' : '>=2'} 'in*' and exactly one 'out'`;
+                issues.push(
+                    createIssue(
+                        ErcCode.DIGITAL_PIN_SHAPE,
+                        [c.id],
+                        `${c.designator || c.id} (${c.type}): ${reason} (got ${inputs} input(s), ${distinctInputs} distinct, ${outputs} output(s))`,
+                    ),
+                );
+            }
+        } else if (c.type === 'dff') {
+            for (const req of ['d', 'clk', 'q', 'qb']) {
+                if (!c.pins.some((p) => p.pinId === req)) {
+                    issues.push(
+                        createIssue(ErcCode.DIGITAL_PIN_SHAPE, [c.id], `${c.designator || c.id} (dff): missing required pin '${req}'`),
+                    );
+                }
+            }
+        }
+    }
+
+    // 2) Per-net driver analysis. "Active analog" = a type that actively DRIVES a node (independent
+    // V/I sources + controlled/behavioral sources E/G/B) — any of these fighting a digital output (the
+    // dac_bridge is itself a voltage source) is a real driver conflict. Passive/bidirectional parts (switch,
+    // resistor, …) are not drivers and stay out.
+    const ACTIVE_ANALOG = new Set(['voltage_source', 'current_source', 'vcvs', 'vccs', 'bsource']);
+    interface Tally {
+        src: number;
+        sink: number;
+        analog: number;
+        analogSrc: number;
+    }
+    const tally = new Map<string, Tally>();
+    const at = (netId: string): Tally => {
+        let x = tally.get(netId);
+        if (!x) {
+            x = { src: 0, sink: 0, analog: 0, analogSrc: 0 };
+            tally.set(netId, x);
+        }
+        return x;
+    };
+    for (const c of circuit.components) {
+        if (c.type === 'ground' || c.type === 'generic') continue;
+        const digital = isDigitalType(c.type);
+        for (const pin of c.pins) {
+            const x = at(pin.netId);
+            if (digital) {
+                if (digitalPinRole(c.type, pin.pinId) === 'source') x.src += 1;
+                else x.sink += 1;
+            } else {
+                x.analog += 1;
+                if (ACTIVE_ANALOG.has(c.type)) x.analogSrc += 1;
+            }
+        }
+    }
+    for (const [netId, x] of tally) {
+        if (x.src + x.sink === 0) continue; // not a digital net
+        const net = circuit.nets.find((n) => n.id === netId);
+        const label = `Net "${net?.name || netId}"`;
+        if (x.src >= 2) {
+            issues.push(createIssue(ErcCode.DIGITAL_BUS_CONTENTION, [netId], `${label} is driven by ${x.src} digital outputs`));
+        }
+        if (x.src >= 1 && x.analogSrc >= 1) {
+            issues.push(createIssue(ErcCode.MIXED_DRIVER_CONFLICT, [netId], label));
+        }
+        // A digital input with no driver (no digital source, no analog connection) and not tied to ground
+        // is an unknown 'U' state. (An analog connection bridges in via adc; ground ties it low.)
+        if (x.sink >= 1 && x.src === 0 && x.analog === 0 && !net?.isGround) {
+            issues.push(createIssue(ErcCode.FLOATING_DIGITAL_INPUT, [netId], label));
         }
     }
 

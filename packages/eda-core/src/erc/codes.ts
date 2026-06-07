@@ -26,6 +26,10 @@ export const ERC_DESCRIPTIONS: Record<ErcCode, string> = {
         'Component references a model that is not defined in the circuit (must be supplied by an included model library)',
     [ErcCode.UNCONNECTED_NET]: 'Net defined but not connected to any components',
     [ErcCode.NET_HAS_SINGLE_PIN]: 'Net has only one pin connection (dead end)',
+    [ErcCode.DIGITAL_PIN_SHAPE]: 'Digital component is missing a required pin (output and/or inputs)',
+    [ErcCode.FLOATING_DIGITAL_INPUT]: 'Digital input is not driven by any source (would be an unknown state)',
+    [ErcCode.DIGITAL_BUS_CONTENTION]: 'Multiple digital outputs drive the same net',
+    [ErcCode.MIXED_DRIVER_CONFLICT]: 'A digital output and an analog source drive the same net',
     [ErcCode.EMPTY_CIRCUIT]: 'Circuit contains no components',
     [ErcCode.NO_ACTIVE_COMPONENTS]: 'Circuit has no active sources or inputs',
 };
@@ -50,6 +54,10 @@ export const ERC_SEVERITIES: Record<ErcCode, ErcSeverity> = {
     [ErcCode.UNRESOLVED_MODEL]: 'warning',
     [ErcCode.UNCONNECTED_NET]: 'info',
     [ErcCode.NET_HAS_SINGLE_PIN]: 'warning',
+    [ErcCode.DIGITAL_PIN_SHAPE]: 'error', // can't emit a valid a-device without the right pins
+    [ErcCode.FLOATING_DIGITAL_INPUT]: 'error', // an undriven digital input is unknown ('U') — a real bug
+    [ErcCode.DIGITAL_BUS_CONTENTION]: 'error', // two pushing outputs on one net — needs a tristate/bus
+    [ErcCode.MIXED_DRIVER_CONFLICT]: 'error', // analog source vs digital output fighting over a node
     [ErcCode.EMPTY_CIRCUIT]: 'error',
     [ErcCode.NO_ACTIVE_COMPONENTS]: 'warning',
 };

@@ -59,6 +59,18 @@ export const COMPONENT_TYPES = [
     'mosfet',
     'jfet',
     'subckt',
+    // Digital / mixed-signal (XSPICE event-driven). Gates are variable-arity (in1..inN + out);
+    // dff is a fixed-arity D flip-flop. All emit XSPICE 'a'-devices; the generator auto-inserts
+    // analog<->digital bridges. See DIGITAL_PIN_ROLES + planMixedSignal in the netlist generator.
+    'logic_and',
+    'logic_or',
+    'logic_nand',
+    'logic_nor',
+    'logic_xor',
+    'logic_xnor',
+    'logic_not',
+    'logic_buffer',
+    'dff',
     'ground',
     'generic',
 ] as const;
@@ -71,7 +83,7 @@ export type ComponentType = (typeof COMPONENT_TYPES)[number];
  */
 export interface ModelDef {
     name: string; // referenced by Component.model, e.g. "QGENNPN"
-    device: 'bjt' | 'mosfet' | 'jfet' | 'diode' | 'subckt' | 'switch';
+    device: 'bjt' | 'mosfet' | 'jfet' | 'diode' | 'subckt' | 'switch' | 'digital';
     body: string; // the literal SPICE line(s): ".model QGENNPN NPN(...)" or ".subckt ... .ends"
     /** Fidelity of this model relative to the real part (Flux-style honesty). */
     tier?: 'manufacturer' | 'generic' | 'ideal';
@@ -194,6 +206,20 @@ export const COMPONENT_PINS: Record<ComponentType, string[]> = {
     mosfet: ['d', 'g', 's', 'b'], // SPICE M: drain gate source bulk
     jfet: ['d', 'g', 's'], // SPICE J: drain gate source
     subckt: [], // variable arity — pins are emitted in AUTHORED order to match the .subckt port order
+    // Logic gates are VARIABLE arity (like subckt): pins are `in1`..`inN` + `out` (not/buffer use a
+    // single `in1`). The generator derives the input list from the authored pins, so `[]` here and a
+    // custom ERC pin-shape check replaces the fixed pin-count check.
+    logic_and: [],
+    logic_or: [],
+    logic_nand: [],
+    logic_nor: [],
+    logic_xor: [],
+    logic_xnor: [],
+    logic_not: [],
+    logic_buffer: [],
+    // D flip-flop (XSPICE d_dff): fixed XSPICE port order D CLK SET RST Q QB. set/rst are optional in
+    // the authored circuit — the generator auto-ties an omitted one to the inactive (LOW) digital rail.
+    dff: ['d', 'clk', 'set', 'rst', 'q', 'qb'],
     ground: ['1'],
     generic: [], // variable arity — pins come from the catalog part / schematic layer
 };
@@ -219,6 +245,16 @@ export const SPICE_PREFIXES: Record<ComponentType, string> = {
     mosfet: 'M',
     jfet: 'J', // SPICE J: junction FET
     subckt: 'X', // SPICE subcircuit instance call
+    // Digital / mixed-signal: all XSPICE code-model instances use the 'A' prefix.
+    logic_and: 'A',
+    logic_or: 'A',
+    logic_nand: 'A',
+    logic_nor: 'A',
+    logic_xor: 'A',
+    logic_xnor: 'A',
+    logic_not: 'A',
+    logic_buffer: 'A',
+    dff: 'A',
     ground: '', // Ground is a special case (node 0)
     generic: '', // Catalog-only — not emitted to SPICE
 };
@@ -231,4 +267,44 @@ export const SPICE_PREFIXES: Record<ComponentType, string> = {
  */
 export function isSimulatable(component: Pick<Component, 'type'>): boolean {
     return component.type !== 'generic';
+}
+
+/** The variable-arity XSPICE logic gates (pins `in1`..`inN` + `out`). */
+const LOGIC_GATE_TYPES = new Set<ComponentType>([
+    'logic_and',
+    'logic_or',
+    'logic_nand',
+    'logic_nor',
+    'logic_xor',
+    'logic_xnor',
+    'logic_not',
+    'logic_buffer',
+]);
+
+/** All digital / mixed-signal component types (gates + flip-flops) — emit XSPICE `a`-devices. */
+const DIGITAL_TYPES = new Set<ComponentType>([...LOGIC_GATE_TYPES, 'dff']);
+
+/** True for a single-input gate (only `logic_not` / `logic_buffer`) — emitted with a scalar input port. */
+export function isSingleInputGate(type: ComponentType): boolean {
+    return type === 'logic_not' || type === 'logic_buffer';
+}
+
+export function isLogicGateType(type: ComponentType): boolean {
+    return LOGIC_GATE_TYPES.has(type);
+}
+
+/** True if the component participates in the digital domain (drives/reads XSPICE event nodes). */
+export function isDigitalType(type: ComponentType): boolean {
+    return DIGITAL_TYPES.has(type);
+}
+
+/**
+ * Role of a digital component's pin on its net: a `source` DRIVES the net (gate `out`; flip-flop `q`/`qb`),
+ * a `sink` READS it (gate inputs `in*`; flip-flop `d`/`clk`/`set`/`rst`). Drives the auto-bridging
+ * (net classification + adc/dac direction) in the netlist generator. Returns null for non-digital types.
+ */
+export function digitalPinRole(type: ComponentType, pinId: string): 'source' | 'sink' | null {
+    if (isLogicGateType(type)) return pinId === 'out' ? 'source' : 'sink';
+    if (type === 'dff') return pinId === 'q' || pinId === 'qb' ? 'source' : 'sink';
+    return null;
 }

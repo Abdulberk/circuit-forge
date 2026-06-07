@@ -4,10 +4,11 @@
  */
 import type { CircuitJson, Component, Net, ModelDef } from '../types/circuit';
 import type { AnalysisConfig } from '../types/analysis';
-import { SPICE_PREFIXES, COMPONENT_PINS } from '../types/circuit';
+import { SPICE_PREFIXES, COMPONENT_PINS, isDigitalType } from '../types/circuit';
 import { analysisToSpice } from '../types/analysis';
 import { buildZenerModel, normalizeControlledSourceGain, parseTransformerParams, parseTransmissionLineParams } from '../models/library';
 import { sanitizeNodeName, validateIncludePaths } from './sanitizer';
+import { planMixedSignal, emitDigitalComponent, aInstanceName, type MixedSignalPlan } from './digital';
 
 /**
  * Netlist generation options
@@ -44,6 +45,26 @@ export function generateNetlist(
 
     // Build node map
     const nodeMap = buildNodeMap(circuit.nets);
+
+    // Reserve the SPICE instance name of every real component so the mixed-signal pre-pass can pick
+    // synthesized bridge/rail device names that never collide with a user designator (mirrors the node
+    // uniqueness already done for synthesized nodes). The synthesized devices are leaf/unreferenced, so a
+    // collision-avoiding rename is always safe. Empty / harmless for analog-only circuits.
+    const reservedDeviceNames = new Set<string>();
+    for (const c of circuit.components) {
+        if (c.type === 'ground' || c.type === 'generic') continue; // not emitted as devices
+        const prefix = SPICE_PREFIXES[c.type];
+        const name = isDigitalType(c.type)
+            ? aInstanceName(c.designator)
+            : prefix
+              ? spiceInstanceName(c.designator, prefix)
+              : null;
+        if (name) reservedDeviceNames.add(name.toLowerCase());
+    }
+
+    // Mixed-signal pre-pass: classify nets, plan analog<->digital bridges + the digital-node overrides,
+    // synthesize bridge/rail devices + their models. A no-op (empty) for analog-only circuits.
+    const ms = planMixedSignal(circuit, nodeMap, reservedDeviceNames);
 
     // Track every emitted .model/.subckt name -> body so we (a) dedup identical definitions and
     // (b) refuse to SILENTLY drop a conflicting body that reuses a name (which would emit only the
@@ -112,6 +133,31 @@ export function generateNetlist(
         lines.push('');
     }
 
+    // Digital / bridge models (XSPICE gate/flip-flop timing + adc/dac bridges), deduped + conflict-checked
+    // alongside the rest. Empty for analog-only circuits.
+    if (ms.modelCards.length > 0) {
+        const digitalModelLines: string[] = [];
+        for (const card of ms.modelCards) {
+            const name = card.split(/\s+/)[1] ?? ''; // ".model <NAME> ..."
+            const existing = emittedModels.get(name);
+            if (existing !== undefined) {
+                if (existing !== card) {
+                    throw new Error(
+                        `Conflicting definitions for model '${name}': the same name is defined with two different bodies.`,
+                    );
+                }
+                continue;
+            }
+            emittedModels.set(name, card);
+            digitalModelLines.push(card);
+        }
+        if (digitalModelLines.length > 0) {
+            lines.push('* Digital / bridge models');
+            lines.push(...digitalModelLines);
+            lines.push('');
+        }
+    }
+
     // Include files (with validation)
     if (options.includeFiles && options.includeFiles.length > 0) {
         if (options.jobDir) {
@@ -138,7 +184,11 @@ export function generateNetlist(
     // sub-element name is used.
     const designatorToInstance = new Map<string, string>();
     for (const component of circuit.components) {
-        const spiceLine = componentToSpice(component, nodeMap, modelMap);
+        // Digital components (gates/flip-flops) emit XSPICE 'a'-devices via the mixed-signal plan (which
+        // resolves their nodes through the bridge overrides); everything else takes the analog path.
+        const spiceLine = isDigitalType(component.type)
+            ? emitDigitalComponent(component, nodeMap, ms)
+            : componentToSpice(component, nodeMap, modelMap);
         const emitted = Array.isArray(spiceLine) ? spiceLine : spiceLine ? [spiceLine] : [];
         const emittedName = emitted[0]?.split(/\s+/)[0];
         if (emittedName && component.designator) {
@@ -146,6 +196,9 @@ export function generateNetlist(
         }
         componentLines.push(...emitted); // a composite device (e.g. transformer) emits several lines
     }
+    // Synthesized mixed-signal devices: analog<->digital bridges + the constant digital rail (empty for
+    // analog-only). Appended so they go through the same duplicate-device-name guard below.
+    componentLines.push(...ms.deviceLines);
     // No two emitted devices may share a name — ngspice would silently redefine the first. This catches
     // a composite device's derived sub-element names (e.g. transformer T1 -> LT1P/RT1P/KT1) colliding
     // with a user-authored component's designator. ngspice device names are CASE-INSENSITIVE, so the
@@ -191,7 +244,20 @@ export function generateNetlist(
         const node = nodeMap.get(net.id);
         if (node) netRefToNode.set(net.id.toLowerCase(), node); // …ids win on collision (ids are unique/authoritative)
     }
-    const rawProbes = options.probes || generateDefaultProbes(circuit, nodeMap);
+    // A pure-digital net's raw event node can't be sampled through wrdata, so planMixedSignal bridged it to
+    // an analog "_p" twin (probeNodeForNet). generateDefaultProbes already probes the twin; apply the SAME
+    // redirect to CALLER-supplied probes (the version-sim path always passes explicit probes) so v(<netId>),
+    // v(<netName>) AND v(<sanitized node>) all resolve to the observable analog twin. Overlaid LAST so it
+    // wins over the raw node above. No-op for analog-only circuits (probeNodeForNet is empty).
+    for (const net of circuit.nets) {
+        const twin = ms.probeNodeForNet.get(net.id);
+        if (!twin) continue;
+        netRefToNode.set(net.id.toLowerCase(), twin);
+        if (net.name) netRefToNode.set(net.name.toLowerCase(), twin);
+        const raw = nodeMap.get(net.id);
+        if (raw) netRefToNode.set(raw.toLowerCase(), twin);
+    }
+    const rawProbes = options.probes || generateDefaultProbes(circuit, nodeMap, ms);
     const probes = rawProbes
         .map((p) => rewriteProbeNodeRefs(rewriteProbeDeviceRefs(p, designatorToInstance), netRefToNode))
         .filter((p) => p.trim().length > 0); // a probe that reduced to nothing (e.g. v(gnd)) is dropped
@@ -501,20 +567,21 @@ function rewriteExprNodeRefs(expr: string, nodeMap: Map<string, string>): string
 }
 
 /**
- * Generate default probes (all node voltages)
+ * Generate default probes (all node voltages). For a pure-digital net, the raw event node is unreliable
+ * through `wrdata`, so the mixed-signal plan bridged it to an analog node — probe THAT instead.
  */
 function generateDefaultProbes(
     circuit: CircuitJson,
     nodeMap: Map<string, string>,
+    ms?: MixedSignalPlan,
 ): string[] {
     const probes: string[] = [];
 
     for (const net of circuit.nets) {
-        if (!net.isGround) {
-            const nodeName = nodeMap.get(net.id);
-            if (nodeName) {
-                probes.push(`v(${nodeName})`);
-            }
+        if (net.isGround) continue;
+        const probeNode = ms?.probeNodeForNet.get(net.id) ?? nodeMap.get(net.id);
+        if (probeNode) {
+            probes.push(`v(${probeNode})`);
         }
     }
 
