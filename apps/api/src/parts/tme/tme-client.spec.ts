@@ -22,6 +22,16 @@ function ok(data: unknown) {
     return { ok: true, status: 200, text: async () => JSON.stringify({ status: 'OK', data }) };
 }
 
+/** A non-OK response carrying an error envelope + an optional Retry-After header. */
+function err(status: number, body: unknown, retryAfter?: string) {
+    return {
+        ok: false,
+        status,
+        text: async () => JSON.stringify(body),
+        headers: { get: (h: string) => (h.toLowerCase() === 'retry-after' ? (retryAfter ?? null) : null) },
+    };
+}
+
 describe('TmeClient', () => {
     const realFetch = global.fetch;
     afterEach(() => {
@@ -67,5 +77,32 @@ describe('TmeClient', () => {
         await expect(client.get('/x')).resolves.toEqual({ ok: true });
         expect(tok.invalidate).toHaveBeenCalledTimes(1);
         expect(fetchMock).toHaveBeenCalledTimes(2);
+    });
+
+    it('retries a 429 rate-limit (honouring Retry-After) then succeeds', async () => {
+        const fetchMock = jest
+            .fn()
+            .mockResolvedValueOnce(err(429, { code: 'E_HTTP_429', message: 'rate limited' }, '0')) // Retry-After: 0s
+            .mockResolvedValueOnce(ok({ ok: true }));
+        global.fetch = fetchMock as unknown as typeof fetch;
+        const client = new TmeClient(cfg(), tokens());
+        await expect(client.get('/x')).resolves.toEqual({ ok: true });
+        expect(fetchMock).toHaveBeenCalledTimes(2); // one 429, one retry that succeeded
+    });
+
+    it('gives up with TmeApiError after exhausting retries on a persistent 429', async () => {
+        const fetchMock = jest.fn().mockResolvedValue(err(429, { code: 'E_HTTP_429', message: 'rate limited' }, '0'));
+        global.fetch = fetchMock as unknown as typeof fetch;
+        const client = new TmeClient(cfg(), tokens()); // default TME_MAX_RETRIES = 3
+        await expect(client.get('/x')).rejects.toBeInstanceOf(TmeApiError);
+        expect(fetchMock).toHaveBeenCalledTimes(3);
+    });
+
+    it('does NOT retry a 4xx (e.g. WAF 403) — deterministic, handled one layer up', async () => {
+        const fetchMock = jest.fn().mockResolvedValue(err(403, { code: 'E_HTTP_403', message: 'blocked' }));
+        global.fetch = fetchMock as unknown as typeof fetch;
+        const client = new TmeClient(cfg(), tokens());
+        await expect(client.get('/x')).rejects.toBeInstanceOf(TmeApiError);
+        expect(fetchMock).toHaveBeenCalledTimes(1); // no retry on a non-transient 4xx
     });
 });

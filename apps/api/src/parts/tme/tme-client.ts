@@ -48,25 +48,44 @@ export class TmeClient {
     }
 
     /** GET a TME endpoint and return the unwrapped `data`. Runs through the concurrency limiter,
-     *  with one transient retry (5xx / network) on top of the in-request one-shot 401 retry. */
+     *  with transient retries (5xx / network / 429 rate-limit) on top of the in-request one-shot 401
+     *  retry. A 429 honours the server's Retry-After; the catalog is business-critical, so a transient
+     *  rate-limit/outage must not surface as a hard failure to the AI design loop. */
     async get<T = unknown>(path: string, query: Query = {}): Promise<T> {
         return this.pool.run(() => this.withRetry(() => this.request<T>(path, query, true)));
     }
 
-    private async withRetry<T>(fn: () => Promise<T>, attempts = 2): Promise<T> {
+    private async withRetry<T>(fn: () => Promise<T>): Promise<T> {
+        const attempts = this.conf.maxRetries;
         let lastErr: unknown;
         for (let i = 0; i < attempts; i++) {
             try {
                 return await fn();
             } catch (err) {
                 lastErr = err;
+                // Retry network errors, 5xx, and 429 (rate limit). NOT other 4xx (incl. WAF 403) — those
+                // are deterministic, and a search 403 is handled (swallowed to empty) one layer up.
                 const transient =
-                    err instanceof TmeNetworkError || (err instanceof TmeApiError && err.httpStatus >= 500);
+                    err instanceof TmeNetworkError ||
+                    (err instanceof TmeApiError && (err.httpStatus >= 500 || err.httpStatus === 429));
                 if (!transient || i === attempts - 1) throw err;
-                await new Promise((r) => setTimeout(r, 200 * (i + 1)));
+                // Honour Retry-After on a 429; otherwise capped exponential backoff + jitter.
+                const retryAfter = err instanceof TmeApiError ? err.retryAfterMs : undefined;
+                const backoff = Math.min(200 * 2 ** i, 2000) + Math.floor(Math.random() * 100);
+                await new Promise((r) => setTimeout(r, retryAfter ?? backoff));
             }
         }
         throw lastErr;
+    }
+
+    /** Parse a `Retry-After` header (delta-seconds or an HTTP-date) into ms; undefined if absent/invalid. */
+    private parseRetryAfter(res: Response): number | undefined {
+        const raw = res.headers?.get?.('retry-after');
+        if (!raw) return undefined;
+        const secs = Number(raw);
+        if (Number.isFinite(secs)) return Math.max(0, secs * 1000);
+        const when = Date.parse(raw);
+        return Number.isFinite(when) ? Math.max(0, when - Date.now()) : undefined;
     }
 
     private async request<T>(path: string, query: Query, retryOn401: boolean): Promise<T> {
@@ -118,6 +137,7 @@ export class TmeClient {
             res.status,
             json?.message ?? `TME request failed (${res.status})`,
             json?.error_data,
+            this.parseRetryAfter(res),
         );
     }
 

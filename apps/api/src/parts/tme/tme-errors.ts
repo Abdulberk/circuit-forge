@@ -10,6 +10,8 @@ export class TmeApiError extends Error {
         public readonly httpStatus: number,
         message: string,
         public readonly errorData?: unknown,
+        /** Parsed from the `Retry-After` header on a 429/503, in ms — how long to wait before retrying. */
+        public readonly retryAfterMs?: number,
     ) {
         super(message);
         this.name = 'TmeApiError';

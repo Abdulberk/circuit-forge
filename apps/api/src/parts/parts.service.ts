@@ -80,20 +80,20 @@ export class PartsService {
     async getProduct(symbol: string): Promise<CatalogPart> {
         this.assertSymbol(symbol);
         try {
-            return await this.provider.getProduct(symbol);
+            // Cache product detail: an AI design session (and sourcing enrichment) looks up the same
+            // symbol repeatedly — dedupe those so we don't hammer (and get rate-limited by) TME.
+            return await this.cache.getOrLoad(`product:${symbol}`, this.ttl('TME_PRODUCT_TTL_MS', 300_000), () =>
+                this.provider.getProduct(symbol),
+            );
         } catch (err) {
             throw this.mapError(err);
         }
     }
 
     async getComponent(symbol: string): Promise<MappedComponent> {
-        this.assertSymbol(symbol);
-        try {
-            const part = await this.provider.getProduct(symbol);
-            return this.mapper.toComponent(part);
-        } catch (err) {
-            throw this.mapError(err);
-        }
+        // Reuse the cached getProduct fetch (incl. its symbol validation + error mapping), then classify.
+        const part = await this.getProduct(symbol);
+        return this.mapper.toComponent(part);
     }
 
     private assertSymbol(symbol: string): void {

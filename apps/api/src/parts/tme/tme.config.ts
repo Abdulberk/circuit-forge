@@ -23,6 +23,10 @@ export interface TmeConfig {
     referenceTtlMs: number;
     /** TTL for search-result caching. */
     searchTtlMs: number;
+    /** TTL for product-detail caching (dedupes repeated part lookups within one design session). */
+    productTtlMs: number;
+    /** Total attempts (1 = no retry) for a transient TME failure (5xx / network / 429 rate-limit). */
+    maxRetries: number;
 }
 
 function num(config: ConfigService, key: string, fallback: number): number {
@@ -52,5 +56,7 @@ export function requireTmeConfig(config: ConfigService): TmeConfig {
         maxManufacturers: num(config, 'TME_MAX_MANUFACTURERS', 5000),
         referenceTtlMs: num(config, 'TME_REF_TTL_MS', 24 * 60 * 60 * 1000),
         searchTtlMs: num(config, 'TME_SEARCH_TTL_MS', 60 * 1000),
+        productTtlMs: num(config, 'TME_PRODUCT_TTL_MS', 5 * 60 * 1000),
+        maxRetries: Math.max(1, num(config, 'TME_MAX_RETRIES', 3)),
     };
 }
