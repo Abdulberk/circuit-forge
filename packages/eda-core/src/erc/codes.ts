@@ -30,6 +30,7 @@ export const ERC_DESCRIPTIONS: Record<ErcCode, string> = {
     [ErcCode.FLOATING_DIGITAL_INPUT]: 'Digital input is not driven by any source (would be an unknown state)',
     [ErcCode.DIGITAL_BUS_CONTENTION]: 'Multiple digital outputs drive the same net',
     [ErcCode.MIXED_DRIVER_CONFLICT]: 'A digital output and an analog source drive the same net',
+    [ErcCode.MIXED_LOGIC_LEVELS]: 'The digital domain is driven at materially different (or non-positive) logic levels; analog↔digital bridges use one rail',
     [ErcCode.EMPTY_CIRCUIT]: 'Circuit contains no components',
     [ErcCode.NO_ACTIVE_COMPONENTS]: 'Circuit has no active sources or inputs',
 };
@@ -58,6 +59,7 @@ export const ERC_SEVERITIES: Record<ErcCode, ErcSeverity> = {
     [ErcCode.FLOATING_DIGITAL_INPUT]: 'error', // an undriven digital input is unknown ('U') — a real bug
     [ErcCode.DIGITAL_BUS_CONTENTION]: 'error', // two pushing outputs on one net — needs a tristate/bus
     [ErcCode.MIXED_DRIVER_CONFLICT]: 'error', // analog source vs digital output fighting over a node
+    [ErcCode.MIXED_LOGIC_LEVELS]: 'warning', // advisory: bridges calibrated to one rail; lower-rail HIGH may misread
     [ErcCode.EMPTY_CIRCUIT]: 'error',
     [ErcCode.NO_ACTIVE_COMPONENTS]: 'warning',
 };

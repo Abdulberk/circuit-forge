@@ -51,6 +51,22 @@ export function generateNetlist(
     // Build node map
     const nodeMap = buildNodeMap(circuit.nets);
 
+    // ngspice node names are CASE-INSENSITIVE. Two distinct nets whose sanitized nodes differ only by case
+    // (e.g. "out"→"x_out" and "OUT"→"x_OUT", or "sig"→"nsig" and "SIG"→"nSIG") would be silently MERGED by
+    // ngspice into one node — a silently wrong netlist. Fail loud instead (mirrors the duplicate-device guard).
+    const nodeOwner = new Map<string, string>(); // lower-cased node -> first net id that produced it
+    for (const [netId, node] of nodeMap) {
+        if (node === '0') continue; // multiple ground nets legitimately share node 0
+        const key = node.toLowerCase();
+        const prev = nodeOwner.get(key);
+        if (prev !== undefined) {
+            throw new Error(
+                `Net node-name collision: nets '${prev}' and '${netId}' both map to SPICE node '${node}' (ngspice node names are case-insensitive). Rename one so they don't differ only by case.`,
+            );
+        }
+        nodeOwner.set(key, netId);
+    }
+
     // Reserve the SPICE instance name of every real component so the mixed-signal pre-pass can pick
     // synthesized bridge/rail device names that never collide with a user designator (mirrors the node
     // uniqueness already done for synthesized nodes). The synthesized devices are leaf/unreferenced, so a
@@ -188,16 +204,27 @@ export function generateNetlist(
     // they point at the real emitted name. For a composite device (transformer) the first emitted
     // sub-element name is used.
     const designatorToInstance = new Map<string, string>();
+    // Digital `a`-devices have NO branch-current vector in ngspice, so an `i(<digital dev>)` probe is
+    // meaningless and would abort the entire wrdata line. Collect their designator + emitted instance name
+    // so such probes can be dropped (and so a digital designator is never remapped into an i() rewrite).
+    const digitalDeviceRefs = new Set<string>();
     for (const component of circuit.components) {
         // Digital components (gates/flip-flops) emit XSPICE 'a'-devices via the mixed-signal plan (which
         // resolves their nodes through the bridge overrides); everything else takes the analog path.
-        const spiceLine = isDigitalType(component.type)
+        const digital = isDigitalType(component.type);
+        const spiceLine = digital
             ? emitDigitalComponent(component, nodeMap, ms)
             : componentToSpice(component, nodeMap, modelMap);
         const emitted = Array.isArray(spiceLine) ? spiceLine : spiceLine ? [spiceLine] : [];
         const emittedName = emitted[0]?.split(/\s+/)[0];
         if (emittedName && component.designator) {
-            designatorToInstance.set(component.designator.toLowerCase(), emittedName);
+            if (digital) {
+                digitalDeviceRefs.add(component.designator.toLowerCase());
+                digitalDeviceRefs.add(emittedName.toLowerCase());
+            } else {
+                // Only ANALOG devices are remapped for i()/.dc references; an a-device has no current to probe.
+                designatorToInstance.set(component.designator.toLowerCase(), emittedName);
+            }
         }
         componentLines.push(...emitted); // a composite device (e.g. transformer) emits several lines
     }
@@ -265,7 +292,8 @@ export function generateNetlist(
     const rawProbes = options.probes || generateDefaultProbes(circuit, nodeMap, ms);
     const probes = rawProbes
         .map((p) => rewriteProbeNodeRefs(rewriteProbeDeviceRefs(p, designatorToInstance), netRefToNode))
-        .filter((p) => p.trim().length > 0); // a probe that reduced to nothing (e.g. v(gnd)) is dropped
+        .filter((p) => p.trim().length > 0) // a probe that reduced to nothing (e.g. v(gnd)) is dropped
+        .filter((p) => !isDigitalCurrentProbe(p, digitalDeviceRefs)); // i(<digital a-device>) has no current vector → drop (else it aborts the whole wrdata line)
     lines.push('* Control block');
     lines.push('.control');
     lines.push('  set filetype=ascii');
@@ -331,6 +359,18 @@ function rewriteProbeDeviceRefs(probe: string, map: Map<string, string>): string
         const mapped = map.get(name.trim().toLowerCase());
         return mapped ? `i(${mapped})` : whole;
     });
+}
+
+/**
+ * True if `probe` is a current probe `i(<x>)` whose target is a digital component (its designator or its
+ * emitted XSPICE `a`-device name). Such a probe must be DROPPED: an event-driven `a`-device has no branch-
+ * current vector, so `i(...)` on it is unresolvable and aborts the ENTIRE wrdata line (losing every other
+ * probe on it). Matches a probe consisting solely of one `i(name)` term.
+ */
+function isDigitalCurrentProbe(probe: string, digitalRefs: Set<string>): boolean {
+    const m = probe.trim().match(/^i\s*\(\s*([^),]+?)\s*\)$/i);
+    const name = m?.[1];
+    return name !== undefined && digitalRefs.has(name.trim().toLowerCase());
 }
 
 /**

@@ -7,6 +7,7 @@ import { isDigitalType, isLogicGateType, isSingleInputGate, digitalPinRole } fro
 import { ErcCode, ErcSeverity, ErcResult, ErcIssue } from '../types/erc';
 import { ERC_DESCRIPTIONS, ERC_SEVERITIES } from './codes';
 import { buildZenerModel, normalizeControlledSourceGain, parseTransformerParams, parseTransmissionLineParams } from '../models/library';
+import { sourceHighLevel } from '../netlist/digital';
 
 /**
  * Expected pin counts for each component type
@@ -245,14 +246,19 @@ function checkDigitalConnectivity(circuit: CircuitJson): ErcIssue[] {
             const inputs = inputPins.length;
             const distinctInputs = new Set(inputPins).size;
             const outputs = c.pins.filter((p) => p.pinId === 'out').length;
+            // A pin that is neither `out` nor `in<N>` is silently bridged-but-dropped at emission (the gate
+            // ignores it while the planner still bridges its net), so flag it as a shape error.
+            const stray = c.pins.filter((p) => p.pinId !== 'out' && !/^in\d+$/i.test(p.pinId)).map((p) => p.pinId);
             // not/buffer take EXACTLY one input (scalar port); other gates take >=2. A duplicate `in*` pinId
             // would silently collapse to one net during emission, so flag it too.
             const okInputs = isSingleInputGate(c.type) ? inputs === 1 : inputs >= 2;
-            if (outputs !== 1 || !okInputs || distinctInputs !== inputs) {
+            if (outputs !== 1 || !okInputs || distinctInputs !== inputs || stray.length > 0) {
                 const reason =
-                    distinctInputs !== inputs
-                        ? 'has duplicate input pin ids'
-                        : `needs ${isSingleInputGate(c.type) ? 'exactly one' : '>=2'} 'in*' and exactly one 'out'`;
+                    stray.length > 0
+                        ? `has unexpected pin(s) ${[...new Set(stray)].join(', ')} — gate pins must be 'in1'..'inN' + 'out'`
+                        : distinctInputs !== inputs
+                          ? 'has duplicate input pin ids'
+                          : `needs ${isSingleInputGate(c.type) ? 'exactly one' : '>=2'} 'in*' and exactly one 'out'`;
                 issues.push(
                     createIssue(
                         ErcCode.DIGITAL_PIN_SHAPE,
@@ -268,6 +274,18 @@ function checkDigitalConnectivity(circuit: CircuitJson): ErcIssue[] {
                         createIssue(ErcCode.DIGITAL_PIN_SHAPE, [c.id], `${c.designator || c.id} (dff): missing required pin '${req}'`),
                     );
                 }
+            }
+            // A duplicate pinId (e.g. two `q`) silently drops a connection (nodeOf takes the first); a pin
+            // outside the fixed dff port set is silently ignored by emission. Flag both.
+            const allowed = new Set(['d', 'clk', 'set', 'rst', 'q', 'qb']);
+            const ids = c.pins.map((p) => p.pinId.toLowerCase());
+            const dups = [...new Set(ids.filter((id, i) => ids.indexOf(id) !== i))];
+            if (dups.length > 0) {
+                issues.push(createIssue(ErcCode.DIGITAL_PIN_SHAPE, [c.id], `${c.designator || c.id} (dff): duplicate pin id(s) ${dups.join(', ')}`));
+            }
+            const strayDff = [...new Set(c.pins.map((p) => p.pinId).filter((id) => !allowed.has(id.toLowerCase())))];
+            if (strayDff.length > 0) {
+                issues.push(createIssue(ErcCode.DIGITAL_PIN_SHAPE, [c.id], `${c.designator || c.id} (dff): unexpected pin(s) ${strayDff.join(', ')} — dff pins are d/clk/set/rst/q/qb`));
             }
         }
     }
@@ -302,7 +320,11 @@ function checkDigitalConnectivity(circuit: CircuitJson): ErcIssue[] {
                 else x.sink += 1;
             } else {
                 x.analog += 1;
-                if (ACTIVE_ANALOG.has(c.type)) x.analogSrc += 1;
+                // A vcvs/vccs c+/c- pin only SENSES its net (high-impedance input); it does not DRIVE it.
+                // Counting it as a driver would falsely flag MIXED_DRIVER_CONFLICT when an E/G source senses
+                // a logic output (a valid comparator / level-sense pattern the generator handles correctly).
+                const senseOnly = (c.type === 'vcvs' || c.type === 'vccs') && (pin.pinId === 'c+' || pin.pinId === 'c-');
+                if (ACTIVE_ANALOG.has(c.type) && !senseOnly) x.analogSrc += 1;
             }
         }
     }
@@ -321,6 +343,46 @@ function checkDigitalConnectivity(circuit: CircuitJson): ErcIssue[] {
         if (x.sink >= 1 && x.src === 0 && x.analog === 0 && !net?.isGround) {
             issues.push(createIssue(ErcCode.FLOATING_DIGITAL_INPUT, [netId], label));
         }
+    }
+
+    // 3) Logic-level sanity. The analog↔digital bridges are calibrated to ONE circuit-wide rail (the highest
+    // positive level driving the digital domain). Warn if the digital domain is driven at materially different
+    // levels (a lower-rail HIGH may be misread against the higher rail's thresholds — use a level shifter or
+    // set logicVoltage) or by a non-positive stimulus (a negative-going clock can't cross the positive adc
+    // thresholds). Advisory only — the netlist still generates.
+    const digitalNets = new Set<string>();
+    for (const [netId, x] of tally) if (x.src + x.sink > 0) digitalNets.add(netId);
+    const levels: number[] = [];
+    let sawNonPositive = false;
+    for (const c of circuit.components) {
+        const isVoltageDriver = c.type === 'voltage_source' || (c.type === 'bsource' && /^\s*V\s*=/i.test(c.value ?? ''));
+        if (!isVoltageDriver || !c.pins.some((p) => digitalNets.has(p.netId))) continue;
+        const lvl = sourceHighLevel(c.value);
+        if (lvl === null) continue;
+        if (lvl > 0) levels.push(lvl);
+        else sawNonPositive = true;
+    }
+    if (levels.length >= 2) {
+        const max = Math.max(...levels);
+        const min = Math.min(...levels);
+        if (max / min > 1.4) {
+            issues.push(
+                createIssue(
+                    ErcCode.MIXED_LOGIC_LEVELS,
+                    [],
+                    `Digital domain driven at different logic levels (${min} V and ${max} V); bridges are calibrated to the highest rail (${max} V), so a ${min} V HIGH may read as undefined. Use a level shifter or set logicVoltage.`,
+                ),
+            );
+        }
+    }
+    if (sawNonPositive) {
+        issues.push(
+            createIssue(
+                ErcCode.MIXED_LOGIC_LEVELS,
+                [],
+                `A digital input is driven by a non-positive (negative-rail) stimulus; the positive adc thresholds cannot read it as HIGH. Use a positive logic rail.`,
+            ),
+        );
     }
 
     return issues;
