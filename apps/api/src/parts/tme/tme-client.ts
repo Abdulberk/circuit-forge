@@ -13,6 +13,10 @@ import { createLimiter, type Limiter } from './concurrency-limiter';
 export type QueryValue = string | number | boolean | undefined | Array<string | number>;
 export type Query = Record<string, QueryValue>;
 
+/** Upper bound on a single inter-retry wait, incl. a server-supplied Retry-After. Keeps a transient
+ *  rate-limit/outage from parking a request (and a concurrency slot) for the server's full window. */
+const MAX_RETRY_WAIT_MS = 5_000;
+
 interface TmeEnvelope<T> {
     status?: string;
     data?: T;
@@ -47,12 +51,14 @@ export class TmeClient {
         return { country, language, currency, maxManufacturers };
     }
 
-    /** GET a TME endpoint and return the unwrapped `data`. Runs through the concurrency limiter,
-     *  with transient retries (5xx / network / 429 rate-limit) on top of the in-request one-shot 401
-     *  retry. A 429 honours the server's Retry-After; the catalog is business-critical, so a transient
-     *  rate-limit/outage must not surface as a hard failure to the AI design loop. */
+    /** GET a TME endpoint and return the unwrapped `data`, with transient retries (5xx / network / 429
+     *  rate-limit) on top of the in-request one-shot 401 retry. A 429 honours the server's Retry-After
+     *  (capped — see withRetry); the catalog is business-critical, so a transient rate-limit/outage must
+     *  not surface as a hard failure to the AI design loop. Retry runs OUTSIDE the concurrency limiter so
+     *  the backoff sleep never holds a slot — only the actual fetch occupies one, so a handful of
+     *  rate-limited calls can't stall all catalog traffic. */
     async get<T = unknown>(path: string, query: Query = {}): Promise<T> {
-        return this.pool.run(() => this.withRetry(() => this.request<T>(path, query, true)));
+        return this.withRetry(() => this.pool.run(() => this.request<T>(path, query, true)));
     }
 
     private async withRetry<T>(fn: () => Promise<T>): Promise<T> {
@@ -69,10 +75,13 @@ export class TmeClient {
                     err instanceof TmeNetworkError ||
                     (err instanceof TmeApiError && (err.httpStatus >= 500 || err.httpStatus === 429));
                 if (!transient || i === attempts - 1) throw err;
-                // Honour Retry-After on a 429; otherwise capped exponential backoff + jitter.
+                // Honour Retry-After on a 429; otherwise capped exponential backoff + jitter. The wait is
+                // CLAMPED to MAX_RETRY_WAIT_MS: a server can legally send a huge Retry-After (60/3600/…),
+                // and we must fail fast rather than park the request (and the AI loop) for minutes/hours.
                 const retryAfter = err instanceof TmeApiError ? err.retryAfterMs : undefined;
                 const backoff = Math.min(200 * 2 ** i, 2000) + Math.floor(Math.random() * 100);
-                await new Promise((r) => setTimeout(r, retryAfter ?? backoff));
+                const delay = Math.min(retryAfter ?? backoff, MAX_RETRY_WAIT_MS);
+                await new Promise((r) => setTimeout(r, delay));
             }
         }
         throw lastErr;
