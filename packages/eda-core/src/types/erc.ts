@@ -35,6 +35,7 @@ export enum ErcCode {
     FLOATING_DIGITAL_INPUT = 'ERC061', // a digital input net has no driver (would be an unknown 'U' state)
     DIGITAL_BUS_CONTENTION = 'ERC062', // two or more digital outputs drive the same net
     MIXED_DRIVER_CONFLICT = 'ERC063', // a digital output and an analog source drive the same net
+    MIXED_LOGIC_LEVELS = 'ERC064', // the digital domain is driven at materially different / non-positive logic levels
 
     // General
     EMPTY_CIRCUIT = 'ERC050',

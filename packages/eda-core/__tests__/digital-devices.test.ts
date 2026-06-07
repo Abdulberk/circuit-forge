@@ -632,3 +632,157 @@ describe('parametric digital timing (per-component, properties-driven)', () => {
         expect(modelCard(netlist, 'CFD_AND')).toBe('.model CFD_AND d_and(rise_delay=1n fall_delay=1n input_load=0.5p)');
     });
 });
+
+describe('subsystem audit hardening fixes', () => {
+    const src = (id: string, des: string, value: string, net: string): CircuitJson['components'][number] =>
+        ({ id, type: 'voltage_source', designator: des, value, pins: [{ pinId: '+', netId: net }, { pinId: '-', netId: 'gnd' }] });
+    const res = (id: string, des: string, a: string, b: string): CircuitJson['components'][number] =>
+        ({ id, type: 'resistor', designator: des, value: '1k', pins: [{ pinId: '1', netId: a }, { pinId: '2', netId: b }] });
+    const netsOf = (...ids: string[]): CircuitJson['nets'] =>
+        ids.map((id) => (id === 'gnd' ? { id: 'gnd', name: 'GND', isGround: true } : { id, name: id.toUpperCase() }));
+
+    // #1 — mixed 3.3 V + 5 V digital domains: bridges calibrate to one rail, so warn.
+    it('warns MIXED_LOGIC_LEVELS when 3.3 V and 5 V sources drive the digital domain', () => {
+        const c: CircuitJson = {
+            version: '1.0',
+            components: [
+                src('v1', 'V1', 'DC 5', 'ck5'), src('v2', 'V2', 'DC 3.3', 'd33'),
+                { id: 'u1', type: 'logic_and', designator: 'U1', pins: [
+                    { pinId: 'in1', netId: 'ck5' }, { pinId: 'in2', netId: 'd33' }, { pinId: 'out', netId: 'y' }] },
+                res('r1', 'R1', 'y', 'gnd'),
+            ],
+            nets: netsOf('ck5', 'd33', 'y', 'gnd'),
+        };
+        expect(runErc(c).issues.some((i) => i.code === ErcCode.MIXED_LOGIC_LEVELS)).toBe(true);
+    });
+
+    // #8 — a negative-rail digital stimulus can't cross the positive adc thresholds: warn.
+    it('warns MIXED_LOGIC_LEVELS for a negative-rail (PULSE 0 -5) digital stimulus', () => {
+        const c: CircuitJson = {
+            version: '1.0',
+            components: [
+                src('v1', 'V1', 'PULSE(0 -5 0 1n 1n 1u 2u)', 'a'),
+                { id: 'u1', type: 'logic_buffer', designator: 'U1', pins: [{ pinId: 'in1', netId: 'a' }, { pinId: 'out', netId: 'y' }] },
+                res('r1', 'R1', 'y', 'gnd'),
+            ],
+            nets: netsOf('a', 'y', 'gnd'),
+        };
+        expect(runErc(c).issues.some((i) => i.code === ErcCode.MIXED_LOGIC_LEVELS && /negative/i.test(i.message))).toBe(true);
+    });
+
+    // #2a — two real nets whose nodes differ only by case would silently MERGE in ngspice: fail loud.
+    it('throws on two nets whose SPICE nodes collide case-insensitively', () => {
+        const c: CircuitJson = {
+            version: '1.0',
+            components: [res('r1', 'R1', 'sig', 'gnd'), res('r2', 'R2', 'SIG', 'gnd'), src('v1', 'V1', 'DC 5', 'sig')],
+            nets: netsOf('sig', 'SIG', 'gnd'),
+        };
+        expect(() => generateNetlist(c, TRAN)).toThrow(/node-name collision/i);
+    });
+
+    // #2b — a synthesized digital twin node must not case-collide with a real net node (uniqueNode renames).
+    it('renames a synthesized digital node that would case-collide with a real net node', () => {
+        const c: CircuitJson = {
+            version: '1.0',
+            components: [
+                { id: 'u1', type: 'logic_buffer', designator: 'U1', pins: [{ pinId: 'in1', netId: 'a' }, { pinId: 'out', netId: 'y' }] },
+                res('r1', 'R1', 'y', 'gnd'), // makes net y mixed → digital twin node "ny_d"
+                src('v2', 'V2', 'DC 3', 'Y_d'), res('r2', 'R2', 'Y_d', 'gnd'), // real net Y_d → node "nY_d"
+            ],
+            nets: netsOf('a', 'y', 'Y_d', 'gnd'),
+        };
+        const netlist = generateNetlist(c, TRAN);
+        expect(netlist).toContain('nY_d'); // the real net's node, intact
+        expect(netlist).toContain('ny_d_1'); // the twin was renamed to avoid the case-collision
+        expect(deviceLine(netlist, 'AU1')).toContain('ny_d_1');
+    });
+
+    // #3 — a vcvs that only SENSES a logic output (c+ on the digital net) is NOT a driver conflict.
+    it('does NOT flag MIXED_DRIVER_CONFLICT when a vcvs only senses a logic output', () => {
+        const c: CircuitJson = {
+            version: '1.0',
+            components: [
+                src('v1', 'V1', 'PULSE(0 5 0 1n 1n 1u 2u)', 'a'),
+                { id: 'u1', type: 'logic_buffer', designator: 'U1', pins: [{ pinId: 'in1', netId: 'a' }, { pinId: 'out', netId: 'sig' }] },
+                { id: 'e1', type: 'vcvs', designator: 'E1', value: '2', pins: [
+                    { pinId: '+', netId: 'outp' }, { pinId: '-', netId: 'gnd' }, { pinId: 'c+', netId: 'sig' }, { pinId: 'c-', netId: 'gnd' }] },
+                res('r1', 'R1', 'outp', 'gnd'),
+            ],
+            nets: netsOf('a', 'sig', 'outp', 'gnd'),
+        };
+        expect(runErc(c).issues.some((i) => i.code === ErcCode.MIXED_DRIVER_CONFLICT)).toBe(false);
+    });
+
+    // #4 — a bsource V=3.3 driving the digital domain sets the rail (was ignored → wrongly 5 V).
+    it('auto-detects the logic rail from a bsource V=3.3 driving the digital domain', () => {
+        const c: CircuitJson = {
+            version: '1.0',
+            components: [
+                { id: 'b1', type: 'bsource', designator: 'B1', value: 'V=3.3', pins: [{ pinId: '+', netId: 'a' }, { pinId: '-', netId: 'gnd' }] },
+                { id: 'u1', type: 'logic_buffer', designator: 'U1', pins: [{ pinId: 'in1', netId: 'a' }, { pinId: 'out', netId: 'y' }] },
+                res('r1', 'R1', 'y', 'gnd'),
+            ],
+            nets: netsOf('a', 'y', 'gnd'),
+        };
+        expect(modelCard(generateNetlist(c, TRAN), 'CFD_DAC')).toBe('.model CFD_DAC dac_bridge(out_low=0 out_high=3.3)');
+    });
+
+    // #7 — EXP() stimulus peak sets the rail (was mis-read as the 0 V initial value).
+    it('auto-detects the logic rail from an EXP() stimulus peak', () => {
+        const c: CircuitJson = {
+            version: '1.0',
+            components: [
+                src('v1', 'V1', 'EXP(0 3.3 1n 2n 3n 4n)', 'a'),
+                { id: 'u1', type: 'logic_buffer', designator: 'U1', pins: [{ pinId: 'in1', netId: 'a' }, { pinId: 'out', netId: 'y' }] },
+                res('r1', 'R1', 'y', 'gnd'),
+            ],
+            nets: netsOf('a', 'y', 'gnd'),
+        };
+        expect(modelCard(generateNetlist(c, TRAN), 'CFD_DAC')).toBe('.model CFD_DAC dac_bridge(out_low=0 out_high=3.3)');
+    });
+
+    // #5 — an i() current probe on a digital a-device is dropped (it would abort the whole wrdata line).
+    it('drops an i() current probe on a digital device but keeps sibling v() probes', () => {
+        const c: CircuitJson = {
+            version: '1.0',
+            components: [
+                src('v1', 'V1', 'PULSE(0 5 0 1n 1n 1u 2u)', 'a'), src('v2', 'V2', 'PULSE(0 5 0 1n 1n 1u 2u)', 'b'),
+                { id: 'u1', type: 'logic_and', designator: 'U1', pins: [
+                    { pinId: 'in1', netId: 'a' }, { pinId: 'in2', netId: 'b' }, { pinId: 'out', netId: 'q' }] },
+            ],
+            nets: netsOf('a', 'b', 'q', 'gnd'),
+        };
+        const netlist = generateNetlist(c, TRAN, { probes: ['i(U1)', 'v(q)'] });
+        expect(wrdataLine(netlist)).not.toMatch(/i\s*\(/i); // the meaningless a-device current probe is gone
+        expect(wrdataLine(netlist)).toContain('v(nq_p)'); // the sibling probe survived (redirected to the twin)
+    });
+
+    // #6a — a gate pin that is neither in* nor out is silently dropped at emission: flag it.
+    it('flags a gate pin that is neither in* nor out (DIGITAL_PIN_SHAPE)', () => {
+        const c: CircuitJson = {
+            version: '1.0',
+            components: [
+                src('v1', 'V1', 'DC 5', 'a'), src('v2', 'V2', 'DC 5', 'b'), src('v3', 'V3', 'DC 5', 'cc'),
+                { id: 'u1', type: 'logic_and', designator: 'U1', pins: [
+                    { pinId: 'in1', netId: 'a' }, { pinId: 'in2', netId: 'b' }, { pinId: 'en', netId: 'cc' }, { pinId: 'out', netId: 'y' }] },
+                res('r1', 'R1', 'y', 'gnd'),
+            ],
+            nets: netsOf('a', 'b', 'cc', 'y', 'gnd'),
+        };
+        expect(runErc(c).issues.some((i) => i.code === ErcCode.DIGITAL_PIN_SHAPE && i.relatedIds.includes('u1') && /unexpected/i.test(i.message))).toBe(true);
+    });
+
+    // #6b — a dff with a duplicate pin id silently drops a connection: flag it.
+    it('flags a dff with a duplicate pin id (DIGITAL_PIN_SHAPE)', () => {
+        const c: CircuitJson = {
+            version: '1.0',
+            components: [
+                { id: 'u1', type: 'dff', designator: 'U1', pins: [
+                    { pinId: 'd', netId: 'din' }, { pinId: 'clk', netId: 'clk' },
+                    { pinId: 'q', netId: 'q1' }, { pinId: 'q', netId: 'q2' }, { pinId: 'qb', netId: 'qb' }] },
+            ],
+            nets: netsOf('din', 'clk', 'q1', 'q2', 'qb'),
+        };
+        expect(runErc(c).issues.some((i) => i.code === ErcCode.DIGITAL_PIN_SHAPE && /duplicate/i.test(i.message))).toBe(true);
+    });
+});

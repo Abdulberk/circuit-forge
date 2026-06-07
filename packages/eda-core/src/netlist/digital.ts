@@ -95,7 +95,7 @@ function defaultParams(type: string): string {
  * `PWL(t v …)`, or a bare number. Returns null when no level can be read. Timing/unit suffixes in the
  * tail are irrelevant here (we only read the first one or two level numbers), so a plain regex is enough.
  */
-function sourceHighLevel(value: string | undefined): number | null {
+export function sourceHighLevel(value: string | undefined): number | null {
     if (!value) return null;
     const v = value.trim();
     const nums = (v.match(/[+-]?\d*\.?\d+(?:[eE][+-]?\d+)?/g) ?? []).map(Number).filter((n) => Number.isFinite(n));
@@ -103,13 +103,15 @@ function sourceHighLevel(value: string | undefined): number | null {
     if (first === undefined) return null;
     const second = nums[1];
     const up = v.toUpperCase();
-    if (up.startsWith('PULSE')) return second === undefined ? first : Math.max(first, second); // V1 initial, V2 pulsed
-    if (up.startsWith('SIN')) return second === undefined ? first : first + Math.abs(second); // offset + amplitude
+    // PULSE(V1 V2 …) and EXP(V1 V2 …): the two level args are the initial and the pulsed/target level.
+    if (up.startsWith('PULSE') || up.startsWith('EXP')) return second === undefined ? first : Math.max(first, second);
+    // SIN(off amp …) and SFFM(off amp …): peak = offset + |amplitude|.
+    if (up.startsWith('SIN') || up.startsWith('SFFM')) return second === undefined ? first : first + Math.abs(second);
     if (up.startsWith('PWL')) {
         const levels = nums.filter((_, i) => i % 2 === 1); // (t,v) pairs → the v's
         return levels.length ? Math.max(...levels) : null;
     }
-    return first; // "DC 5" → 5, or a bare "5"
+    return first; // "DC 5" → 5, "V=3.3" (bsource) → 3.3, or a bare "5"
 }
 
 /**
@@ -123,7 +125,10 @@ function detectLogicHigh(circuit: CircuitJson, roles: Map<string, NetRoles>, ove
     if (override && override > 0) return override;
     let high = 0;
     for (const c of circuit.components) {
-        if (c.type !== 'voltage_source') continue;
+        // Independent V sources, and a voltage-form behavioral source (`V=<const>`), define a logic level.
+        // (A `bsource` `I=…`, a `current_source`, or a `vcvs`/`vccs` gain carry no statically-knowable level.)
+        const isVoltageDriver = c.type === 'voltage_source' || (c.type === 'bsource' && /^\s*V\s*=/i.test(c.value ?? ''));
+        if (!isVoltageDriver) continue;
         const drivesDigital = c.pins.some((p) => {
             const r = roles.get(p.netId);
             return !!r && r.digitalSource + r.digitalSink > 0;
@@ -232,13 +237,15 @@ export function planMixedSignal(
     const vdd = detectLogicHigh(circuit, roles, logicVoltage);
     const { adc: ADC_MODEL, dac: DAC_MODEL } = makeBridgeModels(vdd);
 
-    // Name-uniqueness: synthesized NODES must not collide with any existing node (no dup-guard for nodes).
-    const usedNodes = new Set<string>(nodeMap.values());
+    // Name-uniqueness: synthesized NODES must not collide with any existing node. ngspice node names are
+    // CASE-INSENSITIVE, so the dedup must be too (mirrors uniqueDevice below) — otherwise a synthesized
+    // 'ny_d' would silently merge with a real net node 'nY_d' into one node at sim time.
+    const usedNodes = new Set<string>([...nodeMap.values()].map((s) => s.toLowerCase()));
     const uniqueNode = (base: string): string => {
         let name = base;
         let n = 1;
-        while (usedNodes.has(name)) name = `${base}_${n++}`;
-        usedNodes.add(name);
+        while (usedNodes.has(name.toLowerCase())) name = `${base}_${n++}`;
+        usedNodes.add(name.toLowerCase());
         return name;
     };
     // Synthesized DEVICE names (bridges + the rail source) must not collide with a real component's emitted

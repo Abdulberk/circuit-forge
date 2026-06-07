@@ -268,8 +268,13 @@ analog-only circuits** (an analog-only netlist is byte-for-byte unchanged).
 - **Stimulus.** A clock or pattern is just a `voltage_source` `PULSE(...)` auto-bridged onto a digital
   sink; use a `tran` analysis. (MCUs/CPUs are **not** SPICE-simulated — they stay catalog `generic` parts.)
 
-Digital ERC rules (see §3): `DIGITAL_PIN_SHAPE`, `FLOATING_DIGITAL_INPUT`, `DIGITAL_BUS_CONTENTION`,
-`MIXED_DRIVER_CONFLICT`.
+Digital ERC rules (see §3): `DIGITAL_PIN_SHAPE` (incl. a stray/duplicate gate or dff pin),
+`FLOATING_DIGITAL_INPUT`, `DIGITAL_BUS_CONTENTION`, `MIXED_DRIVER_CONFLICT` (a vcvs/vccs that only *senses*
+a logic level via `c+`/`c-` is **not** a conflict), and `MIXED_LOGIC_LEVELS` (warning: the digital domain
+is driven at materially different — or non-positive — levels, so the single-rail bridges may misread the
+lower rail; use a level shifter or `logicVoltage`). Note: a caller `i(<digital device>)` current probe is
+dropped (an XSPICE `a`-device has no branch current), and two nets whose SPICE nodes differ only by case are
+rejected (ngspice node names are case-insensitive).
 
 ---
 
