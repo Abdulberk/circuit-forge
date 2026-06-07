@@ -281,7 +281,7 @@ The response type is `TokensResponse` (`apps/api/src/auth/auth.service.ts:15`): 
 
 **Key elements:**
 - Canvas with grid, pan/zoom (drives `uiJson.viewport`), component placement (drag from palette → `positions[id]`), rotation (0/90/180/270), and wiring (draw `wires[netId]`, which creates/links `Net`s and pin→net connections).
-- Component palette limited to the **7 supported types** (`packages/eda-core/src/types/circuit.ts:30`): `resistor`, `capacitor`, `inductor`, `voltage_source`, `current_source`, `diode`, `ground`.
+- Component palette limited to the **7 supported types** (`COMPONENT_TYPES` in `packages/eda-core/src/types/circuit.ts`): `resistor`, `capacitor`, `inductor`, `voltage_source`, `current_source`, `diode`, `ground`. _(Note: as of eda-core 1.15.0 the simulation engine ALSO supports digital logic — `logic_and/or/nand/nor/xor/xnor/not/buffer` + `dff` — with automatic analog↔digital bridging; see [docs/EDA_CORE.md §1.7.1](docs/EDA_CORE.md). Adding these to the palette (variable-arity gate pins; clock = a `PULSE` `voltage_source`) is a planned extension, not part of the v1 palette.)_
 - Properties inspector for `designator` (must match `/^[A-Z][A-Z0-9]*[0-9]+$/` — must **end in a digit**, e.g. `R1`, `GND1`), `value` (SPICE strings like `10k`, `100n`, `DC 5`, `SIN(0 1 1k)`), and `model` (diodes only — and you may omit it; eda-core injects `DDEFAULT`).
 - Live ERC panel running eda-core's `runErc(circuit)` **client-side** (pure function, no secrets): renders `issues[]` with code/severity/message and highlights related component/net ids; block save on `error`-severity issues.
 - Toolbar entry points to Simulate, AI Generate/Edit/Explain, Import, Export.
@@ -1857,7 +1857,9 @@ The full enum (`ComponentTypeSchema` and `ComponentType`, both derived from the 
 
 **Richer devices are now first-class (the earlier "transistors/op-amps don't exist" gap is closed).** `ComponentType` includes structured `bjt`, `mosfet`, `jfet`, `vcvs`, `vccs`, `bsource`, `switch`, `transformer`, `tline`, `zener`, and `subckt` (op-amp / IC macromodels). `componentToSpice` emits each of them and returns `null` (it no longer throws) for a non-emittable type. Model-based devices reference a model **by name**; eda-core ships a curated generic library (`QGENNPN`/`QGENPNP`, `MGENNMOS`/`MGENPMOS`, `JGENNJF`/`JGENPJF`, op-amp `OPAMPGEN`, switch `SWGEN`, thyristor/SCR `SCRGEN`, IGBT `IGBTGEN`, …) and generates parametric models (a `zener` from its breakdown voltage). So the editor can offer all of these as **structured** palette items.
 
-Still NOT structured — use the escape hatch: **pure digital/logic** parts and an **exact manufacturer model** for a specific MPN.
+**Digital logic is now first-class too (eda-core 1.15.0).** `logic_and/or/nand/nor/xor/xnor/not/buffer` + `dff` simulate via ngspice XSPICE, and the generator auto-inserts analog↔digital bridges so logic and analog mix freely in one circuit; digital components carry **no** `value`/`model` (the host supplies a `CFD_*` timing model), gates are variable-arity (`in1..inN` + `out`), and a clock is just a `PULSE` `voltage_source`. See [docs/EDA_CORE.md §1.7.1](docs/EDA_CORE.md).
+
+Still NOT structured — use the escape hatch: whole **logic ICs / MCUs / complex programmable parts** (source as catalog `generic` parts) and an **exact manufacturer model** for a specific MPN.
 
 - **Escape hatch / long tail** — a user can upload a SPICE model `Asset` and attach it to a run via `modelAssetIds` (the worker `.include`s it; see §4), and any unsupported device can flow through the raw-netlist path (`POST /simulations/quick`). This bypasses structured editing/ERC but unblocks the long tail.
 

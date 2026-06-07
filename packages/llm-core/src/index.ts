@@ -474,7 +474,7 @@ CircuitJson schema (every field validated; invalid output is rejected):
   "components": [                            // 1+ components
     {
       "id": "r1",                            // unique, lowercase recommended
-      "type": "resistor",                    // one of: resistor | capacitor | inductor | transformer | tline | voltage_source | current_source | vcvs | vccs | bsource | switch | diode | zener | bjt | mosfet | jfet | subckt | ground
+      "type": "resistor",                    // one of: resistor | capacitor | inductor | transformer | tline | voltage_source | current_source | vcvs | vccs | bsource | switch | diode | zener | bjt | mosfet | jfet | subckt | logic_and | logic_or | logic_nand | logic_nor | logic_xor | logic_xnor | logic_not | logic_buffer | dff | ground
       "designator": "R1",                    // matches /^[A-Z][A-Z0-9]*[0-9]+$/i  (e.g. R1, C1, L1, V1, I1, D1)
       "value": "10k",                        // optional; SPICE value string (see below). Omit for ground.
       "model": "...",                        // DO NOT SET for diodes — a default model is auto-supplied (see below)
@@ -524,6 +524,14 @@ Component conventions:
   - THYRISTOR/SCR: "model":"SCRGEN", pins in order "anode","gate","cathode". Blocks until a gate pulse triggers it, then latches on until the anode current drops (phase control, crowbar, latching loads).
   - IGBT: "model":"IGBTGEN", pins in order "c","g","e" (collector, gate, emitter). Gate-voltage controlled (~4.5 V threshold); use for power switching.
 - ground: a single pin "1" connected to the ground net; no value.
+- logic gates — logic_and / logic_or / logic_nand / logic_nor / logic_xor / logic_xnor (A): event-driven XSPICE digital gates, VARIABLE arity. pins are "in1","in2",… (one per input, as many as needed) plus a single "out". E.g. a 3-input NAND has pins ["in1","in2","in3","out"]. OMIT "value" AND "model" — the host supplies the timing model.
+- logic_not / logic_buffer (A): single-input digital gates. pins "in1" and "out". OMIT "value"/"model".
+- dff (A): a rising-edge-triggered D flip-flop. pins in EXACTLY this order "d","clk","set","rst","q","qb" (data, clock, set, reset, output Q, complement Q-bar). "set"/"rst" are ACTIVE-HIGH and OPTIONAL — omit a pin you don't need and the host ties it to its inactive (LOW) level; q loads d on the clock's rising edge, qb is its complement. OMIT "value"/"model". Build counters/registers/state machines by chaining dffs (feed qb→d for a toggle / divide-by-2) and gates.
+
+Digital & mixed-signal:
+- Digital logic (the gates + dff above) and analog parts (sources, resistors, diodes, transistors, …) mix freely in ONE circuit. The host AUTOMATICALLY inserts analog↔digital (ADC/DAC) bridges on any net that connects both domains — just wire them together; never add bridge components or set logic levels (0/5 V is assumed).
+- Drive a clock or a digital input with a "voltage_source" PULSE, e.g. "PULSE(0 5 0 1n 1n 1u 2u)" (0→5 V, period 2 µs, high 1 µs). Use a "tran" analysis to observe digital behavior over time.
+- Every digital input must be DRIVEN (by a gate/dff output, a PULSE source, or tied to the ground net for a constant low); never leave one floating, and never drive one net from two gate/flip-flop outputs.
 
 Rules:
 - Use a unique id and a unique, type-appropriate designator (R*/C*/L*/V*/I*/D*) per component.
@@ -531,7 +539,7 @@ Rules:
 - Include exactly one net with "isGround": true and tie the circuit's reference/ground node to it (via a ground component or a source's "-" pin).
 - Pick a source and an analysis that actually excite the circuit (a transient on a purely-DC circuit just shows a flat line — use a SIN/PULSE source or an "op" analysis instead).
 - Keep the circuit minimal and physically sensible; pick reasonable real-world values.
-- Transistors (bjt/mosfet/jfet), op-amps (OPAMPGEN), thyristors/SCR (SCRGEN) and IGBTs (IGBTGEN) ARE supported, plus switches, zeners, transformers, transmission lines and behavioral (B) sources. Logic ICs, MCUs and other complex DIGITAL parts are NOT yet — if the request needs one, return a best-effort approximation using the supported types and explain the limitation in "explanation"; never invent unsupported component types or model names.`;
+- Transistors (bjt/mosfet/jfet), op-amps (OPAMPGEN), thyristors/SCR (SCRGEN) and IGBTs (IGBTGEN) ARE supported, plus switches, zeners, transformers, transmission lines and behavioral (B) sources. Digital LOGIC — the logic gates and the D flip-flop above — IS supported and mixes freely with analog (see "Digital & mixed-signal"). Whole logic ICs (counters, registers, 74-series parts), microcontrollers/CPUs and other complex programmable parts are NOT simulatable primitives — source them as real catalog parts where possible and build the simulatable behavior from the supported gates/flip-flops + analog parts, explaining any simplification in "explanation"; never invent unsupported component types or model names.`;
 
 const GROUNDING_PROMPT = `PART SOURCING — tools available (use them):
 You have two tools backed by a LIVE distributor catalog of real manufacturer parts:
