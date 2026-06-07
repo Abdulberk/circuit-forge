@@ -27,23 +27,69 @@ import {
 } from '../types/circuit';
 
 /**
- * Built-in timing model (one per digital type) — v1 uses fixed sane delays; `value` overrides are PR2.
- * Names are NAMESPACED with a reserved `CFD_` prefix (Circuit-Forge Digital) so an engine-synthesized
- * model can never collide with a caller-supplied `ModelDef` (which now legitimately allows device:'digital'):
- * a generic name like `ADCBRIDGE`/`DLAND` was guessable and would hard-throw "Conflicting definitions".
+ * Digital timing is PARAMETRIC, not a single fixed model per type: each gate/flip-flop reads its delays
+ * from `component.properties`, so a value typed into a properties panel flows straight into the SPICE
+ * model. Missing props fall back to sane defaults. Components that resolve to IDENTICAL parameters share
+ * one deduped `.model`; a component with custom timing gets its own uniquely-named model (see
+ * `resolveDigitalModels`). Names are NAMESPACED `CFD_*` so an engine-synthesized model can never collide
+ * with a caller-supplied `ModelDef`.
+ *
+ * Supported props (all optional, SPICE value strings): gates — `riseDelay`, `fallDelay`, `inputLoad`;
+ * `dff` — `clkDelay`, `setDelay`, `resetDelay`, `riseDelay`, `fallDelay`, and `ic` ("1" → Q starts HIGH).
  */
-const DIGITAL_MODEL: Partial<Record<string, { name: string; card: string }>> = {
-    logic_and: { name: 'CFD_AND', card: '.model CFD_AND d_and(rise_delay=1n fall_delay=1n input_load=0.5p)' },
-    logic_or: { name: 'CFD_OR', card: '.model CFD_OR d_or(rise_delay=1n fall_delay=1n input_load=0.5p)' },
-    logic_nand: { name: 'CFD_NAND', card: '.model CFD_NAND d_nand(rise_delay=1n fall_delay=1n input_load=0.5p)' },
-    logic_nor: { name: 'CFD_NOR', card: '.model CFD_NOR d_nor(rise_delay=1n fall_delay=1n input_load=0.5p)' },
-    logic_xor: { name: 'CFD_XOR', card: '.model CFD_XOR d_xor(rise_delay=1n fall_delay=1n input_load=0.5p)' },
-    logic_xnor: { name: 'CFD_XNOR', card: '.model CFD_XNOR d_xnor(rise_delay=1n fall_delay=1n input_load=0.5p)' },
-    logic_not: { name: 'CFD_NOT', card: '.model CFD_NOT d_inverter(rise_delay=1n fall_delay=1n input_load=0.5p)' },
-    logic_buffer: { name: 'CFD_BUF', card: '.model CFD_BUF d_buffer(rise_delay=1n fall_delay=1n input_load=0.5p)' },
-    // set/reset are active-HIGH (verified); ic defaults to 0 (Q starts low).
-    dff: { name: 'CFD_DFF', card: '.model CFD_DFF d_dff(clk_delay=1n set_delay=1n reset_delay=1n rise_delay=1n fall_delay=1n)' },
+const DIGITAL_DEVICE: Partial<Record<string, string>> = {
+    logic_and: 'd_and', logic_or: 'd_or', logic_nand: 'd_nand', logic_nor: 'd_nor',
+    logic_xor: 'd_xor', logic_xnor: 'd_xnor', logic_not: 'd_inverter', logic_buffer: 'd_buffer', dff: 'd_dff',
 };
+const DIGITAL_BASENAME: Partial<Record<string, string>> = {
+    logic_and: 'CFD_AND', logic_or: 'CFD_OR', logic_nand: 'CFD_NAND', logic_nor: 'CFD_NOR',
+    logic_xor: 'CFD_XOR', logic_xnor: 'CFD_XNOR', logic_not: 'CFD_NOT', logic_buffer: 'CFD_BUF', dff: 'CFD_DFF',
+};
+const GATE_DEFAULT_PARAMS = 'rise_delay=1n fall_delay=1n input_load=0.5p';
+const DFF_DEFAULT_PARAMS = 'clk_delay=1n set_delay=1n reset_delay=1n rise_delay=1n fall_delay=1n';
+
+/** A property value as a trimmed string ("2n", "1"), or undefined. */
+function digitalProp(component: Component, key: string): string | undefined {
+    const v = component.properties?.[key];
+    if (typeof v === 'string') return v;
+    if (typeof v === 'number') return String(v);
+    return undefined;
+}
+/**
+ * A fully-anchored, NON-NEGATIVE SPICE number ("2n", "1.5u", "1e-9", "0.5p"). Anchored (^…$) so no trailing
+ * junk can be injected into a `.model` card; non-negative because delays / loads are physically ≥ 0 (a
+ * stray "-5n" would otherwise abort ngspice). Anything else falls back to the safe default.
+ */
+const SPICE_NUMBER = /^\+?\d*\.?\d+(?:[eE][+-]?\d+)?(?:meg|MEG|[fpnumkgtFPNUMKGT])?$/;
+function validTime(raw: string | undefined, fallback: string): string {
+    const t = raw?.trim();
+    return t && SPICE_NUMBER.test(t) ? t : fallback;
+}
+/** Gate param string from properties (field order matches GATE_DEFAULT_PARAMS so an all-default config is byte-identical). */
+function gateParams(c: Component): string {
+    const rise = validTime(digitalProp(c, 'riseDelay'), '1n');
+    const fall = validTime(digitalProp(c, 'fallDelay'), '1n');
+    const load = validTime(digitalProp(c, 'inputLoad'), '0.5p');
+    return `rise_delay=${rise} fall_delay=${fall} input_load=${load}`;
+}
+/** d_dff param string from properties; `ic=1` is appended ONLY when explicitly requested (default stays byte-identical). */
+function dffParams(c: Component): string {
+    const clk = validTime(digitalProp(c, 'clkDelay'), '1n');
+    const set = validTime(digitalProp(c, 'setDelay'), '1n');
+    const reset = validTime(digitalProp(c, 'resetDelay'), '1n');
+    const rise = validTime(digitalProp(c, 'riseDelay'), '1n');
+    const fall = validTime(digitalProp(c, 'fallDelay'), '1n');
+    const base = `clk_delay=${clk} set_delay=${set} reset_delay=${reset} rise_delay=${rise} fall_delay=${fall}`;
+    return digitalProp(c, 'ic') === '1' ? `${base} ic=1` : base;
+}
+/** ngspice param string for any digital component. */
+function digitalParams(c: Component): string {
+    return c.type === 'dff' ? dffParams(c) : gateParams(c);
+}
+/** The default param string for a type (used to decide whether a component keeps the base model name). */
+function defaultParams(type: string): string {
+    return type === 'dff' ? DFF_DEFAULT_PARAMS : GATE_DEFAULT_PARAMS;
+}
 /**
  * Peak/HIGH level (volts) of a voltage-source value string — `DC 5`, `PULSE(0 5 …)`, `SIN(off amp …)`,
  * `PWL(t v …)`, or a bare number. Returns null when no level can be read. Timing/unit suffixes in the
@@ -121,6 +167,8 @@ export interface MixedSignalPlan {
     deviceLines: string[];
     /** netId -> analog node a pure-digital net is bridged to FOR PROBING (probe this, not the raw digital node). */
     probeNodeForNet: Map<string, string>;
+    /** componentId -> the resolved (per-timing) `.model` name its `a`-device line must reference. */
+    digitalModelName: Map<string, string>;
 }
 
 const EMPTY_PLAN: MixedSignalPlan = {
@@ -130,6 +178,7 @@ const EMPTY_PLAN: MixedSignalPlan = {
     modelCards: [],
     deviceLines: [],
     probeNodeForNet: new Map(),
+    digitalModelName: new Map(),
 };
 
 /** Sorted input pinIds of a gate: every pin matching `in<number>`, ascending. */
@@ -210,6 +259,7 @@ export function planMixedSignal(
         modelCards: [],
         deviceLines: [],
         probeNodeForNet: new Map(),
+        digitalModelName: new Map(),
     };
     const modelSet = new Set<string>(); // dedup model cards by their card text
     const addModel = (m: { name: string; card: string }) => {
@@ -218,10 +268,30 @@ export function planMixedSignal(
             plan.modelCards.push(m.card);
         }
     };
-    // Gate/ff timing models for every digital type actually present.
+    // Per-component timing models: components with identical resolved params share one `.model` (the base
+    // name CFD_<TYPE> for the all-default config), while each distinct CUSTOM timing gets its own
+    // CFD_<TYPE>_<n>. The component->name map is what emitDigitalComponent stamps onto the `a`-device line.
+    const nameByParamKey = new Map<string, string>(); // "<base>|<params>" -> model name (dedup identical configs)
+    const variantCount = new Map<string, number>(); // base name -> # of custom variants so far
     for (const c of circuit.components) {
-        const m = DIGITAL_MODEL[c.type];
-        if (m) addModel(m);
+        const device = DIGITAL_DEVICE[c.type];
+        const base = DIGITAL_BASENAME[c.type];
+        if (!device || !base) continue; // not a digital component
+        const params = digitalParams(c);
+        const key = `${base}|${params}`;
+        let name = nameByParamKey.get(key);
+        if (!name) {
+            if (params === defaultParams(c.type)) {
+                name = base; // the all-default config keeps the clean base name
+            } else {
+                const n = (variantCount.get(base) ?? 0) + 1;
+                variantCount.set(base, n);
+                name = `${base}_${n}`; // a distinct custom timing → its own model
+            }
+            nameByParamKey.set(key, name);
+            addModel({ name, card: `.model ${name} ${device}(${params})` });
+        }
+        plan.digitalModelName.set(c.id, name);
     }
 
     let synthN = 0;
@@ -290,6 +360,9 @@ export function emitDigitalComponent(
     plan: MixedSignalPlan,
 ): string | null {
     const inst = aInstanceName(component.designator);
+    // The per-component timing model name resolved in planMixedSignal (base CFD_<TYPE> or a custom variant).
+    const modelName = plan.digitalModelName.get(component.id);
+    if (!modelName) return null; // not a digital component planMixedSignal recognized
     const nodeOf = (pinId: string): string | null => {
         const override = plan.nodeOverride.get(`${component.id}:${pinId}`);
         if (override) return override;
@@ -305,8 +378,6 @@ export function emitDigitalComponent(
     };
 
     if (isLogicGateType(component.type)) {
-        const model = DIGITAL_MODEL[component.type];
-        if (!model) return null;
         const out = nodeOf('out');
         if (!out) return null; // ERC flags a gate with no output
         const inputs = gateInputPins(component).map(nodeOf);
@@ -316,12 +387,11 @@ export function emitDigitalComponent(
         // joining all of them here would shift the output/model columns into a malformed line. Multi-input
         // gates use bracket syntax.
         return isSingleInputGate(component.type)
-            ? `${inst} ${inputs[0]} ${out} ${model.name}`
-            : `${inst} [${inputs.join(' ')}] ${out} ${model.name}`;
+            ? `${inst} ${inputs[0]} ${out} ${modelName}`
+            : `${inst} [${inputs.join(' ')}] ${out} ${modelName}`;
     }
 
     if (component.type === 'dff') {
-        const model = DIGITAL_MODEL.dff!;
         const d = nodeOf('d');
         const clk = nodeOf('clk');
         const q = nodeOf('q');
@@ -331,7 +401,7 @@ export function emitDigitalComponent(
         const set = nodeOf('set') ?? plan.lowRailNode;
         const rst = nodeOf('rst') ?? plan.lowRailNode;
         if (!set || !rst) return null; // lowRailNode should exist when needed; guard defensively
-        return `${inst} ${d} ${clk} ${set} ${rst} ${q} ${qb} ${model.name}`;
+        return `${inst} ${d} ${clk} ${set} ${rst} ${q} ${qb} ${modelName}`;
     }
 
     return null;
