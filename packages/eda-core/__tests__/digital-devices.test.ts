@@ -566,3 +566,69 @@ describe('logic voltage (auto-detect + override)', () => {
         expect(modelCard(generateNetlist(c, TRAN), 'CFD_DAC')).toBe('.model CFD_DAC dac_bridge(out_low=0 out_high=3.3)');
     });
 });
+
+describe('parametric digital timing (per-component, properties-driven)', () => {
+    const gate = (id: string, designator: string, properties?: Record<string, unknown>): CircuitJson['components'][number] => ({
+        id, type: 'logic_and', designator, properties,
+        pins: [{ pinId: 'in1', netId: `${id}a` }, { pinId: 'in2', netId: `${id}b` }, { pinId: 'out', netId: `${id}y` }],
+    });
+    const wrap = (...comps: CircuitJson['components']): CircuitJson => ({
+        version: '1.0',
+        components: comps,
+        nets: comps.flatMap((c) => c.pins.map((p) => ({ id: p.netId, name: p.netId.toUpperCase() }))),
+    });
+
+    it('a default gate keeps the clean base model name + the canonical card', () => {
+        const netlist = generateNetlist(wrap(gate('u1', 'U1')), TRAN);
+        expect(deviceLine(netlist, 'AU1')?.endsWith(' CFD_AND')).toBe(true);
+        expect(modelCard(netlist, 'CFD_AND')).toBe('.model CFD_AND d_and(rise_delay=1n fall_delay=1n input_load=0.5p)');
+    });
+
+    it('a gate with custom delays gets its OWN model that the device line references', () => {
+        const netlist = generateNetlist(wrap(gate('u1', 'U1', { riseDelay: '4n', fallDelay: '6n' })), TRAN);
+        const dev = deviceLine(netlist, 'AU1')!;
+        const name = dev.split(/\s+/).pop()!; // last token = model name
+        expect(name).toBe('CFD_AND_1'); // not the base name
+        expect(modelCard(netlist, name)).toBe('.model CFD_AND_1 d_and(rise_delay=4n fall_delay=6n input_load=0.5p)');
+    });
+
+    it('two gates with IDENTICAL custom timing share one model; different timing → distinct models', () => {
+        const netlist = generateNetlist(
+            wrap(
+                gate('u1', 'U1', { riseDelay: '2n' }),
+                gate('u2', 'U2', { riseDelay: '2n' }), // same as U1 → shares
+                gate('u3', 'U3', { riseDelay: '9n' }), // different → its own
+                gate('u4', 'U4'), // default → base name
+            ),
+            TRAN,
+        );
+        const nameOf = (inst: string) => deviceLine(netlist, inst)!.split(/\s+/).pop();
+        expect(nameOf('AU1')).toBe(nameOf('AU2')); // shared
+        expect(nameOf('AU1')).not.toBe(nameOf('AU3')); // distinct timing
+        expect(nameOf('AU4')).toBe('CFD_AND'); // default keeps base
+        // Exactly two custom variants emitted (U1/U2 share one, U3 the other) + the base.
+        expect(netlist.match(/\.model CFD_AND(_\d+)? d_and\(/g)?.length).toBe(3);
+    });
+
+    it('a flip-flop with ic=1 starts HIGH via its own model; default dff stays byte-identical', () => {
+        const dff = (id: string, designator: string, properties?: Record<string, unknown>): CircuitJson['components'][number] => ({
+            id, type: 'dff', designator, properties,
+            pins: [{ pinId: 'd', netId: `${id}d` }, { pinId: 'clk', netId: `${id}c` },
+                { pinId: 'q', netId: `${id}q` }, { pinId: 'qb', netId: `${id}qb` }],
+        });
+        const netlist = generateNetlist(wrap(dff('u1', 'U1', { ic: '1' }), dff('u2', 'U2')), TRAN);
+        const u1model = deviceLine(netlist, 'AU1')!.split(/\s+/).pop()!;
+        expect(modelCard(netlist, u1model)).toContain(' ic=1)');
+        expect(deviceLine(netlist, 'AU2')!.split(/\s+/).pop()).toBe('CFD_DFF');
+        expect(modelCard(netlist, 'CFD_DFF')).toBe('.model CFD_DFF d_dff(clk_delay=1n set_delay=1n reset_delay=1n rise_delay=1n fall_delay=1n)');
+    });
+
+    it('rejects a malformed/injection delay and falls back to the default (stays the base model)', () => {
+        const netlist = generateNetlist(wrap(gate('u1', 'U1', { riseDelay: '1n) evil .end' }), gate('u2', 'U2', { fallDelay: 'abc' })), TRAN);
+        // Both bad values were rejected → both resolve to the all-default config → the clean base model.
+        expect(deviceLine(netlist, 'AU1')!.split(/\s+/).pop()).toBe('CFD_AND');
+        expect(deviceLine(netlist, 'AU2')!.split(/\s+/).pop()).toBe('CFD_AND');
+        expect(netlist).not.toContain('evil'); // nothing injected into the netlist
+        expect(modelCard(netlist, 'CFD_AND')).toBe('.model CFD_AND d_and(rise_delay=1n fall_delay=1n input_load=0.5p)');
+    });
+});

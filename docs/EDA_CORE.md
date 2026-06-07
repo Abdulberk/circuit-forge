@@ -251,9 +251,15 @@ analog-only circuits** (an analog-only netlist is byte-for-byte unchanged).
 - **Probing.** A raw digital event node can't be sampled through `wrdata`, so a probed pure-digital net is
   bridged to an analog `_p` twin and **that** is probed — for both default probes and caller-supplied
   `options.probes` (`v(<netId>)`/`v(<name>)`/`v(<sanitized node>)` all redirect to the twin).
-- **Auto-supplied models.** Each digital type has a built-in timing `.model`, namespaced `CFD_*`
-  (`CFD_AND`…`CFD_DFF`, plus `CFD_ADC`/`CFD_DAC`) so it can never collide with a caller-supplied model.
-  Authors set **no** `value`/`model` on digital components.
+- **Parametric timing models.** Authors set **no** `model` on digital components; the timing `.model` is
+  synthesized and namespaced `CFD_*` (so it can never collide with a caller-supplied model). Timing is
+  **per-component**, read from `properties` so a value typed into a properties panel flows straight into
+  the SPICE model: gates accept `riseDelay`, `fallDelay`, `inputLoad`; `dff` accepts `clkDelay`,
+  `setDelay`, `resetDelay`, `riseDelay`, `fallDelay`, and `ic` (`"1"` → Q starts HIGH). All optional (SPICE
+  value strings like `"2n"`, validated/sanitized), defaulting to `1n` delays / `0.5p` load. Components that
+  resolve to **identical** parameters share one deduped model (the clean base name `CFD_AND`…`CFD_DFF`);
+  each distinct custom timing gets its own `CFD_<TYPE>_<n>`. The `CFD_ADC`/`CFD_DAC` bridge models are
+  separate (see Logic voltage below).
 - **Logic voltage (auto-scaled).** The bridge levels are **not** hardcoded to 5 V: the logic-HIGH rail is
   auto-detected as the highest supply driving the digital domain (a 3.3 V clock → 3.3 V logic), so
   `dac_bridge` swings `0..Vdd` and `adc_bridge` uses CMOS-style 30 %/70 %-of-Vdd thresholds. Falls back to
