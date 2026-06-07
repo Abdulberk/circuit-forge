@@ -19,6 +19,11 @@ export interface NetlistOptions {
     includeFiles?: string[];
     outputFormat?: 'csv' | 'raw';
     jobDir?: string; // For include path validation
+    /**
+     * Logic-HIGH supply voltage (volts) for digital↔analog bridges. Omit to AUTO-DETECT from the digital
+     * domain's supply (default 5 V if none). Set explicitly to pin a logic family (e.g. 3.3 for 3V3 CMOS).
+     */
+    logicVoltage?: number;
 }
 
 /**
@@ -64,7 +69,7 @@ export function generateNetlist(
 
     // Mixed-signal pre-pass: classify nets, plan analog<->digital bridges + the digital-node overrides,
     // synthesize bridge/rail devices + their models. A no-op (empty) for analog-only circuits.
-    const ms = planMixedSignal(circuit, nodeMap, reservedDeviceNames);
+    const ms = planMixedSignal(circuit, nodeMap, reservedDeviceNames, options.logicVoltage);
 
     // Track every emitted .model/.subckt name -> body so we (a) dedup identical definitions and
     // (b) refuse to SILENTLY drop a conflicting body that reuses a name (which would emit only the

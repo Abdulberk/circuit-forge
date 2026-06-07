@@ -484,3 +484,85 @@ describe('digital review fixes', () => {
         expect(netlist).toContain('axsyn0_1'); // the colliding synth bridge was renamed
     });
 });
+
+/** The `.model <name> ...` card line from a netlist. */
+function modelCard(netlist: string, name: string): string {
+    return netlist.split('\n').find((l) => l.trim().startsWith(`.model ${name} `)) ?? '';
+}
+
+describe('logic voltage (auto-detect + override)', () => {
+    // A mixed inverter whose clock/input swings 0..3.3 V — the bridges must scale to 3.3 V, not 5 V.
+    const mixed3v3: CircuitJson = {
+        version: '1.0',
+        components: [
+            { id: 'v1', type: 'voltage_source', designator: 'V1', value: 'PULSE(0 3.3 0 10n 10n 2u 4u)', pins: [
+                { pinId: '+', netId: 'a' }, { pinId: '-', netId: 'gnd' }] },
+            { id: 'u1', type: 'logic_not', designator: 'U1', pins: [{ pinId: 'in1', netId: 'a' }, { pinId: 'out', netId: 'y' }] },
+            { id: 'r1', type: 'resistor', designator: 'R1', value: '1k', pins: [{ pinId: '1', netId: 'y' }, { pinId: '2', netId: 'gnd' }] },
+        ],
+        nets: [{ id: 'a', name: 'A' }, { id: 'y', name: 'Y' }, { id: 'gnd', name: 'GND', isGround: true }],
+    };
+
+    it('auto-detects the logic rail from the digital stimulus (3.3 V → 0/3.3 V swing, 30%/70% thresholds)', () => {
+        const netlist = generateNetlist(mixed3v3, TRAN);
+        expect(modelCard(netlist, 'CFD_DAC')).toBe('.model CFD_DAC dac_bridge(out_low=0 out_high=3.3)');
+        expect(modelCard(netlist, 'CFD_ADC')).toBe('.model CFD_ADC adc_bridge(in_low=0.99 in_high=2.31)');
+    });
+
+    it('an explicit logicVoltage override wins over auto-detection', () => {
+        const netlist = generateNetlist(mixed3v3, TRAN, { logicVoltage: 1.8 });
+        expect(modelCard(netlist, 'CFD_DAC')).toBe('.model CFD_DAC dac_bridge(out_low=0 out_high=1.8)');
+        expect(modelCard(netlist, 'CFD_ADC')).toBe('.model CFD_ADC adc_bridge(in_low=0.54 in_high=1.26)');
+    });
+
+    it('defaults to 5 V when no analog source drives the digital domain', () => {
+        // Pure-digital AND (no analog stimulus on a digital net) → the rail is abstract → default 5 V.
+        const c: CircuitJson = {
+            version: '1.0',
+            components: [
+                { id: 'u1', type: 'logic_and', designator: 'U1', pins: [
+                    { pinId: 'in1', netId: 'a' }, { pinId: 'in2', netId: 'b' }, { pinId: 'out', netId: 'y' }] },
+            ],
+            nets: [{ id: 'a', name: 'A' }, { id: 'b', name: 'B' }, { id: 'y', name: 'Y' }],
+        };
+        const netlist = generateNetlist(c, TRAN); // probed digital output → CFD_DAC twin emitted
+        expect(modelCard(netlist, 'CFD_DAC')).toBe('.model CFD_DAC dac_bridge(out_low=0 out_high=5)');
+    });
+
+    it('picks the highest digital-domain supply when a 5 V clock and a 3.3 V data line coexist', () => {
+        const c: CircuitJson = {
+            version: '1.0',
+            components: [
+                { id: 'vclk', type: 'voltage_source', designator: 'V1', value: 'PULSE(0 5 0 1n 1n 50u 100u)', pins: [
+                    { pinId: '+', netId: 'clk' }, { pinId: '-', netId: 'gnd' }] },
+                { id: 'vd', type: 'voltage_source', designator: 'V2', value: 'DC 3.3', pins: [
+                    { pinId: '+', netId: 'din' }, { pinId: '-', netId: 'gnd' }] },
+                { id: 'u1', type: 'dff', designator: 'U1', pins: [
+                    { pinId: 'd', netId: 'din' }, { pinId: 'clk', netId: 'clk' },
+                    { pinId: 'q', netId: 'q' }, { pinId: 'qb', netId: 'qb' }] },
+            ],
+            nets: [{ id: 'clk', name: 'CLK' }, { id: 'din', name: 'D' }, { id: 'q', name: 'Q' },
+                { id: 'qb', name: 'QB' }, { id: 'gnd', name: 'GND', isGround: true }],
+        };
+        expect(modelCard(generateNetlist(c, TRAN), 'CFD_DAC')).toBe('.model CFD_DAC dac_bridge(out_low=0 out_high=5)');
+    });
+
+    it('ignores an analog-only supply rail that does not touch the digital domain', () => {
+        // A 12 V rail powering only an analog load must NOT be mistaken for the 3.3 V logic level.
+        const c: CircuitJson = {
+            version: '1.0',
+            components: [
+                { id: 'v12', type: 'voltage_source', designator: 'V1', value: 'DC 12', pins: [
+                    { pinId: '+', netId: 'hv' }, { pinId: '-', netId: 'gnd' }] },
+                { id: 'rload', type: 'resistor', designator: 'R1', value: '1k', pins: [
+                    { pinId: '1', netId: 'hv' }, { pinId: '2', netId: 'gnd' }] },
+                { id: 'vclk', type: 'voltage_source', designator: 'V2', value: 'PULSE(0 3.3 0 1n 1n 1u 2u)', pins: [
+                    { pinId: '+', netId: 'a' }, { pinId: '-', netId: 'gnd' }] },
+                { id: 'u1', type: 'logic_buffer', designator: 'U1', pins: [{ pinId: 'in1', netId: 'a' }, { pinId: 'out', netId: 'y' }] },
+            ],
+            nets: [{ id: 'hv', name: 'HV' }, { id: 'a', name: 'A' }, { id: 'y', name: 'Y' }, { id: 'gnd', name: 'GND', isGround: true }],
+        };
+        // 3.3 V (the source driving the digital input), not 12 V (the analog-only rail).
+        expect(modelCard(generateNetlist(c, TRAN), 'CFD_DAC')).toBe('.model CFD_DAC dac_bridge(out_low=0 out_high=3.3)');
+    });
+});
