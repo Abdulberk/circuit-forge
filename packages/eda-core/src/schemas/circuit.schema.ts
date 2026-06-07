@@ -53,7 +53,7 @@ export const ComponentSchema = z.object({
  */
 export const ModelDefSchema = z.object({
     name: z.string().min(1).max(100),
-    device: z.enum(['bjt', 'mosfet', 'jfet', 'diode', 'subckt', 'switch']),
+    device: z.enum(['bjt', 'mosfet', 'jfet', 'diode', 'subckt', 'switch', 'digital']),
     body: z.string().min(1).max(20000),
     tier: z.enum(['manufacturer', 'generic', 'ideal']).optional(),
     // subckt only: pinIds in the macromodel's port order, so the generator binds nodes by pinId.
