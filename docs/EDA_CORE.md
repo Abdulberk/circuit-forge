@@ -254,6 +254,11 @@ analog-only circuits** (an analog-only netlist is byte-for-byte unchanged).
 - **Auto-supplied models.** Each digital type has a built-in timing `.model`, namespaced `CFD_*`
   (`CFD_AND`…`CFD_DFF`, plus `CFD_ADC`/`CFD_DAC`) so it can never collide with a caller-supplied model.
   Authors set **no** `value`/`model` on digital components.
+- **Logic voltage (auto-scaled).** The bridge levels are **not** hardcoded to 5 V: the logic-HIGH rail is
+  auto-detected as the highest supply driving the digital domain (a 3.3 V clock → 3.3 V logic), so
+  `dac_bridge` swings `0..Vdd` and `adc_bridge` uses CMOS-style 30 %/70 %-of-Vdd thresholds. Falls back to
+  5 V when the digital domain has no analog stimulus; pin it explicitly with `NetlistOptions.logicVoltage`.
+  (One logic level per circuit — the highest wins if a board mixes families.)
 - **Stimulus.** A clock or pattern is just a `voltage_source` `PULSE(...)` auto-bridged onto a digital
   sink; use a `tran` analysis. (MCUs/CPUs are **not** SPICE-simulated — they stay catalog `generic` parts.)
 

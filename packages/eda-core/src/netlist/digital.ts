@@ -44,8 +44,69 @@ const DIGITAL_MODEL: Partial<Record<string, { name: string; card: string }>> = {
     // set/reset are active-HIGH (verified); ic defaults to 0 (Q starts low).
     dff: { name: 'CFD_DFF', card: '.model CFD_DFF d_dff(clk_delay=1n set_delay=1n reset_delay=1n rise_delay=1n fall_delay=1n)' },
 };
-const ADC_MODEL = { name: 'CFD_ADC', card: '.model CFD_ADC adc_bridge(in_low=0.8 in_high=2.0)' };
-const DAC_MODEL = { name: 'CFD_DAC', card: '.model CFD_DAC dac_bridge(out_low=0 out_high=5)' };
+/**
+ * Peak/HIGH level (volts) of a voltage-source value string — `DC 5`, `PULSE(0 5 …)`, `SIN(off amp …)`,
+ * `PWL(t v …)`, or a bare number. Returns null when no level can be read. Timing/unit suffixes in the
+ * tail are irrelevant here (we only read the first one or two level numbers), so a plain regex is enough.
+ */
+function sourceHighLevel(value: string | undefined): number | null {
+    if (!value) return null;
+    const v = value.trim();
+    const nums = (v.match(/[+-]?\d*\.?\d+(?:[eE][+-]?\d+)?/g) ?? []).map(Number).filter((n) => Number.isFinite(n));
+    const first = nums[0];
+    if (first === undefined) return null;
+    const second = nums[1];
+    const up = v.toUpperCase();
+    if (up.startsWith('PULSE')) return second === undefined ? first : Math.max(first, second); // V1 initial, V2 pulsed
+    if (up.startsWith('SIN')) return second === undefined ? first : first + Math.abs(second); // offset + amplitude
+    if (up.startsWith('PWL')) {
+        const levels = nums.filter((_, i) => i % 2 === 1); // (t,v) pairs → the v's
+        return levels.length ? Math.max(...levels) : null;
+    }
+    return first; // "DC 5" → 5, or a bare "5"
+}
+
+/**
+ * The logic-HIGH supply voltage for the digital domain. An explicit override wins; otherwise it is
+ * AUTO-DETECTED as the highest level among the voltage sources that drive the digital domain — a clock or
+ * input stimulus defines what "1" means at the analog↔digital boundary, so a 3.3 V design bridges at
+ * 3.3 V, not a hardcoded 5 V. Falls back to 5 V when the digital domain has no analog stimulus (the level
+ * is abstract then anyway). One logic level per circuit; if a board mixes families the highest wins.
+ */
+function detectLogicHigh(circuit: CircuitJson, roles: Map<string, NetRoles>, override?: number): number {
+    if (override && override > 0) return override;
+    let high = 0;
+    for (const c of circuit.components) {
+        if (c.type !== 'voltage_source') continue;
+        const drivesDigital = c.pins.some((p) => {
+            const r = roles.get(p.netId);
+            return !!r && r.digitalSource + r.digitalSink > 0;
+        });
+        if (!drivesDigital) continue;
+        const lvl = sourceHighLevel(c.value);
+        if (lvl !== null && lvl > high) high = lvl;
+    }
+    return high > 0 ? high : 5;
+}
+
+/** Short SPICE number, trimmed of float noise ("3.3", "0.99", "5"). */
+function fmtVolts(v: number): string {
+    return Number(v.toFixed(4)).toString();
+}
+
+/**
+ * ADC/DAC bridge models scaled to the detected logic rail: 0..Vdd output swing and CMOS-style 30%/70%-of-
+ * Vdd input thresholds (family-agnostic noise margins that track the rail, instead of fixed 5 V TTL).
+ */
+function makeBridgeModels(vdd: number): { adc: { name: string; card: string }; dac: { name: string; card: string } } {
+    const lo = fmtVolts(0.3 * vdd);
+    const hi = fmtVolts(0.7 * vdd);
+    const top = fmtVolts(vdd);
+    return {
+        adc: { name: 'CFD_ADC', card: `.model CFD_ADC adc_bridge(in_low=${lo} in_high=${hi})` },
+        dac: { name: 'CFD_DAC', card: `.model CFD_DAC dac_bridge(out_low=0 out_high=${top})` },
+    };
+}
 
 export interface MixedSignalPlan {
     /** False when the circuit is analog-only — all fields below are empty (the generator is a no-op). */
@@ -91,6 +152,8 @@ export function planMixedSignal(
     nodeMap: Map<string, string>,
     /** Lower-cased SPICE instance names of the real components, so synthesized device names avoid them. */
     usedDeviceNames: Set<string> = new Set(),
+    /** Explicit logic-HIGH supply (volts); overrides auto-detection. */
+    logicVoltage?: number,
 ): MixedSignalPlan {
     if (!circuit.components.some((c) => isDigitalType(c.type))) return EMPTY_PLAN;
 
@@ -113,6 +176,12 @@ export function planMixedSignal(
             bump(pin.netId, role === 'source' ? 'digitalSource' : 'digitalSink');
         }
     }
+
+    // Logic rail: bridges scale to the circuit's actual logic-HIGH voltage (auto-detected from the digital
+    // domain's supply, or an explicit override) instead of a hardcoded 5 V — so mixed-signal voltages are
+    // correct for 3.3 V / 1.8 V / … designs. The two bridge .model cards are circuit-wide (one each, deduped).
+    const vdd = detectLogicHigh(circuit, roles, logicVoltage);
+    const { adc: ADC_MODEL, dac: DAC_MODEL } = makeBridgeModels(vdd);
 
     // Name-uniqueness: synthesized NODES must not collide with any existing node (no dup-guard for nodes).
     const usedNodes = new Set<string>(nodeMap.values());
