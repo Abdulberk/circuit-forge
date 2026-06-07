@@ -98,6 +98,32 @@ describe('TmeClient', () => {
         expect(fetchMock).toHaveBeenCalledTimes(3);
     });
 
+    it('clamps a huge Retry-After (never parks the request for the server-specified hour)', async () => {
+        // Record every scheduled delay and fire it immediately so the test doesn't actually wait.
+        const delays: number[] = [];
+        const realSetTimeout = global.setTimeout;
+        (global as unknown as { setTimeout: typeof setTimeout }).setTimeout = ((fn: () => void, ms?: number) => {
+            delays.push(ms ?? 0);
+            return realSetTimeout(fn, 0);
+        }) as unknown as typeof setTimeout;
+        try {
+            const fetchMock = jest
+                .fn()
+                .mockResolvedValueOnce(err(429, { code: 'E_HTTP_429', message: 'rate limited' }, '3600')) // Retry-After: 1 hour
+                .mockResolvedValueOnce(ok({ ok: true }));
+            global.fetch = fetchMock as unknown as typeof fetch;
+            const client = new TmeClient(cfg(), tokens());
+            await expect(client.get('/x')).resolves.toEqual({ ok: true });
+            // The 10000ms entries are the per-fetch abort timers; the retry wait is everything else and
+            // must be clamped to the cap (5000ms), NOT the server's 3_600_000ms.
+            const retryWaits = delays.filter((d) => d !== 10000);
+            expect(Math.max(...retryWaits)).toBeLessThanOrEqual(5000);
+            expect(fetchMock).toHaveBeenCalledTimes(2);
+        } finally {
+            global.setTimeout = realSetTimeout;
+        }
+    });
+
     it('does NOT retry a 4xx (e.g. WAF 403) — deterministic, handled one layer up', async () => {
         const fetchMock = jest.fn().mockResolvedValue(err(403, { code: 'E_HTTP_403', message: 'blocked' }));
         global.fetch = fetchMock as unknown as typeof fetch;
