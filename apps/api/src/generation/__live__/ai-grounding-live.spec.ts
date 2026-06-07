@@ -140,4 +140,24 @@ function assertSimulatable(circuit: CircuitJson, analysis: AnalysisConfig, label
 
         assertSimulatable(result.circuit, result.analysisConfig, 'npn-amp');
     });
+
+    it('digital: ripple counter from D flip-flops — AI emits digital primitives and it simulates cleanly', async () => {
+        const result = await gen.generate({
+            prompt:
+                'A 3-bit asynchronous (ripple) binary counter built from D flip-flops, clocked at 1 MHz. ' +
+                'Each stage toggles by feeding its own Q-bar back to its D input, and each stage is clocked ' +
+                "by the previous stage's Q. Show the three count bits over time.",
+        } as never);
+        const digital = result.circuit.components.filter((c) => c.type === 'dff' || String(c.type).startsWith('logic_'));
+        // eslint-disable-next-line no-console
+        console.log(`[ripple-counter] analysis=${result.analysisConfig.type}; digital parts:`,
+            digital.map((c) => `${c.designator}:${c.type}`).join(', ') || '(none)');
+        // The prompt teaching worked: the AI reached for the digital vocabulary it now knows about.
+        expect(digital.length).toBeGreaterThan(0);
+        expect(digital.some((c) => c.type === 'dff')).toBe(true);
+        // Digital primitives carry no value/model — the host supplies the XSPICE timing model.
+        for (const c of digital) expect(c.model).toBeFalsy();
+        // And the whole thing produces a valid netlist that ngspice runs without a fatal solver error.
+        assertSimulatable(result.circuit, result.analysisConfig, 'ripple-counter');
+    });
 });

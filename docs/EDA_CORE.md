@@ -203,6 +203,9 @@ canonical pin names from `COMPONENT_PINS`, and the line format from `componentTo
 | `transformer` | *(composite)* | `['p+','p-','s+','s-']` | expands to `L…P`/`L…S` + `K…` (+ series DCR; bleeders for isolated windings) | two magnetically-coupled windings; params in `properties` (Lp/Ls/coupling). See §2.2 |
 | `tline` | `T` | `['a+','a-','b+','b-']` | `T1 <a+> <a-> <b+> <b-> Z0=.. TD=..` (or `F=.. NL=..`) | lossless line; params in `properties` (z0 + td, or the frequency form) |
 | `subckt` | `X` | `[]` (macromodel ports) | `X1 <ports…> <model>` | multi-terminal `.subckt` macromodel; pins bound by the model's declared `ports`; requires a model. Generic bodies: op-amp `OPAMPGEN` (out,in+,in-,vcc,vee), thyristor/SCR `SCRGEN` (anode,gate,cathode), IGBT `IGBTGEN` (c,g,e) |
+| `logic_and` / `logic_or` / `logic_nand` / `logic_nor` / `logic_xor` / `logic_xnor` | `A` | `[]` (variable: `in1`..`inN` + `out`) | `A1 [<in1> <in2> …] <out> CFD_<GATE>` | XSPICE event-driven gate; auto-supplied timing model; **no** user `value`/`model`. See §1.7.1 |
+| `logic_not` / `logic_buffer` | `A` | `[]` (single `in1` + `out`) | `A1 <in1> <out> CFD_NOT`/`CFD_BUF` | single-input gate; **scalar** input port (no brackets) |
+| `dff` | `A` | `['d','clk','set','rst','q','qb']` | `A1 <d> <clk> <set> <rst> <q> <qb> CFD_DFF` | rising-edge D flip-flop; `set`/`rst` active-HIGH **and optional** (an omitted one is auto-tied to a synthesized LOW rail); bound by pinId. See §1.7.1 |
 | `ground` | `''` (none) | `['1']` | *(no line emitted)* | `componentToSpice` returns `null`; ground is realized as node `'0'` |
 | `generic` | `''` (none) | `[]` (from the catalog part) | *(no line emitted)* | **Catalog-only** placeholder for a real part with no simulatable model yet (IC/transistor/connector). Carries `mpn`/`manufacturer`/`sourcing`; skipped by the generator. Test with `isSimulatable()`. |
 
@@ -222,6 +225,40 @@ Behavioral details from `componentToSpice()`:
   aren't simulatable. Use `isSimulatable(component)` to discriminate.
 - A pin referencing a net not present in the node map throws
   `Net not found: <netId> for component <designator>`.
+
+#### 1.7.1 Digital logic + mixed-signal (XSPICE)
+
+Logic gates and the D flip-flop are simulated with **ngspice XSPICE event-driven code models** (`d_and`,
+`d_dff`, …), not analog emulation. The whole subsystem lives in
+[netlist/digital.ts](../packages/eda-core/src/netlist/digital.ts) and is driven by a pre-pass,
+`planMixedSignal(circuit, nodeMap)`, run right after the node map is built. It is a **strict no-op for
+analog-only circuits** (an analog-only netlist is byte-for-byte unchanged).
+
+- **Pin roles.** Each digital pin is a `source` (a gate `out`; a flip-flop `q`/`qb`) or a `sink`
+  (everything else); analog pins are `analog`. `digitalPinRole(type, pinId)` is the single source of truth
+  and drives both net classification and ERC.
+- **Automatic analog↔digital bridging.** Digital code models live in a separate event domain from the
+  analog MNA solver, so any net touching **both** a digital and an analog pin is bridged automatically:
+  - mixed net with ≥1 digital **source** → `dac_bridge` (digital → analog); analog pins read the analog node;
+  - mixed net with **0** digital sources (analog drives digital sinks, e.g. a `PULSE` clock) → `adc_bridge`
+    (analog → digital).
+
+  The analog node keeps the net's original sanitized name (analog devices are untouched); the digital pins
+  get a derived node via an override map. There are **no bridge components in CircuitJson** — just wire a
+  gate to a source/load and the generator inserts the bridge.
+- **Constant rails.** A flip-flop's `set`/`rst` are active-HIGH; an omitted one is tied to a synthesized
+  constant digital-LOW rail (a `DC 0` analog source + `adc_bridge`).
+- **Probing.** A raw digital event node can't be sampled through `wrdata`, so a probed pure-digital net is
+  bridged to an analog `_p` twin and **that** is probed — for both default probes and caller-supplied
+  `options.probes` (`v(<netId>)`/`v(<name>)`/`v(<sanitized node>)` all redirect to the twin).
+- **Auto-supplied models.** Each digital type has a built-in timing `.model`, namespaced `CFD_*`
+  (`CFD_AND`…`CFD_DFF`, plus `CFD_ADC`/`CFD_DAC`) so it can never collide with a caller-supplied model.
+  Authors set **no** `value`/`model` on digital components.
+- **Stimulus.** A clock or pattern is just a `voltage_source` `PULSE(...)` auto-bridged onto a digital
+  sink; use a `tran` analysis. (MCUs/CPUs are **not** SPICE-simulated — they stay catalog `generic` parts.)
+
+Digital ERC rules (see §3): `DIGITAL_PIN_SHAPE`, `FLOATING_DIGITAL_INPUT`, `DIGITAL_BUS_CONTENTION`,
+`MIXED_DRIVER_CONFLICT`.
 
 ---
 
