@@ -19,6 +19,13 @@ const RESERVED_WORDS = new Set([
 ]);
 
 /**
+ * ngspice's expression/wrdata lexer treats these as relational/boolean OPERATORS. A node whose final name
+ * equals one — most commonly net id `e` (an emitter) → node `ne` (== "not equal") — makes `v(ne)` abort the
+ * ENTIRE wrdata line and silently produce no output file (no error). They must never be a bare node name.
+ */
+const NGSPICE_OPERATORS = new Set(['eq', 'ne', 'gt', 'lt', 'ge', 'le', 'and', 'or', 'not']);
+
+/**
  * Sanitize a node name for SPICE compatibility
  * - Removes special characters
  * - Ensures it doesn't start with a number
@@ -46,6 +53,12 @@ export function sanitizeNodeName(name: string): string {
     // Prefix with 'n' for clarity
     if (!sanitized.startsWith('n') && !sanitized.startsWith('x_')) {
         sanitized = `n${sanitized}`;
+    }
+
+    // Final guard: the prefixed name must not BE an ngspice operator token (e.g. net 'e' → 'ne'), or
+    // `v(<node>)` in a wrdata/expression context silently aborts the whole output line.
+    if (NGSPICE_OPERATORS.has(sanitized.toLowerCase())) {
+        sanitized = `x_${sanitized}`;
     }
 
     return sanitized;
