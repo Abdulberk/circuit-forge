@@ -1,0 +1,1734 @@
+{
+  "name": "8-bit DDS Waveform Generator (76 components)",
+  "description": "Direct-Digital-Synthesis sawtooth generator spanning all four layers: an 8-bit PHASE ACCUMULATOR (8-bit ripple adder + clocked dff register, fed back) increments by a frequency word each clock; an 8-bit R-2R DAC converts the ramping count to an analog staircase (digital→analog bridges auto-inserted); an op-amp buffer + RC reconstruction filter smooth it. Preset frequency word = 16 → sawtooth period 16 clocks. Run a ~80µs transient and probe DAC (raw staircase) + FOUT (smoothed). (Validated on ngspice: clean 0–4.7V sawtooth, period exact.)",
+  "tags": [
+    "mixed-signal",
+    "dds",
+    "dac",
+    "digital",
+    "waveform",
+    "flagship",
+    "advanced"
+  ],
+  "circuitJson": {
+    "version": "1.0",
+    "components": [
+      {
+        "id": "v0",
+        "type": "voltage_source",
+        "designator": "V0",
+        "value": "PULSE(0 5 0 5n 5n 0.5u 1u)",
+        "pins": [
+          {
+            "pinId": "+",
+            "netId": "clk"
+          },
+          {
+            "pinId": "-",
+            "netId": "gnd"
+          }
+        ]
+      },
+      {
+        "id": "v1",
+        "type": "voltage_source",
+        "designator": "V1",
+        "value": "DC 0",
+        "pins": [
+          {
+            "pinId": "+",
+            "netId": "fw0"
+          },
+          {
+            "pinId": "-",
+            "netId": "gnd"
+          }
+        ]
+      },
+      {
+        "id": "v2",
+        "type": "voltage_source",
+        "designator": "V2",
+        "value": "DC 0",
+        "pins": [
+          {
+            "pinId": "+",
+            "netId": "fw1"
+          },
+          {
+            "pinId": "-",
+            "netId": "gnd"
+          }
+        ]
+      },
+      {
+        "id": "v3",
+        "type": "voltage_source",
+        "designator": "V3",
+        "value": "DC 0",
+        "pins": [
+          {
+            "pinId": "+",
+            "netId": "fw2"
+          },
+          {
+            "pinId": "-",
+            "netId": "gnd"
+          }
+        ]
+      },
+      {
+        "id": "v4",
+        "type": "voltage_source",
+        "designator": "V4",
+        "value": "DC 0",
+        "pins": [
+          {
+            "pinId": "+",
+            "netId": "fw3"
+          },
+          {
+            "pinId": "-",
+            "netId": "gnd"
+          }
+        ]
+      },
+      {
+        "id": "v5",
+        "type": "voltage_source",
+        "designator": "V5",
+        "value": "DC 5",
+        "pins": [
+          {
+            "pinId": "+",
+            "netId": "fw4"
+          },
+          {
+            "pinId": "-",
+            "netId": "gnd"
+          }
+        ]
+      },
+      {
+        "id": "v6",
+        "type": "voltage_source",
+        "designator": "V6",
+        "value": "DC 0",
+        "pins": [
+          {
+            "pinId": "+",
+            "netId": "fw5"
+          },
+          {
+            "pinId": "-",
+            "netId": "gnd"
+          }
+        ]
+      },
+      {
+        "id": "v7",
+        "type": "voltage_source",
+        "designator": "V7",
+        "value": "DC 0",
+        "pins": [
+          {
+            "pinId": "+",
+            "netId": "fw6"
+          },
+          {
+            "pinId": "-",
+            "netId": "gnd"
+          }
+        ]
+      },
+      {
+        "id": "v8",
+        "type": "voltage_source",
+        "designator": "V8",
+        "value": "DC 0",
+        "pins": [
+          {
+            "pinId": "+",
+            "netId": "fw7"
+          },
+          {
+            "pinId": "-",
+            "netId": "gnd"
+          }
+        ]
+      },
+      {
+        "id": "g0",
+        "type": "logic_xor",
+        "designator": "U0",
+        "pins": [
+          {
+            "pinId": "in1",
+            "netId": "q0"
+          },
+          {
+            "pinId": "in2",
+            "netId": "fw0"
+          },
+          {
+            "pinId": "out",
+            "netId": "sum0"
+          }
+        ]
+      },
+      {
+        "id": "g1",
+        "type": "logic_and",
+        "designator": "U1",
+        "pins": [
+          {
+            "pinId": "in1",
+            "netId": "q0"
+          },
+          {
+            "pinId": "in2",
+            "netId": "fw0"
+          },
+          {
+            "pinId": "out",
+            "netId": "c1"
+          }
+        ]
+      },
+      {
+        "id": "g2",
+        "type": "logic_xor",
+        "designator": "U2",
+        "pins": [
+          {
+            "pinId": "in1",
+            "netId": "q1"
+          },
+          {
+            "pinId": "in2",
+            "netId": "fw1"
+          },
+          {
+            "pinId": "out",
+            "netId": "t1"
+          }
+        ]
+      },
+      {
+        "id": "g3",
+        "type": "logic_xor",
+        "designator": "U3",
+        "pins": [
+          {
+            "pinId": "in1",
+            "netId": "t1"
+          },
+          {
+            "pinId": "in2",
+            "netId": "c1"
+          },
+          {
+            "pinId": "out",
+            "netId": "sum1"
+          }
+        ]
+      },
+      {
+        "id": "g4",
+        "type": "logic_and",
+        "designator": "U4",
+        "pins": [
+          {
+            "pinId": "in1",
+            "netId": "q1"
+          },
+          {
+            "pinId": "in2",
+            "netId": "fw1"
+          },
+          {
+            "pinId": "out",
+            "netId": "g1"
+          }
+        ]
+      },
+      {
+        "id": "g5",
+        "type": "logic_and",
+        "designator": "U5",
+        "pins": [
+          {
+            "pinId": "in1",
+            "netId": "c1"
+          },
+          {
+            "pinId": "in2",
+            "netId": "t1"
+          },
+          {
+            "pinId": "out",
+            "netId": "pc1"
+          }
+        ]
+      },
+      {
+        "id": "g6",
+        "type": "logic_or",
+        "designator": "U6",
+        "pins": [
+          {
+            "pinId": "in1",
+            "netId": "g1"
+          },
+          {
+            "pinId": "in2",
+            "netId": "pc1"
+          },
+          {
+            "pinId": "out",
+            "netId": "c2"
+          }
+        ]
+      },
+      {
+        "id": "g7",
+        "type": "logic_xor",
+        "designator": "U7",
+        "pins": [
+          {
+            "pinId": "in1",
+            "netId": "q2"
+          },
+          {
+            "pinId": "in2",
+            "netId": "fw2"
+          },
+          {
+            "pinId": "out",
+            "netId": "t2"
+          }
+        ]
+      },
+      {
+        "id": "g8",
+        "type": "logic_xor",
+        "designator": "U8",
+        "pins": [
+          {
+            "pinId": "in1",
+            "netId": "t2"
+          },
+          {
+            "pinId": "in2",
+            "netId": "c2"
+          },
+          {
+            "pinId": "out",
+            "netId": "sum2"
+          }
+        ]
+      },
+      {
+        "id": "g9",
+        "type": "logic_and",
+        "designator": "U9",
+        "pins": [
+          {
+            "pinId": "in1",
+            "netId": "q2"
+          },
+          {
+            "pinId": "in2",
+            "netId": "fw2"
+          },
+          {
+            "pinId": "out",
+            "netId": "g2"
+          }
+        ]
+      },
+      {
+        "id": "g10",
+        "type": "logic_and",
+        "designator": "U10",
+        "pins": [
+          {
+            "pinId": "in1",
+            "netId": "c2"
+          },
+          {
+            "pinId": "in2",
+            "netId": "t2"
+          },
+          {
+            "pinId": "out",
+            "netId": "pc2"
+          }
+        ]
+      },
+      {
+        "id": "g11",
+        "type": "logic_or",
+        "designator": "U11",
+        "pins": [
+          {
+            "pinId": "in1",
+            "netId": "g2"
+          },
+          {
+            "pinId": "in2",
+            "netId": "pc2"
+          },
+          {
+            "pinId": "out",
+            "netId": "c3"
+          }
+        ]
+      },
+      {
+        "id": "g12",
+        "type": "logic_xor",
+        "designator": "U12",
+        "pins": [
+          {
+            "pinId": "in1",
+            "netId": "q3"
+          },
+          {
+            "pinId": "in2",
+            "netId": "fw3"
+          },
+          {
+            "pinId": "out",
+            "netId": "t3"
+          }
+        ]
+      },
+      {
+        "id": "g13",
+        "type": "logic_xor",
+        "designator": "U13",
+        "pins": [
+          {
+            "pinId": "in1",
+            "netId": "t3"
+          },
+          {
+            "pinId": "in2",
+            "netId": "c3"
+          },
+          {
+            "pinId": "out",
+            "netId": "sum3"
+          }
+        ]
+      },
+      {
+        "id": "g14",
+        "type": "logic_and",
+        "designator": "U14",
+        "pins": [
+          {
+            "pinId": "in1",
+            "netId": "q3"
+          },
+          {
+            "pinId": "in2",
+            "netId": "fw3"
+          },
+          {
+            "pinId": "out",
+            "netId": "g3"
+          }
+        ]
+      },
+      {
+        "id": "g15",
+        "type": "logic_and",
+        "designator": "U15",
+        "pins": [
+          {
+            "pinId": "in1",
+            "netId": "c3"
+          },
+          {
+            "pinId": "in2",
+            "netId": "t3"
+          },
+          {
+            "pinId": "out",
+            "netId": "pc3"
+          }
+        ]
+      },
+      {
+        "id": "g16",
+        "type": "logic_or",
+        "designator": "U16",
+        "pins": [
+          {
+            "pinId": "in1",
+            "netId": "g3"
+          },
+          {
+            "pinId": "in2",
+            "netId": "pc3"
+          },
+          {
+            "pinId": "out",
+            "netId": "c4"
+          }
+        ]
+      },
+      {
+        "id": "g17",
+        "type": "logic_xor",
+        "designator": "U17",
+        "pins": [
+          {
+            "pinId": "in1",
+            "netId": "q4"
+          },
+          {
+            "pinId": "in2",
+            "netId": "fw4"
+          },
+          {
+            "pinId": "out",
+            "netId": "t4"
+          }
+        ]
+      },
+      {
+        "id": "g18",
+        "type": "logic_xor",
+        "designator": "U18",
+        "pins": [
+          {
+            "pinId": "in1",
+            "netId": "t4"
+          },
+          {
+            "pinId": "in2",
+            "netId": "c4"
+          },
+          {
+            "pinId": "out",
+            "netId": "sum4"
+          }
+        ]
+      },
+      {
+        "id": "g19",
+        "type": "logic_and",
+        "designator": "U19",
+        "pins": [
+          {
+            "pinId": "in1",
+            "netId": "q4"
+          },
+          {
+            "pinId": "in2",
+            "netId": "fw4"
+          },
+          {
+            "pinId": "out",
+            "netId": "g4"
+          }
+        ]
+      },
+      {
+        "id": "g20",
+        "type": "logic_and",
+        "designator": "U20",
+        "pins": [
+          {
+            "pinId": "in1",
+            "netId": "c4"
+          },
+          {
+            "pinId": "in2",
+            "netId": "t4"
+          },
+          {
+            "pinId": "out",
+            "netId": "pc4"
+          }
+        ]
+      },
+      {
+        "id": "g21",
+        "type": "logic_or",
+        "designator": "U21",
+        "pins": [
+          {
+            "pinId": "in1",
+            "netId": "g4"
+          },
+          {
+            "pinId": "in2",
+            "netId": "pc4"
+          },
+          {
+            "pinId": "out",
+            "netId": "c5"
+          }
+        ]
+      },
+      {
+        "id": "g22",
+        "type": "logic_xor",
+        "designator": "U22",
+        "pins": [
+          {
+            "pinId": "in1",
+            "netId": "q5"
+          },
+          {
+            "pinId": "in2",
+            "netId": "fw5"
+          },
+          {
+            "pinId": "out",
+            "netId": "t5"
+          }
+        ]
+      },
+      {
+        "id": "g23",
+        "type": "logic_xor",
+        "designator": "U23",
+        "pins": [
+          {
+            "pinId": "in1",
+            "netId": "t5"
+          },
+          {
+            "pinId": "in2",
+            "netId": "c5"
+          },
+          {
+            "pinId": "out",
+            "netId": "sum5"
+          }
+        ]
+      },
+      {
+        "id": "g24",
+        "type": "logic_and",
+        "designator": "U24",
+        "pins": [
+          {
+            "pinId": "in1",
+            "netId": "q5"
+          },
+          {
+            "pinId": "in2",
+            "netId": "fw5"
+          },
+          {
+            "pinId": "out",
+            "netId": "g5"
+          }
+        ]
+      },
+      {
+        "id": "g25",
+        "type": "logic_and",
+        "designator": "U25",
+        "pins": [
+          {
+            "pinId": "in1",
+            "netId": "c5"
+          },
+          {
+            "pinId": "in2",
+            "netId": "t5"
+          },
+          {
+            "pinId": "out",
+            "netId": "pc5"
+          }
+        ]
+      },
+      {
+        "id": "g26",
+        "type": "logic_or",
+        "designator": "U26",
+        "pins": [
+          {
+            "pinId": "in1",
+            "netId": "g5"
+          },
+          {
+            "pinId": "in2",
+            "netId": "pc5"
+          },
+          {
+            "pinId": "out",
+            "netId": "c6"
+          }
+        ]
+      },
+      {
+        "id": "g27",
+        "type": "logic_xor",
+        "designator": "U27",
+        "pins": [
+          {
+            "pinId": "in1",
+            "netId": "q6"
+          },
+          {
+            "pinId": "in2",
+            "netId": "fw6"
+          },
+          {
+            "pinId": "out",
+            "netId": "t6"
+          }
+        ]
+      },
+      {
+        "id": "g28",
+        "type": "logic_xor",
+        "designator": "U28",
+        "pins": [
+          {
+            "pinId": "in1",
+            "netId": "t6"
+          },
+          {
+            "pinId": "in2",
+            "netId": "c6"
+          },
+          {
+            "pinId": "out",
+            "netId": "sum6"
+          }
+        ]
+      },
+      {
+        "id": "g29",
+        "type": "logic_and",
+        "designator": "U29",
+        "pins": [
+          {
+            "pinId": "in1",
+            "netId": "q6"
+          },
+          {
+            "pinId": "in2",
+            "netId": "fw6"
+          },
+          {
+            "pinId": "out",
+            "netId": "g6"
+          }
+        ]
+      },
+      {
+        "id": "g30",
+        "type": "logic_and",
+        "designator": "U30",
+        "pins": [
+          {
+            "pinId": "in1",
+            "netId": "c6"
+          },
+          {
+            "pinId": "in2",
+            "netId": "t6"
+          },
+          {
+            "pinId": "out",
+            "netId": "pc6"
+          }
+        ]
+      },
+      {
+        "id": "g31",
+        "type": "logic_or",
+        "designator": "U31",
+        "pins": [
+          {
+            "pinId": "in1",
+            "netId": "g6"
+          },
+          {
+            "pinId": "in2",
+            "netId": "pc6"
+          },
+          {
+            "pinId": "out",
+            "netId": "c7"
+          }
+        ]
+      },
+      {
+        "id": "g32",
+        "type": "logic_xor",
+        "designator": "U32",
+        "pins": [
+          {
+            "pinId": "in1",
+            "netId": "q7"
+          },
+          {
+            "pinId": "in2",
+            "netId": "fw7"
+          },
+          {
+            "pinId": "out",
+            "netId": "t7"
+          }
+        ]
+      },
+      {
+        "id": "g33",
+        "type": "logic_xor",
+        "designator": "U33",
+        "pins": [
+          {
+            "pinId": "in1",
+            "netId": "t7"
+          },
+          {
+            "pinId": "in2",
+            "netId": "c7"
+          },
+          {
+            "pinId": "out",
+            "netId": "sum7"
+          }
+        ]
+      },
+      {
+        "id": "g34",
+        "type": "logic_and",
+        "designator": "U34",
+        "pins": [
+          {
+            "pinId": "in1",
+            "netId": "q7"
+          },
+          {
+            "pinId": "in2",
+            "netId": "fw7"
+          },
+          {
+            "pinId": "out",
+            "netId": "g7"
+          }
+        ]
+      },
+      {
+        "id": "g35",
+        "type": "logic_and",
+        "designator": "U35",
+        "pins": [
+          {
+            "pinId": "in1",
+            "netId": "c7"
+          },
+          {
+            "pinId": "in2",
+            "netId": "t7"
+          },
+          {
+            "pinId": "out",
+            "netId": "pc7"
+          }
+        ]
+      },
+      {
+        "id": "g36",
+        "type": "logic_or",
+        "designator": "U36",
+        "pins": [
+          {
+            "pinId": "in1",
+            "netId": "g7"
+          },
+          {
+            "pinId": "in2",
+            "netId": "pc7"
+          },
+          {
+            "pinId": "out",
+            "netId": "c8"
+          }
+        ]
+      },
+      {
+        "id": "d37",
+        "type": "dff",
+        "designator": "U37",
+        "pins": [
+          {
+            "pinId": "d",
+            "netId": "sum0"
+          },
+          {
+            "pinId": "clk",
+            "netId": "clk"
+          },
+          {
+            "pinId": "q",
+            "netId": "q0"
+          },
+          {
+            "pinId": "qb",
+            "netId": "qb0"
+          }
+        ]
+      },
+      {
+        "id": "d38",
+        "type": "dff",
+        "designator": "U38",
+        "pins": [
+          {
+            "pinId": "d",
+            "netId": "sum1"
+          },
+          {
+            "pinId": "clk",
+            "netId": "clk"
+          },
+          {
+            "pinId": "q",
+            "netId": "q1"
+          },
+          {
+            "pinId": "qb",
+            "netId": "qb1"
+          }
+        ]
+      },
+      {
+        "id": "d39",
+        "type": "dff",
+        "designator": "U39",
+        "pins": [
+          {
+            "pinId": "d",
+            "netId": "sum2"
+          },
+          {
+            "pinId": "clk",
+            "netId": "clk"
+          },
+          {
+            "pinId": "q",
+            "netId": "q2"
+          },
+          {
+            "pinId": "qb",
+            "netId": "qb2"
+          }
+        ]
+      },
+      {
+        "id": "d40",
+        "type": "dff",
+        "designator": "U40",
+        "pins": [
+          {
+            "pinId": "d",
+            "netId": "sum3"
+          },
+          {
+            "pinId": "clk",
+            "netId": "clk"
+          },
+          {
+            "pinId": "q",
+            "netId": "q3"
+          },
+          {
+            "pinId": "qb",
+            "netId": "qb3"
+          }
+        ]
+      },
+      {
+        "id": "d41",
+        "type": "dff",
+        "designator": "U41",
+        "pins": [
+          {
+            "pinId": "d",
+            "netId": "sum4"
+          },
+          {
+            "pinId": "clk",
+            "netId": "clk"
+          },
+          {
+            "pinId": "q",
+            "netId": "q4"
+          },
+          {
+            "pinId": "qb",
+            "netId": "qb4"
+          }
+        ]
+      },
+      {
+        "id": "d42",
+        "type": "dff",
+        "designator": "U42",
+        "pins": [
+          {
+            "pinId": "d",
+            "netId": "sum5"
+          },
+          {
+            "pinId": "clk",
+            "netId": "clk"
+          },
+          {
+            "pinId": "q",
+            "netId": "q5"
+          },
+          {
+            "pinId": "qb",
+            "netId": "qb5"
+          }
+        ]
+      },
+      {
+        "id": "d43",
+        "type": "dff",
+        "designator": "U43",
+        "pins": [
+          {
+            "pinId": "d",
+            "netId": "sum6"
+          },
+          {
+            "pinId": "clk",
+            "netId": "clk"
+          },
+          {
+            "pinId": "q",
+            "netId": "q6"
+          },
+          {
+            "pinId": "qb",
+            "netId": "qb6"
+          }
+        ]
+      },
+      {
+        "id": "d44",
+        "type": "dff",
+        "designator": "U44",
+        "pins": [
+          {
+            "pinId": "d",
+            "netId": "sum7"
+          },
+          {
+            "pinId": "clk",
+            "netId": "clk"
+          },
+          {
+            "pinId": "q",
+            "netId": "q7"
+          },
+          {
+            "pinId": "qb",
+            "netId": "qb7"
+          }
+        ]
+      },
+      {
+        "id": "rt0",
+        "type": "resistor",
+        "designator": "Rt0",
+        "value": "20k",
+        "pins": [
+          {
+            "pinId": "1",
+            "netId": "n0"
+          },
+          {
+            "pinId": "2",
+            "netId": "gnd"
+          }
+        ]
+      },
+      {
+        "id": "rl0",
+        "type": "resistor",
+        "designator": "Rl0",
+        "value": "20k",
+        "pins": [
+          {
+            "pinId": "1",
+            "netId": "q0"
+          },
+          {
+            "pinId": "2",
+            "netId": "n0"
+          }
+        ]
+      },
+      {
+        "id": "rl1",
+        "type": "resistor",
+        "designator": "Rl1",
+        "value": "20k",
+        "pins": [
+          {
+            "pinId": "1",
+            "netId": "q1"
+          },
+          {
+            "pinId": "2",
+            "netId": "n1"
+          }
+        ]
+      },
+      {
+        "id": "rl2",
+        "type": "resistor",
+        "designator": "Rl2",
+        "value": "20k",
+        "pins": [
+          {
+            "pinId": "1",
+            "netId": "q2"
+          },
+          {
+            "pinId": "2",
+            "netId": "n2"
+          }
+        ]
+      },
+      {
+        "id": "rl3",
+        "type": "resistor",
+        "designator": "Rl3",
+        "value": "20k",
+        "pins": [
+          {
+            "pinId": "1",
+            "netId": "q3"
+          },
+          {
+            "pinId": "2",
+            "netId": "n3"
+          }
+        ]
+      },
+      {
+        "id": "rl4",
+        "type": "resistor",
+        "designator": "Rl4",
+        "value": "20k",
+        "pins": [
+          {
+            "pinId": "1",
+            "netId": "q4"
+          },
+          {
+            "pinId": "2",
+            "netId": "n4"
+          }
+        ]
+      },
+      {
+        "id": "rl5",
+        "type": "resistor",
+        "designator": "Rl5",
+        "value": "20k",
+        "pins": [
+          {
+            "pinId": "1",
+            "netId": "q5"
+          },
+          {
+            "pinId": "2",
+            "netId": "n5"
+          }
+        ]
+      },
+      {
+        "id": "rl6",
+        "type": "resistor",
+        "designator": "Rl6",
+        "value": "20k",
+        "pins": [
+          {
+            "pinId": "1",
+            "netId": "q6"
+          },
+          {
+            "pinId": "2",
+            "netId": "n6"
+          }
+        ]
+      },
+      {
+        "id": "rl7",
+        "type": "resistor",
+        "designator": "Rl7",
+        "value": "20k",
+        "pins": [
+          {
+            "pinId": "1",
+            "netId": "q7"
+          },
+          {
+            "pinId": "2",
+            "netId": "dac"
+          }
+        ]
+      },
+      {
+        "id": "rs0",
+        "type": "resistor",
+        "designator": "Rs0",
+        "value": "10k",
+        "pins": [
+          {
+            "pinId": "1",
+            "netId": "n0"
+          },
+          {
+            "pinId": "2",
+            "netId": "n1"
+          }
+        ]
+      },
+      {
+        "id": "rs1",
+        "type": "resistor",
+        "designator": "Rs1",
+        "value": "10k",
+        "pins": [
+          {
+            "pinId": "1",
+            "netId": "n1"
+          },
+          {
+            "pinId": "2",
+            "netId": "n2"
+          }
+        ]
+      },
+      {
+        "id": "rs2",
+        "type": "resistor",
+        "designator": "Rs2",
+        "value": "10k",
+        "pins": [
+          {
+            "pinId": "1",
+            "netId": "n2"
+          },
+          {
+            "pinId": "2",
+            "netId": "n3"
+          }
+        ]
+      },
+      {
+        "id": "rs3",
+        "type": "resistor",
+        "designator": "Rs3",
+        "value": "10k",
+        "pins": [
+          {
+            "pinId": "1",
+            "netId": "n3"
+          },
+          {
+            "pinId": "2",
+            "netId": "n4"
+          }
+        ]
+      },
+      {
+        "id": "rs4",
+        "type": "resistor",
+        "designator": "Rs4",
+        "value": "10k",
+        "pins": [
+          {
+            "pinId": "1",
+            "netId": "n4"
+          },
+          {
+            "pinId": "2",
+            "netId": "n5"
+          }
+        ]
+      },
+      {
+        "id": "rs5",
+        "type": "resistor",
+        "designator": "Rs5",
+        "value": "10k",
+        "pins": [
+          {
+            "pinId": "1",
+            "netId": "n5"
+          },
+          {
+            "pinId": "2",
+            "netId": "n6"
+          }
+        ]
+      },
+      {
+        "id": "rs6",
+        "type": "resistor",
+        "designator": "Rs6",
+        "value": "10k",
+        "pins": [
+          {
+            "pinId": "1",
+            "netId": "n6"
+          },
+          {
+            "pinId": "2",
+            "netId": "dac"
+          }
+        ]
+      },
+      {
+        "id": "u_buf",
+        "type": "subckt",
+        "designator": "U90",
+        "model": "OPAMPGEN",
+        "pins": [
+          {
+            "pinId": "out",
+            "netId": "fbuf"
+          },
+          {
+            "pinId": "in+",
+            "netId": "dac"
+          },
+          {
+            "pinId": "in-",
+            "netId": "fbuf"
+          },
+          {
+            "pinId": "vcc",
+            "netId": "vcc"
+          },
+          {
+            "pinId": "vee",
+            "netId": "vee"
+          }
+        ]
+      },
+      {
+        "id": "rf1",
+        "type": "resistor",
+        "designator": "Rf1",
+        "value": "10k",
+        "pins": [
+          {
+            "pinId": "1",
+            "netId": "fbuf"
+          },
+          {
+            "pinId": "2",
+            "netId": "fout"
+          }
+        ]
+      },
+      {
+        "id": "cf",
+        "type": "capacitor",
+        "designator": "C90",
+        "value": "100p",
+        "pins": [
+          {
+            "pinId": "1",
+            "netId": "fout"
+          },
+          {
+            "pinId": "2",
+            "netId": "gnd"
+          }
+        ]
+      },
+      {
+        "id": "v9",
+        "type": "voltage_source",
+        "designator": "V9",
+        "value": "DC 15",
+        "pins": [
+          {
+            "pinId": "+",
+            "netId": "vcc"
+          },
+          {
+            "pinId": "-",
+            "netId": "gnd"
+          }
+        ]
+      },
+      {
+        "id": "v10",
+        "type": "voltage_source",
+        "designator": "V10",
+        "value": "DC -15",
+        "pins": [
+          {
+            "pinId": "+",
+            "netId": "vee"
+          },
+          {
+            "pinId": "-",
+            "netId": "gnd"
+          }
+        ]
+      },
+      {
+        "id": "gnd1",
+        "type": "ground",
+        "designator": "GND1",
+        "pins": [
+          {
+            "pinId": "1",
+            "netId": "gnd"
+          }
+        ]
+      }
+    ],
+    "nets": [
+      {
+        "id": "clk",
+        "name": "CLK"
+      },
+      {
+        "id": "fw0",
+        "name": "FW0"
+      },
+      {
+        "id": "fw1",
+        "name": "FW1"
+      },
+      {
+        "id": "fw2",
+        "name": "FW2"
+      },
+      {
+        "id": "fw3",
+        "name": "FW3"
+      },
+      {
+        "id": "fw4",
+        "name": "FW4"
+      },
+      {
+        "id": "fw5",
+        "name": "FW5"
+      },
+      {
+        "id": "fw6",
+        "name": "FW6"
+      },
+      {
+        "id": "fw7",
+        "name": "FW7"
+      },
+      {
+        "id": "sum0",
+        "name": "SUM0"
+      },
+      {
+        "id": "c1",
+        "name": "C1"
+      },
+      {
+        "id": "t1",
+        "name": "T1"
+      },
+      {
+        "id": "sum1",
+        "name": "SUM1"
+      },
+      {
+        "id": "g1",
+        "name": "G1"
+      },
+      {
+        "id": "pc1",
+        "name": "PC1"
+      },
+      {
+        "id": "c2",
+        "name": "C2"
+      },
+      {
+        "id": "t2",
+        "name": "T2"
+      },
+      {
+        "id": "sum2",
+        "name": "SUM2"
+      },
+      {
+        "id": "g2",
+        "name": "G2"
+      },
+      {
+        "id": "pc2",
+        "name": "PC2"
+      },
+      {
+        "id": "c3",
+        "name": "C3"
+      },
+      {
+        "id": "t3",
+        "name": "T3"
+      },
+      {
+        "id": "sum3",
+        "name": "SUM3"
+      },
+      {
+        "id": "g3",
+        "name": "G3"
+      },
+      {
+        "id": "pc3",
+        "name": "PC3"
+      },
+      {
+        "id": "c4",
+        "name": "C4"
+      },
+      {
+        "id": "t4",
+        "name": "T4"
+      },
+      {
+        "id": "sum4",
+        "name": "SUM4"
+      },
+      {
+        "id": "g4",
+        "name": "G4"
+      },
+      {
+        "id": "pc4",
+        "name": "PC4"
+      },
+      {
+        "id": "c5",
+        "name": "C5"
+      },
+      {
+        "id": "t5",
+        "name": "T5"
+      },
+      {
+        "id": "sum5",
+        "name": "SUM5"
+      },
+      {
+        "id": "g5",
+        "name": "G5"
+      },
+      {
+        "id": "pc5",
+        "name": "PC5"
+      },
+      {
+        "id": "c6",
+        "name": "C6"
+      },
+      {
+        "id": "t6",
+        "name": "T6"
+      },
+      {
+        "id": "sum6",
+        "name": "SUM6"
+      },
+      {
+        "id": "g6",
+        "name": "G6"
+      },
+      {
+        "id": "pc6",
+        "name": "PC6"
+      },
+      {
+        "id": "c7",
+        "name": "C7"
+      },
+      {
+        "id": "t7",
+        "name": "T7"
+      },
+      {
+        "id": "sum7",
+        "name": "SUM7"
+      },
+      {
+        "id": "g7",
+        "name": "G7"
+      },
+      {
+        "id": "pc7",
+        "name": "PC7"
+      },
+      {
+        "id": "c8",
+        "name": "C8"
+      },
+      {
+        "id": "q0",
+        "name": "Q0"
+      },
+      {
+        "id": "qb0",
+        "name": "QB0"
+      },
+      {
+        "id": "q1",
+        "name": "Q1"
+      },
+      {
+        "id": "qb1",
+        "name": "QB1"
+      },
+      {
+        "id": "q2",
+        "name": "Q2"
+      },
+      {
+        "id": "qb2",
+        "name": "QB2"
+      },
+      {
+        "id": "q3",
+        "name": "Q3"
+      },
+      {
+        "id": "qb3",
+        "name": "QB3"
+      },
+      {
+        "id": "q4",
+        "name": "Q4"
+      },
+      {
+        "id": "qb4",
+        "name": "QB4"
+      },
+      {
+        "id": "q5",
+        "name": "Q5"
+      },
+      {
+        "id": "qb5",
+        "name": "QB5"
+      },
+      {
+        "id": "q6",
+        "name": "Q6"
+      },
+      {
+        "id": "qb6",
+        "name": "QB6"
+      },
+      {
+        "id": "q7",
+        "name": "Q7"
+      },
+      {
+        "id": "qb7",
+        "name": "QB7"
+      },
+      {
+        "id": "n0",
+        "name": "N0"
+      },
+      {
+        "id": "gnd",
+        "name": "GND"
+      },
+      {
+        "id": "n1",
+        "name": "N1"
+      },
+      {
+        "id": "n2",
+        "name": "N2"
+      },
+      {
+        "id": "n3",
+        "name": "N3"
+      },
+      {
+        "id": "n4",
+        "name": "N4"
+      },
+      {
+        "id": "n5",
+        "name": "N5"
+      },
+      {
+        "id": "n6",
+        "name": "N6"
+      },
+      {
+        "id": "dac",
+        "name": "DAC"
+      },
+      {
+        "id": "fbuf",
+        "name": "FBUF"
+      },
+      {
+        "id": "fout",
+        "name": "FOUT"
+      },
+      {
+        "id": "vcc",
+        "name": "VCC"
+      },
+      {
+        "id": "vee",
+        "name": "VEE"
+      },
+      {
+        "id": "gnd",
+        "name": "GND",
+        "isGround": true
+      }
+    ],
+    "models": [
+      {
+        "name": "OPAMPGEN",
+        "device": "subckt",
+        "tier": "generic",
+        "ports": [
+          "out",
+          "in+",
+          "in-",
+          "vcc",
+          "vee"
+        ],
+        "body": ".subckt OPAMPGEN out inp inn vcc vee\nRin   inp inn 2Meg\nGm    0 n2 inp inn 1e-3\nRpole n2 0 1e8\nCp    n2 0 16p\nDhi   n2 vcc DCLMP\nDlo   vee n2 DCLMP\nEbuf  n3 0 n2 0 1\nRout  n3 out 50\n.model DCLMP D(IS=1e-12 N=1)\n.ends"
+      }
+    ],
+    "metadata": {
+      "name": "8-bit DDS waveform generator",
+      "description": "phase accumulator → R-2R DAC → filter; sawtooth, fw=16"
+    }
+  }
+}
