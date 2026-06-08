@@ -293,10 +293,6 @@ export function generateNetlist(
             lines.push('');
         }
     }
-    lines.push('* Analysis');
-    lines.push(analysisToSpice(effectiveAnalysis));
-    lines.push('');
-
     // Control block for output. Caller-supplied probes reference a device by its designator (i(<dev>)) or
     // a node by its net id/name (v(<net>)); remap both to the names actually emitted (the device may have
     // been prefixed, the node sanitized) so they resolve in ngspice instead of yielding "no such vector".
@@ -324,10 +320,33 @@ export function generateNetlist(
         if (raw) netRefToNode.set(raw.toLowerCase(), twin);
     }
     const rawProbes = options.probes || generateDefaultProbes(circuit, nodeMap, ms);
+    let needSaveCurrents = false;
     const probes = rawProbes
         .map((p) => rewriteProbeNodeRefs(rewriteProbeDeviceRefs(p, designatorToInstance), netRefToNode))
         .filter((p) => p.trim().length > 0) // a probe that reduced to nothing (e.g. v(gnd)) is dropped
-        .filter((p) => !isDigitalCurrentProbe(p, digitalDeviceRefs)); // i(<digital a-device>) has no current vector → drop (else it aborts the whole wrdata line)
+        .filter((p) => !isDigitalCurrentProbe(p, digitalDeviceRefs)) // i(<digital a-device>) has no current vector → drop (else it aborts the whole wrdata line)
+        .map((p) => {
+            // Make analog current probes outputtable: keep native i() for V/L/E/H, rewrite R/C/D to
+            // @<dev>[i] (+ savecurrents), drop anything else — so no i() term can abort the wrdata line.
+            const { token, savecurrents } = rewriteCurrentProbeVector(p, seenDevices);
+            if (savecurrents) needSaveCurrents = true;
+            return token;
+        })
+        .filter((p) => p.trim().length > 0); // a current probe on an unsupported/multi-terminal device was dropped
+
+    // ngspice -b has no native i(<dev>) for R/C/D — those probes were rewritten to `@<dev>[i]`, which needs
+    // `.options savecurrents` to populate. Emit it ONLY when such a probe is present (it makes ngspice store
+    // every device's current — real matrix/IO overhead we don't want on the common voltage-only run).
+    if (needSaveCurrents) {
+        lines.push('* Options');
+        lines.push('.options savecurrents');
+        lines.push('');
+    }
+
+    lines.push('* Analysis');
+    lines.push(analysisToSpice(effectiveAnalysis));
+    lines.push('');
+
     lines.push('* Control block');
     lines.push('.control');
     lines.push('  set filetype=ascii');
@@ -405,6 +424,39 @@ function isDigitalCurrentProbe(probe: string, digitalRefs: Set<string>): boolean
     const m = probe.trim().match(/^i\s*\(\s*([^),]+?)\s*\)$/i);
     const name = m?.[1];
     return name !== undefined && digitalRefs.has(name.trim().toLowerCase());
+}
+
+/** SPICE device letters with a NATIVE branch-current vector in batch mode — `i(<dev>)` works as-is. */
+const NATIVE_CURRENT_DEVICES = new Set(['V', 'L', 'E', 'H']); // voltage sources, inductors, vcvs, ccvs
+/**
+ * Two-terminal elements whose current is reliably reachable via `.options savecurrents` + the `@<dev>[i]`
+ * vector form, in EVERY analysis mode. Verified on ngspice-41: `@r1[i]`/`@c1[i]` resolve in both op and
+ * tran, case-insensitively. Diodes are deliberately EXCLUDED — their current vector is `@<dev>[id]` (a
+ * different parameter) and it only resolves in tran (it errors in op), so emitting it would re-introduce
+ * the line-abort bug under op; a diode current probe is dropped instead.
+ */
+const SAVECURRENTS_DEVICES = new Set(['R', 'C']); // resistor, capacitor
+
+/**
+ * Make a current probe `i(<inst>)` actually outputtable by ngspice `-b`, keyed on the emitted device letter:
+ *   • V/L/E/H — native branch current → keep `i(<inst>)` (no `.options` needed).
+ *   • R/C     — NO native i() in batch mode; rewrite to the device-current vector `@<inst>[i]` and signal
+ *     the caller to emit `.options savecurrents`. (Verified: `@r1[i]`/`@c1[i]` return the current.)
+ *   • anything else (diode/zener `D`, multi-terminal Q/M/J, sources, switches, behavioral, bridges) has no
+ *     single, mode-portable current vector, and an UNKNOWN device name would error too → DROP (return ''),
+ *     exactly like the digital guard, so the bad term can't abort the whole `wrdata` line and kill co-probes.
+ * Non-current probes (`v(...)`) and compound expressions pass through untouched. `emitted` is the set of
+ * real (lower-cased) device names actually in the deck. Returns `{ token, savecurrents }`.
+ */
+function rewriteCurrentProbeVector(probe: string, emitted: Set<string>): { token: string; savecurrents: boolean } {
+    const m = probe.trim().match(/^i\s*\(\s*([^),]+?)\s*\)$/i);
+    if (!m || m[1] === undefined) return { token: probe, savecurrents: false }; // not a sole current probe
+    const name = m[1].trim();
+    if (!emitted.has(name.toLowerCase())) return { token: '', savecurrents: false }; // unknown device → would abort; drop
+    const letter = name[0]?.toUpperCase() ?? '';
+    if (NATIVE_CURRENT_DEVICES.has(letter)) return { token: `i(${name})`, savecurrents: false };
+    if (SAVECURRENTS_DEVICES.has(letter)) return { token: `@${name}[i]`, savecurrents: true };
+    return { token: '', savecurrents: false }; // multi-terminal / exotic → drop (can't probe a single current)
 }
 
 /**

@@ -414,6 +414,90 @@ describe('NetlistGenerator', () => {
             expect(netlist).toMatch(/v\(na\)/); // node probe v(a) remapped to its sanitized node "na"
         });
 
+        it('rewrites R/C current probes to @dev[i] + savecurrents, keeps native i(V), drops i(diode)', () => {
+            // ngspice -b has NO branch-current vector for a resistor/capacitor, so a verbatim i(R1) errors
+            // "no such function as i," and aborts the ENTIRE wrdata line — silently killing every co-probe
+            // (total data loss). The generator rewrites i(R/C) to the device-current vector @<dev>[i] and
+            // emits `.options savecurrents`, leaves native i(V1) untouched, and DROPS i(D1) (the diode's
+            // @<dev>[id] vector is mode-finicky — dropping it keeps co-probes alive rather than risk the abort).
+            const circuit: CircuitJson = {
+                version: '1.0',
+                components: [
+                    createComponent('v1', 'voltage_source', 'V1', 'DC 5', [
+                        { pinId: '+', netId: 'a' },
+                        { pinId: '-', netId: 'b' },
+                    ]),
+                    createComponent('r1', 'resistor', 'R1', '1k', [
+                        { pinId: '1', netId: 'b' },
+                        { pinId: '2', netId: 'mid' },
+                    ]),
+                    createComponent('c1', 'capacitor', 'C1', '100n', [
+                        { pinId: '1', netId: 'mid' },
+                        { pinId: '2', netId: '0' },
+                    ]),
+                    createComponent('d1', 'diode', 'D1', undefined, [
+                        { pinId: 'anode', netId: 'a' },
+                        { pinId: 'cathode', netId: 'mid' },
+                    ]),
+                ],
+                nets: [createNet('a', 'a'), createNet('b', 'b'), createNet('mid', 'mid'), createNet('0', '0', true)],
+            };
+            const netlist = generateNetlist(circuit, { type: 'tran', stopTime: '1m' }, {
+                probes: ['v(mid)', 'i(R1)', 'i(C1)', 'i(D1)', 'i(V1)'],
+            });
+            const wr = netlist.split('\n').find((l) => l.includes('wrdata'))!;
+            expect(netlist).toMatch(/^\.options savecurrents$/m); // emitted once because R/C currents are probed
+            expect(wr).toMatch(/@R1\[i\]/); // resistor current via the device-current vector
+            expect(wr).toMatch(/@C1\[i\]/); // capacitor current
+            expect(wr).toMatch(/i\(V1\)/); // voltage source keeps its NATIVE branch current
+            expect(wr).toMatch(/v\(nmid\)/); // the voltage co-probe survives on the same line
+            // No bare i(R1)/i(C1) survives to abort the line; the diode current probe is dropped entirely.
+            expect(wr).not.toMatch(/\bi\(R1\)/);
+            expect(wr).not.toMatch(/\bi\(C1\)/);
+            expect(wr).not.toMatch(/\bi\(D1\)/);
+            expect(wr).not.toMatch(/@D1\[/); // diode dropped, NOT rewritten (its @-vector is mode-finicky)
+        });
+
+        it('drops a current probe on a multi-terminal device instead of aborting the wrdata line', () => {
+            // A BJT has no single branch-current vector (ic/ib/ie), so i(Q1) is unresolvable and would abort
+            // the whole wrdata line. It must be DROPPED so the voltage co-probe still produces output. No
+            // savecurrents is needed when only native + dropped probes remain.
+            const circuit: CircuitJson = {
+                version: '1.0',
+                components: [
+                    createComponent('v1', 'voltage_source', 'V1', 'DC 5', [
+                        { pinId: '+', netId: 'vcc' },
+                        { pinId: '-', netId: '0' },
+                    ]),
+                    createComponent('rc', 'resistor', 'RC', '1k', [
+                        { pinId: '1', netId: 'vcc' },
+                        { pinId: '2', netId: 'col' },
+                    ]),
+                    {
+                        id: 'q1',
+                        type: 'bjt',
+                        designator: 'Q1',
+                        model: 'QGENNPN',
+                        pins: [
+                            { pinId: 'c', netId: 'col' },
+                            { pinId: 'b', netId: 'vcc' },
+                            { pinId: 'e', netId: '0' },
+                        ],
+                    },
+                ],
+                nets: [createNet('vcc', 'vcc'), createNet('col', 'col'), createNet('0', '0', true)],
+                models: [{ name: 'QGENNPN', device: 'bjt', body: '.model QGENNPN NPN(BF=100)' }],
+            };
+            const netlist = generateNetlist(circuit, { type: 'tran', stopTime: '1m' }, {
+                probes: ['v(col)', 'i(Q1)'],
+            });
+            const wr = netlist.split('\n').find((l) => l.includes('wrdata'))!;
+            expect(wr).toMatch(/v\(ncol\)/); // co-probe survives
+            expect(wr).not.toMatch(/i\(Q1\)/); // ambiguous transistor current dropped
+            expect(wr).not.toMatch(/@Q1\[/); // and NOT rewritten to a @-vector (no single current)
+            expect(netlist).not.toMatch(/savecurrents/); // not needed when nothing was rewritten to @dev[i]
+        });
+
         it('remaps a .dc sweep source to the emitted (prefixed) device name', () => {
             // A voltage source designated "BAT1" emits as "VBAT1"; the sweep card must name VBAT1, not
             // BAT1, else ngspice aborts with "BAT1 is not in the circuit".

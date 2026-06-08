@@ -118,8 +118,16 @@ export async function runSimulation(input: SimulationJobInput): Promise<Simulati
         // Parse the output. If the caller didn't pass probe names (e.g. version-based sims
         // that rely on eda-core's default probes), derive them from the netlist's `wrdata`
         // line so the CSV columns can be mapped to named series instead of an empty result.
-        const probeNames =
-            input.probeNames.length > 0 ? input.probeNames : extractProbes(sanitizedNetlist);
+        const emittedProbes = extractProbes(sanitizedNetlist);
+        let probeNames = input.probeNames.length > 0 ? input.probeNames : emittedProbes;
+        // The generator can DROP a probe it can't emit (e.g. a current probe on a diode/transistor or a
+        // digital a-device). When that happens the caller's explicit list is LONGER than the emitted wrdata
+        // columns, and the positional CSV mapping would shift every series. The emitted `wrdata` tokens are
+        // the column ground truth, so fall back to them on a count mismatch (a same-count rewrite like
+        // i(R1)->@r1[i] keeps the caller's nicer labels, since position still maps correctly).
+        if (input.probeNames.length > 0 && emittedProbes.length !== input.probeNames.length) {
+            probeNames = emittedProbes;
+        }
         const result = parseSimulationOutput(outputContent, probeNames, input.analysisType);
 
         // Detect a SILENTLY TRUNCATED transient: ngspice can exit 0 yet stop far before the requested
