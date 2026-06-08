@@ -86,18 +86,19 @@ interface CircuitJson {
   version: string;            // e.g. "1.0"
   components: Component[];
   nets: Net[];
+  models?: ModelDef[];        // SPICE .model/.subckt bodies for active devices (transistors, op-amps, …).
+                              //   ⚠️ PERSIST THIS FIELD — dropping it on save breaks active-device sims. See §6.1.
   metadata?: CircuitMetadata; // { name?, description?, author?, createdAt?, updatedAt? }
 }
 
 interface Component {
   id: string;
-  type: 'resistor' | 'capacitor' | 'inductor'
-      | 'voltage_source' | 'current_source' | 'diode' | 'ground';
+  type: ComponentType;                        // the full COMPONENT_TYPES set (28 incl. transistors + digital), NOT just 7 — see §6.2
   designator: string;                         // R1, C1, V1, GND1 — regex /^[A-Z][A-Z0-9]*[0-9]+$/i (MUST end in a digit)
   value?: string;                             // SPICE value strings: "10k", "100n", "DC 5", "SIN(0 1 1k)"
-  model?: string;                             // diodes only; omit to let eda-core inject DDEFAULT
+  model?: string;                             // model NAME for model-based devices (diode→omit for DDEFAULT; transistors → e.g. "QGENNPN"); the body goes in CircuitJson.models
   pins: { pinId: string; netId: string }[];   // connectivity is via pins → nets
-  properties?: Record<string, unknown>;
+  properties?: Record<string, unknown>;       // also carries digital timing for gates/dff (riseDelay, …) — see §6.2
   // Optional real-part metadata (eda-core ≥1.1.0), set when created from the parts catalog
   // (GET /parts/:symbol/component). Additive & backward-compatible; ignored by the netlist generator.
   mpn?: string; manufacturer?: string; footprint?: string;
@@ -110,7 +111,7 @@ interface Net { id: string; name: string; isGround?: boolean; }
 Key facts to internalize:
 
 - **Connectivity is through `pins[].netId` referencing `Net.id`.** There is **no flat node list** — components connect to nets, nets connect components.
-- **`ComponentType` has eight values:** seven SPICE-simulatable primitives plus `'generic'` (a catalog-only part — e.g. an IC/transistor/connector from the part picker — that is *not* emitted to SPICE). Pin names for the simulatable types are fixed per type (`COMPONENT_PINS`): R/C/L = `['1','2']`, voltage/current sources = `['+','-']`, diode = `['anode','cathode']`, ground = `['1']`; `'generic'` is `[]` (its pins come from the catalog part). Use the exported `isSimulatable(component)` helper to tell them apart. The **editor palette** still offers only the seven simulatable types; `'generic'` components arrive only via the part picker.
+- **`ComponentType` is the full `COMPONENT_TYPES` tuple (28 values), not a fixed 7.** It includes passives (R/L/C), sources (V/I + controlled vcvs/vccs + behavioral bsource), diode/zener, **active devices** (bjt/mosfet/jfet), transformer/tline/switch, `subckt` (op-amp/IC macromodels), the **digital** family (`logic_and/or/nand/nor/xor/xnor/not/buffer`, `dff`), `ground`, and `'generic'` (catalog-only, not emitted to SPICE). **Always derive the palette, pin names, and "can this simulate?" from the package — never a hardcoded list:** iterate `COMPONENT_TYPES`, read pins from `COMPONENT_PINS[type]` (R/C/L `['1','2']`, sources `['+','-']`, diode `['anode','cathode']`, ground `['1']`, gates `[]` = variable `in1..inN`+`out`, dff `['d','clk','set','rst','q','qb']`, `'generic'` `[]` = from the catalog part), and call `isSimulatable(component)`. The **v1 editor palette MAY still choose to expose only a curated subset** (that's a frontend scope decision, see §2.4), but the type/pin/validation logic must come from `COMPONENT_TYPES`/`COMPONENT_PINS` so it never drifts from the engine.
 - **`UiJson`** (visual layout, kept separate from the electrical model) is `{ viewport?: { x, y, zoom }, positions?: Record<id, { x, y, rotation? }>, wires?: { netId, points: { x, y, rotation? }[] }[] }`. All three top-level fields are optional in the type; `rotation` is a **string enum** — one of `'0' | '90' | '180' | '270'` (the TS `Position` type and the Zod `PositionSchema` both use these string literals; pass `'90'`, not `90`).
 - **A saved snapshot is a `ProjectVersion`** persisting `circuitJson` + `uiJson`. Versions are **immutable** and numbered per project (every save creates a new version; there is no version PATCH).
 
@@ -188,7 +189,7 @@ This section enumerates every screen the v1 frontend must ship, with its purpose
 
 > All AI endpoints (`/generate-circuit`, `/edit-circuit`, `/explain-circuit`, `/design-circuit`) are **built, deployed, and verified** in `apps/api/src/generation/` (Swagger tag `ai`). The frontend **consumes** them. Never ship an "AI coming soon" placeholder. Contracts are detailed in the Backend Integration Contract (§4) and AI Circuit Generation (§7); summarized inline below.
 
-> The **`/parts/*`** endpoints (Swagger tag `parts`, `apps/api/src/parts/`) are a **built, verified** real-component catalog backed by the TME distributor API (~1.3M parts, 1045 manufacturers) — they power a Flux-style **part picker** in the editor. Supplier credentials are **server-side only** (`TME_*`); the client never calls the distributor. Full contract in §4.4.11; the catalog→`CircuitJson` mapping and the new optional `Component` fields are in §6. Passives/diodes insert as simulatable components; ICs/transistors are catalog-only for now (`simulatable:false`, see §6.2).
+> The **`/parts/*`** endpoints (Swagger tag `parts`, `apps/api/src/parts/`) are a **built, verified** real-component catalog backed by the TME distributor API (~1.3M parts, 1045 manufacturers) — they power a Flux-style **part picker** in the editor. Supplier credentials are **server-side only** (`TME_*`); the client never calls the distributor. Full contract in §4.4.11; the catalog→`CircuitJson` mapping and the new optional `Component` fields are in §6. Passives, diodes/zeners, and active devices (bjt/mosfet/jfet) insert as simulatable components (active devices also return a `modelDef` to merge into `circuit.models`); only true ICs/MCUs/connectors come back catalog-only (`simulatable:false`, `type:'generic'`, see §6.2). Trust the endpoint's `simulatable` flag.
 
 ---
 
@@ -281,7 +282,7 @@ The response type is `TokensResponse` (`apps/api/src/auth/auth.service.ts:15`): 
 
 **Key elements:**
 - Canvas with grid, pan/zoom (drives `uiJson.viewport`), component placement (drag from palette → `positions[id]`), rotation (0/90/180/270), and wiring (draw `wires[netId]`, which creates/links `Net`s and pin→net connections).
-- Component palette limited to the **7 supported types** (`COMPONENT_TYPES` in `packages/eda-core/src/types/circuit.ts`): `resistor`, `capacitor`, `inductor`, `voltage_source`, `current_source`, `diode`, `ground`. _(Note: as of eda-core 1.15.0 the simulation engine ALSO supports digital logic — `logic_and/or/nand/nor/xor/xnor/not/buffer` + `dff` — with automatic analog↔digital bridging; see [docs/EDA_CORE.md §1.7.1](docs/EDA_CORE.md). Adding these to the palette (variable-arity gate pins; clock = a `PULSE` `voltage_source`) is a planned extension, not part of the v1 palette.)_
+- Component palette: the v1 editor MAY expose a curated subset (e.g. the everyday passives + sources + diode + ground), but **drive types/pins from `COMPONENT_TYPES`/`COMPONENT_PINS`, never a hardcoded list** (see §6.2). The engine itself supports far more — active devices (bjt/mosfet/jfet), op-amp/IC `subckt` macromodels, controlled/behavioral sources, **and the full digital family** (`logic_and/or/nand/nor/xor/xnor/not/buffer` + `dff`) with automatic analog↔digital bridging and per-component digital timing via `properties` (see [docs/EDA_CORE.md §1.7.1](docs/EDA_CORE.md)). Which of these the v1 palette surfaces is a frontend scope decision; the type/pin/validation plumbing must still come from the package so it can't drift.
 - Properties inspector for `designator` (must match `/^[A-Z][A-Z0-9]*[0-9]+$/` — must **end in a digit**, e.g. `R1`, `GND1`), `value` (SPICE strings like `10k`, `100n`, `DC 5`, `SIN(0 1 1k)`), and `model` (diodes only — and you may omit it; eda-core injects `DDEFAULT`).
 - Live ERC panel running eda-core's `runErc(circuit)` **client-side** (pure function, no secrets): renders `issues[]` with code/severity/message and highlights related component/net ids; block save on `error`-severity issues.
 - Toolbar entry points to Simulate, AI Generate/Edit/Explain, Import, Export.
@@ -335,7 +336,7 @@ Status enum (`status` field): `QUEUED \| RUNNING \| SUCCEEDED \| FAILED \| CANCE
 **Caveats:**
 - **No cancel endpoint exists**, and the worker never sets `CANCELED` — do not render a cancel action that calls the API. Treat `CANCELED` defensively in the status renderer but never produce it.
 - `POST /simulations/quick` ignores the version context and runs against the user's **first** org — use it only for the raw-netlist scratchpad path, not for saved-version runs.
-- `metrics` (including `pointsCount`) is present on the status response while the job runs; the full series only arrives via the result endpoint (§2.6).
+- `metrics` is `null` while the job is QUEUED/RUNNING; once it reaches a terminal state (`SUCCEEDED`/`FAILED`) the status response carries `metrics` (incl. `pointsCount`). The full series only arrives via the result endpoint (§2.6).
 - Set a sane client-side polling timeout (poll roughly every ~1s) and surface `FAILED`/`TIMED_OUT` distinctly.
 
 ---
@@ -440,7 +441,7 @@ Response (`apps/api/src/generation/design.service.ts:94`):
   simulation: {
     jobId?: string;
     status: string;
-    metrics?: SimulationMetrics;
+    metrics?: SimulationMetrics; // NOTE: NOT exported by eda-core — declare locally: { runtimeMs?, outputSizeBytes?, pointsCount?, error? }
     result?: SimulationResult | null;
   };
   warning?: string; // present when ok === false (round budget exhausted)
@@ -1049,8 +1050,8 @@ Jobs are enqueued to a BullMQ queue (`simulations`) and executed by the separate
 
 | Method | Path | Auth | Role | Request | Response |
 |---|---|---|---|---|---|
-| POST | `/versions/:versionId/simulations` | JWT | membership (version → project → org) | `CreateSimulationDto` `{ analysisConfig: object, probes?: string[] }` | `201 { jobId }` |
-| POST | `/simulations/quick` | JWT | membership (caller's **first** org) | `QuickSimulationDto` `{ netlist: string, analysisConfig?: object }` | `201 { jobId }` (declared throttle 10/60 s) |
+| POST | `/versions/:versionId/simulations` | JWT | membership (version → project → org) | `CreateSimulationDto` `{ analysisConfig: object, probes?: string[], modelAssetIds?: string[] }` | `201 { jobId }` |
+| POST | `/simulations/quick` | JWT | membership (caller's **first** org) | `QuickSimulationDto` `{ netlist: string, analysisConfig?: object, modelAssetIds?: string[] }` | `201 { jobId }` (declared throttle 10/60 s) |
 | GET | `/simulations/:jobId` | JWT | membership (job's org) | — | `200` status object (§4.4.9.2) |
 | GET | `/simulations/:jobId/result` | JWT | membership (job's org) | — | `200` result object (§4.4.9.3) |
 
@@ -1060,10 +1061,11 @@ Jobs are enqueued to a BullMQ queue (`simulations`) and executed by the separate
 ```jsonc
 // body
 { "analysisConfig": { "type": "tran", "stopTime": "1ms", "stepTime": "1us" },
-  "probes": ["v(out)", "v(in)"] }
+  "probes": ["v(out)", "v(in)"],
+  "modelAssetIds": [] } // optional: ids of uploaded SPICE-model Assets to .include for this run (§6.2 escape hatch)
 // 201 → { "jobId": "<uuid>" }
 ```
-The server resolves the version (membership-checked through project → org), runs `generateNetlist(circuitJson, analysisConfig, { probes })`, persists a `SimulationJob` (`status: QUEUED`, `orgId` from the version's project), and enqueues the job. `analysisType` is taken from `analysisConfig.type` (default `'tran'`).
+The server resolves the version (membership-checked through project → org), runs `generateNetlist(circuitJson, analysisConfig, { probes })`, persists a `SimulationJob` (`status: QUEUED`, `orgId` from the version's project), and enqueues the job. `analysisType` is taken from `analysisConfig.type` (default `'tran'`). **`modelAssetIds?: string[]`** is an accepted (whitelisted) optional field on BOTH this and `/simulations/quick` — the worker `.include`s those uploaded model assets; omit it if unused. (The global pipe is `forbidNonWhitelisted`, so only documented fields are allowed — but this one IS allowed.)
 
 **Quick sim from a raw netlist** — `POST /simulations/quick`:
 ```jsonc
@@ -1099,7 +1101,7 @@ If `status === 'SUCCEEDED'`:
   },
   "metrics": { "runtimeMs": 123, "outputSizeBytes": 4096, "pointsCount": 500 } }
 ```
-Render waveforms directly from `result.series[].points` (`x` = time/freq/sweep per `meta.xLabel`/`meta.xUnit`; `y` = signal value). **Reuse the exact eda-core types** (`SimulationResult`, `DataSeries`, `DataPoint`, `ResultMeta`, `SimulationMetrics`) — see the Shared Data Model & Types section. Do not redefine these in the frontend.
+Render waveforms directly from `result.series[].points` (`x` = time/freq/sweep per `meta.xLabel`/`meta.xUnit`; `y` = signal value). **Reuse the exact eda-core types** (`SimulationResult`, `DataSeries`, `DataPoint`, `ResultMeta`) — see the Shared Data Model & Types section. Do not redefine these. (`SimulationMetrics` is the one exception — it is **not** an eda-core export; declare it locally as `{ runtimeMs?: number; outputSizeBytes?: number; pointsCount?: number; error?: string }`, all optional since a failed run returns only `{ runtimeMs, error }`.)
 
 > **S3 spill caveat (now handled by the API):** if a result's JSON exceeds ~1 MB the worker stores it in S3 (DB `resultJson` null, `resultS3Key` set). **`getResult` now re-hydrates from S3** (key `results/{jobId}/result.json`) when `resultJson` is null, so a `SUCCEEDED` result normally returns the full `{ meta, series }`. The response includes `result: null` **plus an `error: "Result data is currently unavailable from storage."` field _only_** when that S3 fetch/parse fails. Frontend: when `status === 'SUCCEEDED'` but `result == null` (or `result.series` is empty), show "Result temporarily unavailable" rather than crashing on `result.series.map`. `metrics.pointsCount` is still present in that case, so you can distinguish "unavailable" from a genuinely empty dataset.
 
@@ -1193,11 +1195,13 @@ A **built, verified** real-component catalog behind a supplier-agnostic provider
                  "sourcing": { "supplier": "tme", "supplierId": "WR06X1002FTL",
                                "unitCost": 0.04737, "currency": "EUR", "stock": 77991, "datasheetUrl": "https://…" } },
   "reason": null,
+  // modelDef is present for ACTIVE devices (transistors/op-amps): merge it into circuit.models on insert.
+  // "modelDef": { "name": "QGENNPN", "device": "bjt", "body": ".model QGENNPN NPN(...)", "tier": "generic" },
   "catalog": { /* the full CatalogPart */ } }
 ```
 
-- The returned `component` is **partial — no `id`/`designator`/`pins`**. The editor assigns those on insert: generate the next free designator (`R1`, `R2`, …, must end in a digit) and wire pins from `COMPONENT_PINS[type]`. The `value`/`footprint`/`mpn`/`manufacturer`/`sourcing` are ready to merge straight onto the new `Component` (see §6.1). **For a `'generic'` catalog part `COMPONENT_PINS['generic']` is `[]`** — its terminals come from the catalog part itself, so seed `pins` from the part's terminals (and the schematic symbol), not from `COMPONENT_PINS`.
-- **`simulatable`:** passives (R/L/C) and diodes map to a simulatable component (value parsed from the catalog parameters; footprint from the package parameter). **ICs/transistors/connectors are catalog-only** — `simulatable:false` with a human-readable `reason` — but the mapper now **still returns a `component`, of type `'generic'`** (carrying `mpn`/`manufacturer`/`footprint`/`sourcing`), so they can be **placed on the schematic/BOM** with a "view / BOM-only, not simulatable yet" badge instead of being simulated. Decide with the exported `isSimulatable(component)` helper (eda-core) — never a hardcoded type list. Active-device simulation is the next step (see §6.2).
+- The returned `component` is **partial — no `id`/`designator`/`pins`**. The editor assigns those on insert: generate the next free designator (`R1`, `R2`, …, must end in a digit) and wire pins from `COMPONENT_PINS[type]`. The `value`/`model`/`footprint`/`mpn`/`manufacturer`/`sourcing` are ready to merge straight onto the new `Component` (see §6.1). **For a `'generic'` catalog part `COMPONENT_PINS['generic']` is `[]`** — its terminals come from the catalog part itself, so seed `pins` from the part's terminals (and the schematic symbol), not from `COMPONENT_PINS`.
+- **`simulatable`:** passives (R/L/C), diodes/zeners **and active devices (bjt/mosfet/jfet)** now map to a simulatable component. For an active device the response also carries a **`modelDef`** (`ModelDef`) and the `component.model` is set to its name — on insert, **push `modelDef` into `circuit.models`** (dedup by name) so the part simulates (§6.1). Parts with no generic model yet (true ICs/MCUs/connectors) come back `simulatable:false` with a human-readable `reason` and a `type:'generic'` `component` (carrying `mpn`/`manufacturer`/`footprint`/`sourcing`) so they can still be **placed on the schematic/BOM** with a "BOM-only, not simulatable yet" badge. **For a catalog part, trust the response's `simulatable` boolean** — do NOT re-derive it by calling `isSimulatable()` on the returned partial: an active device whose model failed to resolve comes back `simulatable:false` but keeps its `bjt`/`mosfet`/`jfet` type (not `'generic'`), and `isSimulatable()` only checks `type !== 'generic'`, so it would disagree. (`isSimulatable(component)` is still the right test for components already in the editor document.)
 - **UX — the Part Picker** (modal or editor side-panel): a debounced search box (respect the 30/60s throttle) + manufacturer & category facets (from the facet endpoints, each with product counts, à la Flux) → result list → detail pane (parameters, price tiers, stock, datasheet) → **Insert** calls `/parts/:symbol/component` and, when `simulatable`, drops the component into the editor with its sourcing metadata attached (feeds a future BOM view).
 - Errors map like any other endpoint (§4.5): config missing → `503`, distributor rejected/unreachable → `502`, unknown symbol → `404`, bad query → `400`.
 
@@ -1268,7 +1272,7 @@ The frontend is a **separate repo**, so it cannot import `apps/api` source. The 
 
 **Layering (regardless of generator):**
 1. **Generated types/schemas** in `src/api/generated/` — never hand-edit.
-2. **Domain types + validators from `@circuit-forge/eda-core`** for `CircuitJson`, `AnalysisConfig`, `SimulationResult`, `DataSeries`, `DataPoint`, `ResultMeta`, `SimulationMetrics`, plus `validateCircuitJson`/`safeValidateCircuitJson` and `validateAnalysisConfig`/`safeValidateAnalysisConfig`. **Reuse the package; never re-declare or `as CircuitJson`.**
+2. **Domain types + validators from `@circuit-forge/eda-core`** for `CircuitJson`, `ModelDef`, `Component`, `Net`, `ComponentType`, `AnalysisConfig`, `SimulationResult`, `DataSeries`, `DataPoint`, `ResultMeta`, plus `COMPONENT_PINS`, `SPICE_PREFIXES`, `COMPONENT_TYPES`, `isSimulatable`, and `validateCircuitJson`/`safeValidateCircuitJson` + `validateAnalysisConfig`/`safeValidateAnalysisConfig`. **Reuse the package; never re-declare or `as CircuitJson`.** (`SimulationMetrics` is NOT exported — declare it locally, all fields optional: `{ runtimeMs?, outputSizeBytes?, pointsCount?, error? }`.)
 3. **One fetch wrapper** (`src/api/client.ts`) that: injects the base URL + Bearer header; serializes only declared body fields; performs single-flight silent refresh on `401` (§4.2.2); normalizes errors to `ApiError` (§4.5); handles `429` backoff; and **validates the load-bearing responses with eda-core Zod** (auth tokens, simulation status/result, version `circuitJson`, AI outputs) so a backend drift surfaces as a typed error rather than a runtime explosion deep in a component.
 
 ```ts
@@ -1703,18 +1707,19 @@ interface CircuitJson {
   version: string;          // MUST match /^\d+\.\d+$/  → use "1.0"
   components: Component[];   // array, max 1000
   nets: Net[];               // array, max 1000
+  models?: ModelDef[];       // max 200; SPICE .model/.subckt bodies for active devices (see ModelDef below)
   metadata?: CircuitMetadata;
 }
 
 interface Component {
   id: string;               // 1..100 chars; unique within the circuit (editor-owned id)
-  type: ComponentType;      // enum of 7 values (see §6.2)
+  type: ComponentType;      // the full COMPONENT_TYPES enum (28 values incl. active + digital, see §6.2) — NOT just 7
   designator: string;       // /^[A-Z][A-Z0-9]*[0-9]+$/i — letter, then alnum, MUST END IN A DIGIT
                             //   valid: R1, V12, GND1   invalid: "R", "1R", "R1A"
   value?: string;           // max 100 chars; "10k", "100n", "DC 5", "SIN(0 1 1k)"
-  model?: string;           // max 100 chars; model name (diodes today; transistors later)
-  pins: PinConnection[];    // 1..20 entries — ORDER IS SIGNIFICANT (see §6.2)
-  properties?: Record<string, unknown>; // accepted by schema; NOT read by the netlist generator
+  model?: string;           // max 100 chars; model NAME for model-based devices (diode→omit→DDEFAULT; bjt→"QGENNPN"/"QGENPNP", mosfet→"MGENNMOS"/…, subckt→"OPAMPGEN"); the BODY lives in CircuitJson.models. Digital gates/dff set NO model.
+  pins: PinConnection[];    // 1..64 entries — ORDER IS SIGNIFICANT for fixed-arity model devices (see §6.2)
+  properties?: Record<string, unknown>; // accepted by schema; the netlist generator reads it ONLY for digital timing (gates: riseDelay/fallDelay/inputLoad; dff: clkDelay/setDelay/resetDelay/riseDelay/fallDelay/ic) — see §6.2
   // Optional real-part / catalog metadata (eda-core ≥1.1.0) — populated by GET /parts/:symbol/component:
   mpn?: string;             // max 100 — Manufacturer Part Number, e.g. "NE555P"
   manufacturer?: string;    // max 120 — e.g. "TEXAS INSTRUMENTS"
@@ -1740,7 +1745,17 @@ interface CircuitMetadata {
   createdAt?: string;       // ISO string (no format check)
   updatedAt?: string;
 }
+
+interface ModelDef {        // CircuitJson.models[] — the SPICE definitions active devices reference by name
+  name: string;             // 1..100; matches a Component.model (e.g. "QGENNPN")
+  device: 'bjt' | 'mosfet' | 'jfet' | 'diode' | 'subckt' | 'switch' | 'digital';
+  body: string;             // 1..20000; literal SPICE: ".model QGENNPN NPN(...)" or ".subckt … .ends"
+  tier?: 'manufacturer' | 'generic' | 'ideal';
+  ports?: string[];         // subckt only: pinIds in the macromodel's port order
+}
 ```
+
+> **⚠️ `CircuitJson.models[]` — persist it or active-device circuits break.** When a transistor/op-amp/etc. is placed (from `GET /parts/:symbol/component` → `modelDef`, §4.4.11, or from the AI which auto-attaches models), its `Component.model` is just a NAME; the matching `.model`/`.subckt` **body** lives in `circuit.models`. If the editor types its document from a hand-copied interface that omits `models`, it will silently drop the array on save and every active-device circuit will fail to simulate (unresolved model). **Import the real `CircuitJson` + `ModelDef` types from `@circuit-forge/eda-core`** (both are exported) instead of re-declaring them, and round-trip `models` verbatim.
 
 > **Real-part metadata (eda-core ≥1.1.0):** `mpn`, `manufacturer`, `footprint`, and `sourcing` are **optional and additive** — existing circuits validate unchanged. They are filled when a component is inserted from the catalog (`GET /parts/:symbol/component`, §4.4.11) and are for the BOM/sourcing UI + round-trip persistence; the netlist generator ignores them. `ComponentSourcing` = `{ supplier, supplierId, unitCost?, currency?, stock?, datasheetUrl? }` (Zod: `supplier`/`supplierId` required bounded strings, `unitCost`/`stock` nonnegative, `datasheetUrl` a URL). Exported from eda-core as the `ComponentSourcing` type + `ComponentSourcingSchema`.
 
@@ -1755,7 +1770,7 @@ interface CircuitMetadata {
 | `Component.designator` | regex `^[A-Z][A-Z0-9]*[0-9]+$` (case-insensitive) — must end in a digit |
 | `Component.value` | string, `max(100)`, optional |
 | `Component.model` | string, `max(100)`, optional |
-| `Component.pins` | array, `min(1) max(20)` |
+| `Component.pins` | array, `min(1) max(64)` |
 | `PinConnection.pinId` | string, `min(1) max(50)` |
 | `PinConnection.netId` | string, `min(1) max(100)` |
 | `Net.id` | string, `min(1) max(100)` |
@@ -1857,7 +1872,7 @@ The full enum (`ComponentTypeSchema` and `ComponentType`, both derived from the 
 
 **Richer devices are now first-class (the earlier "transistors/op-amps don't exist" gap is closed).** `ComponentType` includes structured `bjt`, `mosfet`, `jfet`, `vcvs`, `vccs`, `bsource`, `switch`, `transformer`, `tline`, `zener`, and `subckt` (op-amp / IC macromodels). `componentToSpice` emits each of them and returns `null` (it no longer throws) for a non-emittable type. Model-based devices reference a model **by name**; eda-core ships a curated generic library (`QGENNPN`/`QGENPNP`, `MGENNMOS`/`MGENPMOS`, `JGENNJF`/`JGENPJF`, op-amp `OPAMPGEN`, switch `SWGEN`, thyristor/SCR `SCRGEN`, IGBT `IGBTGEN`, …) and generates parametric models (a `zener` from its breakdown voltage). So the editor can offer all of these as **structured** palette items.
 
-**Digital logic is now first-class too (eda-core 1.16.0).** `logic_and/or/nand/nor/xor/xnor/not/buffer` + `dff` simulate via ngspice XSPICE, and the generator auto-inserts analog↔digital bridges so logic and analog mix freely in one circuit; digital components carry **no** `model` (the host synthesizes a `CFD_*` model), gates are variable-arity (`in1..inN` + `out`), and a clock is just a `PULSE` `voltage_source`. **Timing is per-component and panel-editable via `properties`** (not `value`): gates take `riseDelay`/`fallDelay`/`inputLoad`; `dff` takes `clkDelay`/`setDelay`/`resetDelay`/`riseDelay`/`fallDelay`/`ic` — all optional SPICE value strings (e.g. `"2n"`), defaulting to `1n`. A properties panel that writes these into `properties` directly changes the simulation. See [docs/EDA_CORE.md §1.7.1](docs/EDA_CORE.md).
+**Digital logic is now first-class too.** `logic_and/or/nand/nor/xor/xnor/not/buffer` + `dff` simulate via ngspice XSPICE, and the generator auto-inserts analog↔digital bridges so logic and analog mix freely in one circuit; digital components carry **no** `model` (the host synthesizes a `CFD_*` model), gates are variable-arity (`in1..inN` + `out`), and a clock is just a `PULSE` `voltage_source`. **Timing is per-component and panel-editable via `properties`** (not `value`): gates take `riseDelay`/`fallDelay`/`inputLoad`; `dff` takes `clkDelay`/`setDelay`/`resetDelay`/`riseDelay`/`fallDelay`/`ic` — all optional SPICE value strings (e.g. `"2n"`). Delays default to `1n`; gate `inputLoad` defaults to `0.5p`; `ic` (dff initial Q) defaults to `0`. A properties panel that writes these into `properties` directly changes the simulation. See [docs/EDA_CORE.md §1.7.1](docs/EDA_CORE.md).
 
 Still NOT structured — use the escape hatch: whole **logic ICs / MCUs / complex programmable parts** (source as catalog `generic` parts) and an **exact manufacturer model** for a specific MPN.
 
@@ -1910,7 +1925,7 @@ type AnalysisConfig = TranAnalysis | AcAnalysis | DcAnalysis | OpAnalysis;
 
 > **Editor note:** `dc.source` is a *designator selector*, not a free-text box — populate it from the circuit's `voltage_source` / `current_source` designators so it always references a real device.
 
-**Probe format (`ProbeSchema`, `analysis.schema.ts:68`):** regex `^[vi]\([a-zA-Z0-9_]+(?:,[a-zA-Z0-9_]+)?\)$` (case-insensitive). Valid: `v(out)`, `v(n1)`, `v(out,in)` (differential), `i(R1)`. Note the regex allows only `[a-zA-Z0-9_]` inside the parens — that matches the **sanitized** SPICE node name, not the raw `Net.id`/`name`. The safe default is to send **no probes** and let the backend auto-probe every non-ground net (it emits `v(<sanitizedNode>)` per non-ground net); add explicit probes only for nets/devices the user pins, using the server's node-name convention.
+**Probe format (`ProbeSchema`, `analysis.schema.ts:68`):** regex `^[vi]\([a-zA-Z0-9_]+(?:,[a-zA-Z0-9_]+)?\)$` (case-insensitive). Valid: `v(out)`, `v(n1)`, `v(out,in)` (differential), `i(R1)`. Note the regex allows only `[a-zA-Z0-9_]` inside the parens — that matches the **sanitized** SPICE node name, not the raw `Net.id`/`name`. **ALWAYS send an explicit, non-empty `probes` array on a version sim** (derive node names locally from `getNodeNames(circuit)` and probe what the user pinned, or every non-ground net by default). Sending **no** probes is a documented quirk to AVOID, not a default: the worker's auto-probe is a safety net, **not** a contract (§4.4.9.4), so a no-probe run can SUCCEED with empty series / `pointsCount === 0`. Build probe strings with the server's sanitized node-name convention.
 
 **`SimulationRequest` (what gets POSTed):** `SimulationRequestSchema = { analysisConfig: AnalysisConfig, probes?: Probe[] (<= 100), modelAssets?: UUID[] (<= 10) }`. Match this exactly. The REST DTO types `analysisConfig` loosely as `Record<string, unknown>`, so the frontend should validate against the strict eda-core schemas **before** sending — a bad config is then caught client-side with a precise message instead of failing deep in the worker. See the Backend Integration Contract (§4) for the submit/poll/result flow.
 
@@ -2338,7 +2353,7 @@ This section is the build contract for the **greenfield** Circuit Forge web clie
 | **Server cache / data fetching** | **TanStack Query v5** over a typed API client | Server cache (orgs, projects, versions, templates, assets, simulation status/result) is a *different* concern from the editor document — never store it in Zustand. TanStack Query handles caching, retries, background refetch, and is the right primitive for the **simulation polling loop** (`refetchInterval` driven by job status). Add `@tanstack/react-query-devtools` (dev only). |
 | **Forms + validation** | **react-hook-form + Zod** (`@hookform/resolvers/zod`) | Every form (login, register, create org/project, save version, analysis config, AI prompt) uses RHF for uncontrolled-input performance and Zod for one schema shared by validation and TS types. Reuse `eda-core` Zod schemas (`AnalysisConfigSchema`, `SpiceValueSchema`, `ProbeSchema`) directly so a form cannot submit a payload the backend will `400`. |
 | **UI kit** | **shadcn/ui + Radix primitives + TailwindCSS** | Radix gives **accessible-by-default** primitives (focus management, ARIA roles, keyboard nav) — directly fixing the old app's zero-accessibility audit. shadcn/ui is copy-in (no opaque dependency; fully ownable/themeable). Add `class-variance-authority` + `tailwind-merge` for variants. |
-| **Schematic editor** | **React Flow / @xyflow** (MIT) as the default engine — render **custom SVG/HTML nodes** for the 7 component symbols and **custom orthogonal edges** for wires | See §8.4. React Flow is the FOSS standard for node/port editors: MIT-licensed (only Pro examples/support/attribution-removal are paid) and **DOM-based (HTML/SVG, not canvas)**, so it keeps native hit-testing/focus/ARIA — the accessibility the old audit punished — while giving pan/zoom, selection, viewport, and a `Handle` (port) API for free. You still own the *schematic* look: each component is a custom node (declarative SVG symbol; pins = uniquely-id'd `Handle`s seeded from `COMPONENT_PINS`) and each wire a custom **orthogonal/step** edge (React Flow's default edges are bezier — schematics want Manhattan routing). Note: a `Handle`'s `type` is source/target **direction**, not a datatype, so enforce pin compatibility with `isValidConnection`. Scale via memoized custom nodes + `onlyRenderVisibleElements` (no fixed node-count threshold is documented — profile your circuits). **Alternative (max control):** a from-scratch custom SVG renderer — full control of symbols/routing, but you build pan/zoom, selection, hit-testing and wiring yourself; the §8.4 guidance applies to either path. **Commercial alternative:** GoJS (paid) is the most EDA-proven option (official Circuit Designer sample, typed ports with link-count limits, built-in palette, orthogonal routing). **Open alternative:** maxGraph (framework-agnostic mxGraph successor, orthogonal routing, still pre-1.0). Canvas (react-konva/WebGL) is justified for *one* thing only: the waveform plot. |
+| **Schematic editor** | **React Flow / @xyflow** (MIT) as the default engine — render **custom SVG/HTML nodes** for the component symbols (one per palette `ComponentType`) and **custom orthogonal edges** for wires | See §8.4. React Flow is the FOSS standard for node/port editors: MIT-licensed (only Pro examples/support/attribution-removal are paid) and **DOM-based (HTML/SVG, not canvas)**, so it keeps native hit-testing/focus/ARIA — the accessibility the old audit punished — while giving pan/zoom, selection, viewport, and a `Handle` (port) API for free. You still own the *schematic* look: each component is a custom node (declarative SVG symbol; pins = uniquely-id'd `Handle`s seeded from `COMPONENT_PINS`) and each wire a custom **orthogonal/step** edge (React Flow's default edges are bezier — schematics want Manhattan routing). Note: a `Handle`'s `type` is source/target **direction**, not a datatype, so enforce pin compatibility with `isValidConnection`. Scale via memoized custom nodes + `onlyRenderVisibleElements` (no fixed node-count threshold is documented — profile your circuits). **Alternative (max control):** a from-scratch custom SVG renderer — full control of symbols/routing, but you build pan/zoom, selection, hit-testing and wiring yourself; the §8.4 guidance applies to either path. **Commercial alternative:** GoJS (paid) is the most EDA-proven option (official Circuit Designer sample, typed ports with link-count limits, built-in palette, orthogonal routing). **Open alternative:** maxGraph (framework-agnostic mxGraph successor, orthogonal routing, still pre-1.0). Canvas (react-konva/WebGL) is justified for *one* thing only: the waveform plot. |
 | **Routing** | **Next.js App Router** (file-based, in `src/app/`) | Routes are folders with `page.tsx`; nested `layout.tsx` carry the app chrome + providers; `error.tsx` per segment gives per-route error boundaries for free; `loading.tsx` gives Suspense fallbacks. Guard the authenticated area with a client auth-check in the `(app)` route group's layout (redirect to `/login` when there is no token) — or Next middleware if you later move to cookie auth. Prefetch via the TanStack Query client inside client components/effects (not RSC loaders). |
 | **Icons** | **lucide-react** | Pairs with shadcn/ui; tree-shakeable. **Every icon-only control gets an `aria-label`** (§8.4 a11y). |
 | **Charts / waveforms** | **uPlot** via a thin React wrapper | The server returns `SimulationResult { meta, series: DataSeries[] }` with potentially tens of thousands of `{x,y}` points. uPlot is the fastest large-series time/frequency plotter — far lighter than Recharts/Chart.js at this volume. Map `meta.analysisType` → axis labels using `meta.xLabel` / `meta.xUnit` already provided by the parser (`tran`→time/s, `ac`→freq/Hz with log option, `dc`→sweep var, `op`→single point). |
@@ -2458,9 +2473,9 @@ The editor document = **`CircuitJson` (electrical truth) + `UiJson` (layout)**, 
 
 **Rendering engine (see §8.1).** Default to **React Flow / @xyflow**: each component is a custom node (an SVG symbol + uniquely-id'd `Handle`s for pins), each wire a custom **orthogonal** edge, and React Flow supplies the pan/zoom, grid, selection, viewport, and connection plumbing that the bullets below would otherwise require you to build by hand. If you instead choose the **from-scratch SVG renderer** (the max-control alternative), implement the pan/zoom, hit-testing, and wiring bullets below yourself. **Either way the rest is identical** — the connectivity model, ERC, undo/redo, and import/export operate on `CircuitJson`/`UiJson`, not on the renderer — so map React Flow's node/edge changes back onto `UiJson.positions`/`UiJson.wires` and the pin→net model below.
 
-- **Palette & placement.** The palette lists the 7 supported `ComponentType`s (`resistor`, `capacitor`, `inductor`, `voltage_source`, `current_source`, `diode`, `ground`). Drive pin names/counts from `COMPONENT_PINS` and designator prefixes from `SPICE_PREFIXES` — **never hardcode pin lists.** On placement: generate a unique `Component.id`, a designator using the type's prefix + next free integer (`R1`, `C2`, …) that satisfies the regex `^[A-Z][A-Z0-9]*[0-9]+$` (**must end in a digit**), seed `pins[]` from `COMPONENT_PINS[type]`, and record `UiJson.positions[id] = { x, y, rotation: '0' }` snapped to grid.
+- **Palette & placement.** The v1 palette MAY expose a curated subset of `ComponentType`s (e.g. resistor, capacitor, inductor, voltage_source, current_source, diode, ground); the engine supports many more — active devices, `subckt` macromodels, and the full digital family (see §6.2). Drive the type list, pin names/counts from `COMPONENT_PINS`, and designator prefixes from `SPICE_PREFIXES` — **never hardcode a type or pin list.** On placement: generate a unique `Component.id`, a designator using the type's prefix + next free integer (`R1`, `C2`, …) that satisfies the regex `^[A-Z][A-Z0-9]*[0-9]+$` (**must end in a digit**), seed `pins[]` from `COMPONENT_PINS[type]`, and record `UiJson.positions[id] = { x, y, rotation: '0' }` snapped to grid.
 - **Wiring / nets.** Click a pin → drag → release on another pin: create a new `Net` if neither pin has one; otherwise merge onto the existing `netId`. Wire polylines live in `UiJson.wires[] = { netId, points: {x,y}[] }`. Net `name` is required by the schema; auto-generate readable names (`N1`, `VOUT`) and let users rename. A `ground` component maps its net to SPICE node `0`.
-- **Live ERC.** Run `runErc(circuit)` from eda-core **client-side** (a pure function, no secrets) and surface `ErcIssue[]` in the ERC panel. `error`-severity issues (e.g. `NO_GROUND`, `MISSING_VALUE`, `VOLTAGE_SOURCE_SHORT`) block simulation; warnings/infos are advisory. Highlight `relatedIds` on the canvas.
+- **Live ERC.** Run `runErc(circuit)` from eda-core **client-side** (a pure function, no secrets) and surface `ErcIssue[]` in the ERC panel. Render issues GENERICALLY from `{ code, severity, message, relatedIds }` — do not hardcode the code list (it grows). `error`-severity issues (e.g. `NO_GROUND`, `MISSING_VALUE`, `VOLTAGE_SOURCE_SHORT`, and the digital errors `DIGITAL_PIN_SHAPE`/`FLOATING_DIGITAL_INPUT`/`DIGITAL_BUS_CONTENTION`/`MIXED_DRIVER_CONFLICT`) block simulation; warnings/infos (e.g. `MIXED_LOGIC_LEVELS`, `UNRESOLVED_MODEL`) are advisory. `ErcCode`/`ERC_DESCRIPTIONS`/`ERC_SEVERITIES` are exported from eda-core if you want labels. Highlight `relatedIds` on the canvas.
 - **Correct hit-testing (fixes the old origin-only bug).** Hit-testing must use the full rendered **bounding box / geometry**, not the component origin point. With SVG this is mostly free: rely on the rendered glyph's pointer target plus a computed bbox (component bounds, pin radius, wire-segment distance) for marquee selection. Support single-click, shift-click (add/remove), and rubber-band selection that intersects each element's **bbox**. Selection state lives in the store as a `Set<id>`, separate from geometry, so highlighting one element does not re-render others.
 - **Pan/zoom, grid, snap.** One SVG root `<g transform="translate(x,y) scale(zoom)">` driven by `UiJson.viewport` (`{ x, y, zoom>0 }`); wheel = zoom-to-cursor, space/middle-drag = pan, clamp zoom. Configurable grid (default 10 units) rendered as a single SVG `<pattern>` (not per-cell); all placements/moves/vertices snap to grid.
 - **Undo/redo & copy/paste.** A command/transaction stack in `store/history.ts` over `{ circuit, ui }`; every mutation pushes one undoable entry; coalesce rapid drags. Copy serializes selected components + internal nets + positions; paste deep-clones with **fresh ids, fresh net ids, regenerated designators** offset by a grid step (never duplicate an existing id/designator).
@@ -2524,7 +2539,7 @@ WCAG 2.1 AA target. Non-negotiable baseline:
 - [ ] Auth: login, register, token refresh (single-flight 401 retry), logout; route guards; org switcher seeded from `GET /orgs`.
 - [ ] Dashboard + projects CRUD (create/list/open; role-gated delete hidden for MEMBER).
 - [ ] Project + version history (list summaries, open version, save-as-new-version).
-- [ ] Schematic editor for the 7 supported types; pins→nets model; `UiJson` layout; undo/redo; bbox hit-testing; client-side ERC (`runErc`).
+- [ ] Schematic editor over the palette's component types (driven by `COMPONENT_TYPES`/`COMPONENT_PINS`, not a hardcoded list); pins→nets model; `UiJson` layout; undo/redo; bbox hit-testing; client-side ERC (`runErc`).
 - [ ] Simulation panel: TRAN/AC/DC/OP config + **explicit probe picker**; submit + poll lifecycle.
 - [ ] Waveform viewer: multi-trace plot, zoom/pan, cursors, basic measurements; error/timeout/empty-series/S3-rehydrate states.
 - [ ] Templates browser (public + org), use-as-project (treat ids opaquely; non-UUID seed ids must not crash).
@@ -2541,7 +2556,7 @@ WCAG 2.1 AA target. Non-negotiable baseline:
 - [ ] Advanced waveform measurements (FFT, THD, trace math); same-origin BFF cookie for the refresh token.
 
 #### Later
-- [ ] KiCad and LTspice `.asc` import/export (**backend** converters; expanded component library beyond the 7 types — keep eda-core canonical).
+- [ ] KiCad and LTspice `.asc` import/export (**backend** converters; further `ComponentType` growth beyond today's set — keep eda-core canonical).
 - [ ] Real-time/collaborative editing; presence.
 - [ ] Member-management UI (blocked until invite/role-change endpoints exist).
 - [ ] Cancel-simulation UX (blocked until a cancel endpoint exists; `CANCELED` is currently never emitted).
