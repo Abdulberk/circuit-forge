@@ -7,7 +7,7 @@ import { isDigitalType, isLogicGateType, isSingleInputGate, digitalPinRole } fro
 import { ErcCode, ErcSeverity, ErcResult, ErcIssue } from '../types/erc';
 import { ERC_DESCRIPTIONS, ERC_SEVERITIES } from './codes';
 import { buildZenerModel, normalizeControlledSourceGain, parseTransformerParams, parseTransmissionLineParams } from '../models/library';
-import { sourceHighLevel } from '../netlist/digital';
+import { sourceHighLevel, sourceLowLevel } from '../netlist/digital';
 
 /**
  * Expected pin counts for each component type
@@ -353,14 +353,14 @@ function checkDigitalConnectivity(circuit: CircuitJson): ErcIssue[] {
     const digitalNets = new Set<string>();
     for (const [netId, x] of tally) if (x.src + x.sink > 0) digitalNets.add(netId);
     const levels: number[] = [];
-    let sawNonPositive = false;
+    let sawNegative = false;
     for (const c of circuit.components) {
         const isVoltageDriver = c.type === 'voltage_source' || (c.type === 'bsource' && /^\s*V\s*=/i.test(c.value ?? ''));
         if (!isVoltageDriver || !c.pins.some((p) => digitalNets.has(p.netId))) continue;
-        const lvl = sourceHighLevel(c.value);
-        if (lvl === null) continue;
-        if (lvl > 0) levels.push(lvl);
-        else sawNonPositive = true;
+        const hi = sourceHighLevel(c.value);
+        if (hi !== null && hi > 0) levels.push(hi); // a positive logic-HIGH level
+        const lo = sourceLowLevel(c.value);
+        if (lo !== null && lo < 0) sawNegative = true; // genuinely negative-going (NOT a legit DC-0 logic low)
     }
     if (levels.length >= 2) {
         const max = Math.max(...levels);
@@ -375,12 +375,12 @@ function checkDigitalConnectivity(circuit: CircuitJson): ErcIssue[] {
             );
         }
     }
-    if (sawNonPositive) {
+    if (sawNegative) {
         issues.push(
             createIssue(
                 ErcCode.MIXED_LOGIC_LEVELS,
                 [],
-                `A digital input is driven by a non-positive (negative-rail) stimulus; the positive adc thresholds cannot read it as HIGH. Use a positive logic rail.`,
+                `A digital input is driven by a negative-going stimulus; the positive adc thresholds cannot read its negative excursion. Use a positive logic rail.`,
             ),
         );
     }
