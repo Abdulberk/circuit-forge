@@ -670,6 +670,20 @@ describe('subsystem audit hardening fixes', () => {
         expect(runErc(c).issues.some((i) => i.code === ErcCode.MIXED_LOGIC_LEVELS && /negative/i.test(i.message))).toBe(true);
     });
 
+    // #8b — a legitimate logic-LOW input (DC 0, reaches 0 but never goes negative) must NOT warn.
+    it('does NOT warn MIXED_LOGIC_LEVELS for a DC-0 logic-low input', () => {
+        const c: CircuitJson = {
+            version: '1.0',
+            components: [
+                src('v1', 'V1', 'DC 5', 'a'), src('v0', 'V2', 'DC 0', 'b'), // a=1, b=0 — both single-rail (5V family)
+                { id: 'u1', type: 'logic_and', designator: 'U1', pins: [{ pinId: 'in1', netId: 'a' }, { pinId: 'in2', netId: 'b' }, { pinId: 'out', netId: 'y' }] },
+                res('r1', 'R1', 'y', 'gnd'),
+            ],
+            nets: netsOf('a', 'b', 'y', 'gnd'),
+        };
+        expect(runErc(c).issues.some((i) => i.code === ErcCode.MIXED_LOGIC_LEVELS)).toBe(false);
+    });
+
     // #2a — two real nets whose nodes differ only by case would silently MERGE in ngspice: fail loud.
     it('throws on two nets whose SPICE nodes collide case-insensitively', () => {
         const c: CircuitJson = {

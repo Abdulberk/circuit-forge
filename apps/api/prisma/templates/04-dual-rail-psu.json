@@ -1,0 +1,354 @@
+{
+  "name": "Dual-Rail Regulated Power Supply (+12V / +5V)",
+  "description": "A complete linear power supply: a transformer secondary (26Vpk, 50Hz, with realistic winding resistance + reservoir-cap ESR) feeds a full-bridge rectifier (power diodes with charge storage) and a 1000uF reservoir capacitor, then TWO independent zener-referenced NPN pass-transistor regulators produce a +12V rail and a +5V rail into their loads. Run a transient (~250ms) to watch the rails charge and regulate. (Validated on ngspice: stable +12V and +5V rails.)",
+  "tags": [
+    "power",
+    "psu",
+    "rectifier",
+    "regulator",
+    "analog",
+    "flagship",
+    "advanced"
+  ],
+  "circuitJson": {
+    "version": "1.0",
+    "components": [
+      {
+        "id": "vsec",
+        "type": "voltage_source",
+        "designator": "V1",
+        "value": "SIN(0 26 50)",
+        "pins": [
+          {
+            "pinId": "+",
+            "netId": "snode"
+          },
+          {
+            "pinId": "-",
+            "netId": "sec2"
+          }
+        ]
+      },
+      {
+        "id": "rsec",
+        "type": "resistor",
+        "designator": "R5",
+        "value": "5",
+        "pins": [
+          {
+            "pinId": "1",
+            "netId": "snode"
+          },
+          {
+            "pinId": "2",
+            "netId": "sec1"
+          }
+        ]
+      },
+      {
+        "id": "d1",
+        "type": "diode",
+        "designator": "D1",
+        "model": "DPWR",
+        "pins": [
+          {
+            "pinId": "anode",
+            "netId": "sec1"
+          },
+          {
+            "pinId": "cathode",
+            "netId": "dcp"
+          }
+        ]
+      },
+      {
+        "id": "d2",
+        "type": "diode",
+        "designator": "D2",
+        "model": "DPWR",
+        "pins": [
+          {
+            "pinId": "anode",
+            "netId": "sec2"
+          },
+          {
+            "pinId": "cathode",
+            "netId": "dcp"
+          }
+        ]
+      },
+      {
+        "id": "d3",
+        "type": "diode",
+        "designator": "D3",
+        "model": "DPWR",
+        "pins": [
+          {
+            "pinId": "anode",
+            "netId": "gnd"
+          },
+          {
+            "pinId": "cathode",
+            "netId": "sec1"
+          }
+        ]
+      },
+      {
+        "id": "d4",
+        "type": "diode",
+        "designator": "D4",
+        "model": "DPWR",
+        "pins": [
+          {
+            "pinId": "anode",
+            "netId": "gnd"
+          },
+          {
+            "pinId": "cathode",
+            "netId": "sec2"
+          }
+        ]
+      },
+      {
+        "id": "resr",
+        "type": "resistor",
+        "designator": "R6",
+        "value": "0.5",
+        "pins": [
+          {
+            "pinId": "1",
+            "netId": "dcp"
+          },
+          {
+            "pinId": "2",
+            "netId": "cnode"
+          }
+        ]
+      },
+      {
+        "id": "cf",
+        "type": "capacitor",
+        "designator": "C1",
+        "value": "1000u",
+        "pins": [
+          {
+            "pinId": "1",
+            "netId": "cnode"
+          },
+          {
+            "pinId": "2",
+            "netId": "gnd"
+          }
+        ]
+      },
+      {
+        "id": "rz1",
+        "type": "resistor",
+        "designator": "R1",
+        "value": "1k",
+        "pins": [
+          {
+            "pinId": "1",
+            "netId": "dcp"
+          },
+          {
+            "pinId": "2",
+            "netId": "z12"
+          }
+        ]
+      },
+      {
+        "id": "dz1",
+        "type": "zener",
+        "designator": "D5",
+        "value": "12.6",
+        "pins": [
+          {
+            "pinId": "anode",
+            "netId": "gnd"
+          },
+          {
+            "pinId": "cathode",
+            "netId": "z12"
+          }
+        ]
+      },
+      {
+        "id": "q1",
+        "type": "bjt",
+        "designator": "Q1",
+        "model": "QGENNPN",
+        "pins": [
+          {
+            "pinId": "c",
+            "netId": "dcp"
+          },
+          {
+            "pinId": "b",
+            "netId": "z12"
+          },
+          {
+            "pinId": "e",
+            "netId": "out12"
+          }
+        ]
+      },
+      {
+        "id": "rl1",
+        "type": "resistor",
+        "designator": "R2",
+        "value": "150",
+        "pins": [
+          {
+            "pinId": "1",
+            "netId": "out12"
+          },
+          {
+            "pinId": "2",
+            "netId": "gnd"
+          }
+        ]
+      },
+      {
+        "id": "rz2",
+        "type": "resistor",
+        "designator": "R3",
+        "value": "1k",
+        "pins": [
+          {
+            "pinId": "1",
+            "netId": "dcp"
+          },
+          {
+            "pinId": "2",
+            "netId": "z5"
+          }
+        ]
+      },
+      {
+        "id": "dz2",
+        "type": "zener",
+        "designator": "D6",
+        "value": "5.6",
+        "pins": [
+          {
+            "pinId": "anode",
+            "netId": "gnd"
+          },
+          {
+            "pinId": "cathode",
+            "netId": "z5"
+          }
+        ]
+      },
+      {
+        "id": "q2",
+        "type": "bjt",
+        "designator": "Q2",
+        "model": "QGENNPN",
+        "pins": [
+          {
+            "pinId": "c",
+            "netId": "dcp"
+          },
+          {
+            "pinId": "b",
+            "netId": "z5"
+          },
+          {
+            "pinId": "e",
+            "netId": "out5"
+          }
+        ]
+      },
+      {
+        "id": "rl2",
+        "type": "resistor",
+        "designator": "R4",
+        "value": "100",
+        "pins": [
+          {
+            "pinId": "1",
+            "netId": "out5"
+          },
+          {
+            "pinId": "2",
+            "netId": "gnd"
+          }
+        ]
+      },
+      {
+        "id": "gnd1",
+        "type": "ground",
+        "designator": "GND1",
+        "pins": [
+          {
+            "pinId": "1",
+            "netId": "gnd"
+          }
+        ]
+      }
+    ],
+    "nets": [
+      {
+        "id": "snode",
+        "name": "SNODE"
+      },
+      {
+        "id": "sec1",
+        "name": "SEC1"
+      },
+      {
+        "id": "sec2",
+        "name": "SEC2"
+      },
+      {
+        "id": "dcp",
+        "name": "DCP"
+      },
+      {
+        "id": "cnode",
+        "name": "CNODE"
+      },
+      {
+        "id": "z12",
+        "name": "Z12"
+      },
+      {
+        "id": "out12",
+        "name": "OUT12"
+      },
+      {
+        "id": "z5",
+        "name": "Z5"
+      },
+      {
+        "id": "out5",
+        "name": "OUT5"
+      },
+      {
+        "id": "gnd",
+        "name": "GND",
+        "isGround": true
+      }
+    ],
+    "models": [
+      {
+        "name": "QGENNPN",
+        "device": "bjt",
+        "tier": "generic",
+        "body": ".model QGENNPN NPN(IS=10f BF=200 VAF=100 IKF=0.3 ISE=1p NE=1.5 RB=10 RC=1 RE=0.5 CJE=8p CJC=4p TF=0.4n TR=50n)"
+      },
+      {
+        "name": "DPWR",
+        "device": "diode",
+        "tier": "generic",
+        "body": ".model DPWR D(IS=1e-9 N=1 RS=0.1 BV=400 IBV=1m CJO=2n TT=2u)"
+      }
+    ],
+    "metadata": {
+      "name": "Dual-rail regulated PSU",
+      "description": "bridge + filter + 12V/5V regulators"
+    }
+  }
+}

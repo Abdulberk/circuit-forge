@@ -1,6 +1,6 @@
 import { PrismaClient, OrgRole } from '@prisma/client';
 import * as argon2 from 'argon2';
-import { readFileSync } from 'fs';
+import { readFileSync, readdirSync, existsSync } from 'fs';
 import { resolve } from 'path';
 
 // This script runs standalone via ts-node (outside Nest's ConfigModule), so load the
@@ -437,6 +437,21 @@ const templates = [
     },
 ];
 
+/**
+ * Flagship / large demo circuits (the 100+ component ones — ALU, DDS, amplifier, …) live as JSON files in
+ * ./templates rather than inline here, because of their size. Each file is { name, description, tags,
+ * circuitJson } and was ngspice-validated before being committed. Loaded + upserted alongside the inline set.
+ */
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+function loadFileTemplates(): any[] {
+    const dir = resolve(__dirname, 'templates');
+    if (!existsSync(dir)) return [];
+    return readdirSync(dir)
+        .filter((f) => f.endsWith('.json'))
+        .sort()
+        .map((f) => JSON.parse(readFileSync(resolve(dir, f), 'utf8')));
+}
+
 async function main(): Promise<void> {
     console.log('🌱 Starting database seed...');
 
@@ -482,8 +497,8 @@ async function main(): Promise<void> {
     });
     console.log(`✓ Added user as org owner`);
 
-    // Create public templates
-    for (const template of templates) {
+    // Create public templates (inline simple set + the JSON-file flagship set)
+    for (const template of [...templates, ...loadFileTemplates()]) {
         await prisma.template.upsert({
             where: {
                 id: `template-${template.name.toLowerCase().replace(/\s+/g, '-')}`,

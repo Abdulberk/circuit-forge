@@ -115,6 +115,28 @@ export function sourceHighLevel(value: string | undefined): number | null {
 }
 
 /**
+ * Lowest level (volts) a source reaches — the mirror of sourceHighLevel. Used ONLY to tell a legitimate
+ * logic-LOW input (DC 0, never goes negative) apart from a genuinely NEGATIVE-going rail (DC -5, PULSE 0..-5,
+ * a bipolar SIN), so the mixed-logic-levels ERC warns on the latter but not the former.
+ */
+export function sourceLowLevel(value: string | undefined): number | null {
+    if (!value) return null;
+    const v = value.trim();
+    const nums = (v.match(/[+-]?\d*\.?\d+(?:[eE][+-]?\d+)?/g) ?? []).map(Number).filter((n) => Number.isFinite(n));
+    const first = nums[0];
+    if (first === undefined) return null;
+    const second = nums[1];
+    const up = v.toUpperCase();
+    if (up.startsWith('PULSE') || up.startsWith('EXP')) return second === undefined ? first : Math.min(first, second);
+    if (up.startsWith('SIN') || up.startsWith('SFFM')) return second === undefined ? first : first - Math.abs(second); // trough
+    if (up.startsWith('PWL')) {
+        const levels = nums.filter((_, i) => i % 2 === 1);
+        return levels.length ? Math.min(...levels) : null;
+    }
+    return first;
+}
+
+/**
  * The logic-HIGH supply voltage for the digital domain. An explicit override wins; otherwise it is
  * AUTO-DETECTED as the highest level among the voltage sources that drive the digital domain — a clock or
  * input stimulus defines what "1" means at the analog↔digital boundary, so a 3.3 V design bridges at
