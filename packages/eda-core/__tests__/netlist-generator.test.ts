@@ -298,10 +298,11 @@ describe('NetlistGenerator', () => {
             );
         });
 
-        it('emits .ic cards and forces uic for tran initialConditions (seeding a node)', () => {
+        it('emits .ic cards for tran initialConditions but does NOT force uic (passes the flag through)', () => {
             // initialConditions is keyed by NET ID; the generator maps each to its sanitized SPICE node and
-            // emits `.ic v(<node>)=<v>`, then forces `uic` so the transient honors the seed. Used to kick a
-            // symmetric oscillator off its zero equilibrium without hand-splicing .ic into the netlist.
+            // emits `.ic v(<node>)=<v>`. It must NOT force uic — forcing it zeroes supply rails and aborts a
+            // self-starting oscillator. `.ic` WITHOUT uic keeps supplies energized (the robust kick idiom);
+            // a caller wanting pure-reactive seeding sets uic:true explicitly. Both idioms are asserted below.
             const circuit: CircuitJson = {
                 version: '1.0',
                 components: [
@@ -320,18 +321,28 @@ describe('NetlistGenerator', () => {
                 ],
                 nets: [createNet('vcc', 'vcc'), createNet('cap', 'cap'), createNet('0', '0', true)],
             };
-            const analysis: TranAnalysis = {
+            const findTran = (n: string) => n.split('\n').find((l) => l.trim().startsWith('.tran'))!;
+
+            // Default (uic unset): .ic cards present, NO uic on .tran.
+            const noUic = generateNetlist(circuit, {
                 type: 'tran',
                 stopTime: '1m',
-                // net 'cap' (reserved-safe) sanitizes to node 'ncap'; net '0' must be skipped (no .ic on ground).
+                // net 'cap' (reserved-safe) -> node 'ncap'; net '0' (ground) must be skipped (no .ic on ground).
                 initialConditions: { cap: 0.1, '0': 0 },
-            };
-            const netlist = generateNetlist(circuit, analysis);
-            expect(netlist).toMatch(/^\.ic v\(ncap\)=0\.1$/m);
-            expect(netlist).not.toMatch(/\.ic v\(0\)/); // ground is never seeded
-            // uic must appear on the .tran card so ngspice actually uses the initial conditions.
-            const tranLine = netlist.split('\n').find((l) => l.trim().startsWith('.tran'))!;
-            expect(tranLine).toMatch(/\buic\b/);
+            });
+            expect(noUic).toMatch(/^\.ic v\(ncap\)=0\.1$/m);
+            expect(noUic).not.toMatch(/\.ic v\(0\)/); // ground is never seeded
+            expect(findTran(noUic)).not.toMatch(/\buic\b/); // must NOT force uic
+
+            // Caller opts in (uic:true): .ic cards present AND uic on .tran.
+            const withUic = generateNetlist(circuit, {
+                type: 'tran',
+                stopTime: '1m',
+                uic: true,
+                initialConditions: { cap: 0.1 },
+            });
+            expect(withUic).toMatch(/^\.ic v\(ncap\)=0\.1$/m);
+            expect(findTran(withUic)).toMatch(/\buic\b/); // caller's flag passes through
         });
 
         it('emits the correct SPICE device letter when a designator does not match the prefix', () => {

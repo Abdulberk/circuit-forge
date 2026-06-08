@@ -271,9 +271,16 @@ export function generateNetlist(
         const mapped = designatorToInstance.get(analysis.source.toLowerCase());
         if (mapped) effectiveAnalysis = { ...analysis, source: mapped };
     }
-    // Initial conditions (tran only): emit a `.ic v(<node>)=<v>` card per entry (net id → sanitized node)
-    // and force `uic` so the transient honors them. Lets a caller seed a node (e.g. to start a symmetric
-    // oscillator) without hand-splicing `.ic` into the netlist. Unknown net ids are skipped (no phantom node).
+    // Initial conditions (tran only): emit a `.ic v(<node>)=<v>` card per entry (net id → sanitized node).
+    // CRUCIALLY we do NOT force `uic` — we pass the caller's `uic` flag through. The two idioms are opposite:
+    //   • `.ic` WITHOUT uic ("Initial Transient Solution"): ngspice solves the DC op-point with these nodes
+    //     pinned, then releases them — supplies stay energized. This is the robust way to KICK a symmetric
+    //     self-starting oscillator (active devices + a supply rail) off its equilibrium.
+    //   • `.ic` WITH uic: ngspice SKIPS the op-point and starts every unlisted node at 0 (including supply
+    //     rails). Required for pure-reactive seeding (a charged cap / LC tank: cap=V, iL=0), but it ABORTS an
+    //     active oscillator because the zeroed supply collapses the timestep.
+    // Forcing uic here used to break the documented oscillator use case (supply x_vdd zeroed → "timestep too
+    // small"). Callers that want reactive seeding set `uic: true` explicitly; the default (no uic) self-starts.
     if (analysis.type === 'tran' && analysis.initialConditions) {
         const icLines: string[] = [];
         for (const [netId, volts] of Object.entries(analysis.initialConditions)) {
@@ -281,7 +288,6 @@ export function generateNetlist(
             if (node && node !== '0') icLines.push(`.ic v(${node})=${volts}`);
         }
         if (icLines.length > 0) {
-            effectiveAnalysis = { ...analysis, uic: true };
             lines.push('* Initial conditions');
             lines.push(...icLines);
             lines.push('');
