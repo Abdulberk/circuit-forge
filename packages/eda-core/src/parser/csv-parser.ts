@@ -46,11 +46,27 @@ export function parseCsv(
             continue; // Need at least X and one Y value
         }
 
+        // AC `wrdata` writes each COMPLEX vector as (freq, real, imag) — 3 columns per probe — so the row is
+        // freq re0 im0 freq re1 im1 …  We collapse the complex value to its MAGNITUDE sqrt(re^2+im^2) (the
+        // frequency-response amplitude). Without this the generic (x,y)-pair layout below mis-aligns AC output.
+        const acComplex = analysisType === 'ac' && values.length >= 3 * probeNames.length;
         const interleaved = values.length >= 2 * probeNames.length;
 
         for (let i = 0; i < probeNames.length; i++) {
-            const x = interleaved ? values[2 * i] : values[0];
-            const y = interleaved ? values[2 * i + 1] : values[i + 1];
+            let x: number | undefined;
+            let y: number | undefined;
+            if (acComplex) {
+                x = values[3 * i];
+                const re = values[3 * i + 1];
+                const im = values[3 * i + 2];
+                y = re !== undefined && im !== undefined ? Math.hypot(re, im) : undefined;
+            } else if (interleaved) {
+                x = values[2 * i];
+                y = values[2 * i + 1];
+            } else {
+                x = values[0];
+                y = values[i + 1];
+            }
             if (x !== undefined && y !== undefined && !isNaN(x) && !isNaN(y)) {
                 series[i]?.points.push({ x, y });
             }

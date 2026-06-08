@@ -274,6 +274,66 @@ describe('NetlistGenerator', () => {
             expect(netlist).not.toMatch(/^U1 /m);
         });
 
+        it('throws on an unknown component type instead of silently dropping it', () => {
+            // A caller that skips safeValidateCircuitJson could pass a non-existent type (e.g. 'opamp',
+            // which is NOT a COMPONENT_TYPE — op-amps are 'generic' + a subckt model). Silently skipping it
+            // would yield a degraded netlist that "simulates" to wrong/flat numbers with no error. Fail loud.
+            const circuit: CircuitJson = {
+                version: '1.0',
+                components: [
+                    createComponent('V1', 'voltage_source', 'V1', 'DC 5', [
+                        { pinId: '+', netId: 'vcc' },
+                        { pinId: '-', netId: '0' },
+                    ]),
+                    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+                    createComponent('U1', 'opamp' as any, 'U1', undefined, [
+                        { pinId: '+', netId: 'vcc' },
+                        { pinId: '-', netId: '0' },
+                    ]),
+                ],
+                nets: [createNet('vcc', 'vcc'), createNet('0', '0', true)],
+            };
+            expect(() => generateNetlist(circuit, { type: 'tran', stopTime: '1m' })).toThrow(
+                /Unknown component type 'opamp'/,
+            );
+        });
+
+        it('emits .ic cards and forces uic for tran initialConditions (seeding a node)', () => {
+            // initialConditions is keyed by NET ID; the generator maps each to its sanitized SPICE node and
+            // emits `.ic v(<node>)=<v>`, then forces `uic` so the transient honors the seed. Used to kick a
+            // symmetric oscillator off its zero equilibrium without hand-splicing .ic into the netlist.
+            const circuit: CircuitJson = {
+                version: '1.0',
+                components: [
+                    createComponent('V1', 'voltage_source', 'V1', 'DC 5', [
+                        { pinId: '+', netId: 'vcc' },
+                        { pinId: '-', netId: '0' },
+                    ]),
+                    createComponent('R1', 'resistor', 'R1', '1k', [
+                        { pinId: '1', netId: 'vcc' },
+                        { pinId: '2', netId: 'cap' },
+                    ]),
+                    createComponent('C1', 'capacitor', 'C1', '100n', [
+                        { pinId: '1', netId: 'cap' },
+                        { pinId: '2', netId: '0' },
+                    ]),
+                ],
+                nets: [createNet('vcc', 'vcc'), createNet('cap', 'cap'), createNet('0', '0', true)],
+            };
+            const analysis: TranAnalysis = {
+                type: 'tran',
+                stopTime: '1m',
+                // net 'cap' (reserved-safe) sanitizes to node 'ncap'; net '0' must be skipped (no .ic on ground).
+                initialConditions: { cap: 0.1, '0': 0 },
+            };
+            const netlist = generateNetlist(circuit, analysis);
+            expect(netlist).toMatch(/^\.ic v\(ncap\)=0\.1$/m);
+            expect(netlist).not.toMatch(/\.ic v\(0\)/); // ground is never seeded
+            // uic must appear on the .tran card so ngspice actually uses the initial conditions.
+            const tranLine = netlist.split('\n').find((l) => l.trim().startsWith('.tran'))!;
+            expect(tranLine).toMatch(/\buic\b/);
+        });
+
         it('emits the correct SPICE device letter when a designator does not match the prefix', () => {
             // SPICE keys a device on its first letter. A Zener's device letter is 'D', but its natural
             // designator is "Z1" — emitting "Z1 …" verbatim is an invalid element (no 'Z' device exists),

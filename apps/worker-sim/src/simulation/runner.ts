@@ -7,7 +7,7 @@ import * as fs from 'fs/promises';
 import * as path from 'path';
 import { config } from '../config';
 import { logger } from '../logger';
-import { parseSimulationOutput, sanitizeNetlist, extractProbes } from '@circuit-forge/eda-core';
+import { parseSimulationOutput, sanitizeNetlist, extractProbes, parseSpiceValue } from '@circuit-forge/eda-core';
 import type { SimulationResult } from '@circuit-forge/eda-core';
 
 /**
@@ -121,6 +121,32 @@ export async function runSimulation(input: SimulationJobInput): Promise<Simulati
         const probeNames =
             input.probeNames.length > 0 ? input.probeNames : extractProbes(sanitizedNetlist);
         const result = parseSimulationOutput(outputContent, probeNames, input.analysisType);
+
+        // Detect a SILENTLY TRUNCATED transient: ngspice can exit 0 yet stop far before the requested
+        // stopTime when the adaptive timestep collapses (floating node / hard switching). Fail the job
+        // instead of persisting a misleading partial result. stopTime is read from the netlist's .tran card.
+        if (input.analysisType === 'tran') {
+            const tranMatch = sanitizedNetlist.match(/^\s*\.tran\s+\S+\s+(\S+)/im);
+            let want = 0;
+            if (tranMatch && tranMatch[1]) {
+                const parsedStop = parseSpiceValue(tranMatch[1]);
+                if (parsedStop.isValid) want = parsedStop.value;
+            }
+            const lastT = Math.max(
+                0,
+                ...result.series.map((s) => (s.points.length ? s.points[s.points.length - 1]!.x : 0)),
+            );
+            if (want > 0 && lastT > 0 && lastT < 0.9 * want) {
+                return {
+                    success: false,
+                    stdout,
+                    stderr,
+                    runtimeMs: Date.now() - startTime,
+                    outputSizeBytes,
+                    error: `Transient ended early at t=${lastT.toExponential(2)}s of ${tranMatch![1]} (timestep collapse / non-convergence — often a floating node or missing DC path to ground)`,
+                };
+            }
+        }
 
         const runtimeMs = Date.now() - startTime;
         logger.info(

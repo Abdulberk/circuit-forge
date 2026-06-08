@@ -4,11 +4,14 @@
  */
 import type { CircuitJson, Component, Net, ModelDef } from '../types/circuit';
 import type { AnalysisConfig } from '../types/analysis';
-import { SPICE_PREFIXES, COMPONENT_PINS, isDigitalType } from '../types/circuit';
+import { SPICE_PREFIXES, COMPONENT_PINS, COMPONENT_TYPES, isDigitalType } from '../types/circuit';
 import { analysisToSpice } from '../types/analysis';
 import { buildZenerModel, normalizeControlledSourceGain, parseTransformerParams, parseTransmissionLineParams } from '../models/library';
 import { sanitizeNodeName, validateIncludePaths } from './sanitizer';
 import { planMixedSignal, emitDigitalComponent, aInstanceName, type MixedSignalPlan } from './digital';
+
+/** All valid ComponentType values, for a fail-loud guard against an unknown type slipping through. */
+const VALID_COMPONENT_TYPES = new Set<string>(COMPONENT_TYPES);
 
 /**
  * Netlist generation options
@@ -209,6 +212,15 @@ export function generateNetlist(
     // so such probes can be dropped (and so a digital designator is never remapped into an i() rewrite).
     const digitalDeviceRefs = new Set<string>();
     for (const component of circuit.components) {
+        // Fail loud on an unknown type — otherwise an un-emittable type (e.g. a caller that skipped
+        // safeValidateCircuitJson and passed type:'opamp') would be SILENTLY dropped, yielding a
+        // degraded netlist that "simulates" to wrong/flat results with no error.
+        if (!VALID_COMPONENT_TYPES.has(component.type)) {
+            throw new Error(
+                `Unknown component type '${component.type}' for ${component.designator || component.id}. ` +
+                    `Valid types are COMPONENT_TYPES; validate with safeValidateCircuitJson before generating.`,
+            );
+        }
         // Digital components (gates/flip-flops) emit XSPICE 'a'-devices via the mixed-signal plan (which
         // resolves their nodes through the bridge overrides); everything else takes the analog path.
         const digital = isDigitalType(component.type);
@@ -258,6 +270,22 @@ export function generateNetlist(
     if (analysis.type === 'dc' && analysis.source) {
         const mapped = designatorToInstance.get(analysis.source.toLowerCase());
         if (mapped) effectiveAnalysis = { ...analysis, source: mapped };
+    }
+    // Initial conditions (tran only): emit a `.ic v(<node>)=<v>` card per entry (net id → sanitized node)
+    // and force `uic` so the transient honors them. Lets a caller seed a node (e.g. to start a symmetric
+    // oscillator) without hand-splicing `.ic` into the netlist. Unknown net ids are skipped (no phantom node).
+    if (analysis.type === 'tran' && analysis.initialConditions) {
+        const icLines: string[] = [];
+        for (const [netId, volts] of Object.entries(analysis.initialConditions)) {
+            const node = nodeMap.get(netId);
+            if (node && node !== '0') icLines.push(`.ic v(${node})=${volts}`);
+        }
+        if (icLines.length > 0) {
+            effectiveAnalysis = { ...analysis, uic: true };
+            lines.push('* Initial conditions');
+            lines.push(...icLines);
+            lines.push('');
+        }
     }
     lines.push('* Analysis');
     lines.push(analysisToSpice(effectiveAnalysis));

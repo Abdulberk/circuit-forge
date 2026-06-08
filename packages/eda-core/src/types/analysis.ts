@@ -17,6 +17,13 @@ export interface TranAnalysis {
     startTime?: string; // Default: 0
     maxStep?: string; // Maximum step size
     uic?: boolean; // Use Initial Conditions
+    /**
+     * Initial node voltages keyed by NET ID, e.g. { cap: 0.1 }. The generator emits a `.ic v(<node>)=<v>`
+     * card per entry (net id sanitized to its SPICE node) and forces `uic` on the `.tran`. Use this to seed
+     * a node so a symmetric self-starting oscillator leaves its (otherwise stable) zero equilibrium, instead
+     * of splicing `.ic` into the netlist by hand.
+     */
+    initialConditions?: Record<string, number>;
 }
 
 /**
