@@ -1,0 +1,371 @@
+{
+  "name": "State-Variable Filter (LP/BP/HP)",
+  "description": "A KHN state-variable active filter: a summing amplifier plus two integrators produce simultaneous low-pass, band-pass, and high-pass outputs from one input (fc≈1.585kHz, Q≈5). Run an AC sweep (dec) — LP rolls off at −40dB/dec above fc, HP rises at +40dB/dec below fc, and BP peaks at fc. (Validated on ngspice.)",
+  "tags": [
+    "filter",
+    "state-variable",
+    "khn",
+    "active-filter",
+    "opamp",
+    "signal",
+    "advanced"
+  ],
+  "circuitJson": {
+    "version": "1.0",
+    "components": [
+      {
+        "id": "vin",
+        "type": "voltage_source",
+        "designator": "V1",
+        "value": "AC 1",
+        "pins": [
+          {
+            "pinId": "+",
+            "netId": "in"
+          },
+          {
+            "pinId": "-",
+            "netId": "gnd"
+          }
+        ]
+      },
+      {
+        "id": "vcc",
+        "type": "voltage_source",
+        "designator": "VCC1",
+        "value": "DC 15",
+        "pins": [
+          {
+            "pinId": "+",
+            "netId": "vcc"
+          },
+          {
+            "pinId": "-",
+            "netId": "gnd"
+          }
+        ]
+      },
+      {
+        "id": "vee",
+        "type": "voltage_source",
+        "designator": "VEE1",
+        "value": "DC -15",
+        "pins": [
+          {
+            "pinId": "+",
+            "netId": "vee"
+          },
+          {
+            "pinId": "-",
+            "netId": "gnd"
+          }
+        ]
+      },
+      {
+        "id": "rin",
+        "type": "resistor",
+        "designator": "R1",
+        "value": "10k",
+        "pins": [
+          {
+            "pinId": "1",
+            "netId": "in"
+          },
+          {
+            "pinId": "2",
+            "netId": "sum_n"
+          }
+        ]
+      },
+      {
+        "id": "rfb",
+        "type": "resistor",
+        "designator": "R2",
+        "value": "10k",
+        "pins": [
+          {
+            "pinId": "1",
+            "netId": "lp"
+          },
+          {
+            "pinId": "2",
+            "netId": "sum_n"
+          }
+        ]
+      },
+      {
+        "id": "rf",
+        "type": "resistor",
+        "designator": "R3",
+        "value": "10k",
+        "pins": [
+          {
+            "pinId": "1",
+            "netId": "sum_n"
+          },
+          {
+            "pinId": "2",
+            "netId": "hp"
+          }
+        ]
+      },
+      {
+        "id": "rq2",
+        "type": "resistor",
+        "designator": "R4",
+        "value": "14k",
+        "pins": [
+          {
+            "pinId": "1",
+            "netId": "bp"
+          },
+          {
+            "pinId": "2",
+            "netId": "sum_p"
+          }
+        ]
+      },
+      {
+        "id": "rq1",
+        "type": "resistor",
+        "designator": "R5",
+        "value": "1k",
+        "pins": [
+          {
+            "pinId": "1",
+            "netId": "sum_p"
+          },
+          {
+            "pinId": "2",
+            "netId": "gnd"
+          }
+        ]
+      },
+      {
+        "id": "u1",
+        "type": "subckt",
+        "designator": "U1",
+        "model": "OPAMPGEN",
+        "pins": [
+          {
+            "pinId": "out",
+            "netId": "hp"
+          },
+          {
+            "pinId": "in+",
+            "netId": "sum_p"
+          },
+          {
+            "pinId": "in-",
+            "netId": "sum_n"
+          },
+          {
+            "pinId": "vcc",
+            "netId": "vcc"
+          },
+          {
+            "pinId": "vee",
+            "netId": "vee"
+          }
+        ]
+      },
+      {
+        "id": "ri1",
+        "type": "resistor",
+        "designator": "R6",
+        "value": "10k",
+        "pins": [
+          {
+            "pinId": "1",
+            "netId": "hp"
+          },
+          {
+            "pinId": "2",
+            "netId": "int1_n"
+          }
+        ]
+      },
+      {
+        "id": "ci1",
+        "type": "capacitor",
+        "designator": "C1",
+        "value": "10n",
+        "pins": [
+          {
+            "pinId": "1",
+            "netId": "int1_n"
+          },
+          {
+            "pinId": "2",
+            "netId": "bp"
+          }
+        ]
+      },
+      {
+        "id": "u2",
+        "type": "subckt",
+        "designator": "U2",
+        "model": "OPAMPGEN",
+        "pins": [
+          {
+            "pinId": "out",
+            "netId": "bp"
+          },
+          {
+            "pinId": "in+",
+            "netId": "gnd"
+          },
+          {
+            "pinId": "in-",
+            "netId": "int1_n"
+          },
+          {
+            "pinId": "vcc",
+            "netId": "vcc"
+          },
+          {
+            "pinId": "vee",
+            "netId": "vee"
+          }
+        ]
+      },
+      {
+        "id": "ri2",
+        "type": "resistor",
+        "designator": "R7",
+        "value": "10k",
+        "pins": [
+          {
+            "pinId": "1",
+            "netId": "bp"
+          },
+          {
+            "pinId": "2",
+            "netId": "int2_n"
+          }
+        ]
+      },
+      {
+        "id": "ci2",
+        "type": "capacitor",
+        "designator": "C2",
+        "value": "10n",
+        "pins": [
+          {
+            "pinId": "1",
+            "netId": "int2_n"
+          },
+          {
+            "pinId": "2",
+            "netId": "lp"
+          }
+        ]
+      },
+      {
+        "id": "u3",
+        "type": "subckt",
+        "designator": "U3",
+        "model": "OPAMPGEN",
+        "pins": [
+          {
+            "pinId": "out",
+            "netId": "lp"
+          },
+          {
+            "pinId": "in+",
+            "netId": "gnd"
+          },
+          {
+            "pinId": "in-",
+            "netId": "int2_n"
+          },
+          {
+            "pinId": "vcc",
+            "netId": "vcc"
+          },
+          {
+            "pinId": "vee",
+            "netId": "vee"
+          }
+        ]
+      },
+      {
+        "id": "gnd1",
+        "type": "ground",
+        "designator": "GND1",
+        "pins": [
+          {
+            "pinId": "1",
+            "netId": "gnd"
+          }
+        ]
+      }
+    ],
+    "nets": [
+      {
+        "id": "in",
+        "name": "IN"
+      },
+      {
+        "id": "sum_n",
+        "name": "SUM_N"
+      },
+      {
+        "id": "sum_p",
+        "name": "SUM_P"
+      },
+      {
+        "id": "hp",
+        "name": "HP"
+      },
+      {
+        "id": "int1_n",
+        "name": "INT1_N"
+      },
+      {
+        "id": "bp",
+        "name": "BP"
+      },
+      {
+        "id": "int2_n",
+        "name": "INT2_N"
+      },
+      {
+        "id": "lp",
+        "name": "LP"
+      },
+      {
+        "id": "vcc",
+        "name": "VCC"
+      },
+      {
+        "id": "vee",
+        "name": "VEE"
+      },
+      {
+        "id": "gnd",
+        "name": "GND",
+        "isGround": true
+      }
+    ],
+    "models": [
+      {
+        "name": "OPAMPGEN",
+        "device": "subckt",
+        "tier": "generic",
+        "ports": [
+          "out",
+          "in+",
+          "in-",
+          "vcc",
+          "vee"
+        ],
+        "body": ".subckt OPAMPGEN out inp inn vcc vee\nRin   inp inn 2Meg\nGm    0 n2 inp inn 1e-3\nRpole n2 0 1e8\nCp    n2 0 16p\nDhi   n2 vcc DCLMP\nDlo   vee n2 DCLMP\nEbuf  n3 0 n2 0 1\nRout  n3 out 50\n.model DCLMP D(IS=1e-12 N=1)\n.ends"
+      }
+    ],
+    "metadata": {
+      "name": "State-Variable Filter (LP/BP/HP)",
+      "description": "A KHN state-variable active filter: a summing amplifier plus two integrators produce simultaneous low-pass, band-pass, and high-pass outputs from one input (fc≈1.585kHz, Q≈5). Run an AC sweep (dec) — LP rolls off at −40dB/dec above fc, HP rises at +40dB/dec below fc, and BP peaks at fc. (Validated on ngspice.)"
+    }
+  }
+}

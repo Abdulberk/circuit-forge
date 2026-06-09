@@ -1,0 +1,339 @@
+{
+  "name": "H-Bridge DC Motor Driver",
+  "description": "A four-switch H-bridge driving a DC motor (modeled as a series R+L) with freewheel diodes. PULSE gate drives turn on opposite diagonals to reverse the current direction. Run a transient — the motor current reverses each half-period and the freewheel diodes conduct only at commutation. Uses generic LEVEL-1 MOSFETs (kΩ-scale Ron), so the absolute current is illustrative (a few mA). (Validated on ngspice.)",
+  "tags": [
+    "motor",
+    "h-bridge",
+    "driver",
+    "power",
+    "mosfet",
+    "advanced"
+  ],
+  "circuitJson": {
+    "version": "1.0",
+    "components": [
+      {
+        "id": "VS",
+        "type": "voltage_source",
+        "designator": "V1",
+        "value": "DC 24",
+        "pins": [
+          {
+            "pinId": "+",
+            "netId": "vs"
+          },
+          {
+            "pinId": "-",
+            "netId": "0"
+          }
+        ]
+      },
+      {
+        "id": "VDF",
+        "type": "voltage_source",
+        "designator": "V2",
+        "value": "PULSE(0 24 0 1u 1u 999u 2000u)",
+        "pins": [
+          {
+            "pinId": "+",
+            "netId": "drv_f"
+          },
+          {
+            "pinId": "-",
+            "netId": "0"
+          }
+        ]
+      },
+      {
+        "id": "VDR",
+        "type": "voltage_source",
+        "designator": "V3",
+        "value": "PULSE(0 24 1000u 1u 1u 999u 2000u)",
+        "pins": [
+          {
+            "pinId": "+",
+            "netId": "drv_r"
+          },
+          {
+            "pinId": "-",
+            "netId": "0"
+          }
+        ]
+      },
+      {
+        "id": "RGF",
+        "type": "resistor",
+        "designator": "RG1",
+        "value": "100",
+        "pins": [
+          {
+            "pinId": "1",
+            "netId": "drv_f"
+          },
+          {
+            "pinId": "2",
+            "netId": "gf"
+          }
+        ]
+      },
+      {
+        "id": "RGR",
+        "type": "resistor",
+        "designator": "RG2",
+        "value": "100",
+        "pins": [
+          {
+            "pinId": "1",
+            "netId": "drv_r"
+          },
+          {
+            "pinId": "2",
+            "netId": "gr"
+          }
+        ]
+      },
+      {
+        "id": "Q1",
+        "type": "mosfet",
+        "designator": "M1",
+        "model": "MGENPMOS",
+        "pins": [
+          {
+            "pinId": "d",
+            "netId": "na"
+          },
+          {
+            "pinId": "g",
+            "netId": "gr"
+          },
+          {
+            "pinId": "s",
+            "netId": "vs"
+          },
+          {
+            "pinId": "b",
+            "netId": "vs"
+          }
+        ]
+      },
+      {
+        "id": "Q3",
+        "type": "mosfet",
+        "designator": "M3",
+        "model": "MGENPMOS",
+        "pins": [
+          {
+            "pinId": "d",
+            "netId": "nb"
+          },
+          {
+            "pinId": "g",
+            "netId": "gf"
+          },
+          {
+            "pinId": "s",
+            "netId": "vs"
+          },
+          {
+            "pinId": "b",
+            "netId": "vs"
+          }
+        ]
+      },
+      {
+        "id": "Q2",
+        "type": "mosfet",
+        "designator": "M2",
+        "model": "MGENNMOS",
+        "pins": [
+          {
+            "pinId": "d",
+            "netId": "na"
+          },
+          {
+            "pinId": "g",
+            "netId": "gr"
+          },
+          {
+            "pinId": "s",
+            "netId": "0"
+          },
+          {
+            "pinId": "b",
+            "netId": "0"
+          }
+        ]
+      },
+      {
+        "id": "Q4",
+        "type": "mosfet",
+        "designator": "M4",
+        "model": "MGENNMOS",
+        "pins": [
+          {
+            "pinId": "d",
+            "netId": "nb"
+          },
+          {
+            "pinId": "g",
+            "netId": "gf"
+          },
+          {
+            "pinId": "s",
+            "netId": "0"
+          },
+          {
+            "pinId": "b",
+            "netId": "0"
+          }
+        ]
+      },
+      {
+        "id": "RM",
+        "type": "resistor",
+        "designator": "R3",
+        "value": "20",
+        "pins": [
+          {
+            "pinId": "1",
+            "netId": "na"
+          },
+          {
+            "pinId": "2",
+            "netId": "nm"
+          }
+        ]
+      },
+      {
+        "id": "LM",
+        "type": "inductor",
+        "designator": "L1",
+        "value": "500u",
+        "pins": [
+          {
+            "pinId": "1",
+            "netId": "nm"
+          },
+          {
+            "pinId": "2",
+            "netId": "nb"
+          }
+        ]
+      },
+      {
+        "id": "D1",
+        "type": "diode",
+        "designator": "D1",
+        "model": "DPWR",
+        "pins": [
+          {
+            "pinId": "anode",
+            "netId": "na"
+          },
+          {
+            "pinId": "cathode",
+            "netId": "vs"
+          }
+        ]
+      },
+      {
+        "id": "D3",
+        "type": "diode",
+        "designator": "D3",
+        "model": "DPWR",
+        "pins": [
+          {
+            "pinId": "anode",
+            "netId": "nb"
+          },
+          {
+            "pinId": "cathode",
+            "netId": "vs"
+          }
+        ]
+      },
+      {
+        "id": "D2",
+        "type": "diode",
+        "designator": "D2",
+        "model": "DPWR",
+        "pins": [
+          {
+            "pinId": "anode",
+            "netId": "0"
+          },
+          {
+            "pinId": "cathode",
+            "netId": "na"
+          }
+        ]
+      },
+      {
+        "id": "D4",
+        "type": "diode",
+        "designator": "D4",
+        "model": "DPWR",
+        "pins": [
+          {
+            "pinId": "anode",
+            "netId": "0"
+          },
+          {
+            "pinId": "cathode",
+            "netId": "nb"
+          }
+        ]
+      }
+    ],
+    "nets": [
+      {
+        "id": "0",
+        "name": "gnd",
+        "isGround": true
+      },
+      {
+        "id": "vs",
+        "name": "vs"
+      },
+      {
+        "id": "drv_f",
+        "name": "drv_f"
+      },
+      {
+        "id": "drv_r",
+        "name": "drv_r"
+      },
+      {
+        "id": "gf",
+        "name": "gf"
+      },
+      {
+        "id": "gr",
+        "name": "gr"
+      },
+      {
+        "id": "na",
+        "name": "na"
+      },
+      {
+        "id": "nb",
+        "name": "nb"
+      },
+      {
+        "id": "nm",
+        "name": "nm"
+      }
+    ],
+    "models": [
+      {
+        "name": "DPWR",
+        "device": "diode",
+        "body": ".model DPWR D(IS=1e-9 RS=0.02 N=1.8 BV=600 CJO=200p TT=2u)"
+      }
+    ],
+    "metadata": {
+      "name": "H-Bridge DC Motor Driver",
+      "description": "A four-switch H-bridge driving a DC motor (modeled as a series R+L) with freewheel diodes. PULSE gate drives turn on opposite diagonals to reverse the current direction. Run a transient — the motor current reverses each half-period and the freewheel diodes conduct only at commutation. Uses generic LEVEL-1 MOSFETs (kΩ-scale Ron), so the absolute current is illustrative (a few mA). (Validated on ngspice.)"
+    }
+  }
+}

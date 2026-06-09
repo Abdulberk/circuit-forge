@@ -1,0 +1,373 @@
+{
+  "name": "RIAA Phono Preamplifier",
+  "description": "A moving-magnet phono preamplifier: an op-amp gain stage with the standard RIAA equalization feedback network (the three RIAA time constants 3180/318/75µs). Run an AC sweep (dec, 20Hz–20kHz) — the response follows the RIAA curve within 0.26dB, with ~40dB gain at 1kHz and high boost at low frequencies. (Validated on ngspice.)",
+  "tags": [
+    "audio",
+    "phono",
+    "riaa",
+    "preamp",
+    "opamp",
+    "filter",
+    "hifi"
+  ],
+  "circuitJson": {
+    "version": "1.0",
+    "components": [
+      {
+        "id": "VPLUS",
+        "type": "voltage_source",
+        "designator": "V1",
+        "value": "DC 15",
+        "pins": [
+          {
+            "pinId": "+",
+            "netId": "vcc"
+          },
+          {
+            "pinId": "-",
+            "netId": "0"
+          }
+        ]
+      },
+      {
+        "id": "VMINUS",
+        "type": "voltage_source",
+        "designator": "V2",
+        "value": "DC -15",
+        "pins": [
+          {
+            "pinId": "+",
+            "netId": "vee"
+          },
+          {
+            "pinId": "-",
+            "netId": "0"
+          }
+        ]
+      },
+      {
+        "id": "VSIG",
+        "type": "voltage_source",
+        "designator": "V3",
+        "value": "AC 1",
+        "pins": [
+          {
+            "pinId": "+",
+            "netId": "src"
+          },
+          {
+            "pinId": "-",
+            "netId": "0"
+          }
+        ]
+      },
+      {
+        "id": "RCART",
+        "type": "resistor",
+        "designator": "R3",
+        "value": "1k",
+        "pins": [
+          {
+            "pinId": "1",
+            "netId": "src"
+          },
+          {
+            "pinId": "2",
+            "netId": "cart_mid"
+          }
+        ]
+      },
+      {
+        "id": "LCART",
+        "type": "inductor",
+        "designator": "L1",
+        "value": "500m",
+        "pins": [
+          {
+            "pinId": "1",
+            "netId": "cart_mid"
+          },
+          {
+            "pinId": "2",
+            "netId": "cart_out"
+          }
+        ]
+      },
+      {
+        "id": "RLOAD",
+        "type": "resistor",
+        "designator": "R4",
+        "value": "47k",
+        "pins": [
+          {
+            "pinId": "1",
+            "netId": "cart_out"
+          },
+          {
+            "pinId": "2",
+            "netId": "0"
+          }
+        ]
+      },
+      {
+        "id": "CLOAD",
+        "type": "capacitor",
+        "designator": "C3",
+        "value": "100p",
+        "pins": [
+          {
+            "pinId": "1",
+            "netId": "cart_out"
+          },
+          {
+            "pinId": "2",
+            "netId": "0"
+          }
+        ]
+      },
+      {
+        "id": "CIN",
+        "type": "capacitor",
+        "designator": "C4",
+        "value": "2.2u",
+        "pins": [
+          {
+            "pinId": "1",
+            "netId": "cart_out"
+          },
+          {
+            "pinId": "2",
+            "netId": "inp"
+          }
+        ]
+      },
+      {
+        "id": "RBIAS",
+        "type": "resistor",
+        "designator": "R5",
+        "value": "47k",
+        "pins": [
+          {
+            "pinId": "1",
+            "netId": "inp"
+          },
+          {
+            "pinId": "2",
+            "netId": "0"
+          }
+        ]
+      },
+      {
+        "id": "U1",
+        "type": "subckt",
+        "designator": "U1",
+        "model": "OPAMPGEN",
+        "pins": [
+          {
+            "pinId": "out",
+            "netId": "amp_out"
+          },
+          {
+            "pinId": "in+",
+            "netId": "inp"
+          },
+          {
+            "pinId": "in-",
+            "netId": "inv"
+          },
+          {
+            "pinId": "vcc",
+            "netId": "vcc"
+          },
+          {
+            "pinId": "vee",
+            "netId": "vee"
+          }
+        ]
+      },
+      {
+        "id": "R1",
+        "type": "resistor",
+        "designator": "R1",
+        "value": "86.6k",
+        "pins": [
+          {
+            "pinId": "1",
+            "netId": "amp_out"
+          },
+          {
+            "pinId": "2",
+            "netId": "fb_mid"
+          }
+        ]
+      },
+      {
+        "id": "C1",
+        "type": "capacitor",
+        "designator": "C1",
+        "value": "30n",
+        "pins": [
+          {
+            "pinId": "1",
+            "netId": "amp_out"
+          },
+          {
+            "pinId": "2",
+            "netId": "fb_mid"
+          }
+        ]
+      },
+      {
+        "id": "R2",
+        "type": "resistor",
+        "designator": "R2",
+        "value": "12.7k",
+        "pins": [
+          {
+            "pinId": "1",
+            "netId": "fb_mid"
+          },
+          {
+            "pinId": "2",
+            "netId": "inv"
+          }
+        ]
+      },
+      {
+        "id": "C2",
+        "type": "capacitor",
+        "designator": "C2",
+        "value": "7.5n",
+        "pins": [
+          {
+            "pinId": "1",
+            "netId": "amp_out"
+          },
+          {
+            "pinId": "2",
+            "netId": "inv"
+          }
+        ]
+      },
+      {
+        "id": "RI",
+        "type": "resistor",
+        "designator": "R6",
+        "value": "102",
+        "pins": [
+          {
+            "pinId": "1",
+            "netId": "inv"
+          },
+          {
+            "pinId": "2",
+            "netId": "gain_lo"
+          }
+        ]
+      },
+      {
+        "id": "CG",
+        "type": "capacitor",
+        "designator": "C5",
+        "value": "1000u",
+        "pins": [
+          {
+            "pinId": "1",
+            "netId": "gain_lo"
+          },
+          {
+            "pinId": "2",
+            "netId": "0"
+          }
+        ]
+      },
+      {
+        "id": "COUT",
+        "type": "capacitor",
+        "designator": "C6",
+        "value": "2.2u",
+        "pins": [
+          {
+            "pinId": "1",
+            "netId": "amp_out"
+          },
+          {
+            "pinId": "2",
+            "netId": "out"
+          }
+        ]
+      },
+      {
+        "id": "ROUT",
+        "type": "resistor",
+        "designator": "R7",
+        "value": "100k",
+        "pins": [
+          {
+            "pinId": "1",
+            "netId": "out"
+          },
+          {
+            "pinId": "2",
+            "netId": "0"
+          }
+        ]
+      }
+    ],
+    "nets": [
+      {
+        "id": "0",
+        "name": "GND",
+        "isGround": true
+      },
+      {
+        "id": "vcc",
+        "name": "VCC"
+      },
+      {
+        "id": "vee",
+        "name": "VEE"
+      },
+      {
+        "id": "src",
+        "name": "SRC"
+      },
+      {
+        "id": "cart_mid",
+        "name": "CART_MID"
+      },
+      {
+        "id": "cart_out",
+        "name": "CART_OUT"
+      },
+      {
+        "id": "inp",
+        "name": "INP"
+      },
+      {
+        "id": "inv",
+        "name": "INV"
+      },
+      {
+        "id": "amp_out",
+        "name": "AMP_OUT"
+      },
+      {
+        "id": "fb_mid",
+        "name": "FB_MID"
+      },
+      {
+        "id": "gain_lo",
+        "name": "GAIN_LO"
+      },
+      {
+        "id": "out",
+        "name": "OUT"
+      }
+    ],
+    "metadata": {
+      "name": "RIAA Phono Preamplifier",
+      "description": "A moving-magnet phono preamplifier: an op-amp gain stage with the standard RIAA equalization feedback network (the three RIAA time constants 3180/318/75µs). Run an AC sweep (dec, 20Hz–20kHz) — the response follows the RIAA curve within 0.26dB, with ~40dB gain at 1kHz and high boost at low frequencies. (Validated on ngspice.)"
+    }
+  }
+}

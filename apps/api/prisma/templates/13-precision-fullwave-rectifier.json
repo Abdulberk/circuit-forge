@@ -1,0 +1,319 @@
+{
+  "name": "Precision Full-Wave Rectifier (Absolute Value)",
+  "description": "A two-op-amp precision absolute-value rectifier that rectifies signals far below a diode drop (no dead-zone, unlike a passive diode bridge). Run a transient with a small (e.g. 100mV) sine that crosses zero — the output is |Vin|, with both half-cycles folded positive and peak ≈ the input peak. A true-RMS / measurement front end. (Validated on ngspice.)",
+  "tags": [
+    "instrumentation",
+    "rectifier",
+    "precision",
+    "absolute-value",
+    "opamp",
+    "measurement"
+  ],
+  "circuitJson": {
+    "version": "1.0",
+    "components": [
+      {
+        "id": "vin",
+        "type": "voltage_source",
+        "designator": "V1",
+        "value": "SIN(0 0.1 1k)",
+        "pins": [
+          {
+            "pinId": "+",
+            "netId": "vin"
+          },
+          {
+            "pinId": "-",
+            "netId": "0"
+          }
+        ]
+      },
+      {
+        "id": "vcc",
+        "type": "voltage_source",
+        "designator": "V2",
+        "value": "DC 15",
+        "pins": [
+          {
+            "pinId": "+",
+            "netId": "vcc"
+          },
+          {
+            "pinId": "-",
+            "netId": "0"
+          }
+        ]
+      },
+      {
+        "id": "vee",
+        "type": "voltage_source",
+        "designator": "V3",
+        "value": "DC -15",
+        "pins": [
+          {
+            "pinId": "+",
+            "netId": "vee"
+          },
+          {
+            "pinId": "-",
+            "netId": "0"
+          }
+        ]
+      },
+      {
+        "id": "u1",
+        "type": "subckt",
+        "designator": "U1",
+        "model": "OPAMPGEN",
+        "pins": [
+          {
+            "pinId": "out",
+            "netId": "u1out"
+          },
+          {
+            "pinId": "in+",
+            "netId": "0"
+          },
+          {
+            "pinId": "in-",
+            "netId": "sj1"
+          },
+          {
+            "pinId": "vcc",
+            "netId": "vcc"
+          },
+          {
+            "pinId": "vee",
+            "netId": "vee"
+          }
+        ]
+      },
+      {
+        "id": "u2",
+        "type": "subckt",
+        "designator": "U2",
+        "model": "OPAMPGEN",
+        "pins": [
+          {
+            "pinId": "out",
+            "netId": "out"
+          },
+          {
+            "pinId": "in+",
+            "netId": "0"
+          },
+          {
+            "pinId": "in-",
+            "netId": "sj2"
+          },
+          {
+            "pinId": "vcc",
+            "netId": "vcc"
+          },
+          {
+            "pinId": "vee",
+            "netId": "vee"
+          }
+        ]
+      },
+      {
+        "id": "r1",
+        "type": "resistor",
+        "designator": "R1",
+        "value": "10k",
+        "pins": [
+          {
+            "pinId": "1",
+            "netId": "vin"
+          },
+          {
+            "pinId": "2",
+            "netId": "sj1"
+          }
+        ]
+      },
+      {
+        "id": "r2",
+        "type": "resistor",
+        "designator": "R2",
+        "value": "10k",
+        "pins": [
+          {
+            "pinId": "1",
+            "netId": "sj1"
+          },
+          {
+            "pinId": "2",
+            "netId": "hw"
+          }
+        ]
+      },
+      {
+        "id": "d1",
+        "type": "diode",
+        "designator": "D1",
+        "model": "DSIG",
+        "pins": [
+          {
+            "pinId": "anode",
+            "netId": "hw"
+          },
+          {
+            "pinId": "cathode",
+            "netId": "u1out"
+          }
+        ]
+      },
+      {
+        "id": "d2",
+        "type": "diode",
+        "designator": "D2",
+        "model": "DSIG",
+        "pins": [
+          {
+            "pinId": "anode",
+            "netId": "u1out"
+          },
+          {
+            "pinId": "cathode",
+            "netId": "u1out2"
+          }
+        ]
+      },
+      {
+        "id": "rd2",
+        "type": "resistor",
+        "designator": "RD2",
+        "value": "10k",
+        "pins": [
+          {
+            "pinId": "1",
+            "netId": "u1out2"
+          },
+          {
+            "pinId": "2",
+            "netId": "sj1"
+          }
+        ]
+      },
+      {
+        "id": "r3",
+        "type": "resistor",
+        "designator": "R3",
+        "value": "10k",
+        "pins": [
+          {
+            "pinId": "1",
+            "netId": "vin"
+          },
+          {
+            "pinId": "2",
+            "netId": "sj2"
+          }
+        ]
+      },
+      {
+        "id": "r4",
+        "type": "resistor",
+        "designator": "R4",
+        "value": "5k",
+        "pins": [
+          {
+            "pinId": "1",
+            "netId": "hw"
+          },
+          {
+            "pinId": "2",
+            "netId": "sj2"
+          }
+        ]
+      },
+      {
+        "id": "r5",
+        "type": "resistor",
+        "designator": "R5",
+        "value": "10k",
+        "pins": [
+          {
+            "pinId": "1",
+            "netId": "sj2"
+          },
+          {
+            "pinId": "2",
+            "netId": "out"
+          }
+        ]
+      },
+      {
+        "id": "rload",
+        "type": "resistor",
+        "designator": "R6",
+        "value": "100k",
+        "pins": [
+          {
+            "pinId": "1",
+            "netId": "out"
+          },
+          {
+            "pinId": "2",
+            "netId": "0"
+          }
+        ]
+      }
+    ],
+    "nets": [
+      {
+        "id": "0",
+        "name": "GND",
+        "isGround": true
+      },
+      {
+        "id": "vin",
+        "name": "VIN"
+      },
+      {
+        "id": "vcc",
+        "name": "VCC"
+      },
+      {
+        "id": "vee",
+        "name": "VEE"
+      },
+      {
+        "id": "u1out",
+        "name": "U1OUT"
+      },
+      {
+        "id": "u1out2",
+        "name": "U1OUT2"
+      },
+      {
+        "id": "hw",
+        "name": "HW"
+      },
+      {
+        "id": "sj1",
+        "name": "SJ1"
+      },
+      {
+        "id": "sj2",
+        "name": "SJ2"
+      },
+      {
+        "id": "out",
+        "name": "OUT"
+      }
+    ],
+    "models": [
+      {
+        "name": "DSIG",
+        "device": "diode",
+        "body": ".model DSIG D(IS=2.5e-9 RS=0.5 N=1.0 CJO=4p TT=5n BV=75)"
+      }
+    ],
+    "metadata": {
+      "name": "Precision Full-Wave Rectifier (Absolute Value)",
+      "description": "A two-op-amp precision absolute-value rectifier that rectifies signals far below a diode drop (no dead-zone, unlike a passive diode bridge). Run a transient with a small (e.g. 100mV) sine that crosses zero — the output is |Vin|, with both half-cycles folded positive and peak ≈ the input peak. A true-RMS / measurement front end. (Validated on ngspice.)"
+    }
+  }
+}

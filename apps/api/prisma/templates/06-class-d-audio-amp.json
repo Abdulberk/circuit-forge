@@ -1,0 +1,505 @@
+{
+  "name": "Class-D Audio Amplifier",
+  "description": "A switching audio power amplifier: a triangle-carrier comparator turns the audio input into PWM, a MOSFET half-bridge switches the supply rails, and an LC filter (fc≈21kHz) reconstructs the audio. Run a transient — the 8Ω load recovers a clean sine (voltage gain ≈1.875, ~3.5W, flat 1–8kHz, ~55dB carrier rejection). Note: simplified single-node gate drive (no dead-time), so treat as a teaching/demo stage. (Validated on ngspice.)",
+  "tags": [
+    "audio",
+    "amplifier",
+    "class-d",
+    "power",
+    "pwm",
+    "mosfet",
+    "advanced"
+  ],
+  "circuitJson": {
+    "version": "1.0",
+    "components": [
+      {
+        "id": "VCC",
+        "type": "voltage_source",
+        "designator": "V1",
+        "value": "DC 15",
+        "pins": [
+          {
+            "pinId": "+",
+            "netId": "vpos"
+          },
+          {
+            "pinId": "-",
+            "netId": "0"
+          }
+        ]
+      },
+      {
+        "id": "VEE",
+        "type": "voltage_source",
+        "designator": "V2",
+        "value": "DC -15",
+        "pins": [
+          {
+            "pinId": "+",
+            "netId": "vneg"
+          },
+          {
+            "pinId": "-",
+            "netId": "0"
+          }
+        ]
+      },
+      {
+        "id": "CVCC1",
+        "type": "capacitor",
+        "designator": "CVCC1",
+        "value": "100u",
+        "pins": [
+          {
+            "pinId": "1",
+            "netId": "vpos"
+          },
+          {
+            "pinId": "2",
+            "netId": "0"
+          }
+        ]
+      },
+      {
+        "id": "CVCC2",
+        "type": "capacitor",
+        "designator": "CVCC2",
+        "value": "100n",
+        "pins": [
+          {
+            "pinId": "1",
+            "netId": "vpos"
+          },
+          {
+            "pinId": "2",
+            "netId": "0"
+          }
+        ]
+      },
+      {
+        "id": "CVEE1",
+        "type": "capacitor",
+        "designator": "CVEE1",
+        "value": "100u",
+        "pins": [
+          {
+            "pinId": "1",
+            "netId": "vneg"
+          },
+          {
+            "pinId": "2",
+            "netId": "0"
+          }
+        ]
+      },
+      {
+        "id": "CVEE2",
+        "type": "capacitor",
+        "designator": "CVEE2",
+        "value": "100n",
+        "pins": [
+          {
+            "pinId": "1",
+            "netId": "vneg"
+          },
+          {
+            "pinId": "2",
+            "netId": "0"
+          }
+        ]
+      },
+      {
+        "id": "VAUDIO",
+        "type": "voltage_source",
+        "designator": "V3",
+        "value": "SIN(0 4 5k)",
+        "pins": [
+          {
+            "pinId": "+",
+            "netId": "audio"
+          },
+          {
+            "pinId": "-",
+            "netId": "0"
+          }
+        ]
+      },
+      {
+        "id": "CIN",
+        "type": "capacitor",
+        "designator": "C3",
+        "value": "1u",
+        "pins": [
+          {
+            "pinId": "1",
+            "netId": "audio"
+          },
+          {
+            "pinId": "2",
+            "netId": "ain"
+          }
+        ]
+      },
+      {
+        "id": "RBIAS",
+        "type": "resistor",
+        "designator": "R1",
+        "value": "100k",
+        "pins": [
+          {
+            "pinId": "1",
+            "netId": "ain"
+          },
+          {
+            "pinId": "2",
+            "netId": "0"
+          }
+        ]
+      },
+      {
+        "id": "RAA",
+        "type": "resistor",
+        "designator": "R2",
+        "value": "1k",
+        "pins": [
+          {
+            "pinId": "1",
+            "netId": "ain"
+          },
+          {
+            "pinId": "2",
+            "netId": "aflt"
+          }
+        ]
+      },
+      {
+        "id": "CAA",
+        "type": "capacitor",
+        "designator": "C4",
+        "value": "1n",
+        "pins": [
+          {
+            "pinId": "1",
+            "netId": "aflt"
+          },
+          {
+            "pinId": "2",
+            "netId": "0"
+          }
+        ]
+      },
+      {
+        "id": "VTRI",
+        "type": "voltage_source",
+        "designator": "V4",
+        "value": "PULSE(-8.39 7.61 0 1u 1u 1n 2u)",
+        "pins": [
+          {
+            "pinId": "+",
+            "netId": "tri"
+          },
+          {
+            "pinId": "-",
+            "netId": "0"
+          }
+        ]
+      },
+      {
+        "id": "U1",
+        "type": "subckt",
+        "designator": "U1",
+        "model": "OPAMPGEN",
+        "pins": [
+          {
+            "pinId": "out",
+            "netId": "pwm"
+          },
+          {
+            "pinId": "in+",
+            "netId": "aflt"
+          },
+          {
+            "pinId": "in-",
+            "netId": "tri"
+          },
+          {
+            "pinId": "vcc",
+            "netId": "vpos"
+          },
+          {
+            "pinId": "vee",
+            "netId": "vneg"
+          }
+        ]
+      },
+      {
+        "id": "RGP",
+        "type": "resistor",
+        "designator": "R3",
+        "value": "10",
+        "pins": [
+          {
+            "pinId": "1",
+            "netId": "pwm"
+          },
+          {
+            "pinId": "2",
+            "netId": "gate"
+          }
+        ]
+      },
+      {
+        "id": "RGN",
+        "type": "resistor",
+        "designator": "R4",
+        "value": "10",
+        "pins": [
+          {
+            "pinId": "1",
+            "netId": "pwm"
+          },
+          {
+            "pinId": "2",
+            "netId": "gaten"
+          }
+        ]
+      },
+      {
+        "id": "MP",
+        "type": "mosfet",
+        "designator": "M1",
+        "model": "MPWRP",
+        "pins": [
+          {
+            "pinId": "d",
+            "netId": "sw"
+          },
+          {
+            "pinId": "g",
+            "netId": "gate"
+          },
+          {
+            "pinId": "s",
+            "netId": "vpos"
+          },
+          {
+            "pinId": "b",
+            "netId": "vpos"
+          }
+        ]
+      },
+      {
+        "id": "MN",
+        "type": "mosfet",
+        "designator": "M2",
+        "model": "MPWRN",
+        "pins": [
+          {
+            "pinId": "d",
+            "netId": "sw"
+          },
+          {
+            "pinId": "g",
+            "netId": "gaten"
+          },
+          {
+            "pinId": "s",
+            "netId": "vneg"
+          },
+          {
+            "pinId": "b",
+            "netId": "vneg"
+          }
+        ]
+      },
+      {
+        "id": "RSNUB",
+        "type": "resistor",
+        "designator": "R5",
+        "value": "10",
+        "pins": [
+          {
+            "pinId": "1",
+            "netId": "sw"
+          },
+          {
+            "pinId": "2",
+            "netId": "snub"
+          }
+        ]
+      },
+      {
+        "id": "CSNUB",
+        "type": "capacitor",
+        "designator": "C5",
+        "value": "1n",
+        "pins": [
+          {
+            "pinId": "1",
+            "netId": "snub"
+          },
+          {
+            "pinId": "2",
+            "netId": "0"
+          }
+        ]
+      },
+      {
+        "id": "L1",
+        "type": "inductor",
+        "designator": "L1",
+        "value": "82u",
+        "pins": [
+          {
+            "pinId": "1",
+            "netId": "sw"
+          },
+          {
+            "pinId": "2",
+            "netId": "out"
+          }
+        ]
+      },
+      {
+        "id": "C1",
+        "type": "capacitor",
+        "designator": "C1",
+        "value": "680n",
+        "pins": [
+          {
+            "pinId": "1",
+            "netId": "out"
+          },
+          {
+            "pinId": "2",
+            "netId": "0"
+          }
+        ]
+      },
+      {
+        "id": "RZ",
+        "type": "resistor",
+        "designator": "R6",
+        "value": "10",
+        "pins": [
+          {
+            "pinId": "1",
+            "netId": "out"
+          },
+          {
+            "pinId": "2",
+            "netId": "zob"
+          }
+        ]
+      },
+      {
+        "id": "CZ",
+        "type": "capacitor",
+        "designator": "C6",
+        "value": "100n",
+        "pins": [
+          {
+            "pinId": "1",
+            "netId": "zob"
+          },
+          {
+            "pinId": "2",
+            "netId": "0"
+          }
+        ]
+      },
+      {
+        "id": "RSPK",
+        "type": "resistor",
+        "designator": "R7",
+        "value": "8",
+        "pins": [
+          {
+            "pinId": "1",
+            "netId": "out"
+          },
+          {
+            "pinId": "2",
+            "netId": "0"
+          }
+        ]
+      }
+    ],
+    "nets": [
+      {
+        "id": "0",
+        "name": "GND",
+        "isGround": true
+      },
+      {
+        "id": "vpos",
+        "name": "VPOS"
+      },
+      {
+        "id": "vneg",
+        "name": "VNEG"
+      },
+      {
+        "id": "audio",
+        "name": "AUDIO_IN"
+      },
+      {
+        "id": "ain",
+        "name": "AIN"
+      },
+      {
+        "id": "aflt",
+        "name": "AFLT"
+      },
+      {
+        "id": "tri",
+        "name": "TRI"
+      },
+      {
+        "id": "pwm",
+        "name": "PWM"
+      },
+      {
+        "id": "gate",
+        "name": "GATE_P"
+      },
+      {
+        "id": "gaten",
+        "name": "GATE_N"
+      },
+      {
+        "id": "sw",
+        "name": "SW"
+      },
+      {
+        "id": "snub",
+        "name": "SNUB"
+      },
+      {
+        "id": "out",
+        "name": "OUT"
+      },
+      {
+        "id": "zob",
+        "name": "ZOBEL"
+      }
+    ],
+    "models": [
+      {
+        "name": "MPWRN",
+        "device": "mosfet",
+        "body": ".model MPWRN NMOS(LEVEL=1 VTO=2.0 KP=8 LAMBDA=0.005 RD=0.03 RS=0.03 CGSO=150p CGDO=40p)"
+      },
+      {
+        "name": "MPWRP",
+        "device": "mosfet",
+        "body": ".model MPWRP PMOS(LEVEL=1 VTO=-2.0 KP=8 LAMBDA=0.005 RD=0.03 RS=0.03 CGSO=150p CGDO=40p)"
+      }
+    ],
+    "metadata": {
+      "name": "Class-D Audio Amplifier",
+      "description": "A switching audio power amplifier: a triangle-carrier comparator turns the audio input into PWM, a MOSFET half-bridge switches the supply rails, and an LC filter (fc≈21kHz) reconstructs the audio. Run a transient — the 8Ω load recovers a clean sine (voltage gain ≈1.875, ~3.5W, flat 1–8kHz, ~55dB carrier rejection). Note: simplified single-node gate drive (no dead-time), so treat as a teaching/demo stage. (Validated on ngspice.)"
+    }
+  }
+}

@@ -1,0 +1,364 @@
+{
+  "name": "Howland Current Pump (V→I Converter)",
+  "description": "A Howland voltage-controlled current source: an op-amp with matched positive/negative feedback resistors forces a load current proportional to the input voltage and independent of the load resistance. Sweep or step the load — the current stays constant (≈0.099mA/V, <0.2% change across a 2:1 load swing) while the load voltage scales. (Validated on ngspice.)",
+  "tags": [
+    "instrumentation",
+    "current-source",
+    "howland",
+    "vccs",
+    "opamp",
+    "analog"
+  ],
+  "circuitJson": {
+    "version": "1.0",
+    "components": [
+      {
+        "id": "vin",
+        "type": "voltage_source",
+        "designator": "V1",
+        "value": "DC 1",
+        "pins": [
+          {
+            "pinId": "+",
+            "netId": "vsig"
+          },
+          {
+            "pinId": "-",
+            "netId": "0"
+          }
+        ]
+      },
+      {
+        "id": "vcc",
+        "type": "voltage_source",
+        "designator": "V2",
+        "value": "DC 15",
+        "pins": [
+          {
+            "pinId": "+",
+            "netId": "vcc"
+          },
+          {
+            "pinId": "-",
+            "netId": "0"
+          }
+        ]
+      },
+      {
+        "id": "vee",
+        "type": "voltage_source",
+        "designator": "V3",
+        "value": "DC -15",
+        "pins": [
+          {
+            "pinId": "+",
+            "netId": "vee"
+          },
+          {
+            "pinId": "-",
+            "netId": "0"
+          }
+        ]
+      },
+      {
+        "id": "rinf",
+        "type": "resistor",
+        "designator": "R5",
+        "value": "100",
+        "pins": [
+          {
+            "pinId": "1",
+            "netId": "vsig"
+          },
+          {
+            "pinId": "2",
+            "netId": "vin"
+          }
+        ]
+      },
+      {
+        "id": "cinf",
+        "type": "capacitor",
+        "designator": "C5",
+        "value": "10n",
+        "pins": [
+          {
+            "pinId": "1",
+            "netId": "vin"
+          },
+          {
+            "pinId": "2",
+            "netId": "0"
+          }
+        ]
+      },
+      {
+        "id": "cbyp_p",
+        "type": "capacitor",
+        "designator": "CB1",
+        "value": "100n",
+        "pins": [
+          {
+            "pinId": "1",
+            "netId": "vcc"
+          },
+          {
+            "pinId": "2",
+            "netId": "0"
+          }
+        ]
+      },
+      {
+        "id": "cbyp_n",
+        "type": "capacitor",
+        "designator": "CB2",
+        "value": "100n",
+        "pins": [
+          {
+            "pinId": "1",
+            "netId": "vee"
+          },
+          {
+            "pinId": "2",
+            "netId": "0"
+          }
+        ]
+      },
+      {
+        "id": "cbulk_p",
+        "type": "capacitor",
+        "designator": "CB3",
+        "value": "10u",
+        "pins": [
+          {
+            "pinId": "1",
+            "netId": "vcc"
+          },
+          {
+            "pinId": "2",
+            "netId": "0"
+          }
+        ]
+      },
+      {
+        "id": "cbulk_n",
+        "type": "capacitor",
+        "designator": "CB4",
+        "value": "10u",
+        "pins": [
+          {
+            "pinId": "1",
+            "netId": "vee"
+          },
+          {
+            "pinId": "2",
+            "netId": "0"
+          }
+        ]
+      },
+      {
+        "id": "u1",
+        "type": "subckt",
+        "designator": "U1",
+        "model": "OPAMPGEN",
+        "pins": [
+          {
+            "pinId": "out",
+            "netId": "out"
+          },
+          {
+            "pinId": "in+",
+            "netId": "inp"
+          },
+          {
+            "pinId": "in-",
+            "netId": "inn"
+          },
+          {
+            "pinId": "vcc",
+            "netId": "vcc"
+          },
+          {
+            "pinId": "vee",
+            "netId": "vee"
+          }
+        ]
+      },
+      {
+        "id": "r1",
+        "type": "resistor",
+        "designator": "R1",
+        "value": "10k",
+        "pins": [
+          {
+            "pinId": "1",
+            "netId": "vin"
+          },
+          {
+            "pinId": "2",
+            "netId": "inn"
+          }
+        ]
+      },
+      {
+        "id": "r2",
+        "type": "resistor",
+        "designator": "R2",
+        "value": "10k",
+        "pins": [
+          {
+            "pinId": "1",
+            "netId": "out"
+          },
+          {
+            "pinId": "2",
+            "netId": "inn"
+          }
+        ]
+      },
+      {
+        "id": "r3",
+        "type": "resistor",
+        "designator": "R3",
+        "value": "10k",
+        "pins": [
+          {
+            "pinId": "1",
+            "netId": "0"
+          },
+          {
+            "pinId": "2",
+            "netId": "inp"
+          }
+        ]
+      },
+      {
+        "id": "r4",
+        "type": "resistor",
+        "designator": "R4",
+        "value": "10k",
+        "pins": [
+          {
+            "pinId": "1",
+            "netId": "out"
+          },
+          {
+            "pinId": "2",
+            "netId": "inp"
+          }
+        ]
+      },
+      {
+        "id": "ccomp",
+        "type": "capacitor",
+        "designator": "C6",
+        "value": "10p",
+        "pins": [
+          {
+            "pinId": "1",
+            "netId": "out"
+          },
+          {
+            "pinId": "2",
+            "netId": "inn"
+          }
+        ]
+      },
+      {
+        "id": "rsense",
+        "type": "resistor",
+        "designator": "R6",
+        "value": "10",
+        "pins": [
+          {
+            "pinId": "1",
+            "netId": "inp"
+          },
+          {
+            "pinId": "2",
+            "netId": "load"
+          }
+        ]
+      },
+      {
+        "id": "rprot",
+        "type": "resistor",
+        "designator": "R7",
+        "value": "10",
+        "pins": [
+          {
+            "pinId": "1",
+            "netId": "load"
+          },
+          {
+            "pinId": "2",
+            "netId": "loado"
+          }
+        ]
+      },
+      {
+        "id": "rload",
+        "type": "resistor",
+        "designator": "R8",
+        "value": "1k",
+        "pins": [
+          {
+            "pinId": "1",
+            "netId": "loado"
+          },
+          {
+            "pinId": "2",
+            "netId": "0"
+          }
+        ]
+      }
+    ],
+    "nets": [
+      {
+        "id": "0",
+        "name": "GND",
+        "isGround": true
+      },
+      {
+        "id": "vsig",
+        "name": "VSIG"
+      },
+      {
+        "id": "vin",
+        "name": "VIN"
+      },
+      {
+        "id": "vcc",
+        "name": "VCC"
+      },
+      {
+        "id": "vee",
+        "name": "VEE"
+      },
+      {
+        "id": "out",
+        "name": "OUT"
+      },
+      {
+        "id": "inp",
+        "name": "INP"
+      },
+      {
+        "id": "inn",
+        "name": "INN"
+      },
+      {
+        "id": "load",
+        "name": "LOAD"
+      },
+      {
+        "id": "loado",
+        "name": "LOADO"
+      }
+    ],
+    "metadata": {
+      "name": "Howland Current Pump (V→I Converter)",
+      "description": "A Howland voltage-controlled current source: an op-amp with matched positive/negative feedback resistors forces a load current proportional to the input voltage and independent of the load resistance. Sweep or step the load — the current stays constant (≈0.099mA/V, <0.2% change across a 2:1 load swing) while the load voltage scales. (Validated on ngspice.)"
+    }
+  }
+}
