@@ -74,6 +74,19 @@ describe('NetlistSanitizer', () => {
         it('should prefix numeric-only names', () => {
             expect(sanitizeNodeName('123')).toBe('n123');
         });
+
+        it('must not emit a node that IS an ngspice operator token (net "e" -> "ne" == not-equal)', () => {
+            // net 'e' (emitter!) prefixes to 'ne', which ngspice parses as != -> v(ne) silently kills wrdata.
+            expect(sanitizeNodeName('e')).not.toBe('ne');
+            expect(sanitizeNodeName('e')).toBe('x_ne');
+            expect(sanitizeNodeName('ot')).toBe('x_not'); // 'ot' -> 'not'
+            // a net literally named like an operator
+            expect(sanitizeNodeName('ne')).toBe('x_ne');
+            expect(sanitizeNodeName('not')).toBe('x_not');
+            // benign names that merely CONTAIN an operator substring are untouched
+            expect(sanitizeNodeName('node')).toBe('node');
+            expect(sanitizeNodeName('and')).toBe('nand'); // prefixed 'n' -> not an operator token, fine
+        });
     });
 
     describe('sanitizeNetlist', () => {

@@ -21,6 +21,7 @@ export const TranAnalysisSchema = z.object({
     startTime: SpiceValueSchema.optional(),
     maxStep: SpiceValueSchema.optional(),
     uic: z.boolean().optional(),
+    initialConditions: z.record(z.string().min(1).max(100), z.number()).optional(),
 });
 
 /**

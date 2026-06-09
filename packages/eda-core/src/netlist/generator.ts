@@ -4,11 +4,14 @@
  */
 import type { CircuitJson, Component, Net, ModelDef } from '../types/circuit';
 import type { AnalysisConfig } from '../types/analysis';
-import { SPICE_PREFIXES, COMPONENT_PINS, isDigitalType } from '../types/circuit';
+import { SPICE_PREFIXES, COMPONENT_PINS, COMPONENT_TYPES, isDigitalType } from '../types/circuit';
 import { analysisToSpice } from '../types/analysis';
 import { buildZenerModel, normalizeControlledSourceGain, parseTransformerParams, parseTransmissionLineParams } from '../models/library';
 import { sanitizeNodeName, validateIncludePaths } from './sanitizer';
 import { planMixedSignal, emitDigitalComponent, aInstanceName, type MixedSignalPlan } from './digital';
+
+/** All valid ComponentType values, for a fail-loud guard against an unknown type slipping through. */
+const VALID_COMPONENT_TYPES = new Set<string>(COMPONENT_TYPES);
 
 /**
  * Netlist generation options
@@ -209,6 +212,15 @@ export function generateNetlist(
     // so such probes can be dropped (and so a digital designator is never remapped into an i() rewrite).
     const digitalDeviceRefs = new Set<string>();
     for (const component of circuit.components) {
+        // Fail loud on an unknown type — otherwise an un-emittable type (e.g. a caller that skipped
+        // safeValidateCircuitJson and passed type:'opamp') would be SILENTLY dropped, yielding a
+        // degraded netlist that "simulates" to wrong/flat results with no error.
+        if (!VALID_COMPONENT_TYPES.has(component.type)) {
+            throw new Error(
+                `Unknown component type '${component.type}' for ${component.designator || component.id}. ` +
+                    `Valid types are COMPONENT_TYPES; validate with safeValidateCircuitJson before generating.`,
+            );
+        }
         // Digital components (gates/flip-flops) emit XSPICE 'a'-devices via the mixed-signal plan (which
         // resolves their nodes through the bridge overrides); everything else takes the analog path.
         const digital = isDigitalType(component.type);
@@ -259,10 +271,28 @@ export function generateNetlist(
         const mapped = designatorToInstance.get(analysis.source.toLowerCase());
         if (mapped) effectiveAnalysis = { ...analysis, source: mapped };
     }
-    lines.push('* Analysis');
-    lines.push(analysisToSpice(effectiveAnalysis));
-    lines.push('');
-
+    // Initial conditions (tran only): emit a `.ic v(<node>)=<v>` card per entry (net id → sanitized node).
+    // CRUCIALLY we do NOT force `uic` — we pass the caller's `uic` flag through. The two idioms are opposite:
+    //   • `.ic` WITHOUT uic ("Initial Transient Solution"): ngspice solves the DC op-point with these nodes
+    //     pinned, then releases them — supplies stay energized. This is the robust way to KICK a symmetric
+    //     self-starting oscillator (active devices + a supply rail) off its equilibrium.
+    //   • `.ic` WITH uic: ngspice SKIPS the op-point and starts every unlisted node at 0 (including supply
+    //     rails). Required for pure-reactive seeding (a charged cap / LC tank: cap=V, iL=0), but it ABORTS an
+    //     active oscillator because the zeroed supply collapses the timestep.
+    // Forcing uic here used to break the documented oscillator use case (supply x_vdd zeroed → "timestep too
+    // small"). Callers that want reactive seeding set `uic: true` explicitly; the default (no uic) self-starts.
+    if (analysis.type === 'tran' && analysis.initialConditions) {
+        const icLines: string[] = [];
+        for (const [netId, volts] of Object.entries(analysis.initialConditions)) {
+            const node = nodeMap.get(netId);
+            if (node && node !== '0') icLines.push(`.ic v(${node})=${volts}`);
+        }
+        if (icLines.length > 0) {
+            lines.push('* Initial conditions');
+            lines.push(...icLines);
+            lines.push('');
+        }
+    }
     // Control block for output. Caller-supplied probes reference a device by its designator (i(<dev>)) or
     // a node by its net id/name (v(<net>)); remap both to the names actually emitted (the device may have
     // been prefixed, the node sanitized) so they resolve in ngspice instead of yielding "no such vector".
@@ -290,10 +320,33 @@ export function generateNetlist(
         if (raw) netRefToNode.set(raw.toLowerCase(), twin);
     }
     const rawProbes = options.probes || generateDefaultProbes(circuit, nodeMap, ms);
+    let needSaveCurrents = false;
     const probes = rawProbes
         .map((p) => rewriteProbeNodeRefs(rewriteProbeDeviceRefs(p, designatorToInstance), netRefToNode))
         .filter((p) => p.trim().length > 0) // a probe that reduced to nothing (e.g. v(gnd)) is dropped
-        .filter((p) => !isDigitalCurrentProbe(p, digitalDeviceRefs)); // i(<digital a-device>) has no current vector → drop (else it aborts the whole wrdata line)
+        .filter((p) => !isDigitalCurrentProbe(p, digitalDeviceRefs)) // i(<digital a-device>) has no current vector → drop (else it aborts the whole wrdata line)
+        .map((p) => {
+            // Make analog current probes outputtable: keep native i() for V/L/E/H, rewrite R/C/D to
+            // @<dev>[i] (+ savecurrents), drop anything else — so no i() term can abort the wrdata line.
+            const { token, savecurrents } = rewriteCurrentProbeVector(p, seenDevices);
+            if (savecurrents) needSaveCurrents = true;
+            return token;
+        })
+        .filter((p) => p.trim().length > 0); // a current probe on an unsupported/multi-terminal device was dropped
+
+    // ngspice -b has no native i(<dev>) for R/C/D — those probes were rewritten to `@<dev>[i]`, which needs
+    // `.options savecurrents` to populate. Emit it ONLY when such a probe is present (it makes ngspice store
+    // every device's current — real matrix/IO overhead we don't want on the common voltage-only run).
+    if (needSaveCurrents) {
+        lines.push('* Options');
+        lines.push('.options savecurrents');
+        lines.push('');
+    }
+
+    lines.push('* Analysis');
+    lines.push(analysisToSpice(effectiveAnalysis));
+    lines.push('');
+
     lines.push('* Control block');
     lines.push('.control');
     lines.push('  set filetype=ascii');
@@ -371,6 +424,39 @@ function isDigitalCurrentProbe(probe: string, digitalRefs: Set<string>): boolean
     const m = probe.trim().match(/^i\s*\(\s*([^),]+?)\s*\)$/i);
     const name = m?.[1];
     return name !== undefined && digitalRefs.has(name.trim().toLowerCase());
+}
+
+/** SPICE device letters with a NATIVE branch-current vector in batch mode — `i(<dev>)` works as-is. */
+const NATIVE_CURRENT_DEVICES = new Set(['V', 'L', 'E', 'H']); // voltage sources, inductors, vcvs, ccvs
+/**
+ * Two-terminal elements whose current is reliably reachable via `.options savecurrents` + the `@<dev>[i]`
+ * vector form, in EVERY analysis mode. Verified on ngspice-41: `@r1[i]`/`@c1[i]` resolve in both op and
+ * tran, case-insensitively. Diodes are deliberately EXCLUDED — their current vector is `@<dev>[id]` (a
+ * different parameter) and it only resolves in tran (it errors in op), so emitting it would re-introduce
+ * the line-abort bug under op; a diode current probe is dropped instead.
+ */
+const SAVECURRENTS_DEVICES = new Set(['R', 'C']); // resistor, capacitor
+
+/**
+ * Make a current probe `i(<inst>)` actually outputtable by ngspice `-b`, keyed on the emitted device letter:
+ *   • V/L/E/H — native branch current → keep `i(<inst>)` (no `.options` needed).
+ *   • R/C     — NO native i() in batch mode; rewrite to the device-current vector `@<inst>[i]` and signal
+ *     the caller to emit `.options savecurrents`. (Verified: `@r1[i]`/`@c1[i]` return the current.)
+ *   • anything else (diode/zener `D`, multi-terminal Q/M/J, sources, switches, behavioral, bridges) has no
+ *     single, mode-portable current vector, and an UNKNOWN device name would error too → DROP (return ''),
+ *     exactly like the digital guard, so the bad term can't abort the whole `wrdata` line and kill co-probes.
+ * Non-current probes (`v(...)`) and compound expressions pass through untouched. `emitted` is the set of
+ * real (lower-cased) device names actually in the deck. Returns `{ token, savecurrents }`.
+ */
+function rewriteCurrentProbeVector(probe: string, emitted: Set<string>): { token: string; savecurrents: boolean } {
+    const m = probe.trim().match(/^i\s*\(\s*([^),]+?)\s*\)$/i);
+    if (!m || m[1] === undefined) return { token: probe, savecurrents: false }; // not a sole current probe
+    const name = m[1].trim();
+    if (!emitted.has(name.toLowerCase())) return { token: '', savecurrents: false }; // unknown device → would abort; drop
+    const letter = name[0]?.toUpperCase() ?? '';
+    if (NATIVE_CURRENT_DEVICES.has(letter)) return { token: `i(${name})`, savecurrents: false };
+    if (SAVECURRENTS_DEVICES.has(letter)) return { token: `@${name}[i]`, savecurrents: true };
+    return { token: '', savecurrents: false }; // multi-terminal / exotic → drop (can't probe a single current)
 }
 
 /**

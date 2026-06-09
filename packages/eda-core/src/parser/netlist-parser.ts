@@ -522,16 +522,21 @@ export function extractProbes(netlist: string): string[] {
     for (const line of lines) {
         const trimmed = line.trim().toLowerCase();
 
+        // A probe token is v(...), i(...), or the device-current vector @<dev>[i] (emitted for R/C/D currents,
+        // which have no native i() in batch mode). Capturing @... keeps the extracted probe list aligned with
+        // the wrdata columns — otherwise the parser would map columns to a short list and lose/shift series.
+        const isProbeToken = (p: string) => p.startsWith('v(') || p.startsWith('i(') || p.startsWith('@');
+
         // Look for wrdata command
         if (trimmed.startsWith('wrdata')) {
             const parts = trimmed.split(/\s+/).slice(2); // Skip 'wrdata' and filename
-            probes.push(...parts.filter((p) => p.startsWith('v(') || p.startsWith('i(')));
+            probes.push(...parts.filter(isProbeToken));
         }
 
         // Look for print command
         if (trimmed.startsWith('print') || trimmed.startsWith('.print')) {
             const parts = trimmed.split(/\s+/).slice(1);
-            probes.push(...parts.filter((p) => p.startsWith('v(') || p.startsWith('i(')));
+            probes.push(...parts.filter(isProbeToken));
         }
     }
 

@@ -17,6 +17,18 @@ export interface TranAnalysis {
     startTime?: string; // Default: 0
     maxStep?: string; // Maximum step size
     uic?: boolean; // Use Initial Conditions
+    /**
+     * Initial node voltages keyed by NET ID, e.g. { cap: 0.1 }. The generator emits a `.ic v(<node>)=<v>`
+     * card per entry (net id sanitized to its SPICE node). It does NOT force `uic` — set `uic` yourself to
+     * pick the idiom, because the two are opposite:
+     *   • LEAVE uic UNSET (default) to KICK a self-starting oscillator that has a supply rail: ngspice solves
+     *     the DC op-point with these nodes pinned then releases them, so the supply stays energized and the
+     *     seed breaks the symmetric equilibrium. (Forcing uic here would zero the supply and abort the run.)
+     *   • SET uic:true for pure-reactive seeding (a charged cap / lossless LC tank, no supply): ngspice skips
+     *     the op-point and starts every unlisted node at 0 (cap=V, iL=0) — without uic such a circuit diverges.
+     * Unknown net ids and ground are skipped (no phantom `.ic`).
+     */
+    initialConditions?: Record<string, number>;
 }
 
 /**

@@ -7,7 +7,7 @@ import * as fs from 'fs/promises';
 import * as path from 'path';
 import { config } from '../config';
 import { logger } from '../logger';
-import { parseSimulationOutput, sanitizeNetlist, extractProbes } from '@circuit-forge/eda-core';
+import { parseSimulationOutput, sanitizeNetlist, extractProbes, parseSpiceValue } from '@circuit-forge/eda-core';
 import type { SimulationResult } from '@circuit-forge/eda-core';
 
 /**
@@ -118,9 +118,43 @@ export async function runSimulation(input: SimulationJobInput): Promise<Simulati
         // Parse the output. If the caller didn't pass probe names (e.g. version-based sims
         // that rely on eda-core's default probes), derive them from the netlist's `wrdata`
         // line so the CSV columns can be mapped to named series instead of an empty result.
-        const probeNames =
-            input.probeNames.length > 0 ? input.probeNames : extractProbes(sanitizedNetlist);
+        const emittedProbes = extractProbes(sanitizedNetlist);
+        let probeNames = input.probeNames.length > 0 ? input.probeNames : emittedProbes;
+        // The generator can DROP a probe it can't emit (e.g. a current probe on a diode/transistor or a
+        // digital a-device). When that happens the caller's explicit list is LONGER than the emitted wrdata
+        // columns, and the positional CSV mapping would shift every series. The emitted `wrdata` tokens are
+        // the column ground truth, so fall back to them on a count mismatch (a same-count rewrite like
+        // i(R1)->@r1[i] keeps the caller's nicer labels, since position still maps correctly).
+        if (input.probeNames.length > 0 && emittedProbes.length !== input.probeNames.length) {
+            probeNames = emittedProbes;
+        }
         const result = parseSimulationOutput(outputContent, probeNames, input.analysisType);
+
+        // Detect a SILENTLY TRUNCATED transient: ngspice can exit 0 yet stop far before the requested
+        // stopTime when the adaptive timestep collapses (floating node / hard switching). Fail the job
+        // instead of persisting a misleading partial result. stopTime is read from the netlist's .tran card.
+        if (input.analysisType === 'tran') {
+            const tranMatch = sanitizedNetlist.match(/^\s*\.tran\s+\S+\s+(\S+)/im);
+            let want = 0;
+            if (tranMatch && tranMatch[1]) {
+                const parsedStop = parseSpiceValue(tranMatch[1]);
+                if (parsedStop.isValid) want = parsedStop.value;
+            }
+            const lastT = Math.max(
+                0,
+                ...result.series.map((s) => (s.points.length ? s.points[s.points.length - 1]!.x : 0)),
+            );
+            if (want > 0 && lastT > 0 && lastT < 0.9 * want) {
+                return {
+                    success: false,
+                    stdout,
+                    stderr,
+                    runtimeMs: Date.now() - startTime,
+                    outputSizeBytes,
+                    error: `Transient ended early at t=${lastT.toExponential(2)}s of ${tranMatch![1]} (timestep collapse / non-convergence — often a floating node or missing DC path to ground)`,
+                };
+            }
+        }
 
         const runtimeMs = Date.now() - startTime;
         logger.info(

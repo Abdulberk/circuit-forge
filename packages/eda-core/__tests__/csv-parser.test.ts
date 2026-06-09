@@ -66,6 +66,27 @@ describe('CsvParser', () => {
             expect(result.meta.xUnit).toBe('Hz');
         });
 
+        it('collapses AC complex columns (freq, re, im) to magnitude per probe', () => {
+            // ngspice `wrdata` writes each AC vector as THREE columns — freq, real, imag — so a row for two
+            // probes is: f re0 im0 f re1 im1. The parser must read every 3rd value as x and hypot(re,im) as y;
+            // the older (x,y)-pair heuristic would mis-align and report the imaginary part as a separate point.
+            const csv = `1 3 4 1 0.6 0.8
+10 6 8 10 5 12`;
+
+            const result = parseCsv(csv, ['v(out)', 'v(fb)'], 'ac');
+
+            expect(result.series).toHaveLength(2);
+            // probe 0: |3+4j| = 5, |6+8j| = 10
+            expect(result.series[0]!.points).toEqual([
+                { x: 1, y: 5 },
+                { x: 10, y: 10 },
+            ]);
+            // probe 1: |0.6+0.8j| = 1, |5+12j| = 13
+            expect(result.series[1]!.points[0]!.x).toBe(1);
+            expect(result.series[1]!.points[0]!.y).toBeCloseTo(1);
+            expect(result.series[1]!.points[1]!.y).toBeCloseTo(13);
+        });
+
         it('should handle empty lines', () => {
             const csv = `0 0
 

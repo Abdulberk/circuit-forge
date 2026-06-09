@@ -274,6 +274,77 @@ describe('NetlistGenerator', () => {
             expect(netlist).not.toMatch(/^U1 /m);
         });
 
+        it('throws on an unknown component type instead of silently dropping it', () => {
+            // A caller that skips safeValidateCircuitJson could pass a non-existent type (e.g. 'opamp',
+            // which is NOT a COMPONENT_TYPE — op-amps are 'generic' + a subckt model). Silently skipping it
+            // would yield a degraded netlist that "simulates" to wrong/flat numbers with no error. Fail loud.
+            const circuit: CircuitJson = {
+                version: '1.0',
+                components: [
+                    createComponent('V1', 'voltage_source', 'V1', 'DC 5', [
+                        { pinId: '+', netId: 'vcc' },
+                        { pinId: '-', netId: '0' },
+                    ]),
+                    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+                    createComponent('U1', 'opamp' as any, 'U1', undefined, [
+                        { pinId: '+', netId: 'vcc' },
+                        { pinId: '-', netId: '0' },
+                    ]),
+                ],
+                nets: [createNet('vcc', 'vcc'), createNet('0', '0', true)],
+            };
+            expect(() => generateNetlist(circuit, { type: 'tran', stopTime: '1m' })).toThrow(
+                /Unknown component type 'opamp'/,
+            );
+        });
+
+        it('emits .ic cards for tran initialConditions but does NOT force uic (passes the flag through)', () => {
+            // initialConditions is keyed by NET ID; the generator maps each to its sanitized SPICE node and
+            // emits `.ic v(<node>)=<v>`. It must NOT force uic — forcing it zeroes supply rails and aborts a
+            // self-starting oscillator. `.ic` WITHOUT uic keeps supplies energized (the robust kick idiom);
+            // a caller wanting pure-reactive seeding sets uic:true explicitly. Both idioms are asserted below.
+            const circuit: CircuitJson = {
+                version: '1.0',
+                components: [
+                    createComponent('V1', 'voltage_source', 'V1', 'DC 5', [
+                        { pinId: '+', netId: 'vcc' },
+                        { pinId: '-', netId: '0' },
+                    ]),
+                    createComponent('R1', 'resistor', 'R1', '1k', [
+                        { pinId: '1', netId: 'vcc' },
+                        { pinId: '2', netId: 'cap' },
+                    ]),
+                    createComponent('C1', 'capacitor', 'C1', '100n', [
+                        { pinId: '1', netId: 'cap' },
+                        { pinId: '2', netId: '0' },
+                    ]),
+                ],
+                nets: [createNet('vcc', 'vcc'), createNet('cap', 'cap'), createNet('0', '0', true)],
+            };
+            const findTran = (n: string) => n.split('\n').find((l) => l.trim().startsWith('.tran'))!;
+
+            // Default (uic unset): .ic cards present, NO uic on .tran.
+            const noUic = generateNetlist(circuit, {
+                type: 'tran',
+                stopTime: '1m',
+                // net 'cap' (reserved-safe) -> node 'ncap'; net '0' (ground) must be skipped (no .ic on ground).
+                initialConditions: { cap: 0.1, '0': 0 },
+            });
+            expect(noUic).toMatch(/^\.ic v\(ncap\)=0\.1$/m);
+            expect(noUic).not.toMatch(/\.ic v\(0\)/); // ground is never seeded
+            expect(findTran(noUic)).not.toMatch(/\buic\b/); // must NOT force uic
+
+            // Caller opts in (uic:true): .ic cards present AND uic on .tran.
+            const withUic = generateNetlist(circuit, {
+                type: 'tran',
+                stopTime: '1m',
+                uic: true,
+                initialConditions: { cap: 0.1 },
+            });
+            expect(withUic).toMatch(/^\.ic v\(ncap\)=0\.1$/m);
+            expect(findTran(withUic)).toMatch(/\buic\b/); // caller's flag passes through
+        });
+
         it('emits the correct SPICE device letter when a designator does not match the prefix', () => {
             // SPICE keys a device on its first letter. A Zener's device letter is 'D', but its natural
             // designator is "Z1" — emitting "Z1 …" verbatim is an invalid element (no 'Z' device exists),
@@ -341,6 +412,90 @@ describe('NetlistGenerator', () => {
             expect(netlist).not.toMatch(/i\(FB1\)/); // the un-prefixed reference must not survive
             expect(netlist).toMatch(/i\(V1\)/); // conventional designator left as-is
             expect(netlist).toMatch(/v\(na\)/); // node probe v(a) remapped to its sanitized node "na"
+        });
+
+        it('rewrites R/C current probes to @dev[i] + savecurrents, keeps native i(V), drops i(diode)', () => {
+            // ngspice -b has NO branch-current vector for a resistor/capacitor, so a verbatim i(R1) errors
+            // "no such function as i," and aborts the ENTIRE wrdata line — silently killing every co-probe
+            // (total data loss). The generator rewrites i(R/C) to the device-current vector @<dev>[i] and
+            // emits `.options savecurrents`, leaves native i(V1) untouched, and DROPS i(D1) (the diode's
+            // @<dev>[id] vector is mode-finicky — dropping it keeps co-probes alive rather than risk the abort).
+            const circuit: CircuitJson = {
+                version: '1.0',
+                components: [
+                    createComponent('v1', 'voltage_source', 'V1', 'DC 5', [
+                        { pinId: '+', netId: 'a' },
+                        { pinId: '-', netId: 'b' },
+                    ]),
+                    createComponent('r1', 'resistor', 'R1', '1k', [
+                        { pinId: '1', netId: 'b' },
+                        { pinId: '2', netId: 'mid' },
+                    ]),
+                    createComponent('c1', 'capacitor', 'C1', '100n', [
+                        { pinId: '1', netId: 'mid' },
+                        { pinId: '2', netId: '0' },
+                    ]),
+                    createComponent('d1', 'diode', 'D1', undefined, [
+                        { pinId: 'anode', netId: 'a' },
+                        { pinId: 'cathode', netId: 'mid' },
+                    ]),
+                ],
+                nets: [createNet('a', 'a'), createNet('b', 'b'), createNet('mid', 'mid'), createNet('0', '0', true)],
+            };
+            const netlist = generateNetlist(circuit, { type: 'tran', stopTime: '1m' }, {
+                probes: ['v(mid)', 'i(R1)', 'i(C1)', 'i(D1)', 'i(V1)'],
+            });
+            const wr = netlist.split('\n').find((l) => l.includes('wrdata'))!;
+            expect(netlist).toMatch(/^\.options savecurrents$/m); // emitted once because R/C currents are probed
+            expect(wr).toMatch(/@R1\[i\]/); // resistor current via the device-current vector
+            expect(wr).toMatch(/@C1\[i\]/); // capacitor current
+            expect(wr).toMatch(/i\(V1\)/); // voltage source keeps its NATIVE branch current
+            expect(wr).toMatch(/v\(nmid\)/); // the voltage co-probe survives on the same line
+            // No bare i(R1)/i(C1) survives to abort the line; the diode current probe is dropped entirely.
+            expect(wr).not.toMatch(/\bi\(R1\)/);
+            expect(wr).not.toMatch(/\bi\(C1\)/);
+            expect(wr).not.toMatch(/\bi\(D1\)/);
+            expect(wr).not.toMatch(/@D1\[/); // diode dropped, NOT rewritten (its @-vector is mode-finicky)
+        });
+
+        it('drops a current probe on a multi-terminal device instead of aborting the wrdata line', () => {
+            // A BJT has no single branch-current vector (ic/ib/ie), so i(Q1) is unresolvable and would abort
+            // the whole wrdata line. It must be DROPPED so the voltage co-probe still produces output. No
+            // savecurrents is needed when only native + dropped probes remain.
+            const circuit: CircuitJson = {
+                version: '1.0',
+                components: [
+                    createComponent('v1', 'voltage_source', 'V1', 'DC 5', [
+                        { pinId: '+', netId: 'vcc' },
+                        { pinId: '-', netId: '0' },
+                    ]),
+                    createComponent('rc', 'resistor', 'RC', '1k', [
+                        { pinId: '1', netId: 'vcc' },
+                        { pinId: '2', netId: 'col' },
+                    ]),
+                    {
+                        id: 'q1',
+                        type: 'bjt',
+                        designator: 'Q1',
+                        model: 'QGENNPN',
+                        pins: [
+                            { pinId: 'c', netId: 'col' },
+                            { pinId: 'b', netId: 'vcc' },
+                            { pinId: 'e', netId: '0' },
+                        ],
+                    },
+                ],
+                nets: [createNet('vcc', 'vcc'), createNet('col', 'col'), createNet('0', '0', true)],
+                models: [{ name: 'QGENNPN', device: 'bjt', body: '.model QGENNPN NPN(BF=100)' }],
+            };
+            const netlist = generateNetlist(circuit, { type: 'tran', stopTime: '1m' }, {
+                probes: ['v(col)', 'i(Q1)'],
+            });
+            const wr = netlist.split('\n').find((l) => l.includes('wrdata'))!;
+            expect(wr).toMatch(/v\(ncol\)/); // co-probe survives
+            expect(wr).not.toMatch(/i\(Q1\)/); // ambiguous transistor current dropped
+            expect(wr).not.toMatch(/@Q1\[/); // and NOT rewritten to a @-vector (no single current)
+            expect(netlist).not.toMatch(/savecurrents/); // not needed when nothing was rewritten to @dev[i]
         });
 
         it('remaps a .dc sweep source to the emitted (prefixed) device name', () => {
