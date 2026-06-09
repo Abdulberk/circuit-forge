@@ -298,6 +298,94 @@ describe('NetlistGenerator', () => {
             );
         });
 
+        it('points scr/igbt at the subckt+model path in the unknown-type error', () => {
+            // scr/igbt are reached as type:'subckt' + model:'SCRGEN'/'IGBTGEN' (the generic models exist),
+            // not as first-class types — the reject should say so instead of leaving the caller stuck.
+            const scr: CircuitJson = {
+                version: '1.0',
+                // eslint-disable-next-line @typescript-eslint/no-explicit-any
+                components: [createComponent('SCR1', 'scr' as any, 'SCR1', undefined, [{ pinId: 'a', netId: 'n1' }])],
+                nets: [createNet('n1', 'n1'), createNet('0', '0', true)],
+            };
+            expect(() => generateNetlist(scr, { type: 'op' })).toThrow(/SCRGEN/);
+        });
+
+        it('throws when an AC analysis has no AC-magnitude source (would be all-zero)', () => {
+            // A .ac run only excites sources declaring an AC magnitude; with none every probe is identically
+            // zero — a meaningless result that would otherwise "succeed". Fail loud.
+            const dcOnly: CircuitJson = {
+                version: '1.0',
+                components: [
+                    createComponent('V1', 'voltage_source', 'V1', 'DC 5', [
+                        { pinId: '+', netId: 'in' },
+                        { pinId: '-', netId: '0' },
+                    ]),
+                    createComponent('R1', 'resistor', 'R1', '1k', [
+                        { pinId: '1', netId: 'in' },
+                        { pinId: '2', netId: '0' },
+                    ]),
+                ],
+                nets: [createNet('in', 'in'), createNet('0', '0', true)],
+            };
+            const ac: AcAnalysis = { type: 'ac', variation: 'dec', points: 10, startFreq: '1', stopFreq: '1meg' };
+            expect(() => generateNetlist(dcOnly, ac)).toThrow(/AC magnitude/);
+            // The same circuit with an AC source is fine.
+            dcOnly.components[0]!.value = 'AC 1';
+            expect(() => generateNetlist(dcOnly, ac)).not.toThrow();
+        });
+
+        it('validates a user-defined subckt instance pin count against its .subckt body port count', () => {
+            // A user subckt with only a body (no declared `ports`) binds in authored order, so a wrong pin
+            // COUNT silently mis-wires (an unmapped port binds to global node 0 → wrong answer). Fail loud.
+            const mk = (pins: { pinId: string; netId: string }[]): CircuitJson => ({
+                version: '1.0',
+                components: [
+                    createComponent('V1', 'voltage_source', 'V1', 'DC 5', [
+                        { pinId: '+', netId: 'in' },
+                        { pinId: '-', netId: '0' },
+                    ]),
+                    { id: 'x1', type: 'subckt', designator: 'X1', model: 'MYBUF', pins },
+                ],
+                nets: [createNet('in', 'in'), createNet('out', 'out'), createNet('0', '0', true)],
+                models: [{ name: 'MYBUF', device: 'subckt', body: '.subckt MYBUF in out gnd\nRb out gnd 1k\n.ends' }],
+            });
+            // 2 pins against a 3-port body → throw.
+            expect(() =>
+                generateNetlist(mk([{ pinId: 'a', netId: 'in' }, { pinId: 'b', netId: 'out' }]), { type: 'op' }),
+            ).toThrow(/declares 3 port/);
+            // Correct 3-pin instance → no throw.
+            expect(() =>
+                generateNetlist(
+                    mk([{ pinId: 'a', netId: 'in' }, { pinId: 'b', netId: 'out' }, { pinId: 'c', netId: '0' }]),
+                    { type: 'op' },
+                ),
+            ).not.toThrow();
+        });
+
+        it('throws a clear error when every caller-supplied probe is unobservable (would emit no wrdata)', () => {
+            // A sole un-probeable probe (i(D1)/i(Q1) alone, or v(0)) would yield a wrdata-less deck → ngspice
+            // exits 0 with no output.csv (opaque empty result). Fail loud naming the bad probes instead.
+            const circuit: CircuitJson = {
+                version: '1.0',
+                components: [
+                    createComponent('V1', 'voltage_source', 'V1', 'DC 5', [
+                        { pinId: '+', netId: 'in' },
+                        { pinId: '-', netId: '0' },
+                    ]),
+                    createComponent('D1', 'diode', 'D1', undefined, [
+                        { pinId: 'anode', netId: 'in' },
+                        { pinId: 'cathode', netId: '0' },
+                    ]),
+                ],
+                nets: [createNet('in', 'in'), createNet('0', '0', true)],
+            };
+            expect(() => generateNetlist(circuit, { type: 'op' }, { probes: ['i(D1)'] })).toThrow(
+                /not observable|i\(D1\)/,
+            );
+            // A voltage co-probe rescues it (only the diode current is dropped).
+            expect(() => generateNetlist(circuit, { type: 'op' }, { probes: ['v(in)', 'i(D1)'] })).not.toThrow();
+        });
+
         it('emits .ic cards for tran initialConditions but does NOT force uic (passes the flag through)', () => {
             // initialConditions is keyed by NET ID; the generator maps each to its sanitized SPICE node and
             // emits `.ic v(<node>)=<v>`. It must NOT force uic — forcing it zeroes supply rails and aborts a

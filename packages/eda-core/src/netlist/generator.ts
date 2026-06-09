@@ -70,6 +70,24 @@ export function generateNetlist(
         nodeOwner.set(key, netId);
     }
 
+    // An `.ac` run only excites sources that declare an AC magnitude; with none, EVERY probe is identically
+    // zero at all frequencies — a meaningless all-zero result that still "succeeds" (exit 0, finite). Fail
+    // loud so a frequency-response request with a DC-only source is corrected, not silently returned as flat.
+    if (analysis.type === 'ac') {
+        const hasAcSource = circuit.components.some(
+            (c) =>
+                (c.type === 'voltage_source' || c.type === 'current_source') &&
+                typeof c.value === 'string' &&
+                /\bac\b/i.test(c.value),
+        );
+        if (!hasAcSource) {
+            throw new Error(
+                `AC analysis requires at least one source with an AC magnitude (e.g. value "AC 1"); none found — ` +
+                    `every probe would be identically zero across the sweep.`,
+            );
+        }
+    }
+
     // Reserve the SPICE instance name of every real component so the mixed-signal pre-pass can pick
     // synthesized bridge/rail device names that never collide with a user designator (mirrors the node
     // uniqueness already done for synthesized nodes). The synthesized devices are leaf/unreferenced, so a
@@ -216,9 +234,18 @@ export function generateNetlist(
         // safeValidateCircuitJson and passed type:'opamp') would be SILENTLY dropped, yielding a
         // degraded netlist that "simulates" to wrong/flat results with no error.
         if (!VALID_COMPONENT_TYPES.has(component.type)) {
+            // A thyristor/IGBT is reached as type:'subckt' with model:'SCRGEN'/'IGBTGEN' (the generic
+            // models exist), not as a first-class type — point the caller there instead of a bare reject.
+            const t = component.type.toLowerCase();
+            const hint =
+                t === 'scr' || t === 'thyristor'
+                    ? ` Use type:'subckt' with model:'SCRGEN' (ports anode,gate,cathode) for a thyristor.`
+                    : t === 'igbt'
+                      ? ` Use type:'subckt' with model:'IGBTGEN' (ports c,g,e) for an IGBT.`
+                      : '';
             throw new Error(
                 `Unknown component type '${component.type}' for ${component.designator || component.id}. ` +
-                    `Valid types are COMPONENT_TYPES; validate with safeValidateCircuitJson before generating.`,
+                    `Valid types are COMPONENT_TYPES; validate with safeValidateCircuitJson before generating.${hint}`,
             );
         }
         // Digital components (gates/flip-flops) emit XSPICE 'a'-devices via the mixed-signal plan (which
@@ -334,6 +361,18 @@ export function generateNetlist(
             return token;
         })
         .filter((p) => p.trim().length > 0); // a current probe on an unsupported/multi-terminal device was dropped
+
+    // If the caller EXPLICITLY asked for probes but every one was dropped (e.g. only i(D1)/i(Q1), or v(0)),
+    // the deck would emit no `wrdata` line and ngspice would exit 0 with no output.csv — an opaque empty
+    // result. Fail loud with the specific probes that aren't observable so the caller can pick a real one
+    // (a diode/transistor terminal current is read via a series sense resistor; ground has no voltage vector).
+    if (options.probes && options.probes.length > 0 && probes.length === 0) {
+        throw new Error(
+            `None of the requested probes are observable in ngspice batch mode: ${options.probes.join(', ')}. ` +
+                `A diode/transistor terminal current (i(D…)/i(Q…)/i(M…)) has no branch-current vector — probe a ` +
+                `series resistor's current i(R…) instead; ground v(0) has no vector — probe a non-ground node.`,
+        );
+    }
 
     // ngspice -b has no native i(<dev>) for R/C/D — those probes were rewritten to `@<dev>[i]`, which needs
     // `.options savecurrents` to populate. Emit it ONLY when such a probe is present (it makes ngspice store
@@ -644,15 +683,32 @@ function componentToSpice(
         case 'subckt': {
             if (!model) return null;
             const inst = spiceInstanceName(designator, 'X');
-            // Bind nodes by the macromodel's declared port order (pinId) when it's known, so the authored
-            // pin-array order is irrelevant and a reordered-but-complete pin set still nets correctly
-            // (mirrors bjt/mosfet). Fall back to the authored order for an unknown / user-defined subckt.
             const def = modelMap?.get(model);
-            const subcktNodes =
-                def?.ports && def.ports.length > 0
-                    ? nodesForPinOrder(component, nodeMap, def.ports)
-                    : nodes;
-            return `${inst} ${subcktNodes.join(' ')} ${model}`;
+            // Macromodel with DECLARED ports: bind by pinId (authored order irrelevant); nodesForPinOrder
+            // throws on a missing/extra named port.
+            if (def?.ports && def.ports.length > 0) {
+                return `${inst} ${nodesForPinOrder(component, nodeMap, def.ports).join(' ')} ${model}`;
+            }
+            // User-defined subckt with only a body: we must bind in authored order (no named ports to reorder
+            // by), so validate the authored pin COUNT against the `.subckt` header's port count. A mismatch
+            // would otherwise mis-wire SILENTLY — an unmapped port binds to global node 0 (wrong answer), or
+            // a surplus node is absorbed — with ngspice exiting 0 and no diagnostic anywhere.
+            if (def?.body) {
+                const header = def.body.match(/^\s*\.subckt\s+\S+\s+(.+)$/im);
+                if (header?.[1]) {
+                    const portCount = header[1]
+                        .trim()
+                        .split(/\s+/)
+                        .filter((tok) => tok.length > 0 && !tok.includes('=') && tok.toLowerCase() !== 'params:').length;
+                    if (portCount > 0 && portCount !== nodes.length) {
+                        throw new Error(
+                            `Subckt '${model}' (${inst}) is wired with ${nodes.length} pin(s) but its .subckt body declares ${portCount} port(s) — ` +
+                                `list exactly those ports, in the .subckt header order.`,
+                        );
+                    }
+                }
+            }
+            return `${inst} ${nodes.join(' ')} ${model}`;
         }
 
         default:
