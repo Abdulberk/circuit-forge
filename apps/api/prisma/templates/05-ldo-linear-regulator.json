@@ -1,0 +1,329 @@
+{
+  "name": "LDO Linear Regulator (3.3V)",
+  "description": "A closed-loop low-dropout linear regulator: an op-amp error amplifier compares a zener reference against a feedback divider and drives a PNP series-pass transistor to hold Vout at 3.3V. Run a DC sweep of VIN (2→7V) to see the regulation knee (~0.23V dropout, then flat at 3.30V), or a transient with input ripple to see ~31dB rejection. ~66mA load, 0.45%/V line regulation. (Validated on ngspice.)",
+  "tags": [
+    "power",
+    "regulator",
+    "ldo",
+    "analog",
+    "opamp",
+    "feedback",
+    "advanced"
+  ],
+  "circuitJson": {
+    "version": "1.0",
+    "components": [
+      {
+        "id": "VIN",
+        "type": "voltage_source",
+        "designator": "V1",
+        "value": "PULSE(5 6 0 1m 1m 4m 10m)",
+        "pins": [
+          {
+            "pinId": "+",
+            "netId": "vin"
+          },
+          {
+            "pinId": "-",
+            "netId": "0"
+          }
+        ]
+      },
+      {
+        "id": "CIN",
+        "type": "capacitor",
+        "designator": "C1",
+        "value": "10u",
+        "pins": [
+          {
+            "pinId": "1",
+            "netId": "vin"
+          },
+          {
+            "pinId": "2",
+            "netId": "0"
+          }
+        ]
+      },
+      {
+        "id": "RREF",
+        "type": "resistor",
+        "designator": "R3",
+        "value": "2.2k",
+        "pins": [
+          {
+            "pinId": "1",
+            "netId": "vin"
+          },
+          {
+            "pinId": "2",
+            "netId": "vref"
+          }
+        ]
+      },
+      {
+        "id": "ZREF",
+        "type": "zener",
+        "designator": "D1",
+        "value": "2.5",
+        "pins": [
+          {
+            "pinId": "anode",
+            "netId": "0"
+          },
+          {
+            "pinId": "cathode",
+            "netId": "vref"
+          }
+        ]
+      },
+      {
+        "id": "CREF",
+        "type": "capacitor",
+        "designator": "C2",
+        "value": "100n",
+        "pins": [
+          {
+            "pinId": "1",
+            "netId": "vref"
+          },
+          {
+            "pinId": "2",
+            "netId": "0"
+          }
+        ]
+      },
+      {
+        "id": "U1",
+        "type": "subckt",
+        "designator": "U1",
+        "model": "OPAMPGEN",
+        "pins": [
+          {
+            "pinId": "out",
+            "netId": "ngate"
+          },
+          {
+            "pinId": "in+",
+            "netId": "fb"
+          },
+          {
+            "pinId": "in-",
+            "netId": "vref"
+          },
+          {
+            "pinId": "vcc",
+            "netId": "vin"
+          },
+          {
+            "pinId": "vee",
+            "netId": "0"
+          }
+        ]
+      },
+      {
+        "id": "RG",
+        "type": "resistor",
+        "designator": "R4",
+        "value": "1k",
+        "pins": [
+          {
+            "pinId": "1",
+            "netId": "ngate"
+          },
+          {
+            "pinId": "2",
+            "netId": "base"
+          }
+        ]
+      },
+      {
+        "id": "RBE",
+        "type": "resistor",
+        "designator": "R5",
+        "value": "10k",
+        "pins": [
+          {
+            "pinId": "1",
+            "netId": "vin"
+          },
+          {
+            "pinId": "2",
+            "netId": "base"
+          }
+        ]
+      },
+      {
+        "id": "QPASS",
+        "type": "bjt",
+        "designator": "Q1",
+        "model": "QGENPNP",
+        "pins": [
+          {
+            "pinId": "e",
+            "netId": "vin"
+          },
+          {
+            "pinId": "b",
+            "netId": "base"
+          },
+          {
+            "pinId": "c",
+            "netId": "out"
+          }
+        ]
+      },
+      {
+        "id": "R1",
+        "type": "resistor",
+        "designator": "R1",
+        "value": "12.7k",
+        "pins": [
+          {
+            "pinId": "1",
+            "netId": "out"
+          },
+          {
+            "pinId": "2",
+            "netId": "fb"
+          }
+        ]
+      },
+      {
+        "id": "R2",
+        "type": "resistor",
+        "designator": "R2",
+        "value": "37.4k",
+        "pins": [
+          {
+            "pinId": "1",
+            "netId": "fb"
+          },
+          {
+            "pinId": "2",
+            "netId": "0"
+          }
+        ]
+      },
+      {
+        "id": "CFB",
+        "type": "capacitor",
+        "designator": "C3",
+        "value": "10n",
+        "pins": [
+          {
+            "pinId": "1",
+            "netId": "out"
+          },
+          {
+            "pinId": "2",
+            "netId": "fb"
+          }
+        ]
+      },
+      {
+        "id": "COUT",
+        "type": "capacitor",
+        "designator": "C4",
+        "value": "22u",
+        "pins": [
+          {
+            "pinId": "1",
+            "netId": "out"
+          },
+          {
+            "pinId": "2",
+            "netId": "0"
+          }
+        ]
+      },
+      {
+        "id": "RLOAD",
+        "type": "resistor",
+        "designator": "R6",
+        "value": "100",
+        "pins": [
+          {
+            "pinId": "1",
+            "netId": "out"
+          },
+          {
+            "pinId": "2",
+            "netId": "0"
+          }
+        ]
+      },
+      {
+        "id": "RSENSE",
+        "type": "resistor",
+        "designator": "R7",
+        "value": "0.01",
+        "pins": [
+          {
+            "pinId": "1",
+            "netId": "out"
+          },
+          {
+            "pinId": "2",
+            "netId": "outs"
+          }
+        ]
+      },
+      {
+        "id": "RLS",
+        "type": "resistor",
+        "designator": "R8",
+        "value": "100",
+        "pins": [
+          {
+            "pinId": "1",
+            "netId": "outs"
+          },
+          {
+            "pinId": "2",
+            "netId": "0"
+          }
+        ]
+      }
+    ],
+    "nets": [
+      {
+        "id": "0",
+        "name": "GND",
+        "isGround": true
+      },
+      {
+        "id": "vin",
+        "name": "VIN"
+      },
+      {
+        "id": "vref",
+        "name": "VREF"
+      },
+      {
+        "id": "ngate",
+        "name": "NGATE"
+      },
+      {
+        "id": "base",
+        "name": "BASE"
+      },
+      {
+        "id": "out",
+        "name": "VOUT"
+      },
+      {
+        "id": "outs",
+        "name": "VOUTS"
+      },
+      {
+        "id": "fb",
+        "name": "FB"
+      }
+    ],
+    "metadata": {
+      "name": "LDO Linear Regulator (3.3V)",
+      "description": "A closed-loop low-dropout linear regulator: an op-amp error amplifier compares a zener reference against a feedback divider and drives a PNP series-pass transistor to hold Vout at 3.3V. Run a DC sweep of VIN (2→7V) to see the regulation knee (~0.23V dropout, then flat at 3.30V), or a transient with input ripple to see ~31dB rejection. ~66mA load, 0.45%/V line regulation. (Validated on ngspice.)"
+    }
+  }
+}
