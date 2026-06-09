@@ -569,8 +569,17 @@ function checkModelResolution(circuit: CircuitJson): ErcIssue[] {
 function checkVoltageSourceShorts(circuit: CircuitJson): ErcIssue[] {
     const issues: ErcIssue[] = [];
 
-    // Find all voltage sources
-    const voltageSources = circuit.components.filter((c) => c.type === 'voltage_source');
+    // Voltage-FORCING devices over-determine a node when two of them sit across the SAME net pair (ngspice
+    // then returns a singular matrix / "timestep too small"). Independent V sources, vcvs (E) outputs, and a
+    // bsource (B) with a `V=` expression all pin a node to a voltage. vccs/current_source/bsource-with-`I=`
+    // drive CURRENT and can legitimately share a net, so they are excluded. (A vcvs's c+/c- are high-impedance
+    // SENSE pins — never the + / - read below — so a sensing controlled source is not counted as a driver.)
+    const voltageSources = circuit.components.filter(
+        (c) =>
+            c.type === 'voltage_source' ||
+            c.type === 'vcvs' ||
+            (c.type === 'bsource' && typeof c.value === 'string' && /^\s*v\s*=/i.test(c.value)),
+    );
 
     // Find ground net ids
     const groundNetIds = new Set<string>();
@@ -625,12 +634,19 @@ function checkVoltageSourceShorts(circuit: CircuitJson): ErcIssue[] {
         if (sources.length > 1) {
             const values = sources.map((s) => s.value);
             const uniqueValues = new Set(values);
-            if (uniqueValues.size > 1) {
+            // Two identical INDEPENDENT voltage sources are a redundancy we leave alone; but differing values
+            // — or a MIX of driver types (e.g. a V source paralleled with a vcvs output) — is a genuine
+            // over-determination. Flag it so the caller fixes it before ngspice fails with an opaque error.
+            const allPlainSources = sources.every((s) => s.source.type === 'voltage_source');
+            if (!allPlainSources || uniqueValues.size > 1) {
+                const labels = sources.map((s) => s.source.designator || s.source.id).join(', ');
                 issues.push(
                     createIssue(
                         ErcCode.PARALLEL_VOLTAGE_SOURCES,
                         sources.map((s) => s.source.id),
-                        `Conflicting values: ${values.join(', ')}`,
+                        allPlainSources
+                            ? `Conflicting values: ${values.join(', ')}`
+                            : `Multiple voltage drivers (${labels}) across the same net pair — they over-determine the node`,
                     ),
                 );
             }

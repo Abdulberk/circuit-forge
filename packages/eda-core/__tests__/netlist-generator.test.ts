@@ -498,6 +498,96 @@ describe('NetlistGenerator', () => {
             expect(netlist).not.toMatch(/savecurrents/); // not needed when nothing was rewritten to @dev[i]
         });
 
+        it('drops R/C current probes in AC (their @dev[i] vector is unresolvable there) but keeps voltage co-probes', () => {
+            // @<dev>[i] resolves in op/dc/tran but NOT in AC — ngspice errors "no such vector @R1[i]" and the
+            // bad token aborts the whole shared wrdata line, losing every co-probe. So R/C current probes must
+            // be DROPPED in AC, while the SAME probes are rewritten to @dev[i] in tran.
+            const circuit: CircuitJson = {
+                version: '1.0',
+                components: [
+                    createComponent('V1', 'voltage_source', 'V1', 'AC 1', [
+                        { pinId: '+', netId: 'in' },
+                        { pinId: '-', netId: '0' },
+                    ]),
+                    createComponent('R1', 'resistor', 'R1', '1.6k', [
+                        { pinId: '1', netId: 'in' },
+                        { pinId: '2', netId: 'out' },
+                    ]),
+                    createComponent('C1', 'capacitor', 'C1', '100n', [
+                        { pinId: '1', netId: 'out' },
+                        { pinId: '2', netId: '0' },
+                    ]),
+                ],
+                nets: [createNet('in', 'in'), createNet('out', 'out'), createNet('0', '0', true)],
+            };
+            const ac: AcAnalysis = { type: 'ac', variation: 'dec', points: 10, startFreq: '1', stopFreq: '1meg' };
+            const acNet = generateNetlist(circuit, ac, { probes: ['v(out)', 'i(R1)', 'i(C1)'] });
+            const wr = acNet.split('\n').find((l) => l.includes('wrdata'))!;
+            expect(wr).toMatch(/v\(x_out\)/); // voltage co-probe survives
+            expect(wr).not.toMatch(/@R1\[i\]/); // R current dropped in AC
+            expect(wr).not.toMatch(/@C1\[i\]/); // C current dropped in AC
+            expect(acNet).not.toMatch(/savecurrents/); // not emitted when both R/C probes were dropped
+            // Control: the SAME probes in tran ARE rewritten to the device-current vector.
+            const tranNet = generateNetlist(circuit, { type: 'tran', stopTime: '1m' }, { probes: ['v(out)', 'i(R1)', 'i(C1)'] });
+            expect(tranNet).toMatch(/@R1\[i\]/);
+            expect(tranNet).toMatch(/@C1\[i\]/);
+        });
+
+        it('emits a diode in canonical anode→cathode order regardless of authored pin-array order', () => {
+            // A diode is POLARIZED. The authored pin-ARRAY order must not flip it — pinIds name the terminals.
+            // Here pins are listed cathode-FIRST (pinIds correct: anode→out, cathode→0); the emitted line must
+            // still be "D1 <anode> <cathode>" = "D1 x_out 0", not the reversed "D1 0 x_out".
+            const circuit: CircuitJson = {
+                version: '1.0',
+                components: [
+                    createComponent('V1', 'voltage_source', 'V1', 'DC 5', [
+                        { pinId: '+', netId: 'in' },
+                        { pinId: '-', netId: '0' },
+                    ]),
+                    createComponent('R1', 'resistor', 'R1', '1k', [
+                        { pinId: '1', netId: 'in' },
+                        { pinId: '2', netId: 'out' },
+                    ]),
+                    createComponent('D1', 'diode', 'D1', undefined, [
+                        { pinId: 'cathode', netId: '0' },
+                        { pinId: 'anode', netId: 'out' },
+                    ]),
+                ],
+                nets: [createNet('in', 'in'), createNet('out', 'out'), createNet('0', '0', true)],
+            };
+            const netlist = generateNetlist(circuit, { type: 'op' });
+            const dline = netlist.split('\n').find((l) => /^D1 /.test(l))!;
+            expect(dline).toMatch(/^D1 x_out 0 /); // anode (out→x_out) BEFORE cathode (0)
+        });
+
+        it('collapses internal whitespace in a passive value so "1 k" / "100 nF" still emit a valid card', () => {
+            // SPICE tokenizes on whitespace; a passive value is a single magnitude token, so a stray space
+            // ('1 k') would shift 'k' into an extra column and break the deck. R/C/L values are normalized.
+            const circuit: CircuitJson = {
+                version: '1.0',
+                components: [
+                    createComponent('V1', 'voltage_source', 'V1', 'DC 10', [
+                        { pinId: '+', netId: 'in' },
+                        { pinId: '-', netId: '0' },
+                    ]),
+                    createComponent('R1', 'resistor', 'R1', '1 k', [
+                        { pinId: '1', netId: 'in' },
+                        { pinId: '2', netId: 'mid' },
+                    ]),
+                    createComponent('C1', 'capacitor', 'C1', '100 nF', [
+                        { pinId: '1', netId: 'mid' },
+                        { pinId: '2', netId: '0' },
+                    ]),
+                ],
+                nets: [createNet('in', 'in'), createNet('mid', 'mid'), createNet('0', '0', true)],
+            };
+            const netlist = generateNetlist(circuit, { type: 'op' });
+            expect(netlist).toMatch(/^R1 \S+ \S+ 1k$/m); // "1 k" -> "1k", one trailing token
+            expect(netlist).toMatch(/^C1 \S+ \S+ 100nF$/m); // "100 nF" -> "100nF"
+            // A source value keeps its legitimate internal spaces (NOT normalized).
+            expect(netlist).toMatch(/^V1 \S+ \S+ DC 10$/m);
+        });
+
         it('remaps a .dc sweep source to the emitted (prefixed) device name', () => {
             // A voltage source designated "BAT1" emits as "VBAT1"; the sweep card must name VBAT1, not
             // BAT1, else ngspice aborts with "BAT1 is not in the circuit".
