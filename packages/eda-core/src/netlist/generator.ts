@@ -326,9 +326,10 @@ export function generateNetlist(
         .filter((p) => p.trim().length > 0) // a probe that reduced to nothing (e.g. v(gnd)) is dropped
         .filter((p) => !isDigitalCurrentProbe(p, digitalDeviceRefs)) // i(<digital a-device>) has no current vector → drop (else it aborts the whole wrdata line)
         .map((p) => {
-            // Make analog current probes outputtable: keep native i() for V/L/E/H, rewrite R/C/D to
-            // @<dev>[i] (+ savecurrents), drop anything else — so no i() term can abort the wrdata line.
-            const { token, savecurrents } = rewriteCurrentProbeVector(p, seenDevices);
+            // Make analog current probes outputtable: keep native i() for V/L/E/H, rewrite R/C to @<dev>[i]
+            // (+ savecurrents) in op/dc/tran, drop everything else (diodes, multi-terminal devices, and R/C
+            // in AC where @<dev>[i] is unresolvable) — so no i() term can abort the shared wrdata line.
+            const { token, savecurrents } = rewriteCurrentProbeVector(p, seenDevices, analysis.type);
             if (savecurrents) needSaveCurrents = true;
             return token;
         })
@@ -448,14 +449,20 @@ const SAVECURRENTS_DEVICES = new Set(['R', 'C']); // resistor, capacitor
  * Non-current probes (`v(...)`) and compound expressions pass through untouched. `emitted` is the set of
  * real (lower-cased) device names actually in the deck. Returns `{ token, savecurrents }`.
  */
-function rewriteCurrentProbeVector(probe: string, emitted: Set<string>): { token: string; savecurrents: boolean } {
+function rewriteCurrentProbeVector(probe: string, emitted: Set<string>, analysisType: string): { token: string; savecurrents: boolean } {
     const m = probe.trim().match(/^i\s*\(\s*([^),]+?)\s*\)$/i);
     if (!m || m[1] === undefined) return { token: probe, savecurrents: false }; // not a sole current probe
     const name = m[1].trim();
     if (!emitted.has(name.toLowerCase())) return { token: '', savecurrents: false }; // unknown device → would abort; drop
     const letter = name[0]?.toUpperCase() ?? '';
     if (NATIVE_CURRENT_DEVICES.has(letter)) return { token: `i(${name})`, savecurrents: false };
-    if (SAVECURRENTS_DEVICES.has(letter)) return { token: `@${name}[i]`, savecurrents: true };
+    if (SAVECURRENTS_DEVICES.has(letter)) {
+        // The `@<dev>[i]` device-current vector resolves in op/dc/tran but NOT in AC (ngspice has no
+        // small-signal device-current vector for R/C — `no such vector @R1[i]`), and the bad token would
+        // abort the whole shared wrdata line, losing every co-probe. So DROP R/C current probes in AC.
+        if (analysisType === 'ac') return { token: '', savecurrents: false };
+        return { token: `@${name}[i]`, savecurrents: true };
+    }
     return { token: '', savecurrents: false }; // multi-terminal / exotic → drop (can't probe a single current)
 }
 
@@ -575,8 +582,15 @@ function componentToSpice(
     switch (type) {
         case 'resistor':
         case 'capacitor':
-        case 'inductor':
-            return `${spiceInstanceName(designator, prefix)} ${nodes.join(' ')} ${value || '0'}`;
+        case 'inductor': {
+            // A passive value is a SINGLE magnitude token ('1k', '4.7uF', '100n') — internal whitespace is
+            // never meaningful, but SPICE tokenizes the card on spaces, so a stray space ('1 k') would shift
+            // 'k' into an extra column and ngspice misparses it as a model/param (broken deck, no output).
+            // Collapse it so a human/AI value like '1 k' just works. (Sources keep their spaces — 'DC 5 AC 1'
+            // is a legitimate multi-token value — so they are intentionally NOT normalized here.)
+            const v = (value ?? '').replace(/\s+/g, '') || '0';
+            return `${spiceInstanceName(designator, prefix)} ${nodes.join(' ')} ${v}`;
+        }
 
         case 'voltage_source':
         case 'current_source':
@@ -594,8 +608,11 @@ function componentToSpice(
             return `${spiceInstanceName(designator, prefix)} ${orderedNodes(component, nodeMap).join(' ')} ${gain}`;
         }
 
+        // A diode is POLARIZED: it must emit anode then cathode. Bind by pinId (canonical order) like the
+        // zener/bjt/mosfet cases — NOT the authored pin-array order — so a diode whose pins were listed
+        // [cathode, anode] (pinIds correct) is not silently reverse-mounted (which rectifies the wrong half).
         case 'diode':
-            return `${spiceInstanceName(designator, prefix)} ${nodes.join(' ')} ${model || 'DDEFAULT'}`;
+            return `${spiceInstanceName(designator, prefix)} ${orderedNodes(component, nodeMap).join(' ')} ${model || 'DDEFAULT'}`;
 
         // A Zener is the SPICE diode device with a breakdown model generated from `value` (the Zener
         // voltage). Nodes are emitted in canonical anode,cathode order (by pinId) so polarity — which

@@ -173,6 +173,14 @@ add('interaction', 'analog->digital->analog bridge', () => ({ circuit: circuit([
 // ERC-layer cell (mixed-driver detection lives in runErc, BEFORE netlisting — not in generateNetlist).
 add('interaction', 'ERC flags mixed-driver (V + vcvs on one net)', () => ({ circuit: circuit([V('v1', 'V1', 'DC 5', 'out', '0'), { id: 'e1', type: 'vcvs', designator: 'E1', value: '2', pins: [{ pinId: '+', netId: 'out' }, { pinId: '-', netId: '0' }, { pinId: 'c+', netId: 'in' }, { pinId: 'c-', netId: '0' }] }, V('vin', 'VIN', 'DC 1', 'in', '0')], N('out', 'in')) }), (erc) => erc.issues.some((i) => i.severity === 'error') ? ok() : fail(`ERC did not flag two hard drivers on 'out'; issues=${JSON.stringify(erc.issues.map((i) => i.code))}`), { erc: true });
 
+// ---------- 15. REGRESSIONS (defects the adversarial audit found — locked so they can't come back) ----------
+// A diode authored with its pin ARRAY reversed (pinIds correct) must still conduct forward, not reverse-mount.
+add('regression', 'diode reversed pin-array stays canonical (forward)', () => ({ circuit: circuit([V('v1', 'V1', 'DC 5', 'in', '0'), R('r1', 'R1', '1k', 'in', 'out'), { id: 'd1', type: 'diode', designator: 'D1', pins: [{ pinId: 'cathode', netId: '0' }, { pinId: 'anode', netId: 'out' }] }], N('in', 'out')), analysis: OP, probes: ['v(out)'] }), (r) => (baseOk(r).pass && r.series[0].final < 1) ? ok() : fail(`v(out)=${r.series[0]?.final} — reversed-array diode is reverse-mounted (should forward-conduct ~0.77V, NOT ~5V)`));
+// An R/C current probe in AC must be dropped (its @dev[i] is unresolvable in AC) without aborting the line.
+add('regression', 'AC R/C current probe dropped, v co-probe survives', () => ({ circuit: circuit([{ id: 'v1', type: 'voltage_source', designator: 'V1', value: 'AC 1', pins: [{ pinId: '+', netId: 'in' }, { pinId: '-', netId: '0' }] }, R('r1', 'R1', '1.6k', 'in', 'out'), C('c1', 'C1', '100n', 'out', '0')], N('in', 'out')), analysis: AC, probes: ['v(out)', 'i(R1)', 'i(C1)'] }), (r) => (baseOk(r).pass && r.series.some((s) => s.name.includes('out'))) ? ok() : fail(`AC current probe aborted the line: ok=${baseOk(r).why ?? 'ok'} series=${r.series.map((s) => s.name)}`));
+// A passive value with an internal space ('1 k') must normalize and still run.
+add('regression', 'passive value with whitespace (1 k) normalized', () => ({ circuit: circuit([V('v1', 'V1', 'DC 10', 'in', '0'), R('r1', 'R1', '1 k', 'in', '0')], N('in')), analysis: OP, probes: ['v(in)'] }), (r) => near(r.series[0]?.final, 10, 0.01) ? ok() : fail(`v(in)=${r.series[0]?.final} — '1 k' value broke the deck`));
+
 // ===================== RUN =====================
 const results = [];
 for (const cell of CELLS) {
