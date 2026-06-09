@@ -9,6 +9,7 @@
         "test": "turbo run test",
         "test:cov": "turbo run test:cov",
         "test:e2e": "turbo run test:e2e",
+        "test:matrix": "pnpm --filter @circuit-forge/eda-core build && node scripts/coverage-matrix.mjs",
         "lint": "turbo run lint",
         "lint:fix": "turbo run lint:fix",
         "format": "prettier --write \"**/*.{ts,tsx,js,jsx,json,md}\"",

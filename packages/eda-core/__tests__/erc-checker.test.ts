@@ -199,6 +199,64 @@ describe('ErcChecker', () => {
 
             expect(result.issues.some(i => i.code === ErcCode.VOLTAGE_SOURCE_SHORT)).toBe(false);
         });
+
+        it('flags a vcvs output paralleled with a voltage source on the same net (over-determined)', () => {
+            // Two voltage-FORCING devices across the same pair (V1 and the vcvs E1 both drive out↔0) make
+            // ngspice's matrix singular. ERC must catch it pre-sim, even though E1 is not a plain voltage_source.
+            const circuit: CircuitJson = {
+                version: '1.0',
+                components: [
+                    createComponent('V1', 'voltage_source', 'V1', 'DC 5', [
+                        { pinId: '+', netId: 'out' },
+                        { pinId: '-', netId: '0' },
+                    ]),
+                    createComponent('E1', 'vcvs', 'E1', '2', [
+                        { pinId: '+', netId: 'out' },
+                        { pinId: '-', netId: '0' },
+                        { pinId: 'c+', netId: 'in' },
+                        { pinId: 'c-', netId: '0' },
+                    ]),
+                    createComponent('VIN', 'voltage_source', 'VIN', 'DC 1', [
+                        { pinId: '+', netId: 'in' },
+                        { pinId: '-', netId: '0' },
+                    ]),
+                ],
+                nets: [createNet('out', 'out'), createNet('in', 'in'), createNet('0', '0')],
+            };
+
+            const result = runErc(circuit);
+
+            expect(result.issues.some(i => i.code === ErcCode.PARALLEL_VOLTAGE_SOURCES)).toBe(true);
+        });
+
+        it('does NOT flag a single vcvs driving its own net while sensing another (no parallel)', () => {
+            // False-positive guard: a vcvs in a normal role — sensing `in` (high-Z c+/c-), driving `out` —
+            // is the ONLY driver on out↔0, so it must not be mistaken for a parallel-source conflict.
+            const circuit: CircuitJson = {
+                version: '1.0',
+                components: [
+                    createComponent('VIN', 'voltage_source', 'VIN', 'DC 1', [
+                        { pinId: '+', netId: 'in' },
+                        { pinId: '-', netId: '0' },
+                    ]),
+                    createComponent('E1', 'vcvs', 'E1', '2', [
+                        { pinId: '+', netId: 'out' },
+                        { pinId: '-', netId: '0' },
+                        { pinId: 'c+', netId: 'in' },
+                        { pinId: 'c-', netId: '0' },
+                    ]),
+                    createComponent('RL', 'resistor', 'RL', '1k', [
+                        { pinId: '1', netId: 'out' },
+                        { pinId: '2', netId: '0' },
+                    ]),
+                ],
+                nets: [createNet('in', 'in'), createNet('out', 'out'), createNet('0', '0')],
+            };
+
+            const result = runErc(circuit);
+
+            expect(result.issues.some(i => i.code === ErcCode.PARALLEL_VOLTAGE_SOURCES)).toBe(false);
+        });
     });
 
     describe('Pin Count Validation', () => {
