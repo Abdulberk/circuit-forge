@@ -676,6 +676,39 @@ describe('NetlistGenerator', () => {
             expect(netlist).toMatch(/^V1 \S+ \S+ DC 10$/m);
         });
 
+        it('uses the transformer windingResistance property for winding DCR, defaulting to 1m', () => {
+            // Default winding DCR is a tiny 1mΩ (anti-singularity); a caller modeling a real transformer can
+            // set `windingResistance` for faithful magnetizing settling (the 1mΩ default gives a huge L/R
+            // time constant on high-L windings). Default must stay 1m (zero regression for existing circuits).
+            const mk = (props: Record<string, unknown>): CircuitJson => ({
+                version: '1.0',
+                components: [
+                    createComponent('V1', 'voltage_source', 'V1', 'SIN(0 10 50)', [
+                        { pinId: '+', netId: 'pri' },
+                        { pinId: '-', netId: '0' },
+                    ]),
+                    { id: 'T1', type: 'transformer', designator: 'T1', properties: props, pins: [
+                        { pinId: 'p+', netId: 'pri' },
+                        { pinId: 'p-', netId: '0' },
+                        { pinId: 's+', netId: 'sec' },
+                        { pinId: 's-', netId: '0' },
+                    ] },
+                    createComponent('RL', 'resistor', 'RL', '1k', [
+                        { pinId: '1', netId: 'sec' },
+                        { pinId: '2', netId: '0' },
+                    ]),
+                ],
+                nets: [createNet('pri', 'pri'), createNet('sec', 'sec'), createNet('0', '0', true)],
+            });
+            const base = { primaryInductance: '1', secondaryInductance: '4', coupling: '0.95' };
+            const def = generateNetlist(mk(base), { type: 'tran', stopTime: '20m' });
+            expect(def).toMatch(/^RT1P \S+ \S+ 1m$/m); // default DCR unchanged
+            expect(def).toMatch(/^RT1S \S+ \S+ 1m$/m);
+            const custom = generateNetlist(mk({ ...base, windingResistance: '5' }), { type: 'tran', stopTime: '20m' });
+            expect(custom).toMatch(/^RT1P \S+ \S+ 5$/m); // caller-set DCR honored
+            expect(custom).toMatch(/^RT1S \S+ \S+ 5$/m);
+        });
+
         it('remaps a .dc sweep source to the emitted (prefixed) device name', () => {
             // A voltage source designated "BAT1" emits as "VBAT1"; the sweep card must name VBAT1, not
             // BAT1, else ngspice aborts with "BAT1 is not in the circuit".

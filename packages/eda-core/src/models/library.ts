@@ -225,6 +225,7 @@ export interface TransformerParams {
     lp: string; // primary winding inductance (SPICE value, e.g. "10m")
     ls: string; // secondary winding inductance
     k: string; // coupling coefficient in (0, 1]
+    dcr?: string; // optional per-winding series DC resistance (SPICE value); default is a tiny 1mΩ anti-singularity
 }
 
 /**
@@ -257,7 +258,16 @@ export function parseTransformerParams(props: Record<string, unknown> | undefine
         if (!Number.isFinite(kv) || kv <= 0 || kv > 1) return null;
         k = rawK;
     }
-    return { lp, ls, k };
+
+    // Optional per-winding DC resistance. The generator's default is a tiny 1mΩ that only breaks the
+    // ideal-inductor singularity, but on a high-L / low-frequency transformer that gives an L/R magnetizing
+    // time constant of thousands of seconds, so a turn-on DC flux never decays within the run (a visible DC
+    // offset). A caller modeling a real transformer can set `windingResistance` (alias `dcr`) to a realistic
+    // ohmic value for faithful settling. Must be a positive SPICE value, else ignored (fall back to default).
+    const rawDcr = str('windingResistance') ?? str('dcr');
+    const dcr = rawDcr && isPositiveSpiceValue(rawDcr) ? rawDcr : undefined;
+
+    return { lp, ls, k, dcr };
 }
 
 /**

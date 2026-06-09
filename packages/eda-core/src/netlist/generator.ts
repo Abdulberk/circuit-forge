@@ -554,11 +554,13 @@ function componentToSpice(
         const [pp, pn, sp, sn] = orderedNodes(component, nodeMap);
         const lPri = `L${designator}P`;
         const lSec = `L${designator}S`;
-        // A tiny series winding resistance (DCR) gives each winding a finite DC path. Without it an ideal
-        // source driving an ideal inductor makes the MNA matrix structurally singular (ngspice limps
-        // through gmin-stepping or fails to converge). 1 mΩ is negligible at signal levels but removes
-        // the singularity. Internal nodes carry the L->R series connection.
-        const RSER = '1m';
+        // A series winding resistance (DCR) gives each winding a finite DC path. Without it an ideal source
+        // driving an ideal inductor makes the MNA matrix structurally singular (ngspice limps through
+        // gmin-stepping or fails to converge). The default 1 mΩ is negligible at signal levels but removes
+        // the singularity; note that on a high-L / low-f transformer the L/R magnetizing time constant is then
+        // huge, so a turn-on DC flux barely decays in-window — set the `windingResistance` property to a
+        // realistic ohmic value for faithful settling. Internal nodes carry the L->R series connection.
+        const RSER = tp.dcr ?? '1m';
         const pMid = `${designator}_wp`;
         const sMid = `${designator}_ws`;
         const out = [

@@ -149,6 +149,59 @@ describe('ErcChecker', () => {
 
             expect(result.issues.some(i => i.code === ErcCode.NET_HAS_SINGLE_PIN)).toBe(false);
         });
+
+        it('flags a node with no DC path (only capacitor connections) as FLOATING_NODE', () => {
+            // A capacitive-divider mid-node touches only capacitors → caps are open at DC → no operating
+            // point (singular .op). Warn (ERC010) suggesting initialConditions, instead of letting ngspice
+            // limp through gmin with a DC-offset artifact.
+            const circuit: CircuitJson = {
+                version: '1.0',
+                components: [
+                    createComponent('V1', 'voltage_source', 'V1', 'AC 1', [
+                        { pinId: '+', netId: 'in' },
+                        { pinId: '-', netId: '0' },
+                    ]),
+                    createComponent('C1', 'capacitor', 'C1', '1u', [
+                        { pinId: '1', netId: 'in' },
+                        { pinId: '2', netId: 'mid' },
+                    ]),
+                    createComponent('C2', 'capacitor', 'C2', '1u', [
+                        { pinId: '1', netId: 'mid' },
+                        { pinId: '2', netId: '0' },
+                    ]),
+                ],
+                nets: [createNet('in', 'in'), createNet('mid', 'mid'), createNet('0', '0')],
+            };
+
+            const result = runErc(circuit);
+            const floating = result.issues.filter(i => i.code === ErcCode.FLOATING_NODE);
+            expect(floating.some(i => i.relatedIds.includes('mid'))).toBe(true);
+        });
+
+        it('does NOT flag a node that has a resistor (DC path) alongside a capacitor', () => {
+            // False-positive guard: an RC node has a DC path through R, so it is NOT a floating node.
+            const circuit: CircuitJson = {
+                version: '1.0',
+                components: [
+                    createComponent('V1', 'voltage_source', 'V1', 'DC 5', [
+                        { pinId: '+', netId: 'in' },
+                        { pinId: '-', netId: '0' },
+                    ]),
+                    createComponent('R1', 'resistor', 'R1', '1k', [
+                        { pinId: '1', netId: 'in' },
+                        { pinId: '2', netId: 'out' },
+                    ]),
+                    createComponent('C1', 'capacitor', 'C1', '1u', [
+                        { pinId: '1', netId: 'out' },
+                        { pinId: '2', netId: '0' },
+                    ]),
+                ],
+                nets: [createNet('in', 'in'), createNet('out', 'out'), createNet('0', '0')],
+            };
+
+            const result = runErc(circuit);
+            expect(result.issues.some(i => i.code === ErcCode.FLOATING_NODE)).toBe(false);
+        });
     });
 
     describe('Voltage Source Short Circuit Check', () => {
