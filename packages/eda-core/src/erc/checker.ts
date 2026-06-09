@@ -199,6 +199,26 @@ function checkFloatingNodes(circuit: CircuitJson): ErcIssue[] {
                     `Net "${net.name || net.id}" connected to only ${connectedComponents.join(', ')}`,
                 ),
             );
+        } else {
+            // pinCount >= 2: if EVERY incident pin is a capacitor or current-source terminal, the node has NO
+            // DC path to ground (caps are open at DC; a current source sets current, not a reference voltage),
+            // so the .op that precedes .tran is singular. ngspice limps through via gmin-stepping (a small
+            // DC-offset artifact) — the result is far cleaner if the caller seeds the node. Conservative: any
+            // resistor/inductor/source/active pin provides a DC path, so such a node is NOT flagged (no false
+            // positive). This is the long-defined-but-unused ERC010 (FLOATING_NODE).
+            const pinsHere = netPins.get(net.id) || [];
+            const noDcPath =
+                pinsHere.length > 0 &&
+                pinsHere.every((p) => p.type === 'capacitor' || p.type === 'current_source');
+            if (noDcPath) {
+                issues.push(
+                    createIssue(
+                        ErcCode.FLOATING_NODE,
+                        [net.id, ...connectedComponents],
+                        `Net "${net.name || net.id}" has no DC path to ground (only capacitor/current-source connections); its operating point is undefined. Set analysis.initialConditions for this node for a clean, artifact-free start.`,
+                    ),
+                );
+            }
         }
     }
 
