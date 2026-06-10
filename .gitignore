@@ -47,3 +47,7 @@ temp/
 
 # MinIO data (local development)
 .minio-data/
+# ngspice / stress-test scratch (local only)
+.stress/
+output.csv
+stdout.log

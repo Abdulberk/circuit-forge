@@ -9,7 +9,7 @@ import { S3Client, GetObjectCommand } from '@aws-sdk/client-s3';
 import { PrismaService } from '../prisma/prisma.service';
 import { VersionsService } from '../versions/versions.service';
 import { OrgsService } from '../orgs/orgs.service';
-import { generateNetlist } from '@circuit-forge/eda-core';
+import { generateNetlist, safeValidateCircuitJson, safeValidateAnalysisConfig } from '@circuit-forge/eda-core';
 import type { CircuitJson, AnalysisConfig } from '@circuit-forge/eda-core';
 
 /** Max uploaded model files attachable to one simulation (each is a separate S3 download in the worker). */
@@ -49,17 +49,36 @@ export class SimulationService {
         modelAssetIds?: string[],
     ) {
         const version = await this.versionsService.findOne(versionId, userId);
-        const circuitJson = version.circuitJson as unknown as CircuitJson;
+
+        // Validate the analysis config + the stored circuit BEFORE netlisting. generateNetlist assumes a
+        // schema-valid CircuitJson and will throw a raw TypeError on a malformed one (e.g. a legacy
+        // pins-as-object shape, a missing designator) — which would surface as an opaque 500. Fail loud
+        // with a 400 naming the problem instead, both for a bad request and a stale stored version.
+        const validAnalysis = safeValidateAnalysisConfig(analysisConfig);
+        if (!validAnalysis.success) {
+            const issues = validAnalysis.error.errors.map((e) => `${e.path.join('.') || '(root)'}: ${e.message}`).join('; ');
+            throw new BadRequestException(`Invalid analysis config: ${issues}`);
+        }
+        const validCircuit = safeValidateCircuitJson(version.circuitJson);
+        if (!validCircuit.success) {
+            const issues = validCircuit.error.errors.slice(0, 5).map((e) => `${e.path.join('.') || '(root)'}: ${e.message}`).join('; ');
+            throw new BadRequestException(`Version ${versionId} has an invalid circuit: ${issues}`);
+        }
+        const circuitJson = validCircuit.data as CircuitJson;
+        const analysis = validAnalysis.data as AnalysisConfig;
 
         // Resolve any user-uploaded SPICE model assets (scoped to this version's org) into S3 keys (for
         // the worker to download) + filenames (to `.include` in the generated netlist).
         const { s3Keys, includeFiles } = await this.resolveModelAssets(version.project.orgId, modelAssetIds);
 
-        // Generate netlist - cast to AnalysisConfig for eda-core
-        const netlist = generateNetlist(circuitJson, analysisConfig as unknown as AnalysisConfig, {
-            probes,
-            includeFiles,
-        });
+        // Generate the netlist. The inputs are schema-valid above, but guard the generation itself too —
+        // a model-body conflict / unknown-type / unsupported-probe is reported as a clean 400, never a 500.
+        let netlist: string;
+        try {
+            netlist = generateNetlist(circuitJson, analysis, { probes, includeFiles });
+        } catch (e) {
+            throw new BadRequestException(`Netlist generation failed: ${e instanceof Error ? e.message : String(e)}`);
+        }
 
         // Create job record
         const job = await this.prisma.simulationJob.create({
