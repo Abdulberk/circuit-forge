@@ -116,6 +116,67 @@ describe('digital emission', () => {
         expect(netlist).toMatch(/axsyn\d+ \[dlogic_lo_a\] \[dlogic_lo\] CFD_ADC/);
     });
 
+    it('emits a JK flip-flop in j k clk set rst q qb order with the d_jkff model + LOW-rail tie-off', () => {
+        const c: CircuitJson = {
+            version: '1.0',
+            components: [
+                { id: 'u1', type: 'jkff', designator: 'U1', pins: [
+                    { pinId: 'j', netId: 'ja' }, { pinId: 'k', netId: 'ka' }, { pinId: 'clk', netId: 'clk' },
+                    { pinId: 'q', netId: 'q' }, { pinId: 'qb', netId: 'qb' }] },
+            ],
+            nets: [{ id: 'ja', name: 'JA' }, { id: 'ka', name: 'KA' }, { id: 'clk', name: 'CLK' }, { id: 'q', name: 'Q' }, { id: 'qb', name: 'QB' }],
+        };
+        const netlist = generateNetlist(c, TRAN);
+        expect(deviceLine(netlist, 'AU1')).toBe('AU1 nja nka nclk dlogic_lo dlogic_lo nq nqb CFD_JKFF');
+        expect(netlist).toContain('.model CFD_JKFF d_jkff(');
+    });
+
+    it('emits a T flip-flop in t clk set rst q qb order with the d_tff model', () => {
+        const c: CircuitJson = {
+            version: '1.0',
+            components: [
+                { id: 'u1', type: 'tff', designator: 'U1', pins: [
+                    { pinId: 't', netId: 'ta' }, { pinId: 'clk', netId: 'clk' },
+                    { pinId: 'q', netId: 'q' }, { pinId: 'qb', netId: 'qb' }] },
+            ],
+            nets: [{ id: 'ta', name: 'TA' }, { id: 'clk', name: 'CLK' }, { id: 'q', name: 'Q' }, { id: 'qb', name: 'QB' }],
+        };
+        const netlist = generateNetlist(c, TRAN);
+        expect(deviceLine(netlist, 'AU1')).toBe('AU1 nta nclk dlogic_lo dlogic_lo nq nqb CFD_TFF');
+        expect(netlist).toContain('.model CFD_TFF d_tff(');
+    });
+
+    it('emits a D latch in d en set rst q qb order with the d_dlatch model (data/enable delays)', () => {
+        const c: CircuitJson = {
+            version: '1.0',
+            components: [
+                { id: 'u1', type: 'dlatch', designator: 'U1', pins: [
+                    { pinId: 'd', netId: 'da' }, { pinId: 'en', netId: 'ena' },
+                    { pinId: 'q', netId: 'q' }, { pinId: 'qb', netId: 'qb' }] },
+            ],
+            nets: [{ id: 'da', name: 'DA' }, { id: 'ena', name: 'ENA' }, { id: 'q', name: 'Q' }, { id: 'qb', name: 'QB' }],
+        };
+        const netlist = generateNetlist(c, TRAN);
+        expect(deviceLine(netlist, 'AU1')).toBe('AU1 nda nena dlogic_lo dlogic_lo nq nqb CFD_DLATCH');
+        expect(netlist).toContain('.model CFD_DLATCH d_dlatch(data_delay=1n enable_delay=1n');
+    });
+
+    it('emits a tristate buffer in in en out order with the d_tristate model (delay param only)', () => {
+        const c: CircuitJson = {
+            version: '1.0',
+            components: [
+                { id: 'u1', type: 'tristate', designator: 'U1', pins: [
+                    { pinId: 'in1', netId: 'a' }, { pinId: 'en', netId: 'ena' }, { pinId: 'out', netId: 'bus' }] },
+            ],
+            nets: [{ id: 'a', name: 'A' }, { id: 'ena', name: 'ENA' }, { id: 'bus', name: 'BUS' }],
+        };
+        const netlist = generateNetlist(c, TRAN);
+        expect(deviceLine(netlist, 'AU1')).toBe('AU1 na nena nbus CFD_TRI');
+        expect(netlist).toContain('.model CFD_TRI d_tristate(delay=1n)');
+        // No LOW rail needed: tristate has no set/rst.
+        expect(netlist).not.toContain('dlogic_lo');
+    });
+
     it('does NOT synthesize a LOW rail when set+rst are both wired', () => {
         const c: CircuitJson = {
             version: '1.0',
@@ -300,6 +361,61 @@ describe('digital ERC', () => {
             nets: [{ id: 'a', name: 'A' }, { id: 'b', name: 'B' }, { id: 'bus', name: 'BUS' }],
         };
         expect(runErc(c).issues.some((i) => i.code === ErcCode.DIGITAL_BUS_CONTENTION && i.relatedIds.includes('bus'))).toBe(true);
+    });
+
+    it('does NOT flag an all-tristate shared bus (the legitimate multi-driver pattern)', () => {
+        const c: CircuitJson = {
+            version: '1.0',
+            components: [
+                { id: 'u1', type: 'tristate', designator: 'U1', pins: [
+                    { pinId: 'in1', netId: 'a' }, { pinId: 'en', netId: 'ena' }, { pinId: 'out', netId: 'bus' }] },
+                { id: 'u2', type: 'tristate', designator: 'U2', pins: [
+                    { pinId: 'in1', netId: 'b' }, { pinId: 'en', netId: 'enb' }, { pinId: 'out', netId: 'bus' }] },
+                { id: 'u3', type: 'logic_buffer', designator: 'U3', pins: [
+                    { pinId: 'in1', netId: 'bus' }, { pinId: 'out', netId: 'y' }] },
+            ],
+            nets: [
+                { id: 'a', name: 'A' }, { id: 'b', name: 'B' }, { id: 'ena', name: 'ENA' },
+                { id: 'enb', name: 'ENB' }, { id: 'bus', name: 'BUS' }, { id: 'y', name: 'Y' },
+            ],
+        };
+        expect(runErc(c).issues.some((i) => i.code === ErcCode.DIGITAL_BUS_CONTENTION)).toBe(false);
+    });
+
+    it('still flags a PUSHING output mixed with tristates on a bus (it never releases)', () => {
+        const c: CircuitJson = {
+            version: '1.0',
+            components: [
+                { id: 'u1', type: 'tristate', designator: 'U1', pins: [
+                    { pinId: 'in1', netId: 'a' }, { pinId: 'en', netId: 'ena' }, { pinId: 'out', netId: 'bus' }] },
+                { id: 'u2', type: 'logic_buffer', designator: 'U2', pins: [
+                    { pinId: 'in1', netId: 'b' }, { pinId: 'out', netId: 'bus' }] },
+            ],
+            nets: [{ id: 'a', name: 'A' }, { id: 'b', name: 'B' }, { id: 'ena', name: 'ENA' }, { id: 'bus', name: 'BUS' }],
+        };
+        expect(runErc(c).issues.some((i) => i.code === ErcCode.DIGITAL_BUS_CONTENTION && i.relatedIds.includes('bus'))).toBe(true);
+    });
+
+    it('flags missing required pins on the new sequential/bus types (DIGITAL_PIN_SHAPE)', () => {
+        const mk = (type: CircuitJson['components'][0]['type'], pins: { pinId: string; netId: string }[]): CircuitJson => ({
+            version: '1.0',
+            components: [{ id: 'u1', type, designator: 'U1', pins }],
+            nets: [{ id: 'x', name: 'X' }],
+        });
+        // jkff without k; tff without t; dlatch without en; tristate without en — each must flag.
+        expect(runErc(mk('jkff', [{ pinId: 'j', netId: 'x' }, { pinId: 'clk', netId: 'x' }, { pinId: 'q', netId: 'x' }, { pinId: 'qb', netId: 'x' }]))
+            .issues.some((i) => i.code === ErcCode.DIGITAL_PIN_SHAPE && /missing required pin 'k'/.test(i.message))).toBe(true);
+        expect(runErc(mk('tff', [{ pinId: 'clk', netId: 'x' }, { pinId: 'q', netId: 'x' }, { pinId: 'qb', netId: 'x' }]))
+            .issues.some((i) => i.code === ErcCode.DIGITAL_PIN_SHAPE && /missing required pin 't'/.test(i.message))).toBe(true);
+        expect(runErc(mk('dlatch', [{ pinId: 'd', netId: 'x' }, { pinId: 'q', netId: 'x' }, { pinId: 'qb', netId: 'x' }]))
+            .issues.some((i) => i.code === ErcCode.DIGITAL_PIN_SHAPE && /missing required pin 'en'/.test(i.message))).toBe(true);
+        expect(runErc(mk('tristate', [{ pinId: 'in1', netId: 'x' }, { pinId: 'out', netId: 'x' }]))
+            .issues.some((i) => i.code === ErcCode.DIGITAL_PIN_SHAPE && /missing required pin 'en'/.test(i.message))).toBe(true);
+        // A complete jkff (set/rst omitted — they're optional) must NOT flag.
+        expect(runErc(mk('jkff', [
+            { pinId: 'j', netId: 'x' }, { pinId: 'k', netId: 'x' }, { pinId: 'clk', netId: 'x' },
+            { pinId: 'q', netId: 'x' }, { pinId: 'qb', netId: 'x' },
+        ])).issues.some((i) => i.code === ErcCode.DIGITAL_PIN_SHAPE)).toBe(false);
     });
 
     it('flags a digital output fighting an analog source on one net (MIXED_DRIVER_CONFLICT)', () => {
