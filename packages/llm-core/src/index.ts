@@ -501,6 +501,7 @@ AnalysisConfig — choose the analysis that best reveals the circuit's behavior:
 - DC sweep:   { "type": "dc", "source": "V1", "startVal": "0", "stopVal": "5", "increment": "0.1" }
 - AC:         { "type": "ac", "variation": "dec", "points": 20, "startFreq": "10", "stopFreq": "1Meg" }   // note: AC result columns are complex — prefer tran/op/dc unless a frequency response is explicitly requested
 (values are SPICE strings)
+- A "tran" may add "initialConditions": { "<netId>": <volts> } to seed node voltages at t=0. Use it to KICK a symmetric oscillator (Wien bridge, ring, relaxation) off its dead equilibrium — seed one internal node (e.g. {"fb": 0.5}); do NOT add "uic" for circuits with supplies. Keep stepTime sane: stopTime/stepTime ≤ ~100k points.
 
 Component conventions:
 - resistor (R): two pins "1","2"; value in ohms, e.g. "10k", "1Meg", "470".
@@ -515,6 +516,7 @@ Component conventions:
 - switch (S): a voltage-controlled switch. pins "+","-" (the switched terminals) and "c+","c-" (the control voltage). Set "model" to "SWGEN" — it closes (~1Ω) when V(c+,c-) rises above ~3V and opens (~1MΩ) below ~2V. The host supplies the model body; do NOT write a .model yourself.
 - bsource (B): an arbitrary behavioral source (math expression). pins "+","-". "value" is "V=<expr>" (output voltage) or "I=<expr>" (output current), on ONE line, where <expr> is math over node voltages written as v(netId) using YOUR circuit's net ids — e.g. "V=v(in)*v(in)" (squarer), "I=1m*v(ctrl)", "V=5*sin(6.283*1k*time)". Functions: sin, cos, exp, ln, sqrt, abs, pow, min, max, etc.; "time" is the simulation time. (The host rewrites v(netId) to the SPICE node automatically.)
 - diode (D): pins "anode","cathode". OMIT the "model" field entirely — a built-in default diode model is supplied automatically.
+- LED (D): use type "diode" with a color-specific generic model set by NAME (the host supplies the body — never write it): "LEDRED" (Vf≈1.9V), "LEDYEL" (≈2.0V), "LEDGRN" (≈2.4V), "LEDBLU" (≈3.0V). Drive pattern: logic/comparator/source output → series resistor → anode, cathode toward ground; size the resistor for (Vdrive−Vf)/R ≈ 5–20mA (330–470Ω from 5V ≈ 7–9mA). For more than ~10mA switch the LED through a BJT (QGENNPN base resistor ~1k). The simulation shows the LED's CURRENT (= its brightness): lit = several mA through its series resistor, dark ≈ 0 — probe the series-resistor current to prove on/off.
 - zener (D): a Zener diode. pins "anode","cathode". Set "value" to the breakdown (Zener) voltage in volts, as a plain number string e.g. "5.1" or "12". For clamping/regulation the CATHODE connects to the higher-voltage node (it conducts in reverse above Vz). OMIT "model" — the host generates the breakdown model from "value".
 - bjt (Q): a bipolar transistor. pins "c","b","e" (collector, base, emitter). Set "model" to a built-in generic model by NAME: "QGENNPN" (NPN) or "QGENPNP" (PNP). The host supplies the model body — do NOT write a .model definition yourself.
 - mosfet (M): a MOSFET. pins "d","g","s","b" (drain, gate, source, bulk; tie bulk to source if unsure). Set "model" to "MGENNMOS" (N-channel) or "MGENPMOS" (P-channel).
@@ -532,6 +534,14 @@ Digital & mixed-signal:
 - Digital logic (the gates + dff above) and analog parts (sources, resistors, diodes, transistors, …) mix freely in ONE circuit. The host AUTOMATICALLY inserts analog↔digital (ADC/DAC) bridges on any net that connects both domains — just wire them together; never add bridge components or set logic levels (0/5 V is assumed).
 - Drive a clock or a digital input with a "voltage_source" PULSE, e.g. "PULSE(0 5 0 1n 1n 1u 2u)" (0→5 V, period 2 µs, high 1 µs). Use a "tran" analysis to observe digital behavior over time.
 - Every digital input must be DRIVEN (by a gate/dff output, a PULSE source, or tied to the ground net for a constant low); never leave one floating, and never drive one net from two gate/flip-flop outputs.
+
+Sensors & real-world instrument patterns (all simulator-proven — reuse them):
+- SENSOR MODELING: SPICE simulates a transducer's ELECTRICAL EQUIVALENT, not its physics. Model an NTC/LDR/level/battery sensor as the divider or bridge OUTPUT VOLTAGE, and emulate the physical sweep with a slow source — a PULSE with a long rise/fall is a ramp ("PULSE(1.5 3.5 0 4 4 1 10)" ramps 1.5→3.5V over 4s), a slow SIN is a cyclic stimulus. PWL is NOT supported. Say how the sensor is modeled in "explanation".
+- COMPARATOR: an OPAMPGEN with NO feedback (open loop) — output saturates near vcc/vee around the threshold at in+ vs in-. For a clean threshold with no chatter add HYSTERESIS (Schmitt): a resistor from output to in+ (positive feedback), band ≈ Vswing·R_in/(R_in+R_fb).
+- REFERENCE LADDER + COMPARATOR BANK: a resistor string from a supply/zener reference sets thresholds (taps at the junctions); one comparator per tap. This builds bargraph/VU meters (LEDs light cumulatively with level), window comparators (in-band detector), and FLASH ADCs (thermometer code → binary via gates).
+- LED INDICATOR LOGIC: complementary red/green status = drive one LED from the comparator output and the other through a logic_not (or a PNP high-side switch). Exactly-one-of-N (battery gauge green/yellow/red) = window comparators + gates so each band lights one LED.
+- 7-SEGMENT DISPLAY: 7 LED diodes (one per segment a–g) each behind its own series resistor, driven by decode gates. For a 2-bit value (digits 0–3 from Q1,Q0): a=d=OR(Q1,NOT Q0); b=tie high; c=OR(NOT Q1,Q0); e=NOT Q0; f=NOR(Q0,Q1); g=Q1. Prove the digit by the lit-segment pattern (segment-resistor currents).
+- COUNTERS/SEQUENCERS: chain dffs (qb→d divides by 2; clock the next stage from q0b for a ripple up-count) + decode gates for traffic lights, chasers, sequencers. One state per clock period.
 
 Rules:
 - Use a unique id and a unique, type-appropriate designator (R*/C*/L*/V*/I*/D*) per component.

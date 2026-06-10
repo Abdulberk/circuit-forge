@@ -511,6 +511,29 @@ describe('active devices', () => {
             });
             expect(extra.map((m) => m.name)).toContain('OPAMPGEN');
         });
+
+        it('library resolves the LED color models by name (diode + model:"LEDRED" etc.)', () => {
+            // LEDs are vetted GENERIC diode models (the AI sets a NAME, never a body): four color classes
+            // with realistic forward voltages. resolveGenericModels must inject each by name.
+            for (const [key, name] of [
+                ['led_red', 'LEDRED'],
+                ['led_yellow', 'LEDYEL'],
+                ['led_green', 'LEDGRN'],
+                ['led_blue', 'LEDBLU'],
+            ] as const) {
+                expect(GENERIC_MODELS[key]!.name).toBe(name);
+                expect(GENERIC_MODELS[key]!.device).toBe('diode');
+                expect(GENERIC_MODELS[key]!.body).toContain(`.model ${name} D(`);
+            }
+            const extra = resolveGenericModels({
+                components: [
+                    { id: 'd1', type: 'diode', designator: 'DA1', model: 'LEDRED', pins: [] },
+                    { id: 'd2', type: 'diode', designator: 'DB1', model: 'LEDGRN', pins: [] },
+                ],
+                models: [],
+            });
+            expect(extra.map((m) => m.name).sort()).toEqual(['LEDGRN', 'LEDRED']);
+        });
     });
 
     describe('zener (parametric breakdown model)', () => {
