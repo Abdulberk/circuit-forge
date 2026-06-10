@@ -193,6 +193,19 @@ add('regression', 'single-point AC sweep returns data', () => ({
     // RC low-pass at fc=1/(2π·1.6k·100n)≈1kHz -> |H(1kHz)| ≈ 0.707
     return r.rows >= 1 && near(r.series[0]?.final, 0.707, 0.05) ? ok() : fail(`rows=${r.rows} |H|=${r.series[0]?.final} want 1 row ≈0.707`);
 });
+// LED generic models (LEDRED/LEDGRN/...) resolve by NAME like QGENNPN: a diode with model:'LEDRED' must
+// auto-inject the vetted body and bias at the color's realistic forward voltage (red ~1.9V at ~9mA).
+add('regression', 'LED generic model resolves + realistic Vf', () => ({
+    circuit: circuit([
+        V('v1', 'V1', 'DC 5', 'vcc', '0'), R('r1', 'R1', '330', 'vcc', 'led'),
+        { id: 'd1', type: 'diode', designator: 'DA1', model: 'LEDRED', pins: [{ pinId: 'anode', netId: 'led' }, { pinId: 'cathode', netId: '0' }] },
+    ], N('vcc', 'led')),
+    analysis: OP, probes: ['v(led)', 'i(R1)'],
+}), (r) => {
+    if (!baseOk(r).pass) return baseOk(r);
+    const vf = r.series[0]?.final, i = Math.abs(r.series[1]?.final ?? 0);
+    return near(vf, 1.93, 0.15) && i > 7e-3 && i < 11e-3 ? ok() : fail(`Vf=${vf} (want ~1.9V), I=${i} (want ~9mA) — LEDRED not resolving/biasing right`);
+});
 // A bsource expression referencing a PURE-DIGITAL net must read the analog _p twin (raw event node would be
 // singular in the analog matrix -> gmin garbage). Found by the pairwise sweep (gate-out -> bsource-expr).
 add('regression', 'bsource expr on digital net reads the analog twin', () => ({

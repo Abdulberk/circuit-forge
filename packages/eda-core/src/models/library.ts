@@ -58,6 +58,36 @@ export const GENERIC_MODELS: Record<string, ModelDef> = {
         // VT+VH=3V, opens (ROFF=1MΩ) below VT-VH=2V. The hysteresis prevents chatter near threshold.
         body: '.model SWGEN SW(VT=2.5 VH=0.5 RON=1 ROFF=1Meg)',
     },
+    // Generic LEDs — a diode with the emission coefficient/saturation current tuned so the forward
+    // voltage at ~10 mA matches the real color class (Vf = N·Vt·ln(I/IS)). SPICE models the LED
+    // ELECTRICALLY (Vf, current — i.e. brightness); light emission itself is not simulated. Drive
+    // pattern: logic/comparator output → series R (330–470 Ω from 5 V) → anode, cathode to ground
+    // (~7–10 mA lit); for >10 mA drive through a BJT. Catalog-proven (7-seg display, bargraph,
+    // night-light templates were validated on ngspice with these exact parameter sets).
+    led_red: {
+        name: 'LEDRED',
+        device: 'diode',
+        tier: 'generic',
+        body: '.model LEDRED D(IS=1e-20 N=1.8 RS=2 CJO=10p)', // Vf ≈ 1.9 V @ 10 mA (red/IR class)
+    },
+    led_yellow: {
+        name: 'LEDYEL',
+        device: 'diode',
+        tier: 'generic',
+        body: '.model LEDYEL D(IS=1e-20 N=1.9 RS=2 CJO=10p)', // Vf ≈ 2.0 V @ 10 mA (yellow/amber)
+    },
+    led_green: {
+        name: 'LEDGRN',
+        device: 'diode',
+        tier: 'generic',
+        body: '.model LEDGRN D(IS=1e-22 N=2.0 RS=2 CJO=10p)', // Vf ≈ 2.4 V @ 10 mA (green)
+    },
+    led_blue: {
+        name: 'LEDBLU',
+        device: 'diode',
+        tier: 'generic',
+        body: '.model LEDBLU D(IS=1e-22 N=2.5 RS=3 CJO=10p)', // Vf ≈ 3.0 V @ 10 mA (blue/white class)
+    },
     // Generic behavioral op-amp macromodel (a `.subckt`, not a `.model`). Authored, license-clean.
     // Ports (MUST be wired in this order): out, in+ , in-, V+ , V- .
     //   Gm   : transconductance input stage (1 mA/V) — current drive bounds the clamp current,
