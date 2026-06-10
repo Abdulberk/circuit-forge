@@ -121,6 +121,10 @@ model Template {
   description String?
   tags        String[]
   circuitJson Json
+  // Optional recommended simulation setup: { analysis: AnalysisConfig, probes?: string[] }. Lets a template
+  // carry the analysis it was validated with — including tran initialConditions (e.g. an oscillator's
+  // startup seed), which CircuitJson itself cannot express. Frontend "Run" uses this when present.
+  analysisConfig Json?
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
 

@@ -395,8 +395,10 @@ interface SimulationResult {
 |---|---|---|
 | `GET /templates` | query `orgId?`, `tag?`, `limit?`, `offset?` | No `orgId` → public templates only. With `orgId` → that org's templates (requires membership). Uses an optional JWT guard, so unauthenticated public browse works. |
 | `GET /templates/:templateId` | — | `templateId` runs through `ParseUUIDPipe` |
-| `POST /templates` | `{ orgId?, name, tags?, circuitJson }` | Omit `orgId` for a public template; `orgId` is `@IsUUID()`-validated |
+| `POST /templates` | `{ orgId?, name, tags?, circuitJson, analysisConfig? }` | Omit `orgId` for a public template; `orgId` is `@IsUUID()`-validated. `analysisConfig.analysis` is server-validated as a real `AnalysisConfig`. |
 | `DELETE /templates/:templateId` | — | RBAC-gated (`OWNER`/`ADMIN`); public templates cannot be deleted |
+
+**`analysisConfig` (optional, on template records):** `{ analysis: AnalysisConfig, probes?: string[] }` — the recommended, validated simulation setup for the template. When present, the "Run" action should pre-fill the Sim Panel from it instead of defaulting to `op`. This matters for circuits that need transient `initialConditions` to start (e.g. the Wien-bridge oscillator template seeds one node — without that seed a symmetric oscillator stays at its equilibrium and the result is a flat line). Templates without it: fall back to the analysis suggested in the description text.
 
 **Caveats:**
 - `:templateId` and the `orgId` query/body field are validated as **UUIDs** (`ParseUUIDPipe` / `@IsUUID()`). The 5 seeded public templates and the demo org use non-UUID ids (e.g. `template-rc-low-pass-filter`, `demo-org-id`), so fetching a seeded template by id or passing `orgId=demo-org-id` returns **400**. Listing public templates (`GET /templates` with no `orgId`) works fine. Treat ids opaquely and surface 400s gracefully.
