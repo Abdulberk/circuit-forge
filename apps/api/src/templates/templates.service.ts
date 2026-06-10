@@ -2,7 +2,8 @@
  * Templates Service
  * Handles template CRUD operations with public/org scope
  */
-import { Injectable, NotFoundException, ForbiddenException } from '@nestjs/common';
+import { Injectable, NotFoundException, ForbiddenException, BadRequestException } from '@nestjs/common';
+import { safeValidateAnalysisConfig } from '@circuit-forge/eda-core';
 import { PrismaService } from '../prisma/prisma.service';
 import { OrgsService } from '../orgs/orgs.service';
 import { CreateTemplateDto, ListTemplatesQueryDto } from './dto';
@@ -29,12 +30,27 @@ export class TemplatesService {
             // In production, this would require special admin role
         }
 
+        // analysisConfig is optional, but when present its `analysis` must be a VALID AnalysisConfig —
+        // storing a malformed one would make the frontend's "Run" emit a broken simulation request later.
+        if (dto.analysisConfig !== undefined) {
+            const analysis = (dto.analysisConfig as { analysis?: unknown }).analysis;
+            const parsed = safeValidateAnalysisConfig(analysis);
+            if (!parsed.success) {
+                throw new BadRequestException(
+                    `analysisConfig.analysis is not a valid AnalysisConfig: ${parsed.error.errors
+                        .map((e) => `${e.path.join('.') || '(root)'}: ${e.message}`)
+                        .join('; ')}`,
+                );
+            }
+        }
+
         return this.prisma.template.create({
             data: {
                 orgId: dto.orgId || null,
                 name: dto.name,
                 tags: dto.tags || [],
                 circuitJson: dto.circuitJson as any,
+                analysisConfig: (dto.analysisConfig as any) ?? undefined,
             },
         });
     }

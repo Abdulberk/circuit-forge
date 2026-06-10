@@ -24,6 +24,16 @@ export class CreateTemplateDto {
     @ApiProperty({ description: 'Circuit JSON definition' })
     @IsObject()
     circuitJson!: Record<string, any>;
+
+    @ApiPropertyOptional({
+        description:
+            'Recommended simulation setup: { analysis: AnalysisConfig, probes?: string[] }. Carries the analysis the ' +
+            'template was validated with — including tran initialConditions (e.g. an oscillator startup seed) that ' +
+            'CircuitJson itself cannot express.',
+    })
+    @IsOptional()
+    @IsObject()
+    analysisConfig?: Record<string, any>;
 }
 
 export class ListTemplatesQueryDto {

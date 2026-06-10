@@ -1,4 +1,4 @@
-import { PrismaClient, OrgRole } from '@prisma/client';
+import { PrismaClient, OrgRole, Prisma } from '@prisma/client';
 import * as argon2 from 'argon2';
 import { readFileSync, readdirSync, existsSync } from 'fs';
 import { resolve } from 'path';
@@ -497,7 +497,9 @@ async function main(): Promise<void> {
     });
     console.log(`✓ Added user as org owner`);
 
-    // Create public templates (inline simple set + the JSON-file flagship set)
+    // Create public templates (inline simple set + the JSON-file flagship set). analysisConfig is the
+    // optional recommended simulation setup ({ analysis, probes? }) — e.g. an oscillator's tran with its
+    // initialConditions startup seed; DbNull clears it on re-seed when a template no longer carries one.
     for (const template of [...templates, ...loadFileTemplates()]) {
         await prisma.template.upsert({
             where: {
@@ -508,6 +510,7 @@ async function main(): Promise<void> {
                 description: template.description,
                 tags: template.tags,
                 circuitJson: template.circuitJson,
+                analysisConfig: template.analysisConfig ?? Prisma.DbNull,
             },
             create: {
                 id: `template-${template.name.toLowerCase().replace(/\s+/g, '-')}`,
@@ -516,6 +519,7 @@ async function main(): Promise<void> {
                 description: template.description,
                 tags: template.tags,
                 circuitJson: template.circuitJson,
+                analysisConfig: template.analysisConfig ?? Prisma.DbNull,
             },
         });
         console.log(`✓ Created template: ${template.name}`);

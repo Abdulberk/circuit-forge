@@ -59,10 +59,67 @@ export interface SimSummary {
 const DEFAULT_TIMEOUT_MS = 8000;
 const DEFAULT_MAX_OUTPUT_BYTES = 2 * 1024 * 1024; // 2 MB
 const MAX_REPORTED_MEASUREMENTS = 40; // cap the per-node list so a wide circuit can't blow the token budget
+/**
+ * Global concurrency bound for INLINE ngspice runs. The per-user throttle (5/min on generate) does not
+ * bound the FLEET: N users × up to maxToolIters verify-loop turns each could otherwise pile up unbounded
+ * concurrent ngspice processes (each up to SIM_TIMEOUT_MS of CPU). The spawn itself is async (the event
+ * loop is never blocked) — this protects the HOST (CPU/process count), like the worker's CONCURRENCY=2.
+ */
+const DEFAULT_MAX_CONCURRENT = 4;
+/** How long a simulate call may WAIT for a slot before giving up (bounded so the AI loop isn't stalled). */
+const DEFAULT_QUEUE_WAIT_MS = 15000;
+
+/** Minimal async semaphore: acquire resolves false (instead of queueing forever) after `waitMs`. */
+class Semaphore {
+    private inUse = 0;
+    private readonly waiters: Array<() => void> = [];
+    constructor(private readonly limit: number) {}
+
+    async acquire(waitMs: number): Promise<boolean> {
+        if (this.inUse < this.limit) {
+            this.inUse++;
+            return true;
+        }
+        return new Promise<boolean>((resolve) => {
+            let settled = false;
+            const waiter = () => {
+                if (settled) return;
+                settled = true;
+                clearTimeout(timer);
+                this.inUse++;
+                resolve(true);
+            };
+            const timer = setTimeout(() => {
+                if (settled) return;
+                settled = true;
+                const i = this.waiters.indexOf(waiter);
+                if (i >= 0) this.waiters.splice(i, 1);
+                resolve(false);
+            }, waitMs);
+            this.waiters.push(waiter);
+        });
+    }
+
+    release(): void {
+        this.inUse--;
+        const next = this.waiters.shift();
+        if (next) next();
+    }
+}
 
 @Injectable()
 export class CircuitSimulatorService {
-    constructor(private readonly config: ConfigService) {}
+    /** One semaphore per service instance (the service is a singleton) — bounds inline ngspice host-wide. */
+    private readonly semaphore: Semaphore;
+
+    constructor(private readonly config: ConfigService) {
+        const limit = Number(this.config.get<string>('SIM_INLINE_CONCURRENCY')) || DEFAULT_MAX_CONCURRENT;
+        this.semaphore = new Semaphore(limit);
+    }
+
+    private queueWaitMs(): number {
+        return Number(this.config.get<string>('SIM_INLINE_QUEUE_WAIT_MS')) || DEFAULT_QUEUE_WAIT_MS;
+    }
 
     /** Whether an ngspice binary is configured — gates the simulate tool at offer time. */
     available(): boolean {
@@ -105,7 +162,14 @@ export class CircuitSimulatorService {
             return { simStatus: 'failed', ercErrors, ercWarnings, measurements: [], nodeCount: 0, analysisType: an.type, runError: `netlist generation failed: ${e instanceof Error ? e.message : String(e)}` };
         }
 
-        // 5-7) Run ngspice in an isolated temp dir, parse the output.
+        // 5-7) Run ngspice in an isolated temp dir, parse the output — under the GLOBAL semaphore, so a
+        // burst of verify-loops can't pile up unbounded concurrent ngspice processes on the host. Everything
+        // above (validation/ERC/netlist) is cheap pure-JS and stays outside the gate. If no slot frees up
+        // within the wait window we report 'skipped' (the AI loop continues with ERC-only feedback).
+        const gotSlot = await this.semaphore.acquire(this.queueWaitMs());
+        if (!gotSlot) {
+            return { simStatus: 'skipped', ercErrors, ercWarnings, measurements: [], nodeCount: 0, analysisType: an.type, runError: 'simulation capacity is saturated — proceeding on ERC results only (try again shortly)' };
+        }
         const dir = path.join(os.tmpdir(), 'cf-sim', randomUUID());
         try {
             await fs.mkdir(dir, { recursive: true });
@@ -166,6 +230,7 @@ export class CircuitSimulatorService {
         } catch (e) {
             return { simStatus: 'failed', ercErrors, ercWarnings, measurements: [], nodeCount: 0, analysisType: an.type, runError: e instanceof Error ? e.message : String(e) };
         } finally {
+            this.semaphore.release();
             await fs.rm(dir, { recursive: true, force: true }).catch(() => undefined);
         }
     }
