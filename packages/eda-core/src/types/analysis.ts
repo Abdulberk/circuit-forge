@@ -84,8 +84,21 @@ export function analysisToSpice(config: AnalysisConfig): string {
             }
             return cmd;
         }
-        case 'ac':
+        case 'ac': {
+            // SINGLE-POINT sweep (startFreq == stopFreq): `.ac dec/oct N f f` makes ngspice run with
+            // "No. of Data Rows : 0" — the wrdata then fails ("no such vector") and the caller gets zero
+            // data with a misleading error. A degenerate log sweep over one point is `.ac lin 1 f f`.
+            let samePoint = config.startFreq === config.stopFreq;
+            if (!samePoint) {
+                try {
+                    samePoint = parseSpiceValue(config.startFreq) === parseSpiceValue(config.stopFreq);
+                } catch {
+                    samePoint = false; // unparseable values: emit as-authored, ngspice reports its own error
+                }
+            }
+            if (samePoint) return `.ac lin 1 ${config.startFreq} ${config.stopFreq}`;
             return `.ac ${config.variation} ${config.points} ${config.startFreq} ${config.stopFreq}`;
+        }
         case 'dc':
             return `.dc ${config.source} ${config.startVal} ${config.stopVal} ${config.increment}`;
         case 'op':

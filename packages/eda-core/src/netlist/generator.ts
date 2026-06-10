@@ -219,6 +219,13 @@ export function generateNetlist(
         if (!modelMap.has(m.name)) modelMap.set(m.name, m);
     }
     const componentLines: string[] = [];
+    // Node map for B-source EXPRESSION references: a `v(<net>)` inside a behavioral expression must read the
+    // ANALOG voltage. For a pure-digital net the sanitized name belongs to the XSPICE event node (no analog
+    // element pins it — referencing it from a B-source leaves the node singular in the analog matrix and the
+    // expression reads gmin-degraded garbage). planMixedSignal bridges every digital net to an analog "_p"
+    // twin (probeNodeForNet) — redirect expression refs there, exactly like probes. No-op for analog nets.
+    const exprNodeMap = new Map(nodeMap);
+    for (const [netId, twin] of ms.probeNodeForNet) exprNodeMap.set(netId, twin);
     // Maps each component's schematic designator (lower-cased) to the SPICE instance name actually
     // emitted (which spiceInstanceName may have prefixed/sanitized). Reference sites that name a device
     // by its designator — current probes i(<dev>), a .dc sweep <source> — are remapped through this so
@@ -253,7 +260,7 @@ export function generateNetlist(
         const digital = isDigitalType(component.type);
         const spiceLine = digital
             ? emitDigitalComponent(component, nodeMap, ms)
-            : componentToSpice(component, nodeMap, modelMap);
+            : componentToSpice(component, nodeMap, modelMap, exprNodeMap);
         const emitted = Array.isArray(spiceLine) ? spiceLine : spiceLine ? [spiceLine] : [];
         const emittedName = emitted[0]?.split(/\s+/)[0];
         if (emittedName && component.designator) {
@@ -535,6 +542,9 @@ function componentToSpice(
     component: Component,
     nodeMap: Map<string, string>,
     modelMap?: Map<string, ModelDef>,
+    // For B-source expressions only: nodeMap overlaid with the analog "_p" twins of digital nets, so a
+    // v(<digital net>) reference reads the bridged analog copy instead of the raw XSPICE event node.
+    exprNodeMap?: Map<string, string>,
 ): string | string[] | null {
     const { type, designator, value, model, pins } = component;
 
@@ -600,7 +610,8 @@ function componentToSpice(
         if (!value || /[\r\n]/.test(value) || !/^\s*[VI]\s*=\s*\S/i.test(value)) return null;
         const inst = spiceInstanceName(designator, 'B');
         const [np, nn] = orderedNodes(component, nodeMap);
-        return `${inst} ${np} ${nn} ${rewriteExprNodeRefs(value, nodeMap)}`;
+        // Expression refs use exprNodeMap (digital nets → their analog twins); pins stay on nodeMap.
+        return `${inst} ${np} ${nn} ${rewriteExprNodeRefs(value, exprNodeMap ?? nodeMap)}`;
     }
 
     // Any type without a SPICE element prefix is non-emittable — skip it gracefully rather than throw,
