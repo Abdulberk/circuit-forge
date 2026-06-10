@@ -71,6 +71,12 @@ export const COMPONENT_TYPES = [
     'logic_not',
     'logic_buffer',
     'dff',
+    // Sequential/bus extensions (XSPICE, port orders live-verified on ngspice-41): JK and T flip-flops,
+    // a level-sensitive D latch, and the tristate buffer (the one legitimate multi-driver bus element).
+    'jkff',
+    'tff',
+    'dlatch',
+    'tristate',
     'ground',
     'generic',
 ] as const;
@@ -220,6 +226,16 @@ export const COMPONENT_PINS: Record<ComponentType, string[]> = {
     // D flip-flop (XSPICE d_dff): fixed XSPICE port order D CLK SET RST Q QB. set/rst are optional in
     // the authored circuit — the generator auto-ties an omitted one to the inactive (LOW) digital rail.
     dff: ['d', 'clk', 'set', 'rst', 'q', 'qb'],
+    // JK flip-flop (XSPICE d_jkff, port order J K CLK SET RST Q NQ): J=K=1 toggles. set/rst optional.
+    jkff: ['j', 'k', 'clk', 'set', 'rst', 'q', 'qb'],
+    // T (toggle) flip-flop (XSPICE d_tff, port order T CLK SET RST Q NQ). set/rst optional.
+    tff: ['t', 'clk', 'set', 'rst', 'q', 'qb'],
+    // Level-sensitive D latch (XSPICE d_dlatch, port order DATA ENABLE SET RST Q NQ): transparent while
+    // en is HIGH, holds on en LOW. set/rst optional.
+    dlatch: ['d', 'en', 'set', 'rst', 'q', 'qb'],
+    // Tristate buffer (XSPICE d_tristate, port order IN ENABLE OUT): drives `out` from `in1` while `en`
+    // is HIGH, releases the net (high-Z) on en LOW — the one digital source allowed to SHARE a bus net.
+    tristate: ['in1', 'en', 'out'],
     ground: ['1'],
     generic: [], // variable arity — pins come from the catalog part / schematic layer
 };
@@ -255,6 +271,10 @@ export const SPICE_PREFIXES: Record<ComponentType, string> = {
     logic_not: 'A',
     logic_buffer: 'A',
     dff: 'A',
+    jkff: 'A',
+    tff: 'A',
+    dlatch: 'A',
+    tristate: 'A',
     ground: '', // Ground is a special case (node 0)
     generic: '', // Catalog-only — not emitted to SPICE
 };
@@ -281,8 +301,11 @@ const LOGIC_GATE_TYPES = new Set<ComponentType>([
     'logic_buffer',
 ]);
 
-/** All digital / mixed-signal component types (gates + flip-flops) — emit XSPICE `a`-devices. */
-const DIGITAL_TYPES = new Set<ComponentType>([...LOGIC_GATE_TYPES, 'dff']);
+/** Fixed-arity sequential elements (flip-flops + the latch) — share the dff emission/tie-off pattern. */
+export const SEQUENTIAL_TYPES = new Set<ComponentType>(['dff', 'jkff', 'tff', 'dlatch']);
+
+/** All digital / mixed-signal component types (gates + sequential + tristate) — emit XSPICE `a`-devices. */
+const DIGITAL_TYPES = new Set<ComponentType>([...LOGIC_GATE_TYPES, ...SEQUENTIAL_TYPES, 'tristate']);
 
 /** True for a single-input gate (only `logic_not` / `logic_buffer`) — emitted with a scalar input port. */
 export function isSingleInputGate(type: ComponentType): boolean {
@@ -305,6 +328,7 @@ export function isDigitalType(type: ComponentType): boolean {
  */
 export function digitalPinRole(type: ComponentType, pinId: string): 'source' | 'sink' | null {
     if (isLogicGateType(type)) return pinId === 'out' ? 'source' : 'sink';
-    if (type === 'dff') return pinId === 'q' || pinId === 'qb' ? 'source' : 'sink';
+    if (SEQUENTIAL_TYPES.has(type)) return pinId === 'q' || pinId === 'qb' ? 'source' : 'sink';
+    if (type === 'tristate') return pinId === 'out' ? 'source' : 'sink';
     return null;
 }

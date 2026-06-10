@@ -24,6 +24,7 @@ import {
     isLogicGateType,
     isSingleInputGate,
     digitalPinRole,
+    SEQUENTIAL_TYPES,
 } from '../types/circuit';
 
 /**
@@ -40,13 +41,18 @@ import {
 const DIGITAL_DEVICE: Partial<Record<string, string>> = {
     logic_and: 'd_and', logic_or: 'd_or', logic_nand: 'd_nand', logic_nor: 'd_nor',
     logic_xor: 'd_xor', logic_xnor: 'd_xnor', logic_not: 'd_inverter', logic_buffer: 'd_buffer', dff: 'd_dff',
+    jkff: 'd_jkff', tff: 'd_tff', dlatch: 'd_dlatch', tristate: 'd_tristate',
 };
 const DIGITAL_BASENAME: Partial<Record<string, string>> = {
     logic_and: 'CFD_AND', logic_or: 'CFD_OR', logic_nand: 'CFD_NAND', logic_nor: 'CFD_NOR',
     logic_xor: 'CFD_XOR', logic_xnor: 'CFD_XNOR', logic_not: 'CFD_NOT', logic_buffer: 'CFD_BUF', dff: 'CFD_DFF',
+    jkff: 'CFD_JKFF', tff: 'CFD_TFF', dlatch: 'CFD_DLATCH', tristate: 'CFD_TRI',
 };
 const GATE_DEFAULT_PARAMS = 'rise_delay=1n fall_delay=1n input_load=0.5p';
 const DFF_DEFAULT_PARAMS = 'clk_delay=1n set_delay=1n reset_delay=1n rise_delay=1n fall_delay=1n';
+// d_dlatch keys data/enable delays (no clk); d_tristate's ONLY timing param is `delay` (verified ngspice-41).
+const DLATCH_DEFAULT_PARAMS = 'data_delay=1n enable_delay=1n set_delay=1n reset_delay=1n rise_delay=1n fall_delay=1n';
+const TRISTATE_DEFAULT_PARAMS = 'delay=1n';
 
 /** A property value as a trimmed string ("2n", "1"), or undefined. */
 function digitalProp(component: Component, key: string): string | undefined {
@@ -82,13 +88,34 @@ function dffParams(c: Component): string {
     const base = `clk_delay=${clk} set_delay=${set} reset_delay=${reset} rise_delay=${rise} fall_delay=${fall}`;
     return digitalProp(c, 'ic') === '1' ? `${base} ic=1` : base;
 }
+/** d_dlatch param string (data/enable delays instead of clk; `ic=1` appended only when requested). */
+function dlatchParams(c: Component): string {
+    const data = validTime(digitalProp(c, 'dataDelay'), '1n');
+    const enable = validTime(digitalProp(c, 'enableDelay'), '1n');
+    const set = validTime(digitalProp(c, 'setDelay'), '1n');
+    const reset = validTime(digitalProp(c, 'resetDelay'), '1n');
+    const rise = validTime(digitalProp(c, 'riseDelay'), '1n');
+    const fall = validTime(digitalProp(c, 'fallDelay'), '1n');
+    const base = `data_delay=${data} enable_delay=${enable} set_delay=${set} reset_delay=${reset} rise_delay=${rise} fall_delay=${fall}`;
+    return digitalProp(c, 'ic') === '1' ? `${base} ic=1` : base;
+}
+/** d_tristate param string — its only timing parameter is `delay`. */
+function tristateParams(c: Component): string {
+    return `delay=${validTime(digitalProp(c, 'delay'), '1n')}`;
+}
 /** ngspice param string for any digital component. */
 function digitalParams(c: Component): string {
-    return c.type === 'dff' ? dffParams(c) : gateParams(c);
+    if (c.type === 'dff' || c.type === 'jkff' || c.type === 'tff') return dffParams(c); // same param family (clk/set/reset/rise/fall + ic)
+    if (c.type === 'dlatch') return dlatchParams(c);
+    if (c.type === 'tristate') return tristateParams(c);
+    return gateParams(c);
 }
 /** The default param string for a type (used to decide whether a component keeps the base model name). */
 function defaultParams(type: string): string {
-    return type === 'dff' ? DFF_DEFAULT_PARAMS : GATE_DEFAULT_PARAMS;
+    if (type === 'dff' || type === 'jkff' || type === 'tff') return DFF_DEFAULT_PARAMS;
+    if (type === 'dlatch') return DLATCH_DEFAULT_PARAMS;
+    if (type === 'tristate') return TRISTATE_DEFAULT_PARAMS;
+    return GATE_DEFAULT_PARAMS;
 }
 /**
  * Peak/HIGH level (volts) of a voltage-source value string — `DC 5`, `PULSE(0 5 …)`, `SIN(off amp …)`,
@@ -366,9 +393,11 @@ export function planMixedSignal(
         }
     }
 
-    // 3) Constant digital-LOW rail for unconnected flip-flop set/reset (active-HIGH → inactive = LOW).
+    // 3) Constant digital-LOW rail for unconnected sequential set/reset (active-HIGH → inactive = LOW).
     const needsLowRail = circuit.components.some(
-        (c) => c.type === 'dff' && (!c.pins.some((p) => p.pinId === 'set') || !c.pins.some((p) => p.pinId === 'rst')),
+        (c) =>
+            SEQUENTIAL_TYPES.has(c.type) &&
+            (!c.pins.some((p) => p.pinId === 'set') || !c.pins.some((p) => p.pinId === 'rst')),
     );
     if (needsLowRail) {
         const railAnalog = uniqueNode('dlogic_lo_a');
@@ -420,17 +449,51 @@ export function emitDigitalComponent(
             : `${inst} [${inputs.join(' ')}] ${out} ${modelName}`;
     }
 
-    if (component.type === 'dff') {
-        const d = nodeOf('d');
-        const clk = nodeOf('clk');
+    // Sequential elements share the dff pattern: fixed XSPICE port order, required data/clock + q/qb,
+    // optional active-HIGH set/rst tied to the constant-LOW rail when absent. Port orders verified live
+    // on ngspice-41: d_dff D CLK SET RST Q NQ · d_jkff J K CLK SET RST Q NQ · d_tff T CLK SET RST Q NQ ·
+    // d_dlatch DATA ENABLE SET RST Q NQ.
+    if (SEQUENTIAL_TYPES.has(component.type)) {
         const q = nodeOf('q');
         const qb = nodeOf('qb');
-        if (!d || !clk || !q || !qb) return null; // required pins missing → ERC flags it
-        // set/reset are optional: an absent one is tied to the inactive (LOW) digital rail.
+        if (!q || !qb) return null; // required outputs missing → ERC flags it
         const set = nodeOf('set') ?? plan.lowRailNode;
         const rst = nodeOf('rst') ?? plan.lowRailNode;
         if (!set || !rst) return null; // lowRailNode should exist when needed; guard defensively
-        return `${inst} ${d} ${clk} ${set} ${rst} ${q} ${qb} ${modelName}`;
+        if (component.type === 'dff') {
+            const d = nodeOf('d');
+            const clk = nodeOf('clk');
+            if (!d || !clk) return null;
+            return `${inst} ${d} ${clk} ${set} ${rst} ${q} ${qb} ${modelName}`;
+        }
+        if (component.type === 'jkff') {
+            const j = nodeOf('j');
+            const k = nodeOf('k');
+            const clk = nodeOf('clk');
+            if (!j || !k || !clk) return null;
+            return `${inst} ${j} ${k} ${clk} ${set} ${rst} ${q} ${qb} ${modelName}`;
+        }
+        if (component.type === 'tff') {
+            const t = nodeOf('t');
+            const clk = nodeOf('clk');
+            if (!t || !clk) return null;
+            return `${inst} ${t} ${clk} ${set} ${rst} ${q} ${qb} ${modelName}`;
+        }
+        // dlatch
+        const d = nodeOf('d');
+        const en = nodeOf('en');
+        if (!d || !en) return null;
+        return `${inst} ${d} ${en} ${set} ${rst} ${q} ${qb} ${modelName}`;
+    }
+
+    // Tristate buffer (d_tristate IN ENABLE OUT): drives `out` while `en` is HIGH, releases it on LOW —
+    // the only digital source allowed to share a bus net (ERC relaxes contention for all-tristate buses).
+    if (component.type === 'tristate') {
+        const input = nodeOf('in1');
+        const en = nodeOf('en');
+        const out = nodeOf('out');
+        if (!input || !en || !out) return null; // all three are required → ERC flags absence
+        return `${inst} ${input} ${en} ${out} ${modelName}`;
     }
 
     return null;

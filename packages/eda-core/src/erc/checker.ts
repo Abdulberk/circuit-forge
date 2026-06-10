@@ -3,7 +3,7 @@
  * Validates circuits for common electrical issues
  */
 import type { CircuitJson, Component } from '../types/circuit';
-import { isDigitalType, isLogicGateType, isSingleInputGate, digitalPinRole } from '../types/circuit';
+import { isDigitalType, isLogicGateType, isSingleInputGate, digitalPinRole, SEQUENTIAL_TYPES, COMPONENT_PINS } from '../types/circuit';
 import { ErcCode, ErcSeverity, ErcResult, ErcIssue } from '../types/erc';
 import { ERC_DESCRIPTIONS, ERC_SEVERITIES } from './codes';
 import { buildZenerModel, normalizeControlledSourceGain, parseTransformerParams, parseTransmissionLineParams } from '../models/library';
@@ -287,25 +287,29 @@ function checkDigitalConnectivity(circuit: CircuitJson): ErcIssue[] {
                     ),
                 );
             }
-        } else if (c.type === 'dff') {
-            for (const req of ['d', 'clk', 'q', 'qb']) {
+        } else if (SEQUENTIAL_TYPES.has(c.type) || c.type === 'tristate') {
+            // Fixed-arity digital elements: the canonical pin set comes from COMPONENT_PINS; set/rst are
+            // the only OPTIONAL pins (auto-tied LOW by the generator). Everything else is required, a
+            // duplicate pinId silently drops a connection (nodeOf takes the first), and a pin outside the
+            // port set is silently ignored by emission — flag all three.
+            const canonical = COMPONENT_PINS[c.type];
+            const optional = new Set(['set', 'rst']);
+            for (const req of canonical.filter((p) => !optional.has(p))) {
                 if (!c.pins.some((p) => p.pinId === req)) {
                     issues.push(
-                        createIssue(ErcCode.DIGITAL_PIN_SHAPE, [c.id], `${c.designator || c.id} (dff): missing required pin '${req}'`),
+                        createIssue(ErcCode.DIGITAL_PIN_SHAPE, [c.id], `${c.designator || c.id} (${c.type}): missing required pin '${req}'`),
                     );
                 }
             }
-            // A duplicate pinId (e.g. two `q`) silently drops a connection (nodeOf takes the first); a pin
-            // outside the fixed dff port set is silently ignored by emission. Flag both.
-            const allowed = new Set(['d', 'clk', 'set', 'rst', 'q', 'qb']);
+            const allowed = new Set(canonical);
             const ids = c.pins.map((p) => p.pinId.toLowerCase());
             const dups = [...new Set(ids.filter((id, i) => ids.indexOf(id) !== i))];
             if (dups.length > 0) {
-                issues.push(createIssue(ErcCode.DIGITAL_PIN_SHAPE, [c.id], `${c.designator || c.id} (dff): duplicate pin id(s) ${dups.join(', ')}`));
+                issues.push(createIssue(ErcCode.DIGITAL_PIN_SHAPE, [c.id], `${c.designator || c.id} (${c.type}): duplicate pin id(s) ${dups.join(', ')}`));
             }
-            const strayDff = [...new Set(c.pins.map((p) => p.pinId).filter((id) => !allowed.has(id.toLowerCase())))];
-            if (strayDff.length > 0) {
-                issues.push(createIssue(ErcCode.DIGITAL_PIN_SHAPE, [c.id], `${c.designator || c.id} (dff): unexpected pin(s) ${strayDff.join(', ')} — dff pins are d/clk/set/rst/q/qb`));
+            const strays = [...new Set(c.pins.map((p) => p.pinId).filter((id) => !allowed.has(id.toLowerCase())))];
+            if (strays.length > 0) {
+                issues.push(createIssue(ErcCode.DIGITAL_PIN_SHAPE, [c.id], `${c.designator || c.id} (${c.type}): unexpected pin(s) ${strays.join(', ')} — ${c.type} pins are ${canonical.join('/')}`));
             }
         }
     }
@@ -320,12 +324,13 @@ function checkDigitalConnectivity(circuit: CircuitJson): ErcIssue[] {
         sink: number;
         analog: number;
         analogSrc: number;
+        triSrc: number; // how many of `src` are TRISTATE outputs (releasable -> may legally share a bus)
     }
     const tally = new Map<string, Tally>();
     const at = (netId: string): Tally => {
         let x = tally.get(netId);
         if (!x) {
-            x = { src: 0, sink: 0, analog: 0, analogSrc: 0 };
+            x = { src: 0, sink: 0, analog: 0, analogSrc: 0, triSrc: 0 };
             tally.set(netId, x);
         }
         return x;
@@ -336,8 +341,10 @@ function checkDigitalConnectivity(circuit: CircuitJson): ErcIssue[] {
         for (const pin of c.pins) {
             const x = at(pin.netId);
             if (digital) {
-                if (digitalPinRole(c.type, pin.pinId) === 'source') x.src += 1;
-                else x.sink += 1;
+                if (digitalPinRole(c.type, pin.pinId) === 'source') {
+                    x.src += 1;
+                    if (c.type === 'tristate') x.triSrc += 1;
+                } else x.sink += 1;
             } else {
                 x.analog += 1;
                 // A vcvs/vccs c+/c- pin only SENSES its net (high-impedance input); it does not DRIVE it.
@@ -352,8 +359,11 @@ function checkDigitalConnectivity(circuit: CircuitJson): ErcIssue[] {
         if (x.src + x.sink === 0) continue; // not a digital net
         const net = circuit.nets.find((n) => n.id === netId);
         const label = `Net "${net?.name || netId}"`;
-        if (x.src >= 2) {
-            issues.push(createIssue(ErcCode.DIGITAL_BUS_CONTENTION, [netId], `${label} is driven by ${x.src} digital outputs`));
+        // Two PUSHING outputs on one net fight; but a bus where EVERY driver is a tristate output is the
+        // legitimate shared-bus pattern (drivers release to high-Z) — relax contention for that case only.
+        // One pushing output mixed with tristates still contends (the pushing one never releases).
+        if (x.src >= 2 && x.triSrc < x.src) {
+            issues.push(createIssue(ErcCode.DIGITAL_BUS_CONTENTION, [netId], `${label} is driven by ${x.src} digital outputs (${x.src - x.triSrc} non-tristate)`));
         }
         if (x.src >= 1 && x.analogSrc >= 1) {
             issues.push(createIssue(ErcCode.MIXED_DRIVER_CONFLICT, [netId], label));
