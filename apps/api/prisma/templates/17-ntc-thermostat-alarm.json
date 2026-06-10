@@ -1,0 +1,315 @@
+{
+  "name": "NTC Thermostat Alarm (Green/Red)",
+  "description": "An over-temperature alarm: an NTC thermistor bridge (the temperature rise/fall is modeled as the bridge output ramping 1.5→3.5→1.5V — the standard way to simulate a sensor electrically) feeds a Schmitt comparator (op-amp + positive feedback, ~265mV hysteresis band). Below threshold the green \"OK\" LED is lit (7.6mA, via a PNP high-side switch); past the trip point they swap — red \"ALARM\" lights (9.45mA) and green goes dark, with trip (2.64V) and release (2.38V) at different sensor voltages exactly as a real thermostat needs. (ngspice-validated.)",
+  "tags": [
+    "sensor",
+    "temperature",
+    "ntc",
+    "thermostat",
+    "alarm",
+    "led",
+    "comparator",
+    "hysteresis"
+  ],
+  "analysisConfig": {
+    "analysis": {
+      "type": "tran",
+      "stopTime": "10",
+      "stepTime": "2m"
+    },
+    "probes": [
+      "v(tsx)",
+      "v(cmpp)",
+      "v(vo)",
+      "i(R5)",
+      "i(R7)"
+    ]
+  },
+  "circuitJson": {
+    "version": "1.0",
+    "components": [
+      {
+        "id": "v1",
+        "type": "voltage_source",
+        "designator": "V1",
+        "value": "DC 5",
+        "pins": [
+          {
+            "pinId": "+",
+            "netId": "vcc"
+          },
+          {
+            "pinId": "-",
+            "netId": "0"
+          }
+        ]
+      },
+      {
+        "id": "vtemp",
+        "type": "voltage_source",
+        "designator": "V2",
+        "value": "PULSE(1.5 3.5 0.5 4 4 0.5 20)",
+        "pins": [
+          {
+            "pinId": "+",
+            "netId": "tsx"
+          },
+          {
+            "pinId": "-",
+            "netId": "0"
+          }
+        ]
+      },
+      {
+        "id": "r1",
+        "type": "resistor",
+        "designator": "R1",
+        "value": "10k",
+        "pins": [
+          {
+            "pinId": "1",
+            "netId": "vcc"
+          },
+          {
+            "pinId": "2",
+            "netId": "vref"
+          }
+        ]
+      },
+      {
+        "id": "r2",
+        "type": "resistor",
+        "designator": "R2",
+        "value": "10k",
+        "pins": [
+          {
+            "pinId": "1",
+            "netId": "vref"
+          },
+          {
+            "pinId": "2",
+            "netId": "0"
+          }
+        ]
+      },
+      {
+        "id": "r3",
+        "type": "resistor",
+        "designator": "R3",
+        "value": "5.1k",
+        "pins": [
+          {
+            "pinId": "1",
+            "netId": "tsx"
+          },
+          {
+            "pinId": "2",
+            "netId": "cmpp"
+          }
+        ]
+      },
+      {
+        "id": "r4",
+        "type": "resistor",
+        "designator": "R4",
+        "value": "100k",
+        "pins": [
+          {
+            "pinId": "1",
+            "netId": "vo"
+          },
+          {
+            "pinId": "2",
+            "netId": "cmpp"
+          }
+        ]
+      },
+      {
+        "id": "u1",
+        "type": "subckt",
+        "designator": "U1",
+        "model": "OPAMPGEN",
+        "pins": [
+          {
+            "pinId": "out",
+            "netId": "vo"
+          },
+          {
+            "pinId": "in+",
+            "netId": "cmpp"
+          },
+          {
+            "pinId": "in-",
+            "netId": "vref"
+          },
+          {
+            "pinId": "vcc",
+            "netId": "vcc"
+          },
+          {
+            "pinId": "vee",
+            "netId": "0"
+          }
+        ]
+      },
+      {
+        "id": "r5",
+        "type": "resistor",
+        "designator": "R5",
+        "value": "330",
+        "pins": [
+          {
+            "pinId": "1",
+            "netId": "vo"
+          },
+          {
+            "pinId": "2",
+            "netId": "reda"
+          }
+        ]
+      },
+      {
+        "id": "d1",
+        "type": "diode",
+        "designator": "D1",
+        "model": "LEDRED",
+        "pins": [
+          {
+            "pinId": "anode",
+            "netId": "reda"
+          },
+          {
+            "pinId": "cathode",
+            "netId": "0"
+          }
+        ]
+      },
+      {
+        "id": "r6",
+        "type": "resistor",
+        "designator": "R6",
+        "value": "10k",
+        "pins": [
+          {
+            "pinId": "1",
+            "netId": "vo"
+          },
+          {
+            "pinId": "2",
+            "netId": "qb"
+          }
+        ]
+      },
+      {
+        "id": "q1",
+        "type": "bjt",
+        "designator": "Q1",
+        "model": "QGENPNP",
+        "pins": [
+          {
+            "pinId": "c",
+            "netId": "qc"
+          },
+          {
+            "pinId": "b",
+            "netId": "qb"
+          },
+          {
+            "pinId": "e",
+            "netId": "vcc"
+          }
+        ]
+      },
+      {
+        "id": "r7",
+        "type": "resistor",
+        "designator": "R7",
+        "value": "330",
+        "pins": [
+          {
+            "pinId": "1",
+            "netId": "qc"
+          },
+          {
+            "pinId": "2",
+            "netId": "grna"
+          }
+        ]
+      },
+      {
+        "id": "d2",
+        "type": "diode",
+        "designator": "D2",
+        "model": "LEDGRN",
+        "pins": [
+          {
+            "pinId": "anode",
+            "netId": "grna"
+          },
+          {
+            "pinId": "cathode",
+            "netId": "0"
+          }
+        ]
+      }
+    ],
+    "nets": [
+      {
+        "id": "0",
+        "name": "GND",
+        "isGround": true
+      },
+      {
+        "id": "vcc",
+        "name": "VCC"
+      },
+      {
+        "id": "tsx",
+        "name": "TSENSE"
+      },
+      {
+        "id": "vref",
+        "name": "VREF"
+      },
+      {
+        "id": "cmpp",
+        "name": "CMP_P"
+      },
+      {
+        "id": "vo",
+        "name": "CMP_OUT"
+      },
+      {
+        "id": "reda",
+        "name": "RED_A"
+      },
+      {
+        "id": "qb",
+        "name": "QB"
+      },
+      {
+        "id": "qc",
+        "name": "QC"
+      },
+      {
+        "id": "grna",
+        "name": "GRN_A"
+      }
+    ],
+    "models": [
+      {
+        "name": "LEDRED",
+        "device": "diode",
+        "body": ".model LEDRED D(IS=1e-20 N=1.8 RS=2 CJO=10p)"
+      },
+      {
+        "name": "LEDGRN",
+        "device": "diode",
+        "body": ".model LEDGRN D(IS=1e-22 N=2.0 RS=2 CJO=10p)"
+      }
+    ],
+    "metadata": {
+      "name": "NTC Thermostat Alarm (Green/Red)"
+    }
+  }
+}
