@@ -310,6 +310,34 @@ describe('NetlistGenerator', () => {
             expect(() => generateNetlist(scr, { type: 'op' })).toThrow(/SCRGEN/);
         });
 
+        it('emits a single-point AC sweep as ".ac lin 1 f f" (dec/oct over one point yields 0 rows)', () => {
+            // `.ac dec N f f` makes ngspice run with "No. of Data Rows : 0" and the wrdata fails with a
+            // misleading "no such vector" — zero data on a valid request. A one-point sweep must be linear.
+            const c: CircuitJson = {
+                version: '1.0',
+                components: [
+                    createComponent('V1', 'voltage_source', 'V1', 'AC 1', [
+                        { pinId: '+', netId: 'in' },
+                        { pinId: '-', netId: '0' },
+                    ]),
+                    createComponent('R1', 'resistor', 'R1', '1k', [
+                        { pinId: '1', netId: 'in' },
+                        { pinId: '2', netId: '0' },
+                    ]),
+                ],
+                nets: [createNet('in', 'in'), createNet('0', '0', true)],
+            };
+            // identical strings
+            expect(generateNetlist(c, { type: 'ac', variation: 'dec', points: 10, startFreq: '1k', stopFreq: '1k' }))
+                .toContain('.ac lin 1 1k 1k');
+            // equal VALUES spelled differently ('1000' == '1k')
+            expect(generateNetlist(c, { type: 'ac', variation: 'oct', points: 5, startFreq: '1000', stopFreq: '1k' }))
+                .toContain('.ac lin 1 1000 1k');
+            // a real sweep is untouched
+            expect(generateNetlist(c, { type: 'ac', variation: 'dec', points: 10, startFreq: '1', stopFreq: '1meg' }))
+                .toContain('.ac dec 10 1 1meg');
+        });
+
         it('throws when an AC analysis has no AC-magnitude source (would be all-zero)', () => {
             // A .ac run only excites sources declaring an AC magnitude; with none every probe is identically
             // zero — a meaningless result that would otherwise "succeed". Fail loud.

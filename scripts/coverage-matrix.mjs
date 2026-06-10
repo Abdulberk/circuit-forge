@@ -13,7 +13,7 @@ import { mkdtempSync, writeFileSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
-const NG = process.env.NGSPICE_PATH || 'C:/ProgramData/chocolatey/bin/ngspice.exe';
+const NG = process.env.NGSPICE_PATH || 'C:/ProgramData/chocolatey/lib/ngspice/tools/Spice64/bin/ngspice_con.exe'; // CONSOLE build — the choco-shim ngspice.exe is the GUI build: it writes NO log in -b mode (silent empty) and zombies on hangs
 
 // ---- core runner: one cell -> { exit, rows, series, errors } ----
 function runCell(circuit, analysis, probes) {
@@ -180,6 +180,36 @@ add('regression', 'diode reversed pin-array stays canonical (forward)', () => ({
 add('regression', 'AC R/C current probe dropped, v co-probe survives', () => ({ circuit: circuit([{ id: 'v1', type: 'voltage_source', designator: 'V1', value: 'AC 1', pins: [{ pinId: '+', netId: 'in' }, { pinId: '-', netId: '0' }] }, R('r1', 'R1', '1.6k', 'in', 'out'), C('c1', 'C1', '100n', 'out', '0')], N('in', 'out')), analysis: AC, probes: ['v(out)', 'i(R1)', 'i(C1)'] }), (r) => (baseOk(r).pass && r.series.some((s) => s.name.includes('out'))) ? ok() : fail(`AC current probe aborted the line: ok=${baseOk(r).why ?? 'ok'} series=${r.series.map((s) => s.name)}`));
 // A passive value with an internal space ('1 k') must normalize and still run.
 add('regression', 'passive value with whitespace (1 k) normalized', () => ({ circuit: circuit([V('v1', 'V1', 'DC 10', 'in', '0'), R('r1', 'R1', '1 k', 'in', '0')], N('in')), analysis: OP, probes: ['v(in)'] }), (r) => near(r.series[0]?.final, 10, 0.01) ? ok() : fail(`v(in)=${r.series[0]?.final} — '1 k' value broke the deck`));
+// A SINGLE-POINT AC request (startFreq == stopFreq) must return data: `.ac dec N f f` runs with 0 rows and
+// the wrdata fails ("no such vector") -> zero data on a valid request. Found by the monster-systems audit.
+add('regression', 'single-point AC sweep returns data', () => ({
+    circuit: circuit([
+        { id: 'v1', type: 'voltage_source', designator: 'V1', value: 'AC 1', pins: [{ pinId: '+', netId: 'in' }, { pinId: '-', netId: '0' }] },
+        R('r1', 'R1', '1.6k', 'in', 'out'), C('c1', 'C1', '100n', 'out', '0'),
+    ], N('in', 'out')),
+    analysis: { type: 'ac', variation: 'dec', points: 10, startFreq: '1k', stopFreq: '1k' }, probes: ['v(out)'],
+}), (r) => {
+    if (!baseOk(r).pass) return baseOk(r);
+    // RC low-pass at fc=1/(2π·1.6k·100n)≈1kHz -> |H(1kHz)| ≈ 0.707
+    return r.rows >= 1 && near(r.series[0]?.final, 0.707, 0.05) ? ok() : fail(`rows=${r.rows} |H|=${r.series[0]?.final} want 1 row ≈0.707`);
+});
+// A bsource expression referencing a PURE-DIGITAL net must read the analog _p twin (raw event node would be
+// singular in the analog matrix -> gmin garbage). Found by the pairwise sweep (gate-out -> bsource-expr).
+add('regression', 'bsource expr on digital net reads the analog twin', () => ({
+    circuit: circuit([
+        V('vd', 'VD1', 'DC 5', 'vdd', '0'),
+        V('va', 'VA1', 'PULSE(0 5 0 10n 10n 5u 10u)', 'a', '0'),
+        { id: 'g1', type: 'logic_not', designator: 'XN1', pins: [{ pinId: 'in1', netId: 'a' }, { pinId: 'out', netId: 'q' }] },
+        { id: 'b1', type: 'bsource', designator: 'B1', value: 'V=v(q)*0.5+1', pins: [{ pinId: '+', netId: 'bout' }, { pinId: '-', netId: '0' }] },
+        R('rl', 'RL1', '1k', 'bout', '0'),
+    ], N('vdd', 'a', 'q', 'bout')),
+    analysis: { type: 'tran', stopTime: '50u', stepTime: '50n' }, probes: ['v(bout)'],
+}), (r) => {
+    const b = baseOk(r, { swing: 2 }); // gate q toggles 0..5 -> bout = 0.5*q+1 toggles 1..3.5 (pp 2.5)
+    if (!b.pass) return b;
+    const s = r.series[0];
+    return s.min > 0.5 && s.max < 4 ? ok() : fail(`bout range [${s.min},${s.max}] not ~[1,3.5] — expr not reading the twin`);
+});
 
 // ===================== RUN =====================
 const results = [];

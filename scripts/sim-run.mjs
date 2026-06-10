@@ -10,7 +10,7 @@ import { mkdtempSync, writeFileSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
-const NG = process.env.NGSPICE_PATH || 'C:/ProgramData/chocolatey/bin/ngspice.exe';
+const NG = process.env.NGSPICE_PATH || 'C:/ProgramData/chocolatey/lib/ngspice/tools/Spice64/bin/ngspice_con.exe'; // CONSOLE build — the choco-shim ngspice.exe is the GUI build: it writes NO log in -b mode (silent empty) and zombies on hangs
 const spec = JSON.parse(readFileSync(process.argv[2], 'utf-8'));
 const { name = 'unnamed', circuit, analysis, probes } = spec;
 const rep = { name, ok: false, exit: null, rows: 0, series: [], errors: [], truncated: false, netlist: '' };

@@ -369,6 +369,55 @@ describe('digital review fixes', () => {
         });
     });
 
+    describe('bsource expression refs on a pure-digital net redirect to the analog _p twin', () => {
+        // A behavioral expression v(<digital net>) must read the bridged ANALOG copy: the sanitized name
+        // belongs to the XSPICE event node, which no analog element pins — referencing it from a B-source
+        // leaves that node singular in the analog matrix (gmin-degraded garbage + "singular matrix" warnings;
+        // found by the pairwise sweep on gate-out -> bsource-expr). Probes already redirect; expressions must too.
+        const gateFeedsBsource: CircuitJson = {
+            version: '1.0',
+            components: [
+                { id: 'vd', type: 'voltage_source', designator: 'VD1', value: 'DC 5', pins: [
+                    { pinId: '+', netId: 'vdd' }, { pinId: '-', netId: '0' }] },
+                { id: 'va', type: 'voltage_source', designator: 'VA1', value: 'PULSE(0 5 0 10n 10n 5u 10u)', pins: [
+                    { pinId: '+', netId: 'a' }, { pinId: '-', netId: '0' }] },
+                { id: 'u1', type: 'logic_not', designator: 'U1', pins: [
+                    { pinId: 'in1', netId: 'a' }, { pinId: 'out', netId: 'q' }] },
+                { id: 'b1', type: 'bsource', designator: 'B1', value: 'V=v(q)*0.5+1', pins: [
+                    { pinId: '+', netId: 'bout' }, { pinId: '-', netId: '0' }] },
+                { id: 'rl', type: 'resistor', designator: 'RL1', value: '1k', pins: [
+                    { pinId: '1', netId: 'bout' }, { pinId: '2', netId: '0' }] },
+            ],
+            nets: [
+                { id: 'vdd', name: 'vdd' }, { id: 'a', name: 'a' }, { id: 'q', name: 'q' },
+                { id: 'bout', name: 'bout' }, { id: '0', name: '0', isGround: true },
+            ],
+        };
+        it('rewrites v(q) in the B-source value to the analog twin v(nq_p), never the raw event node', () => {
+            const netlist = generateNetlist(gateFeedsBsource, TRAN);
+            const bLine = netlist.split('\n').find((l) => l.startsWith('B1 '))!;
+            expect(bLine).toContain('V(nq_p)'); // expression reads the DAC-bridged analog copy
+            expect(bLine).not.toMatch(/V\(nq\)/); // the raw digital node would be singular in the analog matrix
+        });
+        it('an expression ref to a plain ANALOG net is untouched (no twin, normal sanitized node)', () => {
+            const analog: CircuitJson = {
+                version: '1.0',
+                components: [
+                    { id: 'v1', type: 'voltage_source', designator: 'V1', value: 'SIN(0 2 1k)', pins: [
+                        { pinId: '+', netId: 'sig' }, { pinId: '-', netId: '0' }] },
+                    { id: 'b1', type: 'bsource', designator: 'B1', value: 'V=v(sig)*2', pins: [
+                        { pinId: '+', netId: 'bout' }, { pinId: '-', netId: '0' }] },
+                    { id: 'rl', type: 'resistor', designator: 'RL1', value: '1k', pins: [
+                        { pinId: '1', netId: 'bout' }, { pinId: '2', netId: '0' }] },
+                ],
+                nets: [{ id: 'sig', name: 'sig' }, { id: 'bout', name: 'bout' }, { id: '0', name: '0', isGround: true }],
+            };
+            const bLine = generateNetlist(analog, TRAN).split('\n').find((l) => l.startsWith('B1 '))!;
+            expect(bLine).toContain('V(nsig)');
+            expect(bLine).not.toContain('_p');
+        });
+    });
+
     // #3 — an over-connected not/buffer emits a valid SCALAR line (first input only) AND is flagged by ERC.
     it('a not gate with >1 input emits a scalar line (first input) and ERC flags DIGITAL_PIN_SHAPE', () => {
         const c: CircuitJson = {
