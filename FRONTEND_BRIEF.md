@@ -96,7 +96,7 @@ interface Component {
   type: ComponentType;                        // the full COMPONENT_TYPES set (28 incl. transistors + digital), NOT just 7 — see §6.2
   designator: string;                         // R1, C1, V1, GND1 — regex /^[A-Z][A-Z0-9]*[0-9]+$/i (MUST end in a digit)
   value?: string;                             // SPICE value strings: "10k", "100n", "DC 5", "SIN(0 1 1k)"
-  model?: string;                             // model NAME for model-based devices (diode→omit for DDEFAULT; transistors → e.g. "QGENNPN"); the body goes in CircuitJson.models
+  model?: string;                             // model NAME for model-based devices (diode→omit for DDEFAULT, or an LED color model "LEDRED"/"LEDYEL"/"LEDGRN"/"LEDBLU"; transistors → e.g. "QGENNPN"); the body goes in CircuitJson.models
   pins: { pinId: string; netId: string }[];   // connectivity is via pins → nets
   properties?: Record<string, unknown>;       // also carries digital timing for gates/dff (riseDelay, …) — see §6.2
   // Optional real-part metadata (eda-core ≥1.1.0), set when created from the parts catalog
@@ -313,13 +313,16 @@ The response type is `TokensResponse` (`apps/api/src/auth/auth.service.ts:15`): 
 
 | Type | Shape |
 |---|---|
-| TRAN | `{ type: 'tran', stopTime, stepTime?, startTime?, maxStep?, uic? }` |
+| TRAN | `{ type: 'tran', stopTime, stepTime?, startTime?, maxStep?, uic?, initialConditions? }` |
 | AC | `{ type: 'ac', variation: 'dec' \| 'oct' \| 'lin', points: number, startFreq, stopFreq }` |
 | DC | `{ type: 'dc', source, startVal, stopVal, increment }` (`source` is a component designator, e.g. `V1`) |
 | OP | `{ type: 'op' }` |
 
   Time/freq/value fields are SPICE value strings (e.g. `10m`, `1u`, `1MEG`). Validate client-side with eda-core's `parseSpiceValue` / value schema — remember `M`/`m` = milli, `MEG` = mega.
+- **TRAN `initialConditions?: Record<string, number>`** — initial node voltages keyed by **net id** (e.g. `{ "fb": 0.5 }`, volts as plain numbers); the server emits a `.ic` card per entry (ground/unknown ids are skipped). Use it to kick a symmetric self-starting oscillator off its dead equilibrium (Wien bridge / ring / relaxation — without a seed those simulate as a flat line). Leave `uic` **unset** for circuits with supplies (the robust default: the op-point is solved with the seeded nodes pinned, then released); set `uic: true` only for pure-reactive seeding (a charged cap / LC tank with no supply — forcing `uic` on a supplied circuit zeroes the rails and aborts). Surface it as an advanced field on the TRAN tab; template `analysisConfig` records may carry it (the Wien-bridge template does).
+- **Single-point AC** (`startFreq === stopFreq`) is legal — the server emits a one-point linear sweep and returns one row.
 - Probe picker producing `probes: string[]` like `["v(out)", "v(in)", "i(R1)"]`. **Mandate explicit probes** to avoid the empty-series quirk documented in the Results / Waveform Viewer screen (§2.6).
+- **Current-probe support by device:** `i(V…)`/`i(L…)` (sources, inductors) work in **every** analysis. `i(R…)`/`i(C…)` (resistors, capacitors) work in **op/dc/tran** but are silently dropped in **AC** (no small-signal device-current vector exists — the voltage co-probes still return). A current probe on a diode or transistor terminal is never available — probe a series resistor's current instead. Reflect this in the probe picker (disable/annotate per analysis type) so users aren't surprised by a missing series.
 - Default probes (to pre-populate the picker): eda-core does **not** export a `generateDefaultProbes` helper. Compute defaults locally from the exported `getNodeNames(circuit)` — map each non-ground node to a voltage probe, e.g. `getNodeNames(circuit).filter((n) => n !== '0' && n.toLowerCase() !== 'gnd').map((n) => \`v(${n})\`)`. The frontend still presents these as an editable suggestion; the picker output remains the authoritative `probes` array. (`getNodeNames` and `extractProbes` are the relevant probe-related exports of `@circuit-forge/eda-core`.)
 - "Run" button, a job-status chip, and a recent-jobs list for the current version.
 
@@ -400,8 +403,10 @@ interface SimulationResult {
 
 **`analysisConfig` (optional, on template records):** `{ analysis: AnalysisConfig, probes?: string[] }` — the recommended, validated simulation setup for the template. When present, the "Run" action should pre-fill the Sim Panel from it instead of defaulting to `op`. This matters for circuits that need transient `initialConditions` to start (e.g. the Wien-bridge oscillator template seeds one node — without that seed a symmetric oscillator stays at its equilibrium and the result is a flat line). Templates without it: fall back to the analysis suggested in the description text.
 
+**Seeded catalog (what the browser will actually show):** 31 public templates — 10 simple inline circuits (RC filter, divider, buck, Sallen-Key, 555-style astable, Class-AB, R-2R DAC, …) plus **21 ngspice-validated catalog circuits** in `apps/api/prisma/templates/*.json`: flagships (8-bit ALU, DDS, power amp, dual-rail PSU), real-world projects (LDO, Class-D, overdrive pedal, RIAA, load-cell in-amp, KHN filter, H-bridge, Howland pump, precision rectifier, Wien bridge, 7-segment counter), and sensor+LED instruments (bargraph VU, NTC thermostat, LDR night light, battery gauge, traffic light, sensor→ADC→7-seg). **7 of them carry `analysisConfig`** (the Wien bridge and all six sensor+LED instruments, 16–21) — give those a one-click "Run the validated sim" affordance. Tag facets worth surfacing as filters: `flagship`, `sensor`, `display`, `led`, `audio`, `power`, `digital`.
+
 **Caveats:**
-- `:templateId` and the `orgId` query/body field are validated as **UUIDs** (`ParseUUIDPipe` / `@IsUUID()`). The 5 seeded public templates and the demo org use non-UUID ids (e.g. `template-rc-low-pass-filter`, `demo-org-id`), so fetching a seeded template by id or passing `orgId=demo-org-id` returns **400**. Listing public templates (`GET /templates` with no `orgId`) works fine. Treat ids opaquely and surface 400s gracefully.
+- `:templateId` and the `orgId` query/body field are validated as **UUIDs** (`ParseUUIDPipe` / `@IsUUID()`). ALL seeded public templates and the demo org use non-UUID ids (`template-<slug>`, e.g. `template-rc-low-pass-filter`, `demo-org-id`), so fetching a seeded template by id or passing `orgId=demo-org-id` returns **400**. Listing public templates (`GET /templates` with no `orgId`) works fine. Treat ids opaquely and surface 400s gracefully.
 - Always re-validate a template's `circuitJson` with `safeValidateCircuitJson` before loading it into the editor.
 
 ---
@@ -1719,7 +1724,7 @@ interface Component {
   designator: string;       // /^[A-Z][A-Z0-9]*[0-9]+$/i — letter, then alnum, MUST END IN A DIGIT
                             //   valid: R1, V12, GND1   invalid: "R", "1R", "R1A"
   value?: string;           // max 100 chars; "10k", "100n", "DC 5", "SIN(0 1 1k)"
-  model?: string;           // max 100 chars; model NAME for model-based devices (diode→omit→DDEFAULT; bjt→"QGENNPN"/"QGENPNP", mosfet→"MGENNMOS"/…, subckt→"OPAMPGEN"); the BODY lives in CircuitJson.models. Digital gates/dff set NO model.
+  model?: string;           // max 100 chars; model NAME for model-based devices (diode→omit→DDEFAULT, LED→"LEDRED"/"LEDYEL"/"LEDGRN"/"LEDBLU"; bjt→"QGENNPN"/"QGENPNP", mosfet→"MGENNMOS"/…, subckt→"OPAMPGEN"); the BODY lives in CircuitJson.models (generic bodies auto-attach server-side). Digital gates/dff set NO model.
   pins: PinConnection[];    // 1..64 entries — ORDER IS SIGNIFICANT for fixed-arity model devices (see §6.2)
   properties?: Record<string, unknown>; // accepted by schema; the netlist generator reads it ONLY for digital timing (gates: riseDelay/fallDelay/inputLoad; dff: clkDelay/setDelay/resetDelay/riseDelay/fallDelay/ic) — see §6.2
   // Optional real-part / catalog metadata (eda-core ≥1.1.0) — populated by GET /parts/:symbol/component:
@@ -1854,7 +1859,7 @@ The full enum (`ComponentTypeSchema` and `ComponentType`, both derived from the 
 | `inductor` | `L` | `['1','2']` | `L1 <n1> <n2> <value\|0>` | value defaults to `0` |
 | `voltage_source` | `V` | `['+','-']` | `V1 <n+> <n-> <value\|'DC 0'>` | value defaults to `DC 0`; value carries the waveform: `DC 5`, `AC 1`, `SIN(0 1 1k)`, `PULSE(...)` |
 | `current_source` | `I` | `['+','-']` | `I1 <n+> <n-> <value\|'DC 0'>` | value defaults to `DC 0` |
-| `diode` | `D` | `['anode','cathode']` | `D1 <anode> <cathode> <model\|'DDEFAULT'>` | uses the built-in `DDEFAULT` model when `model` is absent |
+| `diode` | `D` | `['anode','cathode']` | `D1 <anode> <cathode> <model\|'DDEFAULT'>` | uses the built-in `DDEFAULT` model when `model` is absent. **LEDs** = a diode with a generic color model set by NAME: `LEDRED` (Vf≈1.9V), `LEDYEL` (≈2.0V), `LEDGRN` (≈2.4V), `LEDBLU` (≈3.0V) — bodies auto-injected like `QGENNPN`; a lit LED shows several mA through its series resistor |
 | `zener` | `D` | `['anode','cathode']` | `D1 <anode> <cathode> <DZ…>` | breakdown `.model` **generated from `value`** (Zener voltage) |
 | `bjt` | `Q` | `['c','b','e']` | `Q1 <c> <b> <e> <model>` | requires a model; generic `QGENNPN`/`QGENPNP` |
 | `mosfet` | `M` | `['d','g','s','b']` | `M1 <d> <g> <s> <b> <model>` | requires a model; generic `MGENNMOS`/`MGENPMOS` |
@@ -1863,7 +1868,7 @@ The full enum (`ComponentTypeSchema` and `ComponentType`, both derived from the 
 | `vccs` | `G` | `['+','-','c+','c-']` | `G1 <+> <-> <c+> <c-> <gm>` | V-controlled **current** source; `value` = transconductance |
 | `bsource` | `B` | `['+','-']` | `B1 <+> <-> V=<expr>` (or `I=`) | arbitrary behavioral source; `v(netId)` in `value` is rewritten to SPICE nodes |
 | `switch` | `S` | `['+','-','c+','c-']` | `S1 <+> <-> <c+> <c-> <model>` | V-controlled switch; generic `SWGEN` |
-| `transformer` | *(composite)* | `['p+','p-','s+','s-']` | expands to `L…P`/`L…S` + `K…` | coupled windings; params in `properties` (Lp/Ls/coupling) |
+| `transformer` | *(composite)* | `['p+','p-','s+','s-']` | expands to `L…P`/`L…S` + `K…` | coupled windings; params in `properties`: `primaryInductance`, `secondaryInductance`, `coupling?` (default 0.999), `windingResistance?` (per-winding series DCR, default a tiny anti-singularity 1mΩ — set a realistic ohmic value on high-L/low-frequency transformers for faithful magnetizing settling) |
 | `tline` | `T` | `['a+','a-','b+','b-']` | `T1 <a+> <a-> <b+> <b-> Z0=.. TD=..` | lossless line; params in `properties` (z0 + td, or f[+nl]) |
 | `subckt` | `X` | `[]` (macromodel ports) | `X1 <ports…> <model>` | `.subckt` macromodel; pins bound by the model's `ports`. Generic: op-amp `OPAMPGEN`, thyristor/SCR `SCRGEN`, IGBT `IGBTGEN` |
 | `ground` | `''` (none) | `['1']` | *(no line emitted)* | `componentToSpice` returns `null`; ground only marks a net as node `'0'` |
