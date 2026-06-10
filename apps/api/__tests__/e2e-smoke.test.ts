@@ -27,32 +27,46 @@ describe('E2E Smoke Test - Full Simulation Workflow', () => {
         name: 'Smoke Test User',
     };
 
+    // Valid RC low-pass in the current CircuitJson shape (pins = array of {pinId, netId}, designators
+    // present, pins reference net IDs, ground net flagged isGround).
     const rcFilterCircuit = {
         version: '1.0',
         components: [
             {
                 id: 'V1',
                 type: 'voltage_source',
+                designator: 'V1',
                 value: 'SIN(0 1 1k)',
-                pins: { positive: 'in', negative: '0' },
+                pins: [
+                    { pinId: '+', netId: 'in' },
+                    { pinId: '-', netId: '0' },
+                ],
             },
             {
                 id: 'R1',
                 type: 'resistor',
+                designator: 'R1',
                 value: '1k',
-                pins: { '1': 'in', '2': 'out' },
+                pins: [
+                    { pinId: '1', netId: 'in' },
+                    { pinId: '2', netId: 'out' },
+                ],
             },
             {
                 id: 'C1',
                 type: 'capacitor',
+                designator: 'C1',
                 value: '100n',
-                pins: { '1': 'out', '2': '0' },
+                pins: [
+                    { pinId: '1', netId: 'out' },
+                    { pinId: '2', netId: '0' },
+                ],
             },
         ],
         nets: [
-            { id: 'n1', name: 'in' },
-            { id: 'n2', name: 'out' },
-            { id: 'n3', name: '0' },
+            { id: 'in', name: 'in' },
+            { id: 'out', name: 'out' },
+            { id: '0', name: '0', isGround: true },
         ],
     };
 
@@ -209,8 +223,8 @@ describe('E2E Smoke Test - Full Simulation Workflow', () => {
                 .send({
                     analysisConfig: {
                         type: 'tran',
-                        tstep: '10u',
-                        tstop: '5m',
+                        stepTime: '10u',
+                        stopTime: '5m',
                     },
                     probes: ['in', 'out'],
                 })

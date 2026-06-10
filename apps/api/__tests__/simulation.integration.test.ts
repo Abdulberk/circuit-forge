@@ -21,32 +21,46 @@ describe('Simulation Integration Tests', () => {
         name: 'Simulation Test User',
     };
 
+    // A valid voltage-divider in the current CircuitJson shape: pins are an ARRAY of {pinId, netId},
+    // every component has a designator, and pins reference net IDs (the ground net carries isGround).
     const simpleCircuit = {
         version: '1.0',
         components: [
             {
                 id: 'V1',
                 type: 'voltage_source',
-                value: '5',
-                pins: { positive: 'vcc', negative: '0' },
+                designator: 'V1',
+                value: 'DC 5',
+                pins: [
+                    { pinId: '+', netId: 'vcc' },
+                    { pinId: '-', netId: '0' },
+                ],
             },
             {
                 id: 'R1',
                 type: 'resistor',
+                designator: 'R1',
                 value: '1k',
-                pins: { '1': 'vcc', '2': 'out' },
+                pins: [
+                    { pinId: '1', netId: 'vcc' },
+                    { pinId: '2', netId: 'out' },
+                ],
             },
             {
                 id: 'R2',
                 type: 'resistor',
+                designator: 'R2',
                 value: '1k',
-                pins: { '1': 'out', '2': '0' },
+                pins: [
+                    { pinId: '1', netId: 'out' },
+                    { pinId: '2', netId: '0' },
+                ],
             },
         ],
         nets: [
-            { id: 'n1', name: 'vcc' },
-            { id: 'n2', name: 'out' },
-            { id: 'n3', name: '0' },
+            { id: 'vcc', name: 'vcc' },
+            { id: 'out', name: 'out' },
+            { id: '0', name: '0', isGround: true },
         ],
     };
 
@@ -139,8 +153,8 @@ describe('Simulation Integration Tests', () => {
                 .send({
                     analysisConfig: {
                         type: 'tran',
-                        tstep: '1u',
-                        tstop: '10m',
+                        stepTime: '1u',
+                        stopTime: '10m',
                     },
                     probes: ['out', 'vcc'],
                 })
