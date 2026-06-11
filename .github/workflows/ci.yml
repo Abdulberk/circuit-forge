@@ -1,0 +1,77 @@
+# Circuit Forge CI — every PR and every push to main runs the full quality gate.
+#
+# Two jobs:
+#   • test     — install, build all workspaces, typecheck, and run every unit suite
+#                (eda-core 220+, llm-core, api 118+ — all run env-less; live/AI suites are
+#                gated behind env flags and auto-skip here).
+#   • matrix   — the ngspice coverage matrix (73 translation-layer cells) against a REAL
+#                ngspice installed from apt. Catches CircuitJson→SPICE regressions that
+#                unit tests can't (they don't execute ngspice).
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    name: build + typecheck + unit tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4 # reads the version from package.json "packageManager"
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: pnpm
+
+      - name: Install
+        run: pnpm install --frozen-lockfile
+
+      - name: Build
+        run: pnpm build
+
+      - name: Typecheck
+        run: pnpm typecheck
+
+      - name: Unit tests
+        run: pnpm test
+
+  matrix:
+    name: ngspice coverage matrix
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: pnpm
+
+      - name: Install ngspice
+        run: |
+          sudo apt-get update -q
+          sudo apt-get install -y -q ngspice
+          ngspice --version | head -2
+
+      - name: Install
+        run: pnpm install --frozen-lockfile
+
+      - name: Build eda-core
+        run: pnpm --filter @circuit-forge/eda-core build
+
+      - name: Coverage matrix (73 cells, real ngspice)
+        env:
+          NGSPICE_PATH: ngspice # Linux apt build is the console binary
+        run: node scripts/coverage-matrix.mjs
