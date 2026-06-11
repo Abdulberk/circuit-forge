@@ -299,11 +299,33 @@ async function callModel(
 ): Promise<string> {
     const useTools = !!(opts?.tools?.length && opts.executor);
     const convo: Anthropic.MessageParam[] = [...messages];
+    // The zentio gateway intermittently rejects an otherwise-valid request with a 4xx carrying its own
+    // Turkish operational message ("İşlem gerçekleştirilemiyor / İlgili modele erişim yok") + a request id —
+    // observed to succeed on immediate retry with the identical payload. Retry ONCE on that signature and
+    // on any 5xx/overload; never on genuine validation errors (they don't match the signature).
+    const isTransientGatewayError = (e: unknown): boolean => {
+        const status = (e as { status?: number })?.status;
+        const msg = e instanceof Error ? e.message : String(e);
+        if (status !== undefined && status >= 500) return true;
+        if (status === 529 || /overloaded/i.test(msg)) return true;
+        return /İşlem gerçekleştirilemiyor|İlgili modele erişim yok|request id: \d/u.test(msg);
+    };
+    const createWithRetry = async (
+        params: Anthropic.MessageCreateParamsNonStreaming,
+    ): Promise<Anthropic.Message> => {
+        try {
+            return await r.client.messages.create(params);
+        } catch (e) {
+            if (!isTransientGatewayError(e)) throw e;
+            await new Promise((resolve) => setTimeout(resolve, 1500));
+            return await r.client.messages.create(params); // second failure propagates
+        }
+    };
     try {
         for (let iter = 0; ; iter++) {
             // Offer tools until the cap; the final iteration runs tool-less to force a text answer.
             const allowTools = useTools && iter < r.maxToolIters;
-            const response = await r.client.messages.create({
+            const response = await createWithRetry({
                 model: r.model,
                 max_tokens: r.maxTokens,
                 system: [{ type: 'text', text: system, cache_control: { type: 'ephemeral' } }],

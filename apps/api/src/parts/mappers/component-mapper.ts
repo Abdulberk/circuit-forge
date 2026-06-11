@@ -13,12 +13,13 @@ import {
     formatSpiceValue,
     resolveModelForPart,
     buildZenerModel,
+    GENERIC_MODELS,
     type ComponentType,
     type ComponentSourcing,
     type ModelDef,
 } from '@circuit-forge/eda-core';
 import type { CatalogParameter, CatalogPart } from '../provider/part-provider.interface';
-import { typeFromCategoryId, subtypeFromCategoryId } from './tme-category-map';
+import { typeFromCategoryId, subtypeFromCategoryId, isLedCategory } from './tme-category-map';
 
 /** A partial Component (no id/designator/pins — assigned by the schematic layer). */
 export interface PartialComponent {
@@ -61,6 +62,28 @@ export class ComponentMapper {
             manufacturer: part.manufacturer || undefined,
             sourcing: this.toSourcing(part),
         };
+
+        // LEDs: electrically a diode with a color-class forward voltage. Pick the generic LED model
+        // (LEDRED/LEDYEL/LEDGRN/LEDBLU) by parsing the COLOR from the catalog description; the body is
+        // attached as modelDef (same contract as transistors — the frontend pushes it into circuit.models).
+        // A colorless LED stays catalog-only: silently simulating it as a 0.7V DDEFAULT diode would be a lie.
+        if (isLedCategory(part.categoryId, part.category)) {
+            const led = this.resolveLedModel(part);
+            if (!led) {
+                return {
+                    simulatable: false,
+                    reason: 'LED color could not be determined from the catalog data — place it as catalog-only, or use a diode with an LED model (LEDRED/LEDYEL/LEDGRN/LEDBLU) manually.',
+                    component: { ...base, type: 'generic' },
+                    catalog: part,
+                };
+            }
+            return {
+                simulatable: true,
+                component: { ...base, type: 'diode', model: led.name },
+                modelDef: led,
+                catalog: part,
+            };
+        }
 
         // Catalog-only: representable + placeable on a schematic/BOM, but not simulatable yet.
         if (type === 'generic') {
@@ -132,6 +155,23 @@ export class ComponentMapper {
      * keyword heuristic is only a fallback for category ids we haven't mapped yet, and unmapped ids are
      * logged so the map can be extended. Returns `'generic'` for catalog-only parts.
      */
+    /**
+     * Pick the generic LED model for a catalog LED from its description/parameter COLOR. Color classes:
+     * red/pink→LEDRED (Vf≈1.9) · yellow/amber/orange→LEDYEL (≈2.0) · green→LEDGRN (≈2.4) ·
+     * blue/white/UV→LEDBLU (≈3.0). Multi-color parts (RGB/bicolor) and unparseable colors return null —
+     * they need per-die modeling the single-diode mapping can't honestly represent.
+     */
+    private resolveLedModel(part: CatalogPart): ModelDef | null {
+        const colorParam = part.parameters?.find((p) => /colou?r/i.test(p.name) && !/lens|body|case/i.test(p.name))?.value;
+        const text = `${colorParam ?? ''} ; ${part.description ?? ''}`.toLowerCase();
+        if (/\b(rgb|bicolou?r|bi-colou?r|multicolou?r|red-green|tricolou?r)\b/.test(text)) return null;
+        if (/\b(red|pink)\b/.test(text)) return GENERIC_MODELS.led_red ?? null;
+        if (/\b(yellow|amber|orange)\b/.test(text)) return GENERIC_MODELS.led_yellow ?? null;
+        if (/\bgreen\b/.test(text)) return GENERIC_MODELS.led_green ?? null;
+        if (/\b(blue|white|uv|ultraviolet)\b/.test(text)) return GENERIC_MODELS.led_blue ?? null;
+        return null;
+    }
+
     private classify(part: CatalogPart): ComponentType {
         // A part with no stable category id (e.g. a detail-only resolve that never matched a search
         // element) loses the PRIMARY classifier and silently falls back to text — surface it as a warn

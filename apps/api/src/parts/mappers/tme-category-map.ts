@@ -155,3 +155,21 @@ export function subtypeFromCategoryId(categoryId: string | undefined): string | 
     if (!categoryId) return undefined;
     return TME_ACTIVE_SUBTYPE[categoryId];
 }
+
+/**
+ * TME LED leaf categories (harvested live 2026-06-11). An LED is electrically a diode with a
+ * color-class forward voltage — the mapper picks a generic LED model (LEDRED/LEDYEL/LEDGRN/LEDBLU)
+ * by parsing the color from the part description; a colorless LED stays catalog-only (never silently
+ * a 0.7V DDEFAULT diode).
+ */
+export const TME_LED_CATEGORY_IDS = new Set<string>([
+    '112896', // THT LEDs Round
+    '113363', // SMD colour LEDs
+]);
+
+export function isLedCategory(categoryId: string | undefined, categoryName: string | undefined): boolean {
+    if (categoryId && TME_LED_CATEGORY_IDS.has(categoryId)) return true;
+    // Fallback for unmapped LED leaves: the category NAME (not the description, which mentions LED for
+    // accessories too) clearly identifying an LED family.
+    return !!categoryName && /\bLEDs?\b/i.test(categoryName) && !/driver|holder|lens|spacer|display/i.test(categoryName);
+}
