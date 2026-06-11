@@ -15,6 +15,7 @@ import { SimulationModule } from './simulation/simulation.module';
 import { GenerationModule } from './generation/generation.module';
 import { PartsModule } from './parts/parts.module';
 import { NetlistModule } from './netlist/netlist.module';
+import { UsageModule } from './usage/usage.module';
 import { HealthModule } from './health/health.module';
 
 @Module({
@@ -54,6 +55,7 @@ import { HealthModule } from './health/health.module';
         GenerationModule,
         PartsModule,
         NetlistModule,
+        UsageModule,
         HealthModule,
     ],
 })

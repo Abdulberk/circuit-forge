@@ -153,6 +153,8 @@ model Asset {
   // Relations
   org Organization @relation(fields: [orgId], references: [id], onDelete: Cascade)
 
+  // The storage quota aggregates SUM(sizeBytes) per org on every upload presign.
+  @@index([orgId])
   @@map("assets")
 }
 
@@ -227,4 +229,22 @@ model AuditLog {
   @@index([orgId, createdAt])
   @@index([entityType, entityId])
   @@map("audit_logs")
+}
+// ============================================================================
+// Usage metering (quota counters that have no natural source table — e.g. parts catalog calls).
+// Sim runtime/jobs and storage are aggregated ON-DEMAND from SimulationJob / Asset (drift-free),
+// so they intentionally have NO counter rows here.
+// ============================================================================
+
+model UsageRecord {
+  id        String   @id @default(uuid())
+  scope     String // 'org' | 'user'
+  scopeId   String
+  metric    String // e.g. 'parts_calls'
+  period    String // UTC month, 'YYYY-MM'
+  amount    Int      @default(0)
+  updatedAt DateTime @updatedAt
+
+  @@unique([scope, scopeId, metric, period])
+  @@map("usage_records")
 }

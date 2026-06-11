@@ -9,6 +9,8 @@ import request from 'supertest';
 import { PartsModule } from '../src/parts/parts.module';
 import { PART_PROVIDER, type PartProvider } from '../src/parts/provider/part-provider.interface';
 import { JwtAuthGuard } from '../src/auth/guards/jwt-auth.guard';
+import { UsageService } from '../src/usage/usage.service';
+import { OrgsService } from '../src/orgs/orgs.service';
 
 describe('Parts (integration, TME mocked)', () => {
     let app: INestApplication;
@@ -26,11 +28,22 @@ describe('Parts (integration, TME mocked)', () => {
         })
             .overrideProvider(PART_PROVIDER)
             .useValue(provider)
+            // PartsModule -> UsageModule pulls in usage metering + (via its controller) OrgsService.
+            // Both are stubbed so this suite stays DB-free; quota gating has its own unit spec.
+            .overrideProvider(UsageService)
+            .useValue({ assertAndCountPartsCall: jest.fn(async () => undefined) })
+            .overrideProvider(OrgsService)
+            .useValue({ checkMembership: jest.fn(async () => undefined) })
             .overrideGuard(JwtAuthGuard)
             .useValue({ canActivate: () => true })
             .compile();
 
         app = moduleRef.createNestApplication();
+        // The guard is overridden, so nothing populates req.user — inject a test user for @CurrentUser().
+        app.use((req: { user?: { id: string } }, _res: unknown, next: () => void) => {
+            req.user = { id: 'test-user' };
+            next();
+        });
         app.useGlobalPipes(new ValidationPipe({ whitelist: true, transform: true, forbidNonWhitelisted: true }));
         await app.init();
     });

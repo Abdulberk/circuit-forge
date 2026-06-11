@@ -6,6 +6,7 @@
 import {
     Injectable,
     BadGatewayException,
+    HttpException,
     ServiceUnavailableException,
     UnprocessableEntityException,
     Logger,
@@ -135,6 +136,9 @@ export class DesignService {
                 warning: 'Could not produce a successful simulation within the round budget.',
             };
         } catch (err) {
+            // HTTP errors from nested services carry intent — most importantly the structured 429
+            // QUOTA_EXCEEDED from the sim quota gate — and must reach the client untranslated.
+            if (err instanceof HttpException) throw err;
             if (err instanceof CircuitGenerationError) {
                 if (err.code === 'invalid_output') throw new UnprocessableEntityException(err.message);
                 if (err.code === 'config') throw new ServiceUnavailableException(err.message);

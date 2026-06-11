@@ -8,6 +8,7 @@ import { SimulationController } from './simulation.controller';
 import { SimulationService } from './simulation.service';
 import { VersionsModule } from '../versions/versions.module';
 import { OrgsModule } from '../orgs/orgs.module';
+import { UsageModule } from '../usage/usage.module';
 
 @Module({
     imports: [
@@ -25,6 +26,7 @@ import { OrgsModule } from '../orgs/orgs.module';
         }),
         VersionsModule,
         OrgsModule,
+        UsageModule,
     ],
     controllers: [SimulationController],
     providers: [SimulationService],

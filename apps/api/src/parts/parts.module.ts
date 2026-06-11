@@ -3,6 +3,7 @@
  * /parts endpoints. ConfigService is globally available (ConfigModule.forRoot isGlobal).
  */
 import { Module } from '@nestjs/common';
+import { UsageModule } from '../usage/usage.module';
 import { PartsController } from './parts.controller';
 import { PartsService } from './parts.service';
 import { TmeTokenCache } from './tme/tme-token-cache';
@@ -13,6 +14,7 @@ import { TtlCache } from './cache/ttl-cache';
 import { ComponentMapper } from './mappers/component-mapper';
 
 @Module({
+    imports: [UsageModule],
     controllers: [PartsController],
     providers: [
         PartsService,

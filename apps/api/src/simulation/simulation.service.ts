@@ -9,6 +9,7 @@ import { S3Client, GetObjectCommand } from '@aws-sdk/client-s3';
 import { PrismaService } from '../prisma/prisma.service';
 import { VersionsService } from '../versions/versions.service';
 import { OrgsService } from '../orgs/orgs.service';
+import { UsageService } from '../usage/usage.service';
 import { generateNetlist, safeValidateCircuitJson, safeValidateAnalysisConfig, downsampleResult } from '@circuit-forge/eda-core';
 import type { CircuitJson, AnalysisConfig, SimulationResult } from '@circuit-forge/eda-core';
 
@@ -27,6 +28,7 @@ export class SimulationService {
         private prisma: PrismaService,
         private versionsService: VersionsService,
         private orgsService: OrgsService,
+        private usageService: UsageService,
         @InjectQueue('simulations') private simulationQueue: Queue,
     ) {
         this.bucket = process.env.S3_BUCKET || 'circuitforge';
@@ -49,6 +51,10 @@ export class SimulationService {
         modelAssetIds?: string[],
     ) {
         const version = await this.versionsService.findOne(versionId, userId);
+
+        // Quota gate (no-op until QUOTA_SIM_* env limits are configured): in-flight fairness cap +
+        // monthly job/runtime ceilings. Throws a structured 429 before any work is done.
+        await this.usageService.assertSimQuota(version.project.orgId);
 
         // Validate the analysis config + the stored circuit BEFORE netlisting. generateNetlist assumes a
         // schema-valid CircuitJson and will throw a raw TypeError on a malformed one (e.g. a legacy
@@ -123,6 +129,8 @@ export class SimulationService {
         if (!orgId) {
             throw new NotFoundException('No organization found for user');
         }
+
+        await this.usageService.assertSimQuota(orgId);
 
         // The caller supplies the raw netlist (it must already `.include` each model by filename); we
         // only resolve the assets to S3 keys so the worker downloads the files into the job dir.

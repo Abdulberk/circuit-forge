@@ -14,6 +14,9 @@ export class OrgsService {
             include: {
                 org: true,
             },
+            // Stable order: callers treat [0] as the user's primary org (e.g. quick-sim quota
+            // attribution), so the result must not depend on the query plan.
+            orderBy: { createdAt: 'asc' },
         });
         return memberships.map((m) => ({
             ...m.org,
