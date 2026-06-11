@@ -5,6 +5,7 @@ import { Module } from '@nestjs/common';
 import { ConfigModule } from '@nestjs/config';
 import { APP_GUARD } from '@nestjs/core';
 import { ThrottlerModule, ThrottlerGuard } from '@nestjs/throttler';
+import { validateEnv } from './config/env.validation';
 import { PrismaModule } from './prisma/prisma.module';
 import { AuthModule } from './auth/auth.module';
 import { OrgsModule } from './orgs/orgs.module';
@@ -26,6 +27,8 @@ import { HealthModule } from './health/health.module';
             isGlobal: true,
             // Per-package files win; the monorepo root .env (two levels up) is the fallback.
             envFilePath: ['.env.local', '.env', '../../.env'],
+            // Fail fast at boot on missing/weak JWT secrets — never start with forgeable tokens.
+            validate: validateEnv,
         }),
 
         // Rate limiting. Two layers, both enforced by the global ThrottlerGuard registered below
