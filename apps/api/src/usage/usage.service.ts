@@ -18,9 +18,14 @@
  * period } — the frontend can show "X of Y used this month" without parsing prose. `used` >= `limit`
  * holds in every 429 (storage reports the PROJECTED total including the rejected upload).
  */
-import { HttpException, HttpStatus, Injectable } from '@nestjs/common';
+import { HttpException, HttpStatus, Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
+import { Prisma } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
+
+/** A Prisma client OR an interactive-transaction client — the read+write quota methods accept either,
+ *  so the same code runs standalone or inside an advisory-locked transaction. */
+type Db = PrismaService | Prisma.TransactionClient;
 
 export interface OrgUsage {
     period: string;
@@ -48,6 +53,8 @@ const CONCURRENT_STALENESS_MS = 24 * 60 * 60 * 1000;
 
 @Injectable()
 export class UsageService {
+    private readonly logger = new Logger(UsageService.name);
+
     constructor(
         private readonly prisma: PrismaService,
         private readonly config: ConfigService,
@@ -65,22 +72,29 @@ export class UsageService {
         return { start, end };
     }
 
-    /** A QUOTA_* limit from env; unset/0/negative/garbage → null = unlimited. */
+    /** A QUOTA_* limit from env; unset/0/negative/garbage → null = unlimited. Integer (floored). */
     private limit(envKey: string): number | null {
         const raw = this.config.get<string>(envKey);
         if (raw === undefined || raw === '') return null;
         const n = Number(raw);
-        return Number.isFinite(n) && n > 0 ? n : null;
+        if (!Number.isFinite(n) || n <= 0) {
+            // A non-empty but unparseable value is almost always a typo ("10,000", "1_000", "10k").
+            // Fail OPEN (unlimited) per the design, but make the silently-disabled quota visible —
+            // '0' is the documented "unlimited" sentinel, so don't warn for it.
+            if (raw.trim() !== '0') this.logger.warn(`Ignoring unparseable ${envKey}="${raw}" — quota left UNLIMITED.`);
+            return null;
+        }
+        return Math.floor(n);
     }
 
-    private quotaError(metric: string, used: number, limit: number): HttpException {
+    private quotaError(metric: string, used: number, limit: number, period = this.period()): HttpException {
         return new HttpException(
             {
                 code: 'QUOTA_EXCEEDED',
                 metric,
                 used,
                 limit,
-                period: this.period(),
+                period,
                 message: `Quota exceeded for ${metric}: ${used} of ${limit} used this period.`,
             },
             HttpStatus.TOO_MANY_REQUESTS,
@@ -94,11 +108,20 @@ export class UsageService {
 
     // ---------------------------------------------------------------- sims
 
+    /** True iff any sim quota is configured — lets callers skip the locking path entirely otherwise. */
+    hasSimQuota(): boolean {
+        return (
+            this.limit('QUOTA_SIM_CONCURRENT_PER_ORG') !== null ||
+            this.limit('QUOTA_SIM_JOBS_PER_MONTH') !== null ||
+            this.limit('QUOTA_SIM_RUNTIME_MS_PER_MONTH') !== null
+        );
+    }
+
     /** Jobs created by the org this month + their summed runtime — one aggregate row from the DB. */
-    private async simUsageThisMonth(orgId: string): Promise<{ jobs: number; runtimeMs: number }> {
+    private async simUsageThisMonth(orgId: string, db: Db = this.prisma): Promise<{ jobs: number; runtimeMs: number }> {
         const { start, end } = this.monthRange();
         // metrics is JSONB; jsonb_typeof guards against null/absent/malformed runtimeMs entries.
-        const rows = await this.prisma.$queryRaw<Array<{ jobs: number; runtimeMs: number }>>`
+        const rows = await db.$queryRaw<Array<{ jobs: number; runtimeMs: number }>>`
             SELECT COUNT(*)::int AS "jobs",
                    COALESCE(SUM(CASE WHEN jsonb_typeof(metrics -> 'runtimeMs') = 'number'
                                      THEN (metrics ->> 'runtimeMs')::float ELSE 0 END), 0)::float AS "runtimeMs"
@@ -108,8 +131,8 @@ export class UsageService {
     }
 
     /** The org's in-flight jobs RIGHT NOW — the multi-tenant fairness lever. */
-    private async simConcurrent(orgId: string): Promise<number> {
-        return this.prisma.simulationJob.count({
+    private async simConcurrent(orgId: string, db: Db = this.prisma): Promise<number> {
+        return db.simulationJob.count({
             where: {
                 orgId,
                 status: { in: ['QUEUED', 'RUNNING'] },
@@ -123,14 +146,15 @@ export class UsageService {
      *  - QUOTA_SIM_CONCURRENT_PER_ORG — in-flight (QUEUED+RUNNING) cap; the noisy-neighbor guard.
      *  - QUOTA_SIM_JOBS_PER_MONTH    — job count this month.
      *  - QUOTA_SIM_RUNTIME_MS_PER_MONTH — summed worker runtime this month.
+     * Pass a transaction client to run the checks inside an advisory-locked tx (see createSimGuarded).
      */
-    async assertSimQuota(orgId: string): Promise<void> {
+    async assertSimQuota(orgId: string, db: Db = this.prisma): Promise<void> {
         const concurrentLimit = this.limit('QUOTA_SIM_CONCURRENT_PER_ORG');
         const jobsLimit = this.limit('QUOTA_SIM_JOBS_PER_MONTH');
         const runtimeLimit = this.limit('QUOTA_SIM_RUNTIME_MS_PER_MONTH');
         const [inFlight, monthly] = await Promise.all([
-            concurrentLimit !== null ? this.simConcurrent(orgId) : null,
-            jobsLimit !== null || runtimeLimit !== null ? this.simUsageThisMonth(orgId) : null,
+            concurrentLimit !== null ? this.simConcurrent(orgId, db) : null,
+            jobsLimit !== null || runtimeLimit !== null ? this.simUsageThisMonth(orgId, db) : null,
         ]);
         if (inFlight !== null) this.enforce('sim_concurrent', inFlight, concurrentLimit);
         if (monthly !== null) {
@@ -139,14 +163,29 @@ export class UsageService {
         }
     }
 
+    /**
+     * Authoritative sim-enqueue path. When a sim quota is configured, runs `create` under a per-org
+     * advisory lock with the quota RE-CHECKED inside the lock — so concurrent same-org enqueues are
+     * serialized and cannot race past the cap (the plain check-then-create is otherwise a soft cap
+     * with an overshoot window). When no quota is set, runs `create` directly: ZERO added cost —
+     * no transaction, no lock — preserving today's behavior. `create(tx)` must do only the job insert.
+     */
+    async createSimGuarded<T>(orgId: string, create: (tx: Db) => Promise<T>): Promise<T> {
+        if (!this.hasSimQuota()) return create(this.prisma);
+        return this.withOrgLock('sim', orgId, async (tx) => {
+            await this.assertSimQuota(orgId, tx);
+            return create(tx);
+        });
+    }
+
     // ---------------------------------------------------------------- storage
 
     /** Uploaded model assets + spilled result payloads (job metrics.outputSizeBytes), org-wide. */
-    private async storageBytes(orgId: string): Promise<{ assetBytes: number; resultBytes: number }> {
+    private async storageBytes(orgId: string, db: Db = this.prisma): Promise<{ assetBytes: number; resultBytes: number }> {
         const [assets, results] = await Promise.all([
-            this.prisma.asset.aggregate({ where: { orgId }, _sum: { sizeBytes: true } }),
+            db.asset.aggregate({ where: { orgId }, _sum: { sizeBytes: true } }),
             // Only S3-spilled results occupy object storage; outputSizeBytes is what the worker measured.
-            this.prisma.$queryRaw<Array<{ bytes: number }>>`
+            db.$queryRaw<Array<{ bytes: number }>>`
                 SELECT COALESCE(SUM(CASE WHEN jsonb_typeof(metrics -> 'outputSizeBytes') = 'number'
                                          THEN (metrics ->> 'outputSizeBytes')::float ELSE 0 END), 0)::float AS "bytes"
                 FROM simulation_jobs
@@ -156,13 +195,44 @@ export class UsageService {
     }
 
     /** Gate an upload of `addBytes` against QUOTA_STORAGE_BYTES_PER_ORG (unset = unlimited). */
-    async assertStorageQuota(orgId: string, addBytes: number): Promise<void> {
+    async assertStorageQuota(orgId: string, addBytes: number, db: Db = this.prisma): Promise<void> {
         const limit = this.limit('QUOTA_STORAGE_BYTES_PER_ORG');
         if (limit === null) return;
-        const { assetBytes, resultBytes } = await this.storageBytes(orgId);
+        const { assetBytes, resultBytes } = await this.storageBytes(orgId, db);
         // `used` is the PROJECTED total (current + this upload), so the 429 always shows used > limit.
         const projected = assetBytes + resultBytes + Math.max(0, addBytes);
         if (projected > limit) throw this.quotaError('storage_bytes', projected, limit);
+    }
+
+    /**
+     * Authoritative asset-commit path. Mirrors createSimGuarded: when QUOTA_STORAGE_BYTES_PER_ORG is
+     * set, re-checks the storage cap under a per-org advisory lock so concurrent commits can't each
+     * read the same pre-insert SUM and collectively blow past the cap. When unset, runs `create`
+     * directly with no transaction/lock overhead.
+     */
+    async createAssetGuarded<T>(orgId: string, addBytes: number, create: (tx: Db) => Promise<T>): Promise<T> {
+        if (this.limit('QUOTA_STORAGE_BYTES_PER_ORG') === null) return create(this.prisma);
+        return this.withOrgLock('storage', orgId, async (tx) => {
+            await this.assertStorageQuota(orgId, addBytes, tx);
+            return create(tx);
+        });
+    }
+
+    // ---------------------------------------------------------------- advisory locking
+
+    /**
+     * Run `fn` inside a transaction holding a per-(domain,org) PostgreSQL advisory lock. The lock is
+     * transaction-scoped (pg_advisory_xact_lock) so it auto-releases at COMMIT/ROLLBACK — safe under
+     * PgBouncer transaction pooling, and immune to leaks if `fn` throws. hashtextextended gives a
+     * 64-bit key (collisions negligible), and prefixing the domain keeps 'sim' and 'storage' locks
+     * for the same org independent. Different orgs never contend. Keep `fn` to the cheap check+insert
+     * only — never wrap slow work (netlisting, S3) so lock hold time stays in the millisecond range.
+     */
+    private withOrgLock<T>(domain: string, orgId: string, fn: (tx: Prisma.TransactionClient) => Promise<T>): Promise<T> {
+        return this.prisma.$transaction(async (tx) => {
+            await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtextextended(${`${domain}:${orgId}`}, 0))`;
+            return fn(tx);
+        });
     }
 
     // ---------------------------------------------------------------- parts (counter-based)
@@ -173,13 +243,23 @@ export class UsageService {
 
     /**
      * Gate + count one catalog request for a USER (parts endpoints have no org context).
-     * The conditional `amount < limit` UPDATE is atomic, so the cap is a true ceiling even under
-     * concurrent requests — there is no check-then-write window to race through.
+     *
+     * The entire gate is a SINGLE atomic statement. INSERT seeds the first call of the period; on
+     * conflict the DO UPDATE increments ONLY WHILE amount < limit. Under READ COMMITTED Postgres
+     * re-evaluates that WHERE against the row version it locks (EvalPlanQual), so N concurrent
+     * requests can never push the counter past the limit and there is no check-then-write window to
+     * race — proven against the live DB (200-way concurrent burst lands exactly at the limit).
+     * Prisma's upsert API can't express a conditional DO UPDATE, hence raw SQL; gen_random_uuid()
+     * and now() provide the @id/@updatedAt values Prisma would otherwise compute client-side.
      */
     async assertAndCountPartsCall(userId: string): Promise<void> {
-        const key = this.partsKey(userId, this.period());
+        const period = this.period();
+        const key = this.partsKey(userId, period);
         const limit = this.limit('QUOTA_PARTS_CALLS_PER_MONTH');
+
         if (limit === null) {
+            // Unlimited: pure metering. Prisma compiles this to a native atomic
+            // INSERT ... ON CONFLICT DO UPDATE, so concurrent first-calls can't collide.
             await this.prisma.usageRecord.upsert({
                 where: { scope_scopeId_metric_period: key },
                 create: { ...key, amount: 1 },
@@ -187,24 +267,20 @@ export class UsageService {
             });
             return;
         }
-        const hit = await this.prisma.usageRecord.updateMany({
-            where: { ...key, amount: { lt: limit } },
-            data: { amount: { increment: 1 } },
-        });
-        if (hit.count === 1) return;
-        // No row was updated: either the user is at the limit, or this is their first call this period.
+
+        const rows = await this.prisma.$queryRaw<Array<{ amount: number }>>`
+            INSERT INTO usage_records (id, scope, "scopeId", metric, period, amount, "updatedAt")
+            VALUES (gen_random_uuid(), ${key.scope}, ${key.scopeId}, ${key.metric}, ${key.period}, 1, now())
+            ON CONFLICT (scope, "scopeId", metric, period)
+            DO UPDATE SET amount = usage_records.amount + 1, "updatedAt" = now()
+            WHERE usage_records.amount < ${limit}
+            RETURNING amount`;
+        if (rows.length > 0) return; // counted
+
+        // No row returned ⇒ the row exists and is already at/over the limit. Read the true amount so
+        // the 429 reports the real `used` (it can exceed `limit` if the limit was lowered mid-period).
         const row = await this.prisma.usageRecord.findUnique({ where: { scope_scopeId_metric_period: key } });
-        if (row) throw this.quotaError('parts_calls', row.amount, limit);
-        try {
-            await this.prisma.usageRecord.create({ data: { ...key, amount: 1 } });
-        } catch {
-            // Lost the row-creation race to a parallel first call — fall back to the atomic increment.
-            const retry = await this.prisma.usageRecord.updateMany({
-                where: { ...key, amount: { lt: limit } },
-                data: { amount: { increment: 1 } },
-            });
-            if (retry.count !== 1) throw this.quotaError('parts_calls', limit, limit);
-        }
+        throw this.quotaError('parts_calls', row?.amount ?? limit, limit, period);
     }
 
     // ---------------------------------------------------------------- reporting

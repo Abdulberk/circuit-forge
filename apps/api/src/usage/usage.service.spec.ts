@@ -8,30 +8,40 @@ const cfg = (vals: Record<string, string>) =>
     ({ get: (k: string) => vals[k] }) as unknown as ConfigService;
 
 /**
- * Minimal prisma stub. Aggregation now happens via $queryRaw (single-row results); the stub
- * dispatches on the SQL text: the month aggregate selects runtimeMs, the storage one outputSizeBytes.
+ * Minimal prisma stub. Aggregation + the gated parts counter run via $queryRaw; the stub dispatches
+ * on the SQL text: month aggregate (runtimeMs), storage (outputSizeBytes), parts gate (usage_records).
+ * $transaction invokes its callback with the same stub (so advisory-locked paths exercise real logic).
  */
 function prismaStub(over: Partial<Record<string, unknown>> = {}) {
-    return {
+    const stub: Record<string, unknown> = {
         $queryRaw: jest.fn().mockImplementation((strings: TemplateStringsArray) => {
             const sql = strings.join('?');
             if (sql.includes('runtimeMs')) return Promise.resolve([{ jobs: 3, runtimeMs: 350 }]);
-            return Promise.resolve([{ bytes: 200 }]); // spilled-result storage
+            if (sql.includes('outputSizeBytes')) return Promise.resolve([{ bytes: 200 }]);
+            if (sql.includes('usage_records')) return Promise.resolve([{ amount: 1 }]); // parts: counted
+            return Promise.resolve([]);
         }),
+        $executeRaw: jest.fn().mockResolvedValue(1),
         simulationJob: { count: jest.fn().mockResolvedValue(1) },
         asset: { aggregate: jest.fn().mockResolvedValue({ _sum: { sizeBytes: 5000 } }) },
         usageRecord: {
             findUnique: jest.fn().mockResolvedValue({ amount: 7 }),
             upsert: jest.fn().mockResolvedValue({}),
-            updateMany: jest.fn().mockResolvedValue({ count: 1 }),
-            create: jest.fn().mockResolvedValue({}),
         },
         ...over,
-    } as unknown as PrismaService;
+    };
+    stub.$transaction = jest.fn(async (fn: (tx: unknown) => unknown) => fn(stub));
+    return stub as unknown as PrismaService;
 }
 
-const records = (prisma: PrismaService) =>
-    prisma as unknown as { usageRecord: Record<'findUnique' | 'upsert' | 'updateMany' | 'create', jest.Mock> };
+const rec = (prisma: PrismaService) =>
+    prisma as unknown as {
+        $queryRaw: jest.Mock;
+        $transaction: jest.Mock;
+        $executeRaw: jest.Mock;
+        usageRecord: Record<'findUnique' | 'upsert', jest.Mock>;
+        simulationJob: { count: jest.Mock };
+    };
 
 describe('UsageService', () => {
     it('aggregates org usage on demand (jobs + summed runtime, storage incl. spilled results, parts calls)', async () => {
@@ -48,15 +58,15 @@ describe('UsageService', () => {
         expect(u.storage.limits.bytes).toBeNull();
     });
 
-    it('quota gates are NO-OPS when no limits are configured (but parts metering still counts)', async () => {
+    it('quota gates are NO-OPS when no limits are configured (parts still metered via native upsert)', async () => {
         const prisma = prismaStub();
         const svc = new UsageService(prisma, cfg({}));
         await expect(svc.assertSimQuota('org1')).resolves.toBeUndefined();
         await expect(svc.assertStorageQuota('org1', 10_000_000)).resolves.toBeUndefined();
         await expect(svc.assertAndCountPartsCall('user1')).resolves.toBeUndefined();
-        // no limit → no gate queries at all, just the metering upsert
-        expect((prisma as unknown as { $queryRaw: jest.Mock }).$queryRaw).not.toHaveBeenCalled();
-        expect(records(prisma).usageRecord.upsert).toHaveBeenCalledTimes(1);
+        // unlimited → no gate queries, just the metering upsert; gated parts SQL never runs
+        expect(rec(prisma).usageRecord.upsert).toHaveBeenCalledTimes(1);
+        expect(rec(prisma).$queryRaw).not.toHaveBeenCalled();
     });
 
     it('throws a structured 429 when the concurrent (fairness) cap is hit — counting only fresh jobs', async () => {
@@ -98,57 +108,61 @@ describe('UsageService', () => {
         });
     });
 
-    it('parts gate increments atomically via conditional updateMany (true ceiling, no read-then-write race)', async () => {
+    it('parts gate is ONE atomic conditional upsert (INSERT … ON CONFLICT DO UPDATE … WHERE amount < limit)', async () => {
         const prisma = prismaStub();
         const svc = new UsageService(prisma, cfg({ QUOTA_PARTS_CALLS_PER_MONTH: '100' }));
         await svc.assertAndCountPartsCall('user1');
-        const um = records(prisma).usageRecord.updateMany;
-        expect(um).toHaveBeenCalledTimes(1);
-        expect(um.mock.calls[0][0].where.amount).toEqual({ lt: 100 });
-        expect(records(prisma).usageRecord.findUnique).not.toHaveBeenCalled(); // hit → no extra read
+        const q = rec(prisma).$queryRaw;
+        expect(q).toHaveBeenCalledTimes(1);
+        const sql = (q.mock.calls[0][0] as TemplateStringsArray).join('?');
+        expect(sql).toMatch(/INSERT INTO usage_records/);
+        expect(sql).toMatch(/ON CONFLICT/);
+        expect(sql).toMatch(/amount < /);
+        // counted in one round-trip — no separate read on the success path
+        expect(rec(prisma).usageRecord.findUnique).not.toHaveBeenCalled();
     });
 
-    it('parts gate 429s at the limit without advancing the counter', async () => {
+    it('parts gate 429s at the limit (atomic upsert touches 0 rows) and reports the TRUE used', async () => {
         const prisma = prismaStub({
-            usageRecord: {
-                updateMany: jest.fn().mockResolvedValue({ count: 0 }), // conditional update missed: at limit
-                findUnique: jest.fn().mockResolvedValue({ amount: 7 }),
-                create: jest.fn(),
-                upsert: jest.fn(),
-            },
+            // gated parts SQL returns [] (DO UPDATE WHERE amount<limit matched nothing → at/over limit)
+            $queryRaw: jest.fn().mockResolvedValue([]),
+            usageRecord: { findUnique: jest.fn().mockResolvedValue({ amount: 7 }), upsert: jest.fn() },
         });
         const svc = new UsageService(prisma, cfg({ QUOTA_PARTS_CALLS_PER_MONTH: '7' }));
         await expect(svc.assertAndCountPartsCall('user1')).rejects.toMatchObject({
             response: { metric: 'parts_calls', used: 7, limit: 7 },
         });
-        expect(records(prisma).usageRecord.create).not.toHaveBeenCalled();
     });
 
-    it("parts gate creates the row on a user's first call of the period (and survives a creation race)", async () => {
-        const prisma = prismaStub({
-            usageRecord: {
-                updateMany: jest.fn().mockResolvedValue({ count: 0 }), // no row yet
-                findUnique: jest.fn().mockResolvedValue(null),
-                create: jest.fn().mockResolvedValue({}),
-                upsert: jest.fn(),
-            },
-        });
-        const svc = new UsageService(prisma, cfg({ QUOTA_PARTS_CALLS_PER_MONTH: '100' }));
-        await expect(svc.assertAndCountPartsCall('user1')).resolves.toBeUndefined();
-        expect(records(prisma).usageRecord.create).toHaveBeenCalledTimes(1);
+    it('createSimGuarded: zero overhead when no quota — runs the create directly, no transaction/lock', async () => {
+        const prisma = prismaStub();
+        const svc = new UsageService(prisma, cfg({}));
+        const created = await svc.createSimGuarded('org1', async () => ({ id: 'job-x' }));
+        expect(created).toEqual({ id: 'job-x' });
+        expect(rec(prisma).$transaction).not.toHaveBeenCalled();
+        expect(rec(prisma).$executeRaw).not.toHaveBeenCalled();
+    });
 
-        // lost the creation race → falls back to the atomic increment
-        const racy = prismaStub({
-            usageRecord: {
-                updateMany: jest.fn().mockResolvedValueOnce({ count: 0 }).mockResolvedValueOnce({ count: 1 }),
-                findUnique: jest.fn().mockResolvedValue(null),
-                create: jest.fn().mockRejectedValue(new Error('unique violation')),
-                upsert: jest.fn(),
-            },
+    it('createSimGuarded: when a quota is set, takes a per-org advisory lock and re-checks inside the tx', async () => {
+        const prisma = prismaStub({ simulationJob: { count: jest.fn().mockResolvedValue(0) } });
+        const svc = new UsageService(prisma, cfg({ QUOTA_SIM_CONCURRENT_PER_ORG: '5' }));
+        const created = await svc.createSimGuarded('org1', async () => ({ id: 'job-y' }));
+        expect(created).toEqual({ id: 'job-y' });
+        expect(rec(prisma).$transaction).toHaveBeenCalledTimes(1);
+        const lockSql = (rec(prisma).$executeRaw.mock.calls[0][0] as TemplateStringsArray).join('?');
+        expect(lockSql).toMatch(/pg_advisory_xact_lock/);
+    });
+
+    it('createAssetGuarded: locked re-check rejects when the projected total exceeds the cap', async () => {
+        const prisma = prismaStub();
+        const svc = new UsageService(prisma, cfg({ QUOTA_STORAGE_BYTES_PER_ORG: '6000' }));
+        // assets 5000 + results 200 + 2000 = 7200 > 6000 → 429 inside the lock; create never runs
+        const create = jest.fn(async () => ({ id: 'asset-x' }));
+        await expect(svc.createAssetGuarded('org1', 2000, create)).rejects.toMatchObject({
+            response: { metric: 'storage_bytes' },
         });
-        const svc2 = new UsageService(racy, cfg({ QUOTA_PARTS_CALLS_PER_MONTH: '100' }));
-        await expect(svc2.assertAndCountPartsCall('user1')).resolves.toBeUndefined();
-        expect(records(racy).usageRecord.updateMany).toHaveBeenCalledTimes(2);
+        expect(create).not.toHaveBeenCalled();
+        expect(rec(prisma).$transaction).toHaveBeenCalledTimes(1);
     });
 
     it('treats garbage/zero env limits as unlimited', async () => {

@@ -92,22 +92,24 @@ export class AssetsService {
             throw new BadRequestException('Invalid S3 key for this organization');
         }
 
-        // Re-gate at commit with the OBSERVED size: presign gating alone can be raced (parallel
-        // presigns) or sidestepped (URL issued before a limit was tightened, oversized upload).
-        await this.usageService.assertStorageQuota(orgId, actualSizeBytes);
-
-        // Create asset record
-        return this.prisma.asset.create({
-            data: {
-                orgId,
-                type: 'SPICE_MODEL',
-                name: dto.name,
-                contentType: dto.contentType,
-                sizeBytes: actualSizeBytes,
-                s3Key: dto.s3Key,
-                sha256: dto.sha256,
-            },
-        });
+        // Re-gate at commit with the OBSERVED size, under the storage-quota guard: presign gating
+        // alone can be raced (parallel presigns) or sidestepped (URL issued before a limit was
+        // tightened, oversized upload). When QUOTA_STORAGE_BYTES_PER_ORG is set, the check + insert
+        // run under a per-org advisory lock so concurrent commits can't collectively overshoot the
+        // cap; when unset, this is a plain create with no added overhead.
+        return this.usageService.createAssetGuarded(orgId, actualSizeBytes, (tx) =>
+            tx.asset.create({
+                data: {
+                    orgId,
+                    type: 'SPICE_MODEL',
+                    name: dto.name,
+                    contentType: dto.contentType,
+                    sizeBytes: actualSizeBytes,
+                    s3Key: dto.s3Key,
+                    sha256: dto.sha256,
+                },
+            }),
+        );
     }
 
     /**
