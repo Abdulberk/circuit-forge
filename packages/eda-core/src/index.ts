@@ -146,6 +146,8 @@ export {
 // Utilities
 export {
     parseSpiceValue,
+    downsamplePoints,
+    downsampleResult,
     formatSpiceValue,
     normalizeValue,
     valuesEqual,

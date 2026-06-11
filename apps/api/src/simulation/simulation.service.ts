@@ -9,8 +9,8 @@ import { S3Client, GetObjectCommand } from '@aws-sdk/client-s3';
 import { PrismaService } from '../prisma/prisma.service';
 import { VersionsService } from '../versions/versions.service';
 import { OrgsService } from '../orgs/orgs.service';
-import { generateNetlist, safeValidateCircuitJson, safeValidateAnalysisConfig } from '@circuit-forge/eda-core';
-import type { CircuitJson, AnalysisConfig } from '@circuit-forge/eda-core';
+import { generateNetlist, safeValidateCircuitJson, safeValidateAnalysisConfig, downsampleResult } from '@circuit-forge/eda-core';
+import type { CircuitJson, AnalysisConfig, SimulationResult } from '@circuit-forge/eda-core';
 
 /** Max uploaded model files attachable to one simulation (each is a separate S3 download in the worker). */
 const MAX_MODEL_ASSETS = 32;
@@ -233,7 +233,7 @@ export class SimulationService {
         };
     }
 
-    async getResult(jobId: string, userId: string) {
+    async getResult(jobId: string, userId: string, maxPoints?: number) {
         const job = await this.prisma.simulationJob.findUnique({
             where: { id: jobId },
         });
@@ -258,6 +258,18 @@ export class SimulationService {
         let result: unknown = job.resultJson ?? null;
         if (result === null && job.resultS3Key) {
             result = await this.fetchResultFromS3(job.resultS3Key);
+        }
+
+        // Optional display decimation (?maxPoints): min-max bucketing keeps peaks/glitches, so a
+        // 100k-point transient renders fast without hiding exactly the artifacts an engineer looks
+        // for. meta.downsampledFrom carries the original count whenever anything was reduced.
+        if (
+            maxPoints !== undefined &&
+            result !== null &&
+            typeof result === 'object' &&
+            Array.isArray((result as { series?: unknown }).series)
+        ) {
+            result = downsampleResult(result as SimulationResult, maxPoints);
         }
 
         return {

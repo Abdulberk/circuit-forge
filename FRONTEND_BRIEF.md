@@ -166,6 +166,8 @@ This section enumerates every screen the v1 frontend must ship, with its purpose
 | POST | `/versions/:versionId/simulations` | JWT | Sim Panel | Body `{ analysisConfig, probes? }` → `{ jobId }` |
 | POST | `/simulations/quick` | JWT | Sim Panel | Body `{ netlist, analysisConfig? }`; throttled 10/60s |
 | GET | `/versions/:versionId/bom` | JWT | BOM panel | Aggregated bill of materials: parts grouped by mpn (qty, designators, unit/line cost, stock, datasheet) + per-currency totals + `unsourced` flags. `?format=csv` downloads a purchase-ready CSV. Same access rules as reading the version. |
+| POST | `/netlist/import` | JWT | Import dialog | Body `{ netlist }` (standard SPICE deck, max 200KB) → `{ circuit, analysis?, title?, schemaValid, schemaIssues, errors, warnings }`. Load `circuit` into the editor when `schemaValid`; show warnings otherwise. Throttled 30/60s. |
+| POST | `/netlist/export` | JWT | Export action | Body `{ circuitJson, analysisConfig?, probes? }` → `text/plain` self-contained `.cir` deck (generic model bodies inlined; attachment headers set). Authoring errors → 400 with the exact message. Throttled 30/60s. |
 | GET | `/simulations/:jobId` | JWT | Sim Panel | Status poll |
 | GET | `/simulations/:jobId/result` | JWT | Waveform | Result payload |
 | GET | `/templates` | optional JWT | Templates | Public when no `orgId`; org list requires membership |
@@ -322,6 +324,7 @@ The response type is `TokensResponse` (`apps/api/src/auth/auth.service.ts:15`): 
   Time/freq/value fields are SPICE value strings (e.g. `10m`, `1u`, `1MEG`). Validate client-side with eda-core's `parseSpiceValue` / value schema — remember `M`/`m` = milli, `MEG` = mega.
 - **TRAN `initialConditions?: Record<string, number>`** — initial node voltages keyed by **net id** (e.g. `{ "fb": 0.5 }`, volts as plain numbers); the server emits a `.ic` card per entry (ground/unknown ids are skipped). Use it to kick a symmetric self-starting oscillator off its dead equilibrium (Wien bridge / ring / relaxation — without a seed those simulate as a flat line). Leave `uic` **unset** for circuits with supplies (the robust default: the op-point is solved with the seeded nodes pinned, then released); set `uic: true` only for pure-reactive seeding (a charged cap / LC tank with no supply — forcing `uic` on a supplied circuit zeroes the rails and aborts). Surface it as an advanced field on the TRAN tab; template `analysisConfig` records may carry it (the Wien-bridge template does).
 - **Single-point AC** (`startFreq === stopFreq`) is legal — the server emits a one-point linear sweep and returns one row.
+- **Solver tuning `options?` (all four analysis types):** `{ reltol?, abstol?, vntol?, gmin?, method?: 'trap'|'gear', itl4? }` → emitted as an ngspice `.options` card. An advanced/collapsed panel ("Convergence aids") — defaults are right for most circuits; a stiff power circuit that trips "Timestep too small" can be rescued with looser `reltol` (e.g. "0.01"), `gmin` "1e-9", or `method: "gear"`. Values are SPICE numbers, server-validated (invalid ones dropped).
 - Probe picker producing `probes: string[]` like `["v(out)", "v(in)", "i(R1)"]`. **Mandate explicit probes** to avoid the empty-series quirk documented in the Results / Waveform Viewer screen (§2.6).
 - **Current-probe support by device:** `i(V…)`/`i(L…)` (sources, inductors) work in **every** analysis. `i(R…)`/`i(C…)` (resistors, capacitors) work in **op/dc/tran** but are silently dropped in **AC** (no small-signal device-current vector exists — the voltage co-probes still return). A current probe on a diode or transistor terminal is never available — probe a series resistor's current instead. Reflect this in the probe picker (disable/annotate per analysis type) so users aren't surprised by a missing series.
 - Default probes (to pre-populate the picker): eda-core does **not** export a `generateDefaultProbes` helper. Compute defaults locally from the exported `getNodeNames(circuit)` — map each non-ground node to a voltage probe, e.g. `getNodeNames(circuit).filter((n) => n !== '0' && n.toLowerCase() !== 'gnd').map((n) => \`v(${n})\`)`. The frontend still presents these as an editable suggestion; the picker output remains the authoritative `probes` array. (`getNodeNames` and `extractProbes` are the relevant probe-related exports of `@circuit-forge/eda-core`.)
@@ -373,7 +376,7 @@ interface SimulationResult {
 
 | Endpoint | Outcome | Response |
 |---|---|---|
-| `GET /simulations/:jobId/result` | status ≠ `SUCCEEDED` | `{ id, status, error }` (`error` is the worker `stderr`) |
+| `GET /simulations/:jobId/result` | status ≠ `SUCCEEDED` | `{ id, status, error }` (`error` is the worker `stderr`) | **`?maxPoints=N`** (10..100000) decimates each series server-side with MIN-MAX bucketing (peaks/glitches survive); `meta.downsampledFrom` carries the original count. Use ~2-4× the chart pixel width for fast first paint, refetch full on zoom. |
 | `GET /simulations/:jobId/result` | status = `SUCCEEDED` | `{ id, status, result: SimulationResult, metrics }` |
 
 **Caveats (handle all three):**

@@ -19,6 +19,8 @@ export interface ResultMeta {
     xUnit?: string;
     pointsCount: number;
     simulationTime?: number; // Runtime in milliseconds
+    /** Present when the series were decimated for display (?maxPoints): the ORIGINAL point count. */
+    downsampledFrom?: number;
 }
 
 /**
