@@ -174,4 +174,48 @@ describe('ComponentMapper', () => {
         expect(r.simulatable).toBe(false);
         expect(r.component?.value).toBeUndefined();
     });
+describe('LEDs (diode + color-class generic model)', () => {
+        it('maps a THT red LED (category 112896) to diode + LEDRED with the modelDef attached', () => {
+            const r = mapper.toComponent(
+                part({
+                    mpn: 'L-53ID',
+                    manufacturer: 'KINGBRIGHT',
+                    categoryId: '112896',
+                    category: 'THT LEDs Round',
+                    description: 'LED; red; 5mm; 12.5÷80mcd; 60°; Front: convex; 2÷2.5VDC',
+                }),
+            );
+            expect(r.simulatable).toBe(true);
+            expect(r.component?.type).toBe('diode');
+            expect(r.component?.model).toBe('LEDRED');
+            expect(r.modelDef?.name).toBe('LEDRED');
+            expect(r.modelDef?.body).toContain('.model LEDRED D(');
+        });
+
+        it('maps an SMD green LED (category 113363) to LEDGRN, blue/white to LEDBLU, amber to LEDYEL', () => {
+            const grn = mapper.toComponent(part({ categoryId: '113363', category: 'SMD colour LEDs', description: 'LED; green; 0603' }));
+            expect(grn.component?.model).toBe('LEDGRN');
+            const blu = mapper.toComponent(part({ categoryId: '113363', category: 'SMD colour LEDs', description: 'LED; white; 1206' }));
+            expect(blu.component?.model).toBe('LEDBLU');
+            const yel = mapper.toComponent(part({ categoryId: '112896', category: 'THT LEDs Round', description: 'LED; amber; 3mm' }));
+            expect(yel.component?.model).toBe('LEDYEL');
+        });
+
+        it('keeps a colorless or multi-color LED catalog-only (never a silent DDEFAULT diode)', () => {
+            const noColor = mapper.toComponent(part({ categoryId: '112896', category: 'THT LEDs Round', description: 'LED; 5mm; 60°' }));
+            expect(noColor.simulatable).toBe(false);
+            expect(noColor.component?.type).toBe('generic');
+            expect(noColor.reason).toMatch(/color/i);
+            const rgb = mapper.toComponent(part({ categoryId: '113363', category: 'SMD colour LEDs', description: 'LED; RGB; 5mm; red green blue' }));
+            expect(rgb.simulatable).toBe(false);
+        });
+
+        it('classifies an unmapped LED leaf by category NAME, but never LED accessories', () => {
+            const byName = mapper.toComponent(part({ categoryId: '999999', category: 'THT LEDs rectangular', description: 'LED; yellow; 5x2mm' }));
+            expect(byName.component?.model).toBe('LEDYEL');
+            const driver = mapper.toComponent(part({ categoryId: '999998', category: 'LED drivers', description: 'LED driver; 350mA' }));
+            expect(driver.component?.model).toBeUndefined();
+            expect(driver.simulatable).toBe(false);
+        });
+    });
 });

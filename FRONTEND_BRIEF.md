@@ -165,6 +165,7 @@ This section enumerates every screen the v1 frontend must ship, with its purpose
 | GET | `/versions/:versionId` | JWT | Editor | Full version + nested `project` |
 | POST | `/versions/:versionId/simulations` | JWT | Sim Panel | Body `{ analysisConfig, probes? }` → `{ jobId }` |
 | POST | `/simulations/quick` | JWT | Sim Panel | Body `{ netlist, analysisConfig? }`; throttled 10/60s |
+| GET | `/versions/:versionId/bom` | JWT | BOM panel | Aggregated bill of materials: parts grouped by mpn (qty, designators, unit/line cost, stock, datasheet) + per-currency totals + `unsourced` flags. `?format=csv` downloads a purchase-ready CSV. Same access rules as reading the version. |
 | GET | `/simulations/:jobId` | JWT | Sim Panel | Status poll |
 | GET | `/simulations/:jobId/result` | JWT | Waveform | Result payload |
 | GET | `/templates` | optional JWT | Templates | Public when no `orgId`; org list requires membership |
