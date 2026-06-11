@@ -166,6 +166,8 @@ This section enumerates every screen the v1 frontend must ship, with its purpose
 | POST | `/versions/:versionId/simulations` | JWT | Sim Panel | Body `{ analysisConfig, probes? }` → `{ jobId }` |
 | POST | `/simulations/quick` | JWT | Sim Panel | Body `{ netlist, analysisConfig? }`; throttled 10/60s |
 | GET | `/versions/:versionId/bom` | JWT | BOM panel | Aggregated bill of materials: parts grouped by mpn (qty, designators, unit/line cost, stock, datasheet) + per-currency totals + `unsourced` flags. `?format=csv` downloads a purchase-ready CSV. Same access rules as reading the version. |
+| POST | `/netlist/import` | JWT | Import dialog | Body `{ netlist }` (standard SPICE deck, max 200KB) → `{ circuit, analysis?, title?, schemaValid, schemaIssues, errors, warnings }`. Load `circuit` into the editor when `schemaValid`; show warnings otherwise. Throttled 30/60s. |
+| POST | `/netlist/export` | JWT | Export action | Body `{ circuitJson, analysisConfig?, probes? }` → `text/plain` self-contained `.cir` deck (generic model bodies inlined; attachment headers set). Authoring errors → 400 with the exact message. Throttled 30/60s. |
 | GET | `/simulations/:jobId` | JWT | Sim Panel | Status poll |
 | GET | `/simulations/:jobId/result` | JWT | Waveform | Result payload |
 | GET | `/templates` | optional JWT | Templates | Public when no `orgId`; org list requires membership |

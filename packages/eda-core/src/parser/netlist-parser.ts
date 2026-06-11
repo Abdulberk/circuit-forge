@@ -105,13 +105,15 @@ export function parseNetlist(netlist: string): NetlistParseResult {
         // Already handled above
     }
 
-    // Add ground component if there's a ground net
+    // Add ground component if there's a ground net. Designator must end in a digit ("GND1", not
+    // "GND") — the CircuitJson schema enforces IEEE-style refdes, and the parser's own output must
+    // pass the schema (import → editor round-trip).
     const groundNet = nets.find((n) => n.isGround);
     if (groundNet) {
         components.push({
             id: 'gnd1',
             type: 'ground',
-            designator: 'GND',
+            designator: 'GND1',
             pins: [{ pinId: '1', netId: groundNet.id }],
         });
     }
