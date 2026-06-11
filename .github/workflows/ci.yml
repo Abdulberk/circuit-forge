@@ -1,5 +1,9 @@
 # Circuit Forge CI — every PR and every push to main runs the full quality gate.
 #
+# pnpm is installed with "npm i -g" (npm ships with Node) instead of the third-party
+# pnpm/action-setup action, so the workflow runs even under the strictest repository
+# Actions policy ("GitHub-owned actions only") — only actions/* are used.
+#
 # Two jobs:
 #   • test     — install, build all workspaces, typecheck, and run every unit suite
 #                (eda-core 220+, llm-core, api 118+ — all run env-less; live/AI suites are
@@ -26,12 +30,12 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - uses: pnpm/action-setup@v4 # reads the version from package.json "packageManager"
-
       - uses: actions/setup-node@v4
         with:
           node-version: 20
-          cache: pnpm
+
+      - name: Install pnpm (version pinned to package.json "packageManager")
+        run: npm install -g pnpm@8.14.1
 
       - name: Install
         run: pnpm install --frozen-lockfile
@@ -52,12 +56,12 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - uses: pnpm/action-setup@v4
-
       - uses: actions/setup-node@v4
         with:
           node-version: 20
-          cache: pnpm
+
+      - name: Install pnpm
+        run: npm install -g pnpm@8.14.1
 
       - name: Install ngspice
         run: |
@@ -73,5 +77,5 @@ jobs:
 
       - name: Coverage matrix (73 cells, real ngspice)
         env:
-          NGSPICE_PATH: ngspice # Linux apt build is the console binary
+          NGSPICE_PATH: ngspice # the Linux apt build is the console binary
         run: node scripts/coverage-matrix.mjs
