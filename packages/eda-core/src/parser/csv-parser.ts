@@ -28,6 +28,13 @@ export function parseCsv(
         name,
         points: [],
     }));
+    // An AC run ALSO yields one PHASE series per probe (degrees, atan2(im, re)) — appended AFTER all the
+    // magnitude series so existing consumers' indexes stay stable (series[i] is still probe i's magnitude).
+    // Named `phase(<probe>)`. Stays empty (and is not appended) for non-AC / non-complex input.
+    const phaseSeries: DataSeries[] = probeNames.map((name) => ({
+        name: `phase(${name})`,
+        points: [],
+    }));
 
     // Parse each line.
     // ngspice `wrdata` (ascii) repeats the scale (x) column BEFORE each vector, so a row
@@ -60,6 +67,9 @@ export function parseCsv(
                 const re = values[3 * i + 1];
                 const im = values[3 * i + 2];
                 y = re !== undefined && im !== undefined ? Math.hypot(re, im) : undefined;
+                if (x !== undefined && re !== undefined && im !== undefined && !isNaN(x) && !isNaN(re) && !isNaN(im)) {
+                    phaseSeries[i]?.points.push({ x, y: (Math.atan2(im, re) * 180) / Math.PI });
+                }
             } else if (interleaved) {
                 x = values[2 * i];
                 y = values[2 * i + 1];
@@ -73,10 +83,14 @@ export function parseCsv(
         }
     }
 
-    // Build metadata
-    const meta = buildMeta(analysisType, series);
+    // Append the phase series (AC only — they collect points only on the complex 3-col layout) AFTER the
+    // magnitudes, preserving magnitude indexes for existing consumers.
+    const withPhase = phaseSeries.some((p) => p.points.length > 0) ? [...series, ...phaseSeries] : series;
 
-    return { meta, series };
+    // Build metadata
+    const meta = buildMeta(analysisType, withPhase);
+
+    return { meta, series: withPhase };
 }
 
 /**
