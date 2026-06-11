@@ -12,6 +12,7 @@ import {
 import { getSignedUrl } from '@aws-sdk/s3-request-presigner';
 import { PrismaService } from '../prisma/prisma.service';
 import { OrgsService } from '../orgs/orgs.service';
+import { UsageService } from '../usage/usage.service';
 import { PresignUploadDto, CommitAssetDto } from './dto';
 import { randomUUID } from 'crypto';
 
@@ -23,6 +24,7 @@ export class AssetsService {
     constructor(
         private readonly prisma: PrismaService,
         private readonly orgsService: OrgsService,
+        private readonly usageService: UsageService,
     ) {
         this.bucket = process.env.S3_BUCKET || 'circuitforge';
         this.s3 = new S3Client({
@@ -41,6 +43,10 @@ export class AssetsService {
      */
     async presignUpload(orgId: string, userId: string, dto: PresignUploadDto) {
         await this.orgsService.requireMembership(orgId, userId);
+
+        // Storage quota gate (no-op until QUOTA_STORAGE_BYTES_PER_ORG is configured): reject before
+        // handing out an upload URL, so the org can't keep growing past its cap.
+        await this.usageService.assertStorageQuota(orgId, dto.sizeBytes);
 
         // Generate unique S3 key
         const s3Key = `orgs/${orgId}/models/${randomUUID()}/${dto.name}`;
@@ -67,13 +73,16 @@ export class AssetsService {
     async commitAsset(orgId: string, userId: string, dto: CommitAssetDto) {
         await this.orgsService.requireMembership(orgId, userId);
 
-        // Verify file exists in S3
+        // Verify file exists in S3 — and take its size from S3, not the client's claim. The storage
+        // quota aggregates this column, so a client-supplied number would let anyone under-report.
+        let actualSizeBytes: number;
         try {
             const headCommand = new HeadObjectCommand({
                 Bucket: this.bucket,
                 Key: dto.s3Key,
             });
-            await this.s3.send(headCommand);
+            const head = await this.s3.send(headCommand);
+            actualSizeBytes = typeof head.ContentLength === 'number' ? head.ContentLength : dto.sizeBytes;
         } catch (error) {
             throw new BadRequestException('Asset not found in storage. Upload may have failed.');
         }
@@ -83,6 +92,10 @@ export class AssetsService {
             throw new BadRequestException('Invalid S3 key for this organization');
         }
 
+        // Re-gate at commit with the OBSERVED size: presign gating alone can be raced (parallel
+        // presigns) or sidestepped (URL issued before a limit was tightened, oversized upload).
+        await this.usageService.assertStorageQuota(orgId, actualSizeBytes);
+
         // Create asset record
         return this.prisma.asset.create({
             data: {
@@ -90,7 +103,7 @@ export class AssetsService {
                 type: 'SPICE_MODEL',
                 name: dto.name,
                 contentType: dto.contentType,
-                sizeBytes: dto.sizeBytes,
+                sizeBytes: actualSizeBytes,
                 s3Key: dto.s3Key,
                 sha256: dto.sha256,
             },

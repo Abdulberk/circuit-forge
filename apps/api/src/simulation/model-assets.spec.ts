@@ -8,6 +8,7 @@ import { SimulationService } from './simulation.service';
 import type { PrismaService } from '../prisma/prisma.service';
 import type { VersionsService } from '../versions/versions.service';
 import type { OrgsService } from '../orgs/orgs.service';
+import type { UsageService } from '../usage/usage.service';
 import type { Queue } from 'bullmq';
 
 interface MockAsset {
@@ -27,8 +28,9 @@ function makeService(assets: MockAsset[] = [], orgs: Array<{ id: string }> = [{ 
     } as unknown as PrismaService;
     const orgsService = { findAllForUser: jest.fn(async () => orgs) } as unknown as OrgsService;
     const versionsService = {} as unknown as VersionsService;
+    const usageService = { assertSimQuota: jest.fn(async () => undefined) } as unknown as UsageService;
     const queue = { add: queueAdd } as unknown as Queue;
-    const svc = new SimulationService(prisma, versionsService, orgsService, queue);
+    const svc = new SimulationService(prisma, versionsService, orgsService, usageService, queue);
     return { svc, queueAdd, assetFindMany };
 }
 
