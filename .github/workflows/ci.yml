@@ -24,9 +24,38 @@ concurrency:
 
 jobs:
   test:
-    name: build + typecheck + unit tests
+    name: build + typecheck + tests (unit + integration)
     runs-on: ubuntu-latest
     timeout-minutes: 20
+    # The api suite includes REAL integration tests (auth / simulation / e2e-smoke) that boot the
+    # full AppModule — they need live Postgres + Redis, provided as job services. S3/JWT values are
+    # CI-only dummies (the storage client never connects in these suites).
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: circuitforge_test
+        ports: ['5432:5432']
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+      redis:
+        image: redis:7
+        ports: ['6379:6379']
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    # NOTE: jest's setup file (apps/api/__tests__/setup.ts) hard-sets every env the suites need
+    # (DB/redis at localhost, JWT/S3/TME dummies) — only the MIGRATE step below runs outside jest
+    # and needs DATABASE_URL itself.
+    env:
+      DATABASE_URL: postgresql://postgres:postgres@localhost:5432/circuitforge_test
     steps:
       - uses: actions/checkout@v4
 
@@ -40,13 +69,22 @@ jobs:
       - name: Install
         run: pnpm install --frozen-lockfile
 
+      - name: Generate Prisma client
+        # A fresh install ships only the stub @prisma/client — without generate, the api build
+        # fails with "Prisma has no exported member 'InputJsonValue'" (it worked locally only
+        # because the client had been generated there once).
+        run: pnpm db:generate
+
+      - name: Run database migrations
+        run: pnpm db:migrate
+
       - name: Build
         run: pnpm build
 
       - name: Typecheck
         run: pnpm typecheck
 
-      - name: Unit tests
+      - name: Tests (unit + integration)
         run: pnpm test
 
   matrix:
