@@ -4,8 +4,12 @@
  */
 import { Controller, Get } from '@nestjs/common';
 import { ApiTags, ApiOperation } from '@nestjs/swagger';
+import { SkipThrottle } from '@nestjs/throttler';
 import { PrismaService } from '../prisma/prisma.service';
 
+// Monitoring/orchestrator probes (k8s liveness/readiness) poll frequently and must never be
+// rate-limited — exempt the whole controller from the global throttler.
+@SkipThrottle()
 @ApiTags('health')
 @Controller('health')
 export class HealthController {

@@ -28,7 +28,11 @@ function makeService(assets: MockAsset[] = [], orgs: Array<{ id: string }> = [{ 
     } as unknown as PrismaService;
     const orgsService = { findAllForUser: jest.fn(async () => orgs) } as unknown as OrgsService;
     const versionsService = {} as unknown as VersionsService;
-    const usageService = { assertSimQuota: jest.fn(async () => undefined) } as unknown as UsageService;
+    // createSimGuarded runs its create callback with a DB client; here (no quota) it's the prisma stub,
+    // so tx.simulationJob.create resolves to jobCreate exactly as the unguarded path did.
+    const usageService = {
+        createSimGuarded: jest.fn((_orgId: string, create: (tx: unknown) => Promise<unknown>) => create(prisma)),
+    } as unknown as UsageService;
     const queue = { add: queueAdd } as unknown as Queue;
     const svc = new SimulationService(prisma, versionsService, orgsService, usageService, queue);
     return { svc, queueAdd, assetFindMany };

@@ -51,10 +51,7 @@ export class SimulationService {
         modelAssetIds?: string[],
     ) {
         const version = await this.versionsService.findOne(versionId, userId);
-
-        // Quota gate (no-op until QUOTA_SIM_* env limits are configured): in-flight fairness cap +
-        // monthly job/runtime ceilings. Throws a structured 429 before any work is done.
-        await this.usageService.assertSimQuota(version.project.orgId);
+        const orgId = version.project.orgId;
 
         // Validate the analysis config + the stored circuit BEFORE netlisting. generateNetlist assumes a
         // schema-valid CircuitJson and will throw a raw TypeError on a malformed one (e.g. a legacy
@@ -75,7 +72,7 @@ export class SimulationService {
 
         // Resolve any user-uploaded SPICE model assets (scoped to this version's org) into S3 keys (for
         // the worker to download) + filenames (to `.include` in the generated netlist).
-        const { s3Keys, includeFiles } = await this.resolveModelAssets(version.project.orgId, modelAssetIds);
+        const { s3Keys, includeFiles } = await this.resolveModelAssets(orgId, modelAssetIds);
 
         // Generate the netlist. The inputs are schema-valid above, but guard the generation itself too —
         // a model-body conflict / unknown-type / unsupported-probe is reported as a clean 400, never a 500.
@@ -86,23 +83,27 @@ export class SimulationService {
             throw new BadRequestException(`Netlist generation failed: ${e instanceof Error ? e.message : String(e)}`);
         }
 
-        // Create job record
-        const job = await this.prisma.simulationJob.create({
-            data: {
-                orgId: version.project.orgId,
-                projectVersionId: versionId,
-                status: 'QUEUED',
-                engine: 'NGSPICE',
-                analysisConfig: analysisConfig as Prisma.InputJsonValue,
-                netlist,
-            },
-        });
+        // Create the job under the sim-quota guard: when QUOTA_SIM_* is configured, the quota is
+        // re-checked under a per-org advisory lock so concurrent enqueues can't race past the cap;
+        // when unset, this is a plain create (no lock/transaction overhead). 429 thrown before insert.
+        const job = await this.usageService.createSimGuarded(orgId, (tx) =>
+            tx.simulationJob.create({
+                data: {
+                    orgId,
+                    projectVersionId: versionId,
+                    status: 'QUEUED',
+                    engine: 'NGSPICE',
+                    analysisConfig: analysisConfig as Prisma.InputJsonValue,
+                    netlist,
+                },
+            }),
+        );
 
         // Add to queue
         const analysisType = (analysisConfig as { type?: string }).type || 'tran';
         await this.simulationQueue.add('simulation', {
             jobId: job.id,
-            orgId: version.project.orgId,
+            orgId,
             netlist,
             probeNames: probes || [],
             analysisType,
@@ -130,22 +131,23 @@ export class SimulationService {
             throw new NotFoundException('No organization found for user');
         }
 
-        await this.usageService.assertSimQuota(orgId);
-
         // The caller supplies the raw netlist (it must already `.include` each model by filename); we
         // only resolve the assets to S3 keys so the worker downloads the files into the job dir.
         const { s3Keys } = await this.resolveModelAssets(orgId, modelAssetIds);
 
-        // Create job record
-        const job = await this.prisma.simulationJob.create({
-            data: {
-                orgId,
-                status: 'QUEUED',
-                engine: 'NGSPICE',
-                analysisConfig: (analysisConfig || {}) as Prisma.InputJsonValue,
-                netlist,
-            },
-        });
+        // Create the job under the sim-quota guard (advisory-locked re-check when a quota is set;
+        // plain create otherwise) so concurrent quick sims can't race past the cap.
+        const job = await this.usageService.createSimGuarded(orgId, (tx) =>
+            tx.simulationJob.create({
+                data: {
+                    orgId,
+                    status: 'QUEUED',
+                    engine: 'NGSPICE',
+                    analysisConfig: (analysisConfig || {}) as Prisma.InputJsonValue,
+                    netlist,
+                },
+            }),
+        );
 
         // Add to queue
         const analysisType = (analysisConfig as { type?: string } | undefined)?.type || 'tran';

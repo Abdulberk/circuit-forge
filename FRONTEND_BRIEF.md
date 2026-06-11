@@ -817,24 +817,32 @@ new ValidationPipe({ whitelist: true, transform: true, forbidNonWhitelisted: tru
 
 **Frontend rule:** build request bodies from typed DTO factories that include *only* the fields in the tables below. Never spread a full domain object into a create/update call — extra keys produce a `400`.
 
-#### 4.1.4 Throttling (rate limits) — current reality
+#### 4.1.4 Throttling (rate limits) — ENFORCED
 
-`ThrottlerModule.forRoot([...])` declares two tiers in `app.module.ts` (`short`: 10 req/1 s; `medium`: 120 req/60 s), and several controllers carry per-route `@Throttle(...)` decorators. **However, no `ThrottlerGuard` is registered anywhere** (no `APP_GUARD` provider, no `@UseGuards(ThrottlerGuard)` — verified by grep across `apps/api/src`). As written today, **none of these limits are actually enforced** — the decorators are inert until a guard is wired up.
+`app.module.ts` registers a global `ThrottlerGuard` (`APP_GUARD`) with two tiers: a per-route **`default`** budget (120 req/60 s unless a route overrides it) and a universal **`burst`** guard (30 req/1 s) that no route can exceed. These limits **are enforced** in dev/prod (skipped only under the jest test env). Health/liveness/readiness are exempt (`@SkipThrottle`).
 
-The per-route limits that are *declared* (and will activate the moment a guard is added — likely before/at production):
+Per-route overrides (these are the `default`-tier limits each route sets; the 30/1 s burst guard also applies to every one):
 
-| Endpoint | Declared limit | Decorator location |
+| Endpoint | Limit | Decorator location |
 |---|---|---|
+| `POST /versions/:versionId/simulations` | 30 / 60 s | `simulation.controller.ts` |
 | `POST /simulations/quick` | 10 / 60 s | `simulation.controller.ts` |
 | `POST /generate-circuit` | 5 / 60 s | `generation.controller.ts` |
 | `POST /edit-circuit` | 5 / 60 s | `generation.controller.ts` |
 | `POST /explain-circuit` | 10 / 60 s | `generation.controller.ts` |
 | `POST /design-circuit` | 3 / 60 s | `design.controller.ts` |
+| `GET /parts/search`, `/parts/:symbol`, `/parts/:symbol/component` | 30 / 60 s | `parts.controller.ts` |
+| `GET /parts/manufacturers`, `/parts/categories` | 60 / 60 s | `parts.controller.ts` |
+| `POST /netlist/import`, `/netlist/export` | 30 / 60 s | `netlist.controller.ts` |
+| everything else | 120 / 60 s + 30 / 1 s burst | global default |
+
+**Two distinct 429s — branch on the body, not the status code:**
+- **Throttle 429** → body `{ statusCode: 429, message: "ThrottlerException: Too Many Requests" }` (no `code` field). Transient — back off ~2–5 s and retry once; debounce the triggering button.
+- **Quota 429** → body `{ code: "QUOTA_EXCEEDED", metric, used, limit, period }` (see §4.5). A configured usage cap was hit — do **not** blind-retry; show the per-metric message and link to the usage page.
 
 **Client must (code defensively now, not later):**
-- Treat the declared limits as the *contract* and budget the UI to stay within them — debounce AI/quick-sim buttons and disable them while a request is in flight.
-- Handle `429 Too Many Requests` everywhere as retryable: read `Retry-After` if present, otherwise back off ~2–5 s before a single retry.
-- Be especially conservative on `POST /design-circuit` (3/60 s declared) — it is the most expensive call (§4.4.9).
+- Treat the per-route limits as the *contract* and budget the UI to stay within them — debounce AI/quick-sim buttons and disable them while a request is in flight; the 30/1 s burst guard means fanning out many parallel reads on a single screen can trip it, so batch/stagger bulk fetches.
+- Be especially conservative on `POST /design-circuit` (3/60 s) — it is the most expensive call (§4.4.9).
 
 ---
 

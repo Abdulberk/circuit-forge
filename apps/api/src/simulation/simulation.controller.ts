@@ -17,6 +17,7 @@ export class SimulationController {
     constructor(private readonly simulationService: SimulationService) { }
 
     @Post('versions/:versionId/simulations')
+    @Throttle({ default: { limit: 30, ttl: 60000 } })
     @ApiOperation({ summary: 'Create simulation from version' })
     async createFromVersion(
         @Param('versionId') versionId: string,
