@@ -8,6 +8,28 @@
 export type AnalysisConfig = TranAnalysis | AcAnalysis | DcAnalysis | OpAnalysis;
 
 /**
+ * Optional ngspice solver tuning (`.options` card) — the convergence/accuracy levers a power-electronics
+ * run sometimes needs (a stiff switcher that trips "Timestep too small" can often be rescued by a looser
+ * reltol or a small gmin). All values are SPICE number strings; the generator validates each against an
+ * anchored numeric pattern and SILENTLY DROPS invalid ones (an unvalidated token would be netlist
+ * injection). Omit entirely for ngspice defaults — the defaults are right for most circuits.
+ */
+export interface SolverOptions {
+    /** Relative error tolerance (ngspice default 1e-3). Looser (e.g. "0.01") helps stiff circuits converge. */
+    reltol?: string;
+    /** Absolute current error tolerance (default 1e-12). */
+    abstol?: string;
+    /** Absolute voltage error tolerance (default 1e-6). */
+    vntol?: string;
+    /** Minimum conductance (default 1e-12). Raising (e.g. "1e-9") tames near-singular matrices. */
+    gmin?: string;
+    /** Transient integration method (default "trap"; "gear" damps numerical ringing on stiff circuits). */
+    method?: 'trap' | 'gear';
+    /** Transient per-timepoint iteration limit (default 10). Raising helps hard switching edges. */
+    itl4?: number;
+}
+
+/**
  * Transient analysis - time domain simulation
  */
 export interface TranAnalysis {
@@ -29,6 +51,8 @@ export interface TranAnalysis {
      * Unknown net ids and ground are skipped (no phantom `.ic`).
      */
     initialConditions?: Record<string, number>;
+    /** Optional ngspice solver tuning — see SolverOptions. */
+    options?: SolverOptions;
 }
 
 /**
@@ -40,6 +64,8 @@ export interface AcAnalysis {
     points: number; // Points per decade/octave or total for lin
     startFreq: string; // e.g., "1" for 1Hz
     stopFreq: string; // e.g., "1MEG" for 1MHz
+    /** Optional ngspice solver tuning — see SolverOptions. */
+    options?: SolverOptions;
 }
 
 /**
@@ -51,6 +77,8 @@ export interface DcAnalysis {
     startVal: string; // Start value
     stopVal: string; // Stop value
     increment: string; // Step size
+    /** Optional ngspice solver tuning — see SolverOptions. */
+    options?: SolverOptions;
 }
 
 /**
@@ -58,6 +86,8 @@ export interface DcAnalysis {
  */
 export interface OpAnalysis {
     type: 'op';
+    /** Optional ngspice solver tuning — see SolverOptions. */
+    options?: SolverOptions;
 }
 
 /**

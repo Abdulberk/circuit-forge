@@ -12,6 +12,19 @@ export const SpiceValueSchema = z.string().regex(
 );
 
 /**
+ * Solver tuning (`.options`) schema — every numeric field must be a clean SPICE value (anchored
+ * regex, no expressions: these tokens go straight onto a netlist line).
+ */
+export const SolverOptionsSchema = z.object({
+    reltol: SpiceValueSchema.optional(),
+    abstol: SpiceValueSchema.optional(),
+    vntol: SpiceValueSchema.optional(),
+    gmin: SpiceValueSchema.optional(),
+    method: z.enum(['trap', 'gear']).optional(),
+    itl4: z.number().int().positive().max(10000).optional(),
+});
+
+/**
  * Transient analysis schema
  */
 export const TranAnalysisSchema = z.object({
@@ -22,6 +35,7 @@ export const TranAnalysisSchema = z.object({
     maxStep: SpiceValueSchema.optional(),
     uic: z.boolean().optional(),
     initialConditions: z.record(z.string().min(1).max(100), z.number()).optional(),
+    options: SolverOptionsSchema.optional(),
 });
 
 /**
@@ -33,6 +47,7 @@ export const AcAnalysisSchema = z.object({
     points: z.number().int().positive().max(10000),
     startFreq: SpiceValueSchema,
     stopFreq: SpiceValueSchema,
+    options: SolverOptionsSchema.optional(),
 });
 
 /**
@@ -44,6 +59,7 @@ export const DcAnalysisSchema = z.object({
     startVal: SpiceValueSchema,
     stopVal: SpiceValueSchema,
     increment: SpiceValueSchema,
+    options: SolverOptionsSchema.optional(),
 });
 
 /**
@@ -51,6 +67,7 @@ export const DcAnalysisSchema = z.object({
  */
 export const OpAnalysisSchema = z.object({
     type: z.literal('op'),
+    options: SolverOptionsSchema.optional(),
 });
 
 /**

@@ -1,6 +1,6 @@
 {
     "name": "@circuit-forge/eda-core",
-    "version": "1.21.0",
+    "version": "1.22.0",
     "description": "Circuit manipulation, netlist generation, and SPICE parsing library",
     "license": "MIT",
     "author": "Abdulberk",

@@ -381,12 +381,28 @@ export function generateNetlist(
         );
     }
 
-    // ngspice -b has no native i(<dev>) for R/C/D — those probes were rewritten to `@<dev>[i]`, which needs
-    // `.options savecurrents` to populate. Emit it ONLY when such a probe is present (it makes ngspice store
-    // every device's current — real matrix/IO overhead we don't want on the common voltage-only run).
-    if (needSaveCurrents) {
+    // `.options` card: solver tuning from analysis.options (each token re-validated against an anchored
+    // numeric pattern — these strings land verbatim on a netlist line, so an unvalidated value would be
+    // netlist injection; invalid ones are silently dropped in favor of ngspice defaults) + `savecurrents`
+    // when an R/C current probe was rewritten to `@<dev>[i]` (it makes ngspice store every device current —
+    // real matrix/IO overhead we don't want on the common voltage-only run).
+    const optionTokens: string[] = [];
+    const solver = analysis.options;
+    if (solver) {
+        const SPICE_NUM = /^\+?\d*\.?\d+(?:[eE][+-]?\d+)?(?:meg|MEG|[fpnumkgtFPNUMKGT])?$/;
+        for (const key of ['reltol', 'abstol', 'vntol', 'gmin'] as const) {
+            const v = solver[key]?.trim();
+            if (v && SPICE_NUM.test(v)) optionTokens.push(`${key}=${v}`);
+        }
+        if (solver.method === 'trap' || solver.method === 'gear') optionTokens.push(`method=${solver.method}`);
+        if (typeof solver.itl4 === 'number' && Number.isInteger(solver.itl4) && solver.itl4 > 0 && solver.itl4 <= 10000) {
+            optionTokens.push(`itl4=${solver.itl4}`);
+        }
+    }
+    if (needSaveCurrents) optionTokens.push('savecurrents');
+    if (optionTokens.length > 0) {
         lines.push('* Options');
-        lines.push('.options savecurrents');
+        lines.push(`.options ${optionTokens.join(' ')}`);
         lines.push('');
     }
 

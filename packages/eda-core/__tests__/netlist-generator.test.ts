@@ -310,6 +310,63 @@ describe('NetlistGenerator', () => {
             expect(() => generateNetlist(scr, { type: 'op' })).toThrow(/SCRGEN/);
         });
 
+        it('emits validated solver options as a .options card and drops injection attempts', () => {
+            // analysis.options tokens land verbatim on a netlist line — each value is re-validated against
+            // an anchored numeric pattern; anything else (an injection attempt, a typo'd expression) is
+            // silently dropped in favor of ngspice defaults.
+            const c: CircuitJson = {
+                version: '1.0',
+                components: [
+                    createComponent('V1', 'voltage_source', 'V1', 'DC 5', [
+                        { pinId: '+', netId: 'in' },
+                        { pinId: '-', netId: '0' },
+                    ]),
+                    createComponent('R1', 'resistor', 'R1', '1k', [
+                        { pinId: '1', netId: 'in' },
+                        { pinId: '2', netId: '0' },
+                    ]),
+                ],
+                nets: [createNet('in', 'in'), createNet('0', '0', true)],
+            };
+            const netlist = generateNetlist(c, {
+                type: 'tran',
+                stopTime: '1m',
+                options: {
+                    reltol: '0.01',
+                    gmin: '1e-9',
+                    method: 'gear',
+                    itl4: 50,
+                    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+                    abstol: '1e-10; .shell rm -rf' as any, // injection attempt → dropped
+                },
+            });
+            const opt = netlist.split('\n').find((l) => l.startsWith('.options'))!;
+            expect(opt).toBe('.options reltol=0.01 gmin=1e-9 method=gear itl4=50');
+            expect(netlist).not.toContain('.shell');
+            // No options → no .options card at all.
+            expect(generateNetlist(c, { type: 'tran', stopTime: '1m' })).not.toContain('.options');
+        });
+
+        it('merges solver options with savecurrents on one .options card', () => {
+            const c: CircuitJson = {
+                version: '1.0',
+                components: [
+                    createComponent('V1', 'voltage_source', 'V1', 'DC 5', [
+                        { pinId: '+', netId: 'in' },
+                        { pinId: '-', netId: '0' },
+                    ]),
+                    createComponent('R1', 'resistor', 'R1', '1k', [
+                        { pinId: '1', netId: 'in' },
+                        { pinId: '2', netId: '0' },
+                    ]),
+                ],
+                nets: [createNet('in', 'in'), createNet('0', '0', true)],
+            };
+            const netlist = generateNetlist(c, { type: 'tran', stopTime: '1m', options: { reltol: '0.01' } }, { probes: ['i(R1)'] });
+            const opt = netlist.split('\n').find((l) => l.startsWith('.options'))!;
+            expect(opt).toBe('.options reltol=0.01 savecurrents');
+        });
+
         it('emits a single-point AC sweep as ".ac lin 1 f f" (dec/oct over one point yields 0 rows)', () => {
             // `.ac dec N f f` makes ngspice run with "No. of Data Rows : 0" and the wrdata fails with a
             // misleading "no such vector" — zero data on a valid request. A one-point sweep must be linear.
