@@ -16,10 +16,13 @@ A backend system for AI-assisted circuit design and **SPICE-based simulation**. 
   - **ERC** (Electrical Rule Check) with coded findings.
   - **Result parsing** — ngspice CSV / raw ASCII → typed series.
   - **Zod schemas** for circuit and analysis config (transient / AC / DC / operating point).
-- **LLM core** (`@circuitforge/llm-core`) — AI circuit generation via Claude using a native **tool-use loop grounded in the live parts catalog** (the model searches/inspects real parts before specifying components, so outputs carry real MPNs + sourcing).
+- **LLM core** (`@circuitforge/llm-core`) — AI circuit generation via Claude using a native **tool-use loop grounded in the live parts catalog** (the model searches/inspects real parts before specifying components, so outputs carry real MPNs + sourcing), plus a simulate-in-the-loop design endpoint that runs ngspice and self-repairs until the circuit verifies.
+- **Live component catalog** (`parts`) — TME-backed search over 1.3M+ real manufacturer parts (stock, pricing tiers, datasheets), structured classification, and CircuitJson component mapping; OAuth tokens + responses cached. Feeds AI grounding and per-version **BOM** export.
+- **SPICE netlist interchange** (`netlist`) — import/export standard SPICE decks (LTspice/KiCad round-trip) with generic model bodies inlined on export.
+- **Usage metering & quotas** (`usage`) — always-on metering with default-unlimited quotas (per `QUOTA_*` env): multi-tenant simulation fairness (concurrent/monthly), per-user catalog-call ceilings, and per-org storage caps; drift-free on-demand aggregation, structured `429 QUOTA_EXCEEDED`.
 - **Auth & security** — Argon2 password hashing, JWT access + refresh tokens, per-org roles (OWNER/ADMIN/MEMBER), `class-validator` + Zod input validation, rate limiting, simulation timeout & output caps.
 - **Local infra via Docker Compose** — Postgres, Redis, MinIO (+ auto bucket creation).
-- **Demo seed** — ready-to-use user, org, 5 circuit templates, and a sample project.
+- **Demo seed** — ready-to-use user, org, 10 circuit templates, and a sample project.
 
 ---
 
@@ -28,8 +31,9 @@ A backend system for AI-assisted circuit design and **SPICE-based simulation**. 
 ```
                          ┌──────────────────────────────────────────────┐
         client  ───────► │                 API (NestJS)                 │
-                         │  auth · orgs · projects · versions ·         │
-                         │  templates · assets · simulation · health    │
+                         │  auth · orgs · projects · versions · parts ·  │
+                         │  templates · assets · simulation · generation │
+                         │  · netlist · usage · health                   │
                          └───┬───────────────┬───────────────┬──────────┘
                              │ Prisma        │ BullMQ         │ S3 SDK
                              ▼               ▼               ▼
@@ -59,17 +63,21 @@ circuit-forge/
 │  ├─ api/                         # NestJS REST API
 │  │  ├─ __tests__/                # integration + e2e smoke tests
 │  │  ├─ prisma/
-│  │  │  ├─ migrations/            # SQL migrations (20260529111305_init)
+│  │  │  ├─ migrations/            # SQL migrations (init → usage_records → usage_tune)
 │  │  │  ├─ schema.prisma          # data model
 │  │  │  └─ seed.ts                # demo data seeder
 │  │  └─ src/
 │  │     ├─ auth/                  # JWT + local strategies, guards, decorators
 │  │     ├─ orgs/                  # organizations + membership/RBAC
 │  │     ├─ projects/              # projects (org-scoped)
-│  │     ├─ versions/              # versioned circuit snapshots
+│  │     ├─ versions/              # versioned circuit snapshots + BOM (sourcing)
 │  │     ├─ templates/             # public/org circuit templates
 │  │     ├─ assets/                # S3 model-file upload (presign/commit)
-│  │     ├─ simulation/            # enqueue & query simulations
+│  │     ├─ simulation/            # enqueue & query simulations (+ downsampling)
+│  │     ├─ generation/            # AI circuit generate/edit/explain/design (catalog-grounded)
+│  │     ├─ parts/                 # TME component catalog (search, detail, mapping, cache)
+│  │     ├─ netlist/               # SPICE deck import / export (LTspice/KiCad interchange)
+│  │     ├─ usage/                 # usage metering + quota gates (sim, parts, storage)
 │  │     ├─ health/                # health / ready / live
 │  │     ├─ prisma/                # PrismaService module
 │  │     ├─ app.module.ts
@@ -84,9 +92,10 @@ circuit-forge/
 │        └─ main.ts
 ├─ packages/
 │  ├─ eda-core/                    # circuit & netlist library
-│  │  ├─ __tests__/
+│  │  ├─ __tests__/                # unit + coverage-matrix / sweep / fuzz harnesses (live ngspice)
 │  │  └─ src/
 │  │     ├─ netlist/               # generator.ts + sanitizer.ts (security)
+│  │     ├─ models/                # curated generic SPICE model library (diodes, BJT/FET, digital, …)
 │  │     ├─ parser/                # csv-parser.ts + netlist-parser.ts
 │  │     ├─ erc/                   # checker.ts + codes.ts (rule checks)
 │  │     ├─ schemas/               # analysis.schema.ts + circuit.schema.ts (zod)
@@ -161,7 +170,7 @@ See [docs/SIMULATION.md](docs/SIMULATION.md) for the full pipeline and a known r
 
 ## 📡 API Summary
 
-JWT-protected REST API (base `http://localhost:3001`, interactive docs at `/docs`). Modules: **auth, orgs, projects, versions, templates, assets, simulation, health**.
+JWT-protected REST API (base `http://localhost:3001`, interactive docs at `/docs`). Modules: **auth, orgs, projects, versions, templates, assets, simulation, generation (AI), parts (catalog), netlist (import/export), usage (metering/quotas), health**.
 
 Full per-endpoint reference (methods, paths, auth, request/response): **[docs/API.md](docs/API.md)**.
 
@@ -206,7 +215,7 @@ Full per-endpoint reference (methods, paths, auth, request/response): **[docs/AP
 `pnpm db:seed` creates:
 - **User:** `demo@circuitforge.io` / `demo123456`
 - **Organization:** "Demo Organization"
-- **5 templates:** RC Low-Pass Filter, Voltage Divider, Diode Rectifier, LC Oscillator, RC Integrator
+- **10 templates:** RC Low-Pass Filter, Voltage Divider, Diode Rectifier, LC Oscillator, RC Integrator, Buck Converter, Sallen-Key Low-Pass, 555-style Astable, Class-AB Push-Pull, R-2R Ladder DAC
 - **Project:** "My First Circuit" (version 1)
 
 ---
