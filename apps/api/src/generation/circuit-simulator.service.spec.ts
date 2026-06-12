@@ -120,6 +120,22 @@ const NO_GROUND: CircuitJson = {
         expect(r.simStatus).toBe('skipped');
     });
 
+    it('Convergence Doctor: a healthy run passes through simulateWithRemedies unchanged (no remedy noise)', async () => {
+        const r = await svc.simulateWithRemedies(RC_LOWPASS, { type: 'tran', stopTime: '5m', stepTime: '20u' });
+        expect(r.simStatus).toBe('ok');
+        expect(r.convergence).toBeUndefined(); // first run converged — Doctor stayed out of the way
+        expect(r.measurements.length).toBeGreaterThan(0);
+    });
+
+    it('Convergence Doctor: a real netlist-generation failure is NOT mistaken for a convergence problem (no wasted retries)', async () => {
+        // A malformed circuit fails before ngspice even runs — that is not a solver-convergence issue,
+        // so the Doctor must NOT attach a convergence report or retry. (Recovery-ladder orchestration is
+        // proven deterministically in simulate-remedies.spec; this guards the live passthrough.)
+        const r = await svc.simulateWithRemedies({ version: '1.0', components: 'not-an-array', nets: [] });
+        expect(r.simStatus).toBe('failed');
+        expect(r.convergence).toBeUndefined();
+    });
+
     it('never throws and executes nothing on injection-laden input (sanitizer/guards hold)', async () => {
         // A behavioral source whose "value" tries to smuggle a netlist line / shell directive, plus a
         // designator/value with hostile characters. eda-core's bsource newline guard + sanitizeNetlist +

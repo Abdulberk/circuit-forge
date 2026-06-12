@@ -41,7 +41,9 @@ export class CatalogGroundingService {
         return async (name, input) => {
             if (name === 'simulate_circuit') {
                 if (!input.circuit || typeof input.circuit !== 'object') return { error: 'circuit is required' };
-                return this.simulator.simulate(input.circuit, input.analysis as AnalysisConfig | undefined);
+                // Convergence Doctor: auto-applies solver remedies on a convergence failure (and tells
+                // the model what fixed it / why), so the AI doesn't burn a fix-round on a solver tweak.
+                return this.simulator.simulateWithRemedies(input.circuit, input.analysis as AnalysisConfig | undefined);
             }
             if (name === 'search_parts') {
                 const q = String(input.query ?? '').trim().slice(0, 100);

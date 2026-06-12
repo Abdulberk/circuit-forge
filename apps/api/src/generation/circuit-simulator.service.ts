@@ -32,6 +32,7 @@ import {
     type DataSeries,
 } from '@circuit-forge/eda-core';
 import { attachGenericModels } from './model-resolution';
+import { diagnoseConvergence, convergenceRemedyLadder, type ConvergenceKind } from './convergence';
 
 /** One node's behaviour over the run, distilled to four numbers the model can reason about. */
 export interface SimMeasurement {
@@ -40,6 +41,24 @@ export interface SimMeasurement {
     max: number;
     final: number;
     pp: number; // peak-to-peak (max - min)
+}
+
+/** Convergence Doctor report — present when a run hit a convergence-class failure and remedies were tried. */
+export interface ConvergenceReport {
+    /** True if a solver remedy turned the failing run into a successful one. */
+    recovered: boolean;
+    kind: ConvergenceKind;
+    /** Plain-language explanation of the original convergence failure. */
+    diagnosis: string;
+    /** The remedy label that worked (recovered) — and why it helped. */
+    remedyApplied?: string;
+    rationale?: string;
+    /** How many remedies were actually attempted (excludes ones skipped for capacity). */
+    attempts: number;
+    /** Labels of every remedy actually run (set when none recovered the run). */
+    triedRemedies?: string[];
+    /** Set when the ladder was cut short (e.g. inline-sim capacity saturated) — not a true exhaustion. */
+    note?: string;
 }
 
 /** The compact, token-bounded result fed back to the model. Never contains raw CSV. */
@@ -53,6 +72,8 @@ export interface SimSummary {
     measurements: SimMeasurement[];
     nodeCount: number;
     analysisType?: string;
+    /** Set by simulateWithRemedies() when a convergence failure was diagnosed (and possibly fixed). */
+    convergence?: ConvergenceReport;
 }
 
 /** Per-call resource bounds (kept tighter than the queued worker — this runs inline in an HTTP request). */
@@ -233,6 +254,66 @@ export class CircuitSimulatorService {
             this.semaphore.release();
             await fs.rm(dir, { recursive: true, force: true }).catch(() => undefined);
         }
+    }
+
+    /**
+     * Convergence Doctor: simulate(), and if it fails with a CONVERGENCE-class error, automatically
+     * retry with an escalating ladder of solver remedies (gmin / tolerance / iteration-limit / gear),
+     * stopping at the first that converges. Returns the recovered summary annotated with what fixed it,
+     * or the original failure annotated with a plain-language diagnosis when nothing helped. Non-
+     * convergence failures (bad netlist, timeout) and successful runs pass straight through unchanged,
+     * so the proven happy path costs exactly one run.
+     */
+    async simulateWithRemedies(circuitInput: unknown, analysis?: AnalysisConfig): Promise<SimSummary> {
+        const base = await this.simulate(circuitInput, analysis);
+        if (base.simStatus !== 'failed') return base;
+
+        const diag = diagnoseConvergence(base.runError, base.analysisType);
+        if (!diag.isConvergence) return base; // not a solver problem — remedies won't help
+
+        const ladder = convergenceRemedyLadder(base.analysisType);
+        const baseAnalysis: AnalysisConfig = analysis ?? { type: 'op' };
+        const baseOptions = (baseAnalysis as { options?: Record<string, unknown> }).options ?? {};
+        const tried: string[] = [];
+
+        for (const remedy of ladder) {
+            const mergedAnalysis = { ...baseAnalysis, options: { ...baseOptions, ...remedy.options } } as AnalysisConfig;
+            const retry = await this.simulate(circuitInput, mergedAnalysis);
+            if (retry.simStatus === 'ok') {
+                return {
+                    ...retry,
+                    convergence: {
+                        recovered: true,
+                        kind: diag.kind,
+                        diagnosis: diag.explanation,
+                        remedyApplied: remedy.label,
+                        rationale: remedy.rationale,
+                        attempts: tried.length + 1,
+                    },
+                };
+            }
+            // A 'skipped' retry means host sim capacity is saturated — stop walking the ladder rather
+            // than block (up to the queue-wait) on each remaining remedy, and don't claim it was tried.
+            if (retry.simStatus === 'skipped') {
+                return {
+                    ...base,
+                    convergence: {
+                        recovered: false,
+                        kind: diag.kind,
+                        diagnosis: diag.explanation,
+                        attempts: tried.length,
+                        triedRemedies: tried,
+                        note: 'simulation capacity was saturated — not all remedies could be attempted; retry shortly.',
+                    },
+                };
+            }
+            tried.push(remedy.label);
+        }
+
+        return {
+            ...base,
+            convergence: { recovered: false, kind: diag.kind, diagnosis: diag.explanation, attempts: tried.length, triedRemedies: tried },
+        };
     }
 
     /** Spawn ngspice in batch mode, mirroring the worker (apps/worker-sim/src/simulation/runner.ts). */

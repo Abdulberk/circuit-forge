@@ -20,8 +20,9 @@ const okSim = (over: Partial<SimSummary> = {}): SimSummary => ({
 });
 
 function makeService(sim: SimSummary) {
+    // verify() calls simulateWithRemedies (the Convergence Doctor wrapper); stub returns the summary.
     const simulate = jest.fn(async () => sim);
-    const simulator = { simulate } as unknown as CircuitSimulatorService;
+    const simulator = { simulateWithRemedies: simulate } as unknown as CircuitSimulatorService;
     return { svc: new VerificationService(simulator), simulate };
 }
 
