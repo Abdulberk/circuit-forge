@@ -460,11 +460,12 @@ async function main(): Promise<void> {
 
     const user = await prisma.user.upsert({
         where: { email: 'demo@circuitforge.io' },
-        update: {},
+        update: { emailVerified: true },
         create: {
             email: 'demo@circuitforge.io',
             passwordHash,
             name: 'Demo User',
+            emailVerified: true,
         },
     });
     console.log(`✓ Created user: ${user.email}`);

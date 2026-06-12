@@ -27,6 +27,14 @@ model User {
   lastFailedLoginAt DateTime?
   lockedUntil       DateTime?
 
+  // Account lifecycle. Tokens are stored as sha256 hashes (never plaintext) with an expiry; the raw
+  // token travels only in the emailed link. emailVerified gates verified-only features (opt-in).
+  emailVerified              Boolean   @default(false)
+  emailVerificationTokenHash String?
+  emailVerificationExpiresAt DateTime?
+  passwordResetTokenHash     String?
+  passwordResetExpiresAt     DateTime?
+
   // Relations
   memberships     OrgMembership[]
   projectVersions ProjectVersion[]

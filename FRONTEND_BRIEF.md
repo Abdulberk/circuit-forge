@@ -148,9 +148,13 @@ This section enumerates every screen the v1 frontend must ship, with its purpose
 
 | Method | Path | Auth | Screen(s) | Notes |
 |---|---|---|---|---|
-| POST | `/auth/register` | none | Auth | Auto-creates a personal org `"<name>'s Workspace"` (role `OWNER`) |
-| POST | `/auth/login` | none | Auth | Returns 200 |
+| POST | `/auth/register` | none | Auth | Auto-creates a personal org `"<name>'s Workspace"` (role `OWNER`). Email is normalized (trim+lowercase); a verification email is sent (link → `/verify-email?token=…`). Returns tokens immediately — the user is signed in but `emailVerified:false`. |
+| POST | `/auth/login` | none | Auth | Returns 200. Email normalized. May 429 `ACCOUNT_LOCKED` (5 fails → 15m), or 403 `EMAIL_NOT_VERIFIED` (only if the server sets `REQUIRE_EMAIL_VERIFICATION=true`; off by default). |
 | POST | `/auth/refresh` | none | (token loop) | Body `{ refreshToken }` |
+| POST | `/auth/verify-email` | none | Verify page | Body `{ token }` → `204`. Invalid/expired → `400`. Single-use. |
+| POST | `/auth/resend-verification` | none | Verify page | Body `{ email }` → always `204` (never reveals whether the account exists/is verified). Throttled 5/h. |
+| POST | `/auth/forgot-password` | none | Forgot-pw page | Body `{ email }` → always `204` (enumeration-safe). Sends a reset link (`/reset-password?token=…`, 1h TTL) if the account exists. Throttled 5/h. |
+| POST | `/auth/reset-password` | none | Reset page | Body `{ token, newPassword }` → `204`; invalid/expired → `400`. Single-use; also clears any brute-force lock. User then logs in with the new password. |
 | POST | `/auth/logout` | none | Settings | Returns 204; no server revocation |
 | GET | `/orgs` | JWT | Dashboard, Settings | Org switcher source |
 | POST | `/orgs` | JWT | Settings | Creator becomes `OWNER` |
