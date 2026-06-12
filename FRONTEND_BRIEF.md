@@ -189,6 +189,7 @@ This section enumerates every screen the v1 frontend must ship, with its purpose
 | POST | `/edit-circuit` | JWT | AI dialog | Throttled 5/60s |
 | POST | `/explain-circuit` | JWT | AI dialog, Editor | Throttled 10/60s |
 | POST | `/design-circuit` | JWT | AI Design dialog | Agentic; throttled 3/60s; ~10–60s |
+| POST | `/verify-design` | JWT | "Verify" button / review panel | Body `{ circuit, analysisConfig?, assertions? }` → a **DesignEvidence** pack (ERC + ngspice + measured-vs-requested specs → `verdict` pass/fail/inconclusive). Deterministic, no AI. 10/60s. See §4 / §7. |
 | GET | `/parts/search` | JWT | Editor (part picker) | `?q=` (+ `manufacturerId?`/`categoryId?`) → real-part search; 30/60s |
 | GET | `/parts/manufacturers` | JWT | Editor (part picker) | Manufacturer facet `[{ id, name, productsCount }]`; 60/60s |
 | GET | `/parts/categories` | JWT | Editor (part picker) | Category tree facet (nested + counts); 60/60s |
@@ -467,6 +468,45 @@ Response (`apps/api/src/generation/design.service.ts:94`):
 - UI: prompt + optional constraints + a `maxRounds` selector (1–4). Show a long-running progress affordance with the round count, since the request can take ~10–60s. Stream/poll-free — it is one blocking request.
 - On `ok: true`, jump straight to the Waveform Viewer using `simulation.result` (already a `SimulationResult`) — no separate poll needed. Also offer "Insert circuit into editor."
 - On `ok: false`, show the `warning` and the per-round `history`, still offer the best-effort circuit for insertion, and let the user retry with a higher `maxRounds`.
+
+#### `POST /verify-design` — deterministic Verified-Designs evidence pack (10/60s)
+
+Verify ANY circuit by simulation — no AI, fully deterministic. Use it behind a "Verify" button, in a design-review panel, or to re-check a circuit the user edited.
+
+Request:
+```ts
+{
+  circuit: CircuitJson,                  // required
+  analysisConfig?: AnalysisConfig,       // optional; defaults to an operating-point analysis
+  assertions?: {                         // optional; max 50. Each is one spec checked vs the SIMULATION
+    probe: string;                       // a NODE name — "out" or "v(out)" (the v() wrapper is optional, case-insensitive).
+                                         //   ⚠️ current/power probes (i(R1), @r1[i]) are NOT supported yet → 400.
+    metric: 'min' | 'max' | 'final' | 'pp';   // pp = peak-to-peak (max-min). final = last value (use for DC/settled level).
+    op: 'lt' | 'lte' | 'gt' | 'gte' | 'approx';
+    value: number;                       // SI base units (volts/seconds)
+    tol?: number;                        // absolute tolerance for op:"approx" (default 5% of |value|)
+    label?: string;                      // shown in the report
+  }[]
+}
+```
+Response `DesignEvidence` (always `200` for a valid circuit — a failed verification is a `200` with `verdict:"fail"`, NOT an error):
+```ts
+{
+  verdict: 'pass' | 'fail' | 'inconclusive'; // pass = sim ok + no ERC errors + all assertions met;
+                                             // fail = sim failed OR an ERC error OR any assertion unmet;
+                                             // inconclusive = sim couldn't run / produced no data (e.g. ngspice off).
+  summary: string;                           // one-line human verdict
+  simStatus: 'ok' | 'failed' | 'skipped';
+  analysisType?: string;
+  runError?: string;
+  erc: { errors: {code,message,relatedIds}[]; warnings: {code,message,relatedIds}[] };
+  measurements: { node: string; min: number; max: number; final: number; pp: number }[]; // per node, the EVIDENCE
+  assertions: { label; probe; metric; op; target; tol?; actual: number|null; pass: boolean; detail: string }[];
+  checks: { total: number; passed: number; failed: number };
+}
+```
+- Render `verdict` as a badge (green pass / red fail / grey inconclusive) + `checks` (e.g. "2/3 specs met"). Show each assertion row with `actual` vs `target` and the ✓/✗. Plot `measurements` / the waveform as the "receipts".
+- `400` only for a malformed `circuit`/`analysisConfig` or an unsupported current probe — everything else (even a circuit that doesn't simulate) returns a `200` evidence pack.
 
 **Caveats (all AI dialogs):**
 - Re-validate the returned `circuit` with `safeValidateCircuitJson` (and `analysisConfig` with `safeValidateAnalysisConfig`) client-side before inserting — defense in depth even though the backend already validated.
