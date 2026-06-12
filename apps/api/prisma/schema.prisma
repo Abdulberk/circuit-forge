@@ -22,6 +22,11 @@ model User {
   createdAt    DateTime @default(now())
   updatedAt    DateTime @updatedAt
 
+  // Brute-force lockout: failed-login counter resets on success; lockedUntil gates login while set.
+  failedLoginCount  Int       @default(0)
+  lastFailedLoginAt DateTime?
+  lockedUntil       DateTime?
+
   // Relations
   memberships     OrgMembership[]
   projectVersions ProjectVersion[]
