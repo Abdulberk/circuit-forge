@@ -18,9 +18,16 @@ async function bootstrap() {
     // enabled) renders; the API itself serves JSON, not HTML.
     app.use(helmet({ contentSecurityPolicy: false }));
 
-    // Behind a load balancer the real client IP is in X-Forwarded-For; trust one proxy hop so the
-    // rate limiter keys on the client, not the proxy. (Express is the underlying HTTP adapter.)
-    app.getHttpAdapter().getInstance().set('trust proxy', 1);
+    // Proxy trust is OPT-IN: only when TRUST_PROXY is set do we read the client IP from
+    // X-Forwarded-For. Default OFF (req.ip = socket address) — otherwise, when the API is reachable
+    // without a header-stripping proxy, anyone could spoof X-Forwarded-For to poison audit/session
+    // IPs and rotate the rate-limiter key to dodge the per-IP login throttle. Set TRUST_PROXY to the
+    // number of trusted hops (e.g. 1) or 'true' ONLY when a proxy is guaranteed to overwrite XFF.
+    const trustProxy = process.env.TRUST_PROXY;
+    if (trustProxy) {
+        const hops = Number(trustProxy);
+        app.getHttpAdapter().getInstance().set('trust proxy', Number.isInteger(hops) && hops > 0 ? hops : true);
+    }
 
     // Global validation pipe
     app.useGlobalPipes(

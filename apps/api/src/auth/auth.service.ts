@@ -13,10 +13,17 @@ import {
 } from '@nestjs/common';
 import { JwtService } from '@nestjs/jwt';
 import { ConfigService } from '@nestjs/config';
-import { randomBytes, createHash } from 'crypto';
+import { randomBytes, randomUUID, createHash } from 'crypto';
 import * as argon2 from 'argon2';
+import { Prisma } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { EmailService } from '../email/email.service';
+
+/** Request metadata threaded from the controller into audit rows / session records. */
+export interface AuthContext {
+    ip?: string;
+    userAgent?: string;
+}
 
 /** Lock an account after this many consecutive failed logins... */
 const MAX_FAILED_LOGINS = 5;
@@ -36,7 +43,12 @@ const DUMMY_VERIFY_HASH = argon2.hash('cf-login-timing-equalizer');
 export interface JwtPayload {
     sub: string;
     email: string;
+    /** Refresh tokens only: the server-side rotation row's key. Absent on access tokens. */
+    jti?: string;
 }
+
+/** Refresh tokens live this long; must match the '7d' passed to signAsync below. */
+const REFRESH_TTL_MS = 7 * 24 * 60 * 60 * 1000;
 
 export interface TokensResponse {
     accessToken: string;
@@ -73,7 +85,7 @@ export class AuthService {
         return createHash('sha256').update(token).digest('hex');
     }
 
-    async register(email: string, password: string, name: string): Promise<TokensResponse> {
+    async register(email: string, password: string, name: string, ctx: AuthContext = {}): Promise<TokensResponse> {
         const normEmail = this.normalizeEmail(email);
 
         // Check if user exists
@@ -112,11 +124,12 @@ export class AuthService {
 
         await this.email.sendVerificationEmail(normEmail, verify.token);
         this.logger.log({ userId: user.id, orgId: org.id }, 'User registered');
+        this.audit(user.id, 'auth.register', { ...ctx });
 
-        return this.generateTokens(user);
+        return this.generateTokens(user, ctx);
     }
 
-    async login(email: string, password: string): Promise<TokensResponse> {
+    async login(email: string, password: string, ctx: AuthContext = {}): Promise<TokensResponse> {
         const normEmail = this.normalizeEmail(email);
         const user = await this.prisma.user.findUnique({ where: { email: normEmail } });
         if (!user) {
@@ -132,7 +145,8 @@ export class AuthService {
 
         const valid = await argon2.verify(user.passwordHash, password);
         if (!valid) {
-            await this.recordFailedLogin(user.id, user.failedLoginCount);
+            await this.recordFailedLogin(user.id, user.failedLoginCount, ctx);
+            this.audit(user.id, 'auth.login_failed', { ...ctx });
             throw new UnauthorizedException('Invalid credentials');
         }
 
@@ -153,7 +167,13 @@ export class AuthService {
             });
         }
 
-        return this.generateTokens(user);
+        // Housekeeping: drop this user's long-expired refresh rows so the table can't grow unbounded.
+        void this.prisma.refreshToken
+            .deleteMany({ where: { userId: user.id, expiresAt: { lt: new Date() } } })
+            .catch(() => undefined);
+
+        this.audit(user.id, 'auth.login', { ...ctx });
+        return this.generateTokens(user, ctx);
     }
 
     /** Confirm an email-verification token. Idempotent-ish: a valid, unexpired token flips the flag. */
@@ -170,6 +190,7 @@ export class AuthService {
             data: { emailVerified: true, emailVerificationTokenHash: null, emailVerificationExpiresAt: null },
         });
         this.logger.log({ userId: user.id }, 'Email verified');
+        this.audit(user.id, 'auth.email_verified');
     }
 
     /** Re-send a verification email. Enumeration-safe: always resolves, regardless of account state. */
@@ -201,6 +222,7 @@ export class AuthService {
         });
         await this.email.sendPasswordResetEmail(user.email, reset.token);
         this.logger.log({ userId: user.id }, 'Password reset requested');
+        this.audit(user.id, 'auth.password_reset_requested');
     }
 
     /** Complete a password reset: set the new password and invalidate the (single-use) token + lock. */
@@ -224,11 +246,17 @@ export class AuthService {
                 lockedUntil: null,
             },
         });
+        // A password reset means the old credential may be compromised — kill EVERY live session.
+        await this.prisma.refreshToken.updateMany({
+            where: { userId: user.id, revokedAt: null },
+            data: { revokedAt: new Date() },
+        });
         this.logger.log({ userId: user.id }, 'Password reset completed');
+        this.audit(user.id, 'auth.password_reset_completed');
     }
 
     /** Record a failed attempt; once the threshold is hit, lock the account and reset the counter. */
-    private async recordFailedLogin(userId: string, currentCount: number): Promise<void> {
+    private async recordFailedLogin(userId: string, currentCount: number, ctx: AuthContext = {}): Promise<void> {
         const count = currentCount + 1;
         const locked = count >= MAX_FAILED_LOGINS;
         await this.prisma.user.update({
@@ -239,7 +267,10 @@ export class AuthService {
                 ...(locked ? { lockedUntil: new Date(Date.now() + LOCKOUT_MS) } : {}),
             },
         });
-        if (locked) this.logger.warn({ userId }, 'Account locked after repeated failed logins');
+        if (locked) {
+            this.logger.warn({ userId }, 'Account locked after repeated failed logins');
+            this.audit(userId, 'auth.account_locked', { ...ctx });
+        }
     }
 
     /** 429 with a distinct `code` so the frontend can show a "locked" message (not a generic retry). */
@@ -255,21 +286,101 @@ export class AuthService {
         );
     }
 
-    async refresh(refreshToken: string): Promise<TokensResponse> {
+    /**
+     * Rotate a refresh token. State machine (every refresh JWT has a server-side row keyed by jti):
+     *  - bad signature / no jti / no row / hash mismatch / expired / revoked → 401.
+     *  - row already USED → the token was rotated before: this is REUSE (theft evidence, or a client
+     *    that ignored a rotation response). The ENTIRE family is revoked and the event audited —
+     *    whoever holds the successor token is cut off too.
+     *  - fresh row → atomically claim it (used), issue a successor pair in the SAME family.
+     * The atomic updateMany claim means two concurrent uses of one token can't both rotate: the
+     * loser takes the reuse path. Clients must single-flight their refresh (the brief mandates it).
+     */
+    async refresh(refreshToken: string, ctx: AuthContext = {}): Promise<TokensResponse> {
+        let payload: JwtPayload;
         try {
-            const payload = this.jwtService.verify(refreshToken, {
+            payload = this.jwtService.verify<JwtPayload>(refreshToken, {
                 secret: this.configService.get<string>('JWT_REFRESH_SECRET'),
             });
-
-            const user = await this.prisma.user.findUnique({ where: { id: payload.sub } });
-            if (!user) {
-                throw new UnauthorizedException('User not found');
-            }
-
-            return this.generateTokens(user);
-        } catch (e) {
+        } catch {
             throw new UnauthorizedException('Invalid refresh token');
         }
+        if (!payload.jti) {
+            // Legacy token from before rotation existed — no server-side row, can't be trusted/rotated.
+            throw new UnauthorizedException('Invalid refresh token');
+        }
+
+        const row = await this.prisma.refreshToken.findUnique({ where: { jti: payload.jti } });
+        if (!row || row.tokenHash !== this.hashToken(refreshToken) || row.revokedAt || row.expiresAt.getTime() <= Date.now()) {
+            throw new UnauthorizedException('Invalid refresh token');
+        }
+
+        if (row.usedAt) {
+            await this.revokeFamily(row.familyId);
+            this.audit(row.userId, 'auth.refresh_reuse_detected', { familyId: row.familyId, ...ctx });
+            this.logger.warn({ userId: row.userId, familyId: row.familyId }, 'Refresh-token reuse detected — family revoked');
+            throw new UnauthorizedException('Invalid refresh token');
+        }
+
+        const user = await this.prisma.user.findUnique({ where: { id: row.userId } });
+        if (!user) {
+            throw new UnauthorizedException('Invalid refresh token');
+        }
+
+        // Claim the old row AND issue the successor in ONE transaction — either both happen or
+        // neither. Without this, a failed successor-insert AFTER the claim commits would leave a
+        // used-but-successorless token; the client's retry would then hit the reuse branch and
+        // revoke the whole family — a transient DB error wrongly logging out a legitimate user.
+        // Concurrency unchanged: the atomic `usedAt: null` claim still lets exactly one of N
+        // concurrent callers win (count===1); the losers 401 WITHOUT revoking the family.
+        return this.prisma.$transaction(async (tx) => {
+            const claimed = await tx.refreshToken.updateMany({
+                where: { jti: payload.jti, usedAt: null },
+                data: { usedAt: new Date() },
+            });
+            if (claimed.count !== 1) {
+                throw new UnauthorizedException('Invalid refresh token');
+            }
+            return this.generateTokens(user, { familyId: row.familyId, ...ctx }, tx);
+        });
+    }
+
+    /**
+     * Server-side logout. Best-effort by design (always succeeds): given the refresh token, its whole
+     * family is revoked — the access token (≤15m) is the only thing that survives, which is the
+     * standard tradeoff for stateless access tokens. `allDevices` revokes every session of that user.
+     */
+    async logout(refreshToken?: string, allDevices = false, ctx: AuthContext = {}): Promise<void> {
+        if (!refreshToken) return;
+        let payload: JwtPayload;
+        try {
+            payload = this.jwtService.verify<JwtPayload>(refreshToken, {
+                secret: this.configService.get<string>('JWT_REFRESH_SECRET'),
+                ignoreExpiration: true, // an expired session can still be explicitly cleaned up
+            });
+        } catch {
+            return; // invalid token — nothing to revoke, still 204
+        }
+        if (!payload.jti) return;
+        const row = await this.prisma.refreshToken.findUnique({ where: { jti: payload.jti } });
+        if (!row || row.tokenHash !== this.hashToken(refreshToken)) return;
+
+        if (allDevices) {
+            await this.prisma.refreshToken.updateMany({
+                where: { userId: row.userId, revokedAt: null },
+                data: { revokedAt: new Date() },
+            });
+        } else {
+            await this.revokeFamily(row.familyId);
+        }
+        this.audit(row.userId, 'auth.logout', { allDevices, ...ctx });
+    }
+
+    private async revokeFamily(familyId: string): Promise<void> {
+        await this.prisma.refreshToken.updateMany({
+            where: { familyId, revokedAt: null },
+            data: { revokedAt: new Date() },
+        });
     }
 
     async validateUser(userId: string) {
@@ -279,16 +390,39 @@ export class AuthService {
         });
     }
 
-    private async generateTokens(user: { id: string; email: string; name: string }): Promise<TokensResponse> {
-        const payload: JwtPayload = { sub: user.id, email: user.email };
+    /**
+     * Issue an access+refresh pair. The refresh token carries a jti and is registered server-side —
+     * in an existing family on rotation, or a brand-new family (= a new login/device session).
+     */
+    private async generateTokens(
+        user: { id: string; email: string; name: string },
+        session: { familyId?: string } & AuthContext = {},
+        db: PrismaService | Prisma.TransactionClient = this.prisma,
+    ): Promise<TokensResponse> {
+        const jti = randomUUID();
+        const familyId = session.familyId ?? randomUUID();
+        const base: JwtPayload = { sub: user.id, email: user.email };
 
         const [accessToken, refreshToken] = await Promise.all([
-            this.jwtService.signAsync(payload),
-            this.jwtService.signAsync(payload, {
+            this.jwtService.signAsync(base),
+            this.jwtService.signAsync({ ...base, jti }, {
                 secret: this.configService.get<string>('JWT_REFRESH_SECRET'),
-                expiresIn: '7d',
+                // Single source of truth with the DB expiresAt below (keep the JWT exp == row exp).
+                expiresIn: Math.floor(REFRESH_TTL_MS / 1000),
             }),
         ]);
+
+        await db.refreshToken.create({
+            data: {
+                jti,
+                userId: user.id,
+                familyId,
+                tokenHash: this.hashToken(refreshToken),
+                expiresAt: new Date(Date.now() + REFRESH_TTL_MS),
+                ip: session.ip,
+                userAgent: session.userAgent,
+            },
+        });
 
         return {
             accessToken,
@@ -299,5 +433,17 @@ export class AuthService {
                 name: user.name,
             },
         };
+    }
+
+    /**
+     * Fire-and-forget audit write (auth events are user-scoped: orgId null). An audit failure must
+     * never break the auth flow itself — it is logged and swallowed.
+     */
+    private audit(userId: string, action: string, meta: Record<string, unknown> = {}): void {
+        void this.prisma.auditLog
+            .create({
+                data: { userId, action, entityType: 'User', entityId: userId, meta: meta as Prisma.InputJsonValue },
+            })
+            .catch((e) => this.logger.warn(`audit write failed for ${action}: ${e instanceof Error ? e.message : e}`));
     }
 }
