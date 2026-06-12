@@ -5,7 +5,15 @@ import { Controller, Post, Body, HttpCode, HttpStatus } from '@nestjs/common';
 import { ApiTags, ApiOperation, ApiResponse } from '@nestjs/swagger';
 import { Throttle } from '@nestjs/throttler';
 import { AuthService, TokensResponse } from './auth.service';
-import { RegisterDto, LoginDto, RefreshDto } from './dto';
+import {
+    RegisterDto,
+    LoginDto,
+    RefreshDto,
+    VerifyEmailDto,
+    ResendVerificationDto,
+    ForgotPasswordDto,
+    ResetPasswordDto,
+} from './dto';
 
 @ApiTags('auth')
 @Controller('auth')
@@ -42,6 +50,44 @@ export class AuthController {
     @ApiResponse({ status: 401, description: 'Invalid refresh token' })
     async refresh(@Body() dto: RefreshDto): Promise<TokensResponse> {
         return this.authService.refresh(dto.refreshToken);
+    }
+
+    @Post('verify-email')
+    @HttpCode(HttpStatus.NO_CONTENT)
+    @Throttle({ default: { limit: 20, ttl: 3600000 } })
+    @ApiOperation({ summary: 'Confirm an email-verification token' })
+    @ApiResponse({ status: 204, description: 'Email verified' })
+    @ApiResponse({ status: 400, description: 'Invalid or expired token' })
+    async verifyEmail(@Body() dto: VerifyEmailDto): Promise<void> {
+        await this.authService.verifyEmail(dto.token);
+    }
+
+    @Post('resend-verification')
+    @HttpCode(HttpStatus.NO_CONTENT)
+    @Throttle({ default: { limit: 5, ttl: 3600000 } })
+    @ApiOperation({ summary: 'Re-send the verification email (always 204 — never reveals account state)' })
+    @ApiResponse({ status: 204, description: 'If the account exists and is unverified, an email was sent' })
+    async resendVerification(@Body() dto: ResendVerificationDto): Promise<void> {
+        await this.authService.resendVerification(dto.email);
+    }
+
+    @Post('forgot-password')
+    @HttpCode(HttpStatus.NO_CONTENT)
+    @Throttle({ default: { limit: 5, ttl: 3600000 } })
+    @ApiOperation({ summary: 'Request a password-reset link (always 204 — never reveals account state)' })
+    @ApiResponse({ status: 204, description: 'If the account exists, a reset email was sent' })
+    async forgotPassword(@Body() dto: ForgotPasswordDto): Promise<void> {
+        await this.authService.forgotPassword(dto.email);
+    }
+
+    @Post('reset-password')
+    @HttpCode(HttpStatus.NO_CONTENT)
+    @Throttle({ default: { limit: 10, ttl: 3600000 } })
+    @ApiOperation({ summary: 'Set a new password using a reset token' })
+    @ApiResponse({ status: 204, description: 'Password updated' })
+    @ApiResponse({ status: 400, description: 'Invalid or expired token' })
+    async resetPassword(@Body() dto: ResetPasswordDto): Promise<void> {
+        await this.authService.resetPassword(dto.token, dto.newPassword);
     }
 
     @Post('logout')
