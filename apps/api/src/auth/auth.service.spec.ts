@@ -42,12 +42,24 @@ function makeService(user: Partial<UserRow> | null) {
     const update = jest.fn(async (_arg: { where: unknown; data: Record<string, unknown> }) => ({}));
     const prisma = {
         user: { findUnique: jest.fn(async () => row), update },
+        ...tokenTables(),
     } as unknown as PrismaService;
     const jwt = { signAsync: jest.fn(async () => 'token') } as unknown as JwtService;
     const config = { get: jest.fn(() => 'secret') } as unknown as ConfigService;
     const email = emailStub();
     return { svc: new AuthService(prisma, jwt, config, email), update };
 }
+
+/** refreshToken + auditLog stubs every flow needs (token issuance + fire-and-forget audits). */
+const tokenTables = () => ({
+    refreshToken: {
+        create: jest.fn(async (_arg?: unknown) => ({})),
+        findUnique: jest.fn<Promise<Record<string, unknown> | null>, [unknown?]>(async () => null),
+        updateMany: jest.fn(async (_arg?: { where: Record<string, unknown> }) => ({ count: 1 })),
+        deleteMany: jest.fn(async (_arg?: unknown) => ({ count: 0 })),
+    },
+    auditLog: { create: jest.fn(async (_arg?: unknown) => ({})) },
+});
 
 const emailStub = () =>
     ({
@@ -145,7 +157,7 @@ describe('AuthService — email verification & password reset', () => {
         const findFirst = jest.fn(async (_arg: { where: Record<string, unknown> }) => found);
         const findUnique = jest.fn(async (_arg: { where: Record<string, unknown> }) => found);
         const update = jest.fn(async (_arg: { where: unknown; data: Record<string, unknown> }) => ({}));
-        const prisma = { user: { findFirst, findUnique, update } } as unknown as PrismaService;
+        const prisma = { user: { findFirst, findUnique, update }, ...tokenTables() } as unknown as PrismaService;
         const email = emailStub();
         const svc = new AuthService(
             prisma,
@@ -205,5 +217,120 @@ describe('AuthService — email verification & password reset', () => {
         const { svc, update } = makeLifecycle(null);
         await expect(svc.resetPassword('bad', 'whatever12')).rejects.toBeInstanceOf(BadRequestException);
         expect(update).not.toHaveBeenCalled();
+    });
+});
+
+describe('AuthService — refresh rotation & server-side logout', () => {
+    beforeEach(() => jest.clearAllMocks());
+
+    const sha256 = (s: string) => require('crypto').createHash('sha256').update(s).digest('hex');
+
+    /** Stub where jwt.verify yields {sub,email,jti} and the refresh row is controllable. */
+    function makeRotation(row: Record<string, unknown> | null, verifyImpl?: () => unknown) {
+        const tables = tokenTables();
+        tables.refreshToken.findUnique = jest.fn(async () => row);
+        const prisma = {
+            user: { findUnique: jest.fn(async () => ({ id: 'u1', email: 'a@b.com', name: 'A' })), update: jest.fn() },
+            ...tables,
+        } as unknown as PrismaService;
+        // refresh() wraps claim+issue in a transaction; the stub runs the callback with the same stub.
+        (prisma as unknown as { $transaction: unknown }).$transaction = jest.fn(async (fn: (tx: unknown) => unknown) => fn(prisma));
+        const jwt = {
+            signAsync: jest.fn(async () => 'newtoken'),
+            verify: jest.fn(verifyImpl ?? (() => ({ sub: 'u1', email: 'a@b.com', jti: 'jti-1' }))),
+        } as unknown as JwtService;
+        const svc = new AuthService(
+            prisma,
+            jwt,
+            { get: jest.fn(() => 'refresh-secret') } as unknown as ConfigService,
+            emailStub(),
+        );
+        return { svc, tables, jwt };
+    }
+
+    const liveRow = (token: string, over: Record<string, unknown> = {}) => ({
+        jti: 'jti-1',
+        userId: 'u1',
+        familyId: 'fam-1',
+        tokenHash: sha256(token),
+        expiresAt: new Date(Date.now() + 1000_000),
+        usedAt: null,
+        revokedAt: null,
+        ...over,
+    });
+
+    it('rotates a fresh token: claims the row (usedAt) and issues a successor in the SAME family', async () => {
+        const { svc, tables } = makeRotation(liveRow('old-token'));
+        const out = await svc.refresh('old-token');
+        expect(out.refreshToken).toBe('newtoken');
+        // atomic claim on the old row
+        expect(tables.refreshToken.updateMany).toHaveBeenCalledWith(
+            expect.objectContaining({ where: { jti: 'jti-1', usedAt: null } }),
+        );
+        // successor registered in the same family
+        const created = (tables.refreshToken.create as jest.Mock).mock.calls[0][0] as { data: { familyId: string } };
+        expect(created.data.familyId).toBe('fam-1');
+    });
+
+    it('REUSE of an already-used token revokes the entire family and 401s', async () => {
+        const { svc, tables } = makeRotation(liveRow('old-token', { usedAt: new Date() }));
+        await expect(svc.refresh('old-token')).rejects.toBeInstanceOf(UnauthorizedException);
+        expect(tables.refreshToken.updateMany).toHaveBeenCalledWith(
+            expect.objectContaining({ where: { familyId: 'fam-1', revokedAt: null } }),
+        );
+        expect(tables.refreshToken.create).not.toHaveBeenCalled(); // no successor for a thief
+    });
+
+    it('rejects revoked, expired, hash-mismatched, and unknown tokens without touching the family', async () => {
+        for (const row of [
+            liveRow('old-token', { revokedAt: new Date() }),
+            liveRow('old-token', { expiresAt: new Date(Date.now() - 1) }),
+            liveRow('DIFFERENT-token'), // hash mismatch
+            null, // no row at all
+        ]) {
+            const { svc, tables } = makeRotation(row as Record<string, unknown> | null);
+            await expect(svc.refresh('old-token')).rejects.toBeInstanceOf(UnauthorizedException);
+            expect(tables.refreshToken.create).not.toHaveBeenCalled();
+        }
+    });
+
+    it('rejects a legacy refresh token without a jti claim', async () => {
+        const { svc } = makeRotation(null, () => ({ sub: 'u1', email: 'a@b.com' })); // no jti
+        await expect(svc.refresh('legacy')).rejects.toBeInstanceOf(UnauthorizedException);
+    });
+
+    it('a lost concurrent-claim race 401s WITHOUT revoking the family', async () => {
+        const { svc, tables } = makeRotation(liveRow('old-token'));
+        tables.refreshToken.updateMany = jest.fn(async (arg: { where: Record<string, unknown> }) =>
+            'jti' in arg.where ? { count: 0 } : { count: 1 }, // claim fails; family ops would succeed
+        ) as never;
+        await expect(svc.refresh('old-token')).rejects.toBeInstanceOf(UnauthorizedException);
+        // only the claim ran — no family revocation for a clean race
+        const familyCalls = (tables.refreshToken.updateMany as jest.Mock).mock.calls.filter(
+            (c) => 'familyId' in (c[0] as { where: Record<string, unknown> }).where,
+        );
+        expect(familyCalls).toHaveLength(0);
+    });
+
+    it('logout revokes the token’s family; allDevices revokes everything of the user', async () => {
+        const { svc, tables } = makeRotation(liveRow('tok'));
+        await svc.logout('tok');
+        expect(tables.refreshToken.updateMany).toHaveBeenCalledWith(
+            expect.objectContaining({ where: { familyId: 'fam-1', revokedAt: null } }),
+        );
+        const all = makeRotation(liveRow('tok'));
+        await all.svc.logout('tok', true);
+        expect(all.tables.refreshToken.updateMany).toHaveBeenCalledWith(
+            expect.objectContaining({ where: { userId: 'u1', revokedAt: null } }),
+        );
+    });
+
+    it('logout with a garbage/absent token resolves silently (always 204 semantics)', async () => {
+        const { svc, tables } = makeRotation(null, () => {
+            throw new Error('bad sig');
+        });
+        await expect(svc.logout('garbage')).resolves.toBeUndefined();
+        await expect(svc.logout(undefined)).resolves.toBeUndefined();
+        expect(tables.refreshToken.updateMany).not.toHaveBeenCalled();
     });
 });

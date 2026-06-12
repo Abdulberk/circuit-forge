@@ -39,8 +39,34 @@ model User {
   memberships     OrgMembership[]
   projectVersions ProjectVersion[]
   auditLogs       AuditLog[]
+  refreshTokens   RefreshToken[]
 
   @@map("users")
+}
+
+// Server-side refresh-token state: every issued refresh JWT has a row here (keyed by its jti).
+// Rotation marks the old row used and issues a successor in the same FAMILY (one family per login/
+// device). Reuse of an already-used token is theft evidence -> the whole family is revoked. Logout
+// revokes the presented token's family (or all of the user's). Raw tokens are never stored — jti
+// lookup + sha256 hash check.
+model RefreshToken {
+  id        String    @id @default(uuid())
+  jti       String    @unique
+  userId    String
+  familyId  String
+  tokenHash String
+  expiresAt DateTime
+  usedAt    DateTime? // set when rotated (successor issued)
+  revokedAt DateTime? // set by logout / reuse detection
+  ip        String? // session metadata (device management later)
+  userAgent String?
+  createdAt DateTime  @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([familyId])
+  @@map("refresh_tokens")
 }
 
 // ============================================================================
@@ -227,19 +253,24 @@ enum SimEngine {
 
 model AuditLog {
   id         String   @id @default(uuid())
-  orgId      String
+  orgId      String? // null = user-scoped event (auth.* — login, reset, …) with no org context
   userId     String
-  action     String   // e.g., "project.create", "simulation.start"
-  entityType String   // e.g., "Project", "SimulationJob"
+  action     String   // e.g., "project.create", "simulation.start", "auth.login_failed"
+  entityType String   // e.g., "Project", "SimulationJob", "User"
   entityId   String
   meta       Json?    // Additional context
   createdAt  DateTime @default(now())
 
-  // Relations
-  org  Organization @relation(fields: [orgId], references: [id], onDelete: Cascade)
-  user User         @relation(fields: [userId], references: [id])
+  // Relations. DELIBERATE: user-cascade means erasing an account also erases its audit rows. These
+  // rows hold the user's PII (ip/userAgent), so cascade is the GDPR-erasure-aligned default and keeps
+  // account deletion unblocked. TRADEOFF: security-evidence events (refresh_reuse_detected,
+  // account_locked) die with the account — if/when a compliance regime requires audit to OUTLIVE the
+  // subject, switch userId to optional + onDelete:SetNull (anonymize the actor, keep the row).
+  org  Organization? @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  user User          @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@index([orgId, createdAt])
+  @@index([userId, createdAt])
   @@index([entityType, entityId])
   @@map("audit_logs")
 }

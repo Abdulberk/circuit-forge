@@ -1,7 +1,7 @@
 /**
  * Auth DTOs
  */
-import { IsEmail, IsString, MinLength, MaxLength } from 'class-validator';
+import { IsBoolean, IsEmail, IsOptional, IsString, MinLength, MaxLength } from 'class-validator';
 import { ApiProperty } from '@nestjs/swagger';
 
 export class RegisterDto {
@@ -36,6 +36,18 @@ export class RefreshDto {
     @ApiProperty()
     @IsString()
     refreshToken!: string;
+}
+
+export class LogoutDto {
+    @ApiProperty({ required: false, description: 'The refresh token to revoke (its whole session family dies)' })
+    @IsOptional()
+    @IsString()
+    refreshToken?: string;
+
+    @ApiProperty({ required: false, description: 'Revoke ALL of this user’s sessions (log out everywhere)' })
+    @IsOptional()
+    @IsBoolean()
+    allDevices?: boolean;
 }
 
 export class VerifyEmailDto {

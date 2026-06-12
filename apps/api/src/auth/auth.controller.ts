@@ -1,19 +1,27 @@
 /**
  * Auth Controller
  */
-import { Controller, Post, Body, HttpCode, HttpStatus } from '@nestjs/common';
+import { Controller, Post, Body, HttpCode, HttpStatus, Req } from '@nestjs/common';
 import { ApiTags, ApiOperation, ApiResponse } from '@nestjs/swagger';
 import { Throttle } from '@nestjs/throttler';
-import { AuthService, TokensResponse } from './auth.service';
+import type { Request } from 'express';
+import { AuthService, TokensResponse, AuthContext } from './auth.service';
 import {
     RegisterDto,
     LoginDto,
     RefreshDto,
+    LogoutDto,
     VerifyEmailDto,
     ResendVerificationDto,
     ForgotPasswordDto,
     ResetPasswordDto,
 } from './dto';
+
+/** Client metadata for audit rows / session records (trust-proxy is set, so req.ip is the client). */
+const ctxOf = (req: Request): AuthContext => ({
+    ip: req.ip,
+    userAgent: typeof req.headers['user-agent'] === 'string' ? req.headers['user-agent'].slice(0, 256) : undefined,
+});
 
 @ApiTags('auth')
 @Controller('auth')
@@ -26,8 +34,8 @@ export class AuthController {
     @ApiOperation({ summary: 'Register a new user' })
     @ApiResponse({ status: 201, description: 'User registered successfully' })
     @ApiResponse({ status: 409, description: 'Email already registered' })
-    async register(@Body() dto: RegisterDto): Promise<TokensResponse> {
-        return this.authService.register(dto.email, dto.password, dto.name);
+    async register(@Body() dto: RegisterDto, @Req() req: Request): Promise<TokensResponse> {
+        return this.authService.register(dto.email, dto.password, dto.name, ctxOf(req));
     }
 
     @Post('login')
@@ -39,17 +47,17 @@ export class AuthController {
     @ApiResponse({ status: 200, description: 'Login successful' })
     @ApiResponse({ status: 401, description: 'Invalid credentials' })
     @ApiResponse({ status: 429, description: 'Rate-limited, or account temporarily locked (code ACCOUNT_LOCKED)' })
-    async login(@Body() dto: LoginDto): Promise<TokensResponse> {
-        return this.authService.login(dto.email, dto.password);
+    async login(@Body() dto: LoginDto, @Req() req: Request): Promise<TokensResponse> {
+        return this.authService.login(dto.email, dto.password, ctxOf(req));
     }
 
     @Post('refresh')
     @HttpCode(HttpStatus.OK)
-    @ApiOperation({ summary: 'Refresh access token' })
-    @ApiResponse({ status: 200, description: 'Token refreshed' })
-    @ApiResponse({ status: 401, description: 'Invalid refresh token' })
-    async refresh(@Body() dto: RefreshDto): Promise<TokensResponse> {
-        return this.authService.refresh(dto.refreshToken);
+    @ApiOperation({ summary: 'Refresh access token (ROTATING: the old refresh token is single-use)' })
+    @ApiResponse({ status: 200, description: 'New token pair — REPLACE the stored refresh token with the returned one' })
+    @ApiResponse({ status: 401, description: 'Invalid/expired/already-used refresh token (reuse revokes the whole session)' })
+    async refresh(@Body() dto: RefreshDto, @Req() req: Request): Promise<TokensResponse> {
+        return this.authService.refresh(dto.refreshToken, ctxOf(req));
     }
 
     @Post('verify-email')
@@ -92,10 +100,9 @@ export class AuthController {
 
     @Post('logout')
     @HttpCode(HttpStatus.NO_CONTENT)
-    @ApiOperation({ summary: 'Logout (client-side token invalidation)' })
-    @ApiResponse({ status: 204, description: 'Logged out' })
-    async logout(): Promise<void> {
-        // Client should delete tokens
-        return;
+    @ApiOperation({ summary: 'Logout — revokes the refresh-token session server-side (always 204)' })
+    @ApiResponse({ status: 204, description: 'Session revoked (best-effort); client must also delete its tokens' })
+    async logout(@Body() dto: LogoutDto, @Req() req: Request): Promise<void> {
+        await this.authService.logout(dto?.refreshToken, dto?.allDevices === true, ctxOf(req));
     }
 }

@@ -137,7 +137,7 @@ This section enumerates every screen the v1 frontend must ship, with its purpose
 
 - API base URL is `http://localhost:3001`. There is **no global route prefix** — paths are exactly as written below. Swagger UI is at `/docs`, OpenAPI JSON at `/docs-json`.
 - All endpoints except `POST /auth/*`, `GET /health`, and the public-template reads require `Authorization: Bearer <accessToken>`.
-- Access token TTL ~15m (held in memory on the client); refresh token TTL ~7d (`POST /auth/refresh` returns a fresh pair). Logout is client-side only — there is no server-side revocation. See the Backend Integration Contract (§4, Auth & Token Strategy) for the concrete refresh loop.
+- Access token TTL ~15m (held in memory on the client); refresh token TTL ~7d. `POST /auth/refresh` ROTATES — it returns a fresh pair and the old refresh token is single-use (reuse → whole session revoked, so refresh must be single-flighted). Logout revokes the session server-side. See the Backend Integration Contract (§4, Auth & Token Strategy) for the concrete refresh loop.
 - All business data is **org-scoped**. The active `orgId` is global app state driven by the org switcher, not a URL segment.
 - The frontend never holds any provider/LLM key, JWT secret, S3 credential, or DB URL. The only permitted client env var is the API base URL. See the Frontend Architecture & Stack section (§8), which holds Security/NFR — this is a cardinal rule.
 - `CircuitJson`, `AnalysisConfig`, and `SimulationResult` are owned by `@circuit-forge/eda-core`. Reuse its Zod validators (`safeValidateCircuitJson`, `safeValidateAnalysisConfig`) before every POST and after every read. Never cast `as CircuitJson`.
@@ -150,12 +150,12 @@ This section enumerates every screen the v1 frontend must ship, with its purpose
 |---|---|---|---|---|
 | POST | `/auth/register` | none | Auth | Auto-creates a personal org `"<name>'s Workspace"` (role `OWNER`). Email is normalized (trim+lowercase); a verification email is sent (link → `/verify-email?token=…`). Returns tokens immediately — the user is signed in but `emailVerified:false`. |
 | POST | `/auth/login` | none | Auth | Returns 200. Email normalized. May 429 `ACCOUNT_LOCKED` (5 fails → 15m), or 403 `EMAIL_NOT_VERIFIED` (only if the server sets `REQUIRE_EMAIL_VERIFICATION=true`; off by default). |
-| POST | `/auth/refresh` | none | (token loop) | Body `{ refreshToken }` |
+| POST | `/auth/refresh` | none | (token loop) | Body `{ refreshToken }` → fresh pair; **rotating/single-use**, single-flight required |
 | POST | `/auth/verify-email` | none | Verify page | Body `{ token }` → `204`. Invalid/expired → `400`. Single-use. |
 | POST | `/auth/resend-verification` | none | Verify page | Body `{ email }` → always `204` (never reveals whether the account exists/is verified). Throttled 5/h. |
 | POST | `/auth/forgot-password` | none | Forgot-pw page | Body `{ email }` → always `204` (enumeration-safe). Sends a reset link (`/reset-password?token=…`, 1h TTL) if the account exists. Throttled 5/h. |
 | POST | `/auth/reset-password` | none | Reset page | Body `{ token, newPassword }` → `204`; invalid/expired → `400`. Single-use; also clears any brute-force lock. User then logs in with the new password. |
-| POST | `/auth/logout` | none | Settings | Returns 204; no server revocation |
+| POST | `/auth/logout` | none | Settings | Body `{ refreshToken?, allDevices? }` → 204; revokes the session family server-side |
 | GET | `/orgs` | JWT | Dashboard, Settings | Org switcher source |
 | POST | `/orgs` | JWT | Settings | Creator becomes `OWNER` |
 | GET | `/orgs/:orgId` | JWT | Settings | Org + caller `role` |
@@ -218,8 +218,8 @@ This section enumerates every screen the v1 frontend must ship, with its purpose
 |---|---|---|
 | `POST /auth/register` | `{ email, password, name }` | `201 { accessToken, refreshToken, user: { id, email, name } }` |
 | `POST /auth/login` | `{ email, password }` | `200 { accessToken, refreshToken, user: { id, email, name } }` |
-| `POST /auth/refresh` | `{ refreshToken }` | `200 { accessToken, refreshToken, user }` |
-| `POST /auth/logout` | (none) | `204` (client discards tokens) |
+| `POST /auth/refresh` | `{ refreshToken }` | `200 { accessToken, refreshToken, user }` — rotating/single-use; persist the new refreshToken, single-flight only |
+| `POST /auth/logout` | `{ refreshToken?, allDevices? }` | `204` — revokes the session family server-side; also discard tokens client-side |
 
 The response type is `TokensResponse` (`apps/api/src/auth/auth.service.ts:15`): both `login` and `register` return the token pair **and** a `user` object — use `user` to seed the current-user display without an extra call.
 
@@ -886,24 +886,30 @@ All four live on the `auth` controller, **no guard**, all public.
 // (no user enumeration) — show one generic message.
 ```
 
-**`POST /auth/refresh`** → `200`
+**`POST /auth/refresh`** → `200` — **ROTATING & SINGLE-USE**
 ```jsonc
 // Request (RefreshDto)
 { "refreshToken": "<jwt 7d>" }
-// Response 200: a BRAND-NEW TokensResponse (fresh access AND refresh token). Rotate BOTH client-side.
-// 401 "Invalid refresh token" if the refresh token is expired/invalid → force re-login.
+// Response 200: a BRAND-NEW TokensResponse. The refresh token you sent is now CONSUMED — you MUST
+// replace your stored refresh token with the returned one. The old one will never work again.
+// 401 "Invalid refresh token" if expired/invalid/ALREADY-USED → force re-login.
+// SECURITY: presenting an already-used refresh token (theft, OR a non-single-flighted double refresh)
+// is treated as compromise and REVOKES THE WHOLE SESSION FAMILY — including the successor you just
+// got. So single-flight is mandatory (§4.2.2), not optional.
 ```
 
-**`POST /auth/logout`** → `204`, **empty body**.
+**`POST /auth/logout`** → `204`
 ```jsonc
-// No request body. No-op server-side (no token blocklist). Response: 204 No Content.
-// The client is solely responsible for discarding tokens.
+// Request (LogoutDto, all optional): { "refreshToken"?: "<jwt>", "allDevices"?: true }
+// Send the refreshToken to actually revoke the session SERVER-SIDE (its whole family dies).
+// allDevices:true revokes every session of the user ("log out everywhere"). Always 204, even for a
+// missing/garbage token. The access token (≤15m) is stateless and survives until it expires.
 ```
 
 > **QUIRKS to encode in types:**
 > - `user` contains exactly `{ id, email, name }` — **no `createdAt`** in auth responses. Do not type it with `createdAt`.
 > - Logout returns **204 with no body** — do not call `res.json()`; expect and allow an empty response.
-> - Tokens are **non-revocable** server-side (no blocklist / `tokenVersion`). A leaked access token is valid for its full 15m; a leaked refresh token for 7d. This is exactly why the access token must not be persisted (§4.2.2).
+> - Refresh tokens ARE revocable server-side now (rotation + reuse-detection + logout). The **access** token is still stateless: a leaked one is valid for its full ≤15m — which is why it must stay in memory only (§4.2.2). Send the refresh token to `/auth/logout` so the session is actually killed.
 > - The seeded demo user is `demo@circuitforge.io` / `demo123456` (use it for development).
 
 #### 4.2.2 Recommended client token strategy
@@ -911,19 +917,19 @@ All four live on the `auth` controller, **no guard**, all public.
 | Token | Where to store | Why |
 |---|---|---|
 | **accessToken** | **In memory only** (a module-scoped variable / state-store auth slice; not persisted). | 15m lifetime, sent on every request. Keeping it out of `localStorage` removes the highest-value XSS theft target. |
-| **refreshToken** | **In memory** for v1 (single-tab session); optionally a **same-site, secure cookie set by a small same-origin BFF route** in a later version. **Avoid `localStorage`** — it is a 7-day, non-revocable bearer credential. | A single XSS against `localStorage` would mean 7 days of full account access with no server-side revocation possible. |
+| **refreshToken** | **In memory** for v1 (single-tab session); optionally a **same-site, secure cookie set by a small same-origin BFF route** in a later version. **Avoid `localStorage`** — it is a 7-day bearer credential. | Refresh tokens are now server-revocable (rotation + reuse-detection + logout), but a stolen one still grants access until it's used/revoked — and theft from `localStorage` is silent. Keep it out of persistent storage. |
 | **user** (`{ id, email, name }`) | In-memory store; safe to also cache in `sessionStorage` for fast hydration (non-secret). | UI display only. |
 
 **v1 pragmatic default (no BFF):** keep both tokens in memory inside the auth store. On a full page reload the session is lost and the user logs in again — acceptable for v1 and strictly safer than `localStorage`. Document this as a deliberate trade-off; a same-origin BFF cookie for the refresh token is the v2 upgrade.
 
-**Silent refresh on 401 (single-flight):**
+**Silent refresh on 401 (single-flight — now MANDATORY):**
 1. The fetch wrapper attaches `Authorization: Bearer <accessToken>`.
-2. On `401` from any protected endpoint (and the failing request was not itself an `/auth/*` call), call `POST /auth/refresh` **once**, guarded by a shared in-flight promise so concurrent 401s trigger exactly one refresh.
-3. On refresh success: replace **both** access and refresh tokens in the store, then **retry the original request once** with the new access token.
+2. On `401` from any protected endpoint (and the failing request was not itself an `/auth/*` call), call `POST /auth/refresh` **once**, guarded by a shared in-flight promise so concurrent 401s trigger exactly one refresh. ⚠️ This is no longer just an optimization: refresh tokens are single-use, so two in-flight refreshes with the same token make the second look like token reuse and the backend revokes the **entire session** — instant forced logout. One refresh at a time, always.
+3. On refresh success: **persist the returned refresh token in place of the old one** (it rotated — the old one is dead) and replace the access token, then **retry the original request once** with the new access token.
 4. On refresh failure (`401`): clear the auth store, redirect to `/login`, surface "Session expired — please sign in again."
 5. **Proactive refresh (optional):** schedule a refresh near `exp − 60s` (decode the JWT `exp` only for scheduling — never trust it for security) to avoid a user-visible 401 round-trip.
 
-**Logout:** call `POST /auth/logout` best-effort (ignore failures — it is a no-op), then clear the in-memory auth store and any cached `user`, and redirect to `/login`. Never assume the server invalidated anything.
+**Logout:** call `POST /auth/logout` with `{ refreshToken }` (optionally `{ allDevices: true }`) so the session is revoked **server-side** (best-effort — ignore failures, it always 204s), then clear the in-memory auth store and any cached `user`, and redirect to `/login`. Sending the refresh token matters: it kills that session family on the server, not just the local copy.
 
 #### 4.2.3 RBAC the UI must reflect
 
@@ -974,7 +980,7 @@ Use `/health/ready` for a non-blocking "backend up?" indicator. Do not gate the 
 | POST | `/auth/register` | none | `RegisterDto` `{ email, password, name }` | `201 TokensResponse` |
 | POST | `/auth/login` | none | `LoginDto` `{ email, password }` | `200 TokensResponse` |
 | POST | `/auth/refresh` | none | `RefreshDto` `{ refreshToken }` | `200 TokensResponse` |
-| POST | `/auth/logout` | none | — | `204` empty |
+| POST | `/auth/logout` | none | `LogoutDto` `{ refreshToken?, allDevices? }` | `204` empty |
 
 #### 4.4.3 Organizations — `orgs.controller.ts` (entire controller `JwtAuthGuard`)
 
