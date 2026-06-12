@@ -507,10 +507,15 @@ Response `DesignEvidence` (always `200` for a valid circuit — a failed verific
   // remedies). recovered:true means a remedy fixed it — surface a subtle "needed solver help: <remedy>"
   // note on an otherwise-pass; recovered:false means it couldn't be solved (diagnosis explains why).
   convergence?: { recovered: boolean; kind: string; diagnosis: string; remedyApplied?: string; rationale?: string; attempts: number; triedRemedies?: string[]; note?: string };
+  // Per-resistor steady-state power dissipation (P=ΔV²/R) + over-rating flags. INFORMATIONAL — does
+  // NOT change `verdict` (the default 0.25W rating is a guess). basis 'last-timestep' on tran/ac.
+  power?: { basis: 'operating-point' | 'last-timestep'; anyOverRating: boolean;
+            components: { designator: string; dissipationW: number; ratingW: number; ratingIsDefault: boolean; overRating: boolean }[] };
 }
 ```
 - Render `verdict` as a badge (green pass / red fail / grey inconclusive) + `checks` (e.g. "2/3 specs met"). Show each assertion row with `actual` vs `target` and the ✓/✗. Plot `measurements` / the waveform as the "receipts".
 - If `convergence` is present, show the plain-language `diagnosis` (and `remedyApplied` when `recovered`) — this turns ngspice's cryptic "Timestep too small" into something a user understands.
+- If `power` is present, show each resistor's dissipation; badge `overRating` ones (⚠️ red when `ratingIsDefault:false`, softer amber when it's the 0.25W default guess). It never fails the verdict — it's a heads-up, not a gate.
 - `400` only for a malformed `circuit`/`analysisConfig` or an unsupported current probe — everything else (even a circuit that doesn't simulate) returns a `200` evidence pack.
 
 **Caveats (all AI dialogs):**

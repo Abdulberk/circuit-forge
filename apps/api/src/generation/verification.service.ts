@@ -10,7 +10,9 @@
  */
 import { Injectable } from '@nestjs/common';
 import { sanitizeNodeName, type AnalysisConfig } from '@circuit-forge/eda-core';
+import { safeValidateCircuitJson, type CircuitJson } from '@circuit-forge/eda-core';
 import { CircuitSimulatorService, type SimMeasurement, type SimSummary, type ConvergenceReport } from './circuit-simulator.service';
+import { computeResistorPower, type PowerReport } from './power-analysis';
 import type { AssertionDto } from './dto';
 
 export interface AssertionResult {
@@ -41,6 +43,9 @@ export interface DesignEvidence {
     /** Set when the run hit a convergence failure — the Convergence Doctor's diagnosis + what fixed it
      *  (or what was tried). Lets the UI surface "needed solver help: <remedy>" on an otherwise-pass. */
     convergence?: ConvergenceReport;
+    /** Per-resistor steady-state power dissipation + over-rating flags (informational — does NOT change
+     *  the verdict, since the default rating is a guess). Present only when the run produced data. */
+    power?: PowerReport;
 }
 
 /**
@@ -77,6 +82,13 @@ export class VerificationService {
         const sim = await this.simulator.simulateWithRemedies(circuit, analysisConfig);
         const assertionResults = this.evaluate(sim.measurements, assertions, sim.simStatus === 'ok');
 
+        // Power-dissipation review (resistors): only meaningful once we have real node voltages.
+        let power: PowerReport | undefined;
+        if (sim.simStatus === 'ok' && sim.measurements.length > 0) {
+            const valid = safeValidateCircuitJson(circuit);
+            if (valid.success) power = computeResistorPower(valid.data as CircuitJson, sim.measurements, sim.analysisType);
+        }
+
         const ercErrorCount = sim.ercErrors.length;
         const failedAssertions = assertionResults.filter((a) => !a.pass).length;
         // "ok" but zero measurements means ngspice exited cleanly yet produced no usable data — we
@@ -109,6 +121,7 @@ export class VerificationService {
                 failed: failedAssertions,
             },
             ...(sim.convergence ? { convergence: sim.convergence } : {}),
+            ...(power ? { power } : {}),
         };
     }
 
