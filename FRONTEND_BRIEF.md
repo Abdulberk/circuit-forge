@@ -503,9 +503,14 @@ Response `DesignEvidence` (always `200` for a valid circuit — a failed verific
   measurements: { node: string; min: number; max: number; final: number; pp: number }[]; // per node, the EVIDENCE
   assertions: { label; probe; metric; op; target; tol?; actual: number|null; pass: boolean; detail: string }[];
   checks: { total: number; passed: number; failed: number };
+  // Present only when the run hit a CONVERGENCE failure (the "Convergence Doctor" auto-applied solver
+  // remedies). recovered:true means a remedy fixed it — surface a subtle "needed solver help: <remedy>"
+  // note on an otherwise-pass; recovered:false means it couldn't be solved (diagnosis explains why).
+  convergence?: { recovered: boolean; kind: string; diagnosis: string; remedyApplied?: string; rationale?: string; attempts: number; triedRemedies?: string[]; note?: string };
 }
 ```
 - Render `verdict` as a badge (green pass / red fail / grey inconclusive) + `checks` (e.g. "2/3 specs met"). Show each assertion row with `actual` vs `target` and the ✓/✗. Plot `measurements` / the waveform as the "receipts".
+- If `convergence` is present, show the plain-language `diagnosis` (and `remedyApplied` when `recovered`) — this turns ngspice's cryptic "Timestep too small" into something a user understands.
 - `400` only for a malformed `circuit`/`analysisConfig` or an unsupported current probe — everything else (even a circuit that doesn't simulate) returns a `200` evidence pack.
 
 **Caveats (all AI dialogs):**

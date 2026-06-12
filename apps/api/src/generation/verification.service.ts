@@ -10,7 +10,7 @@
  */
 import { Injectable } from '@nestjs/common';
 import { sanitizeNodeName, type AnalysisConfig } from '@circuit-forge/eda-core';
-import { CircuitSimulatorService, type SimMeasurement, type SimSummary } from './circuit-simulator.service';
+import { CircuitSimulatorService, type SimMeasurement, type SimSummary, type ConvergenceReport } from './circuit-simulator.service';
 import type { AssertionDto } from './dto';
 
 export interface AssertionResult {
@@ -38,6 +38,9 @@ export interface DesignEvidence {
     assertions: AssertionResult[];
     /** Counts for a quick UI badge. */
     checks: { total: number; passed: number; failed: number };
+    /** Set when the run hit a convergence failure — the Convergence Doctor's diagnosis + what fixed it
+     *  (or what was tried). Lets the UI surface "needed solver help: <remedy>" on an otherwise-pass. */
+    convergence?: ConvergenceReport;
 }
 
 /**
@@ -69,7 +72,9 @@ export class VerificationService {
         analysisConfig?: AnalysisConfig,
         assertions: AssertionDto[] = [],
     ): Promise<DesignEvidence> {
-        const sim = await this.simulator.simulate(circuit, analysisConfig);
+        // Convergence Doctor: if the run hits a solver-convergence failure, auto-retry with remedies
+        // before reporting — a design that merely needed gmin/itl4 verifies instead of failing.
+        const sim = await this.simulator.simulateWithRemedies(circuit, analysisConfig);
         const assertionResults = this.evaluate(sim.measurements, assertions, sim.simStatus === 'ok');
 
         const ercErrorCount = sim.ercErrors.length;
@@ -103,6 +108,7 @@ export class VerificationService {
                 passed: assertionResults.filter((a) => a.pass).length,
                 failed: failedAssertions,
             },
+            ...(sim.convergence ? { convergence: sim.convergence } : {}),
         };
     }
 
