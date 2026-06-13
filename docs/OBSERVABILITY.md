@@ -38,7 +38,7 @@ exporters directly — we don't intercept them.
 ### Load order
 
 `startTelemetry()` must run **before any instrumented module is loaded**, otherwise auto-instrumentation
-can't patch `http`/`express`/Prisma/`ioredis`. That is why the side-effecting call lives in
+can't patch `http`/`express`/`ioredis`. That is why the side-effecting call lives in
 `observability/instrumentation.ts`, which is the **first import** in each app's `main.ts`. Don't reorder
 those imports. (Both apps compile to CommonJS, so the first `require` fully evaluates — SDK started —
 before the next import runs.)
@@ -47,16 +47,23 @@ before the next import runs.)
 
 ## 2. What it emits
 
-### 2.1 Traces (both apps, auto-instrumented)
+### 2.1 Traces (auto-instrumented)
 
 Via `getNodeAutoInstrumentations()`. With the SDK on you get spans for, among others:
 
-- **HTTP / Express / NestJS** request handling on the API (latency, status code, route).
-- **Prisma** queries (both apps).
-- **ioredis** commands and **BullMQ** queue operations (job enqueue/process — spans link the API's
-  enqueue to the worker's processing when context propagates through the queue).
+- **HTTP / Express / NestJS** on the API — every REST request: route, status code, latency (plus the
+  matching `http.server.duration` metric).
+- **Outgoing HTTP** from the API — its calls to the TME parts catalog and the LLM provider (client spans).
+- **ioredis / Redis commands** on both apps. BullMQ runs on ioredis, so the queue's Redis operations
+  appear as ioredis spans — note these are raw Redis ops, **not** a single semantic "job processed" span.
 
-The `fs` instrumentation is explicitly **disabled** — it is far too noisy to be useful.
+The `fs` instrumentation is explicitly **disabled** — far too noisy.
+
+**Not traced (gaps to be aware of):**
+- **Prisma DB queries.** Prisma runs its own query engine (not the `pg` driver), so capturing query
+  timing needs `previewFeatures = ["tracing"]` in `schema.prisma` + `@prisma/instrumentation` — neither is
+  set up, so DB latency is **not** in the traces today (see §5).
+- **Semantic BullMQ job spans** (one span covering enqueue → process). Only the underlying Redis ops show.
 
 ### 2.2 Metrics
 
@@ -119,7 +126,12 @@ queue-depth alerts are early-warning / capacity signals.
 Called out honestly rather than implied:
 
 - **No logs pipeline.** Only traces + metrics are exported. App logs still go to stdout via `pino`
-  (API/worker). Log↔trace correlation (injecting `trace_id` into pino lines) is not wired up.
+  (API/worker) — they are not shipped to a backend (no Loki), so you can't view/correlate them in Grafana
+  yet. (The pino auto-instrumentation does inject `trace_id`/`span_id` into log lines when a span is
+  active, so the correlation IDs are there once a log pipeline exists.)
+- **No DB / queue span depth.** Prisma DB queries and semantic BullMQ job lifecycle are not traced (see
+  §2.1) — adding `@prisma/instrumentation` (+ schema `tracing` preview) and a BullMQ instrumentation
+  would surface query latency and per-job spans.
 - **No collector / dashboards enabled by default.** The app only emits OTLP. For LOCAL viewing there's an
   opt-in Grafana stack (§6); for PRODUCTION you point it at a real backend (§7). Neither ships on by default.
 - **API does not emit the custom sim metrics.** The API's inline verify-and-fix ngspice path (dev/
@@ -157,7 +169,8 @@ clears the data, which is fine for dev).
 4. **Open Grafana** → http://localhost:3030 (no login — anonymous Admin is enabled; if ever prompted,
    `admin`/`admin`). Use **Explore**:
    - **Traces** (Tempo): filter `service.name = circuit-forge-api` / `circuit-forge-worker`. A
-     verify-design request shows the full span tree: HTTP → BullMQ enqueue → (worker) Prisma + the job.
+     verify-design request shows the API's HTTP span + the Redis (ioredis) ops for the enqueue/poll. (The
+     worker's DB + job work isn't its own span yet — see the §2.1 gaps.)
    - **Metrics** (Prometheus): search `circuitforge` for the custom sim metrics — they arrive as
      `circuitforge_sim_runs_total` (counter, label `status`), `circuitforge_sim_duration_milliseconds_{bucket,sum,count}`
      and `circuitforge_sim_points_{bucket,sum,count}` (histograms). (OTLP dots → underscores; Prometheus

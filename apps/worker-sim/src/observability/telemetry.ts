@@ -2,8 +2,9 @@
  * OpenTelemetry bootstrap for the simulation worker. INERT until configured — the SDK only starts when
  * OTEL_ENABLED=true or an OTEL_EXPORTER_OTLP_ENDPOINT is set, so there is zero overhead by default
  * (mirrors the rest of the system's "configure to activate" philosophy). When on, auto-instrumentation
- * captures ioredis/BullMQ ops and Prisma queries as traces, and a periodic reader exports metrics —
- * both over OTLP/HTTP to a collector. Telemetry must NEVER crash or block the worker: init is wrapped
+ * captures ioredis/Redis commands as traces (incl. the queue's Redis ops), and a periodic reader exports
+ * metrics — both over OTLP/HTTP to a collector. (Prisma queries are NOT traced — needs
+ * @prisma/instrumentation + schema `tracing`.) Telemetry must NEVER crash or block the worker: init is wrapped
  * in try/catch and failures are logged and swallowed.
  *
  * The bootstrap (startTelemetry/telemetryEnabled) is intentionally byte-identical to the API's

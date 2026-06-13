@@ -2,8 +2,9 @@
  * OpenTelemetry bootstrap. INERT until configured — the SDK only starts when OTEL_ENABLED=true or an
  * OTEL_EXPORTER_OTLP_ENDPOINT is set, so there is zero overhead by default (mirrors the rest of the
  * system's "configure to activate" philosophy). When on, auto-instrumentation captures HTTP/Express/
- * Nest requests, Prisma queries, and ioredis/BullMQ ops as traces, and a periodic reader exports
- * metrics — both over OTLP/HTTP to a collector. Telemetry must NEVER crash or block the app: init is
+ * Nest requests (+ outgoing HTTP) and ioredis/Redis commands as traces, and a periodic reader exports
+ * metrics — both over OTLP/HTTP to a collector. (Prisma queries are NOT traced — that needs
+ * @prisma/instrumentation + schema `tracing`, which isn't set up.) Telemetry must NEVER crash the app: init is
  * wrapped in try/catch and failures are logged and swallowed.
  *
  * startTelemetry() must run before any instrumented module is loaded, so the side-effecting call lives
