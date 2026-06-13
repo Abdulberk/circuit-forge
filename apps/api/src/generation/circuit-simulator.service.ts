@@ -27,13 +27,20 @@ import {
     extractProbes,
     parseSimulationOutput,
     parseSpiceValue,
+    diagnoseConvergence,
+    convergenceRemedyLadder,
     type CircuitJson,
     type AnalysisConfig,
     type DataSeries,
+    type ConvergenceReport,
 } from '@circuit-forge/eda-core';
 import { attachGenericModels } from './model-resolution';
-import { diagnoseConvergence, convergenceRemedyLadder, type ConvergenceKind } from './convergence';
 import { sandboxedCommand, resolveSandboxConfig, type SandboxConfig } from './sandbox';
+
+// The Convergence Doctor (diagnose + remedy ladder + ConvergenceReport) now lives in eda-core so the
+// WORKER runs the identical ladder in prod. Re-exported here so existing importers
+// (verification.service) keep their './circuit-simulator.service' path unchanged.
+export type { ConvergenceReport } from '@circuit-forge/eda-core';
 
 /** One node's behaviour over the run, distilled to four numbers the model can reason about. */
 export interface SimMeasurement {
@@ -42,24 +49,6 @@ export interface SimMeasurement {
     max: number;
     final: number;
     pp: number; // peak-to-peak (max - min)
-}
-
-/** Convergence Doctor report — present when a run hit a convergence-class failure and remedies were tried. */
-export interface ConvergenceReport {
-    /** True if a solver remedy turned the failing run into a successful one. */
-    recovered: boolean;
-    kind: ConvergenceKind;
-    /** Plain-language explanation of the original convergence failure. */
-    diagnosis: string;
-    /** The remedy label that worked (recovered) — and why it helped. */
-    remedyApplied?: string;
-    rationale?: string;
-    /** How many remedies were actually attempted (excludes ones skipped for capacity). */
-    attempts: number;
-    /** Labels of every remedy actually run (set when none recovered the run). */
-    triedRemedies?: string[];
-    /** Set when the ladder was cut short (e.g. inline-sim capacity saturated) — not a true exhaustion. */
-    note?: string;
 }
 
 /** The compact, token-bounded result fed back to the model. Never contains raw CSV. */

@@ -9,6 +9,7 @@ import { analysisToSpice } from '../types/analysis';
 import { buildZenerModel, normalizeControlledSourceGain, parseTransformerParams, parseTransmissionLineParams } from '../models/library';
 import { sanitizeNodeName, validateIncludePaths } from './sanitizer';
 import { planMixedSignal, emitDigitalComponent, aInstanceName, type MixedSignalPlan } from './digital';
+import { solverOptionTokens } from './solver-options';
 
 /** All valid ComponentType values, for a fail-loud guard against an unknown type slipping through. */
 const VALID_COMPONENT_TYPES = new Set<string>(COMPONENT_TYPES);
@@ -382,23 +383,13 @@ export function generateNetlist(
     }
 
     // `.options` card: solver tuning from analysis.options (each token re-validated against an anchored
-    // numeric pattern — these strings land verbatim on a netlist line, so an unvalidated value would be
-    // netlist injection; invalid ones are silently dropped in favor of ngspice defaults) + `savecurrents`
-    // when an R/C current probe was rewritten to `@<dev>[i]` (it makes ngspice store every device current —
-    // real matrix/IO overhead we don't want on the common voltage-only run).
-    const optionTokens: string[] = [];
-    const solver = analysis.options;
-    if (solver) {
-        const SPICE_NUM = /^\+?\d*\.?\d+(?:[eE][+-]?\d+)?(?:meg|MEG|[fpnumkgtFPNUMKGT])?$/;
-        for (const key of ['reltol', 'abstol', 'vntol', 'gmin'] as const) {
-            const v = solver[key]?.trim();
-            if (v && SPICE_NUM.test(v)) optionTokens.push(`${key}=${v}`);
-        }
-        if (solver.method === 'trap' || solver.method === 'gear') optionTokens.push(`method=${solver.method}`);
-        if (typeof solver.itl4 === 'number' && Number.isInteger(solver.itl4) && solver.itl4 > 0 && solver.itl4 <= 10000) {
-            optionTokens.push(`itl4=${solver.itl4}`);
-        }
-    }
+    // numeric pattern by solverOptionTokens — these strings land verbatim on a netlist line, so an
+    // unvalidated value would be netlist injection; invalid ones are silently dropped in favor of ngspice
+    // defaults) + `savecurrents` when an R/C current probe was rewritten to `@<dev>[i]` (it makes ngspice
+    // store every device current — real matrix/IO overhead we don't want on the common voltage-only run).
+    // solverOptionTokens is shared with applySolverOptions (solver-options.ts) so a worker-side remedy can
+    // never emit a token the generator wouldn't.
+    const optionTokens: string[] = solverOptionTokens(analysis.options);
     if (needSaveCurrents) optionTokens.push('savecurrents');
     if (optionTokens.length > 0) {
         lines.push('* Options');

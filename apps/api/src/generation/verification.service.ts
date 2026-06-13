@@ -190,12 +190,17 @@ export class VerificationService {
             // NOT design faults (the SimJobStatus enum has no operational value, so the discriminator rides
             // in metrics). Genuine ngspice faults carry 'sim' (or nothing on older rows).
             const infraFailure = (metrics as { failureClass?: string } | null | undefined)?.failureClass === 'infra';
+            // The worker attaches a Convergence Doctor report to metrics when it walked the remedy ladder:
+            // recovered:true on a rescued SUCCEEDED run, or recovered:false on a remedy-resistant FAILED run.
+            // Surface it either way so the evidence can show "needed solver help: <remedy>" (or that the
+            // ladder was tried and exhausted). This is the prod equivalent of the inline simulateWithRemedies.
+            const convergence = (metrics as { convergence?: ConvergenceReport } | null | undefined)?.convergence;
 
             // ngspice ACTUALLY RAN and the circuit could not be simulated (exit≠0 / non-convergence, or it
             // exceeded the worker's own ngspice timeout) → a genuine simulation/design fault → 'fail'.
             // A worker-flagged infra failure is excluded here and handled as inconclusive below.
             if ((status === 'FAILED' || status === 'TIMED_OUT') && !infraFailure) {
-                return { simStatus: 'failed', ercErrors, ercWarnings, runError: `simulation ${status.toLowerCase()}`, ...empty };
+                return { simStatus: 'failed', ercErrors, ercWarnings, runError: `simulation ${status.toLowerCase()}`, ...empty, ...(convergence ? { convergence } : {}) };
             }
             // NO design verdict was produced for an OPERATIONAL reason: the job never started (nothing
             // consumed the queue / backlog beyond our budget → POLL_TIMEOUT), was aborted (CANCELED), or the
@@ -222,7 +227,7 @@ export class VerificationService {
                 }
                 return { simStatus: 'failed', ercErrors, ercWarnings, runError: 'simulation produced no result data', ...empty };
             }
-            return { simStatus: 'ok', ercErrors, ercWarnings, measurements: series.map(summarizeSeries), nodeCount: series.length, analysisType: an.type };
+            return { simStatus: 'ok', ercErrors, ercWarnings, measurements: series.map(summarizeSeries), nodeCount: series.length, analysisType: an.type, ...(convergence ? { convergence } : {}) };
         } catch (e) {
             // The queue/Redis/DB was unreachable (createQuickSim / getStatus / getResult threw). Same
             // contract rule as POLL_TIMEOUT above: a transient infra outage is NOT a design fault. → inconclusive.

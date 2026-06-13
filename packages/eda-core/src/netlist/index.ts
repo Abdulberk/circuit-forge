@@ -17,3 +17,13 @@ export {
     hasShellMetacharacters,
     SecurityError,
 } from './sanitizer';
+export { solverOptionTokens, applySolverOptions } from './solver-options';
+export {
+    diagnoseConvergence,
+    convergenceRemedyLadder,
+    type ConvergenceKind,
+    type ConvergenceDiagnosis,
+    type RemedyStep,
+    type ConvergenceReport,
+    type SolverOptions,
+} from './convergence';

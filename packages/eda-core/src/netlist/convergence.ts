@@ -7,11 +7,15 @@
  * (a) CLASSIFIES the failure into a plain-language explanation, and (b) provides an ordered ladder of
  * SOLVER REMEDIES (standard ngspice convergence aids, expressed through the SolverOptions levers the
  * generator already emits as a `.options` card) for the caller to retry with. Pure + deterministic.
+ *
+ * Lives in eda-core so BOTH the inline API simulator (dev) and the WORKER (prod) run the identical
+ * ladder — the worker applies each step with applySolverOptions() (solver-options.ts) on the netlist
+ * string it holds, re-running ngspice locally (no queue round-trip per remedy).
  */
-import type { AnalysisConfig } from '@circuit-forge/eda-core';
+import type { AnalysisConfig } from '../types/analysis';
 
 /** The solver-tuning levers the generator emits as a `.options` card. Derived from the public
- *  AnalysisConfig so it stays in sync with eda-core without needing a separate named export. */
+ *  AnalysisConfig so it stays in sync without a separate named export. */
 export type SolverOptions = NonNullable<AnalysisConfig['options']>;
 
 export type ConvergenceKind =
@@ -34,6 +38,25 @@ export interface RemedyStep {
     label: string;
     rationale: string;
     options: SolverOptions;
+}
+
+/** Convergence Doctor report — present when a run hit a convergence-class failure and remedies were
+ *  tried. Produced by the inline simulator AND the worker; surfaced on the verify-design evidence. */
+export interface ConvergenceReport {
+    /** True if a solver remedy turned the failing run into a successful one. */
+    recovered: boolean;
+    kind: ConvergenceKind;
+    /** Plain-language explanation of the original convergence failure. */
+    diagnosis: string;
+    /** The remedy label that worked (recovered) — and why it helped. */
+    remedyApplied?: string;
+    rationale?: string;
+    /** How many remedies were actually attempted (excludes ones skipped for capacity). */
+    attempts: number;
+    /** Labels of every remedy actually run (set when none recovered the run). */
+    triedRemedies?: string[];
+    /** Set when the ladder was cut short (e.g. inline-sim capacity saturated) — not a true exhaustion. */
+    note?: string;
 }
 
 /** Patterns → kind. Ordered most-specific first; matched against the (already distilled) error text. */
