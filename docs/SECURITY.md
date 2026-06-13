@@ -305,7 +305,19 @@ Relevant config defaults (validated by Zod in [config.ts](../apps/worker-sim/src
 
 The worker config self-validates with Zod at startup and `process.exit(1)` on any invalid/missing required var (e.g., `DATABASE_URL`, S3 keys), so a misconfigured worker fails fast rather than running insecurely.
 
-> Note: beyond the app-level controls, the worker now applies **kernel resource limits (RLIMIT_AS/CPU/FSIZE/NPROC)** and runs the ngspice child as a **dedicated low-privilege user** on Linux (verified — see the resource-limits bullet). Still NOT present: a namespace/seccomp/cgroup sandbox, network-egress restriction, or a read-only root FS — run the worker in a locked-down container (Section 7) for those stronger layers. Also: the worker process itself still runs as root in the image (it drops to `simrunner` only for the ngspice child) — running the whole worker non-root is a further hardening step.
+### 5.3 Container-level isolation (deployment) — [docker-compose.yml](../docker-compose.yml)
+
+The `worker-sim` service runs the untrusted-ngspice tier under **host-independent** container controls that stack UNDER the in-process rlimit wrapper + dedicated user (§5.2). Unlike a user-namespace sandbox (bubblewrap), these need no seccomp relaxation or host unprivileged-userns support, so they apply on any container runtime:
+
+- **Read-only root + tmpfs.** `read_only: true` with `tmpfs: [/tmp/sim, /tmp]`. The only writable paths are the per-job temp areas: `SIM_TEMP_DIR=/tmp/sim` (job dirs) and `/tmp` (ngspice spools `.control` blocks there via libc `tmpfile()`, which ignores `$TMPDIR`). The built image needs no other runtime writes.
+- **Minimal capabilities.** `cap_drop: [ALL]` then `cap_add: [SETUID, SETGID]` — the worker holds only the two capabilities su-exec needs to DROP the ngspice child to `simrunner`; everything else (NET_RAW, SYS_ADMIN, CHOWN, …) is removed.
+- **No privilege escalation.** `security_opt: [no-new-privileges:true]` — a child can never gain privileges via a setuid bit. Compatible with su-exec, which drops (never escalates) using the worker's existing CAP_SETUID.
+- **Process + memory ceilings.** `pids_limit: 256` caps total processes container-wide; `mem_limit: 2g` is a cgroup RSS cap — stronger than the per-process RLIMIT_AS (virtual address space) the wrapper sets, and it OOM-kills before the host is starved.
+- **Networking kept.** The worker KEEPS normal networking (it must reach Postgres/Redis/MinIO). ngspice itself needs no network; isolating the *child's* network is the optional bubblewrap follow-up below — not the worker container's.
+
+> Validation caveat: these keys are config-validated and reasoned-correct; the dev source-mount flow keeps the needed paths writable. Confirm `read_only` with a built-image container smoke-test before a production rollout.
+
+> Note: the worker now layers **kernel resource limits + a dedicated low-privilege ngspice user** (§5.2) UNDER **container-level read-only-root, dropped capabilities, no-new-privileges, and process/memory ceilings** (§5.3). Still NOT present by default: a **user-namespace / seccomp / network-egress** sandbox of the ngspice child (rootless bubblewrap — host-conditional, see §5.3) and running the **worker process itself non-root** (it drops to `simrunner` only for the ngspice child). Those are the remaining hardening steps; the bubblewrap layer must fail-loud + fall back to the controls above because rootless userns is blocked under Docker's default seccomp unless the host kernel permits it.
 
 ---
 

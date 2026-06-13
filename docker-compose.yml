@@ -105,6 +105,36 @@ services:
       context: .
       dockerfile: infra/docker/worker-sim.Dockerfile
     container_name: circuitforge-worker-sim
+    # Least-privilege containment for the tier that runs untrusted ngspice. These are host-independent
+    # (no user-namespace / seccomp relaxation required, unlike bubblewrap) and stack UNDER the existing
+    # in-process rlimit wrapper + dedicated low-privilege ngspice user (SIM_SANDBOX_USER=simrunner).
+    #   - read_only root + tmpfs: the only writable paths are the per-job temp areas. SIM_TEMP_DIR=/tmp/sim
+    #     is where job dirs live; /tmp is needed because ngspice spools `.control` blocks there via libc
+    #     tmpfile() (which ignores $TMPDIR). Built-image runtime needs no other writes. NOTE: the dev
+    #     source-mount flow (volumes below) keeps those paths writable; confirm with a container smoke-test
+    #     before relying on read_only in a built-image prod deploy.
+    #   - cap_drop ALL, then re-add only SETUID/SETGID — the worker runs as root SOLELY so su-exec can DROP
+    #     the ngspice child to simrunner; those two caps are exactly what that drop needs. Everything else
+    #     (NET_RAW, SYS_ADMIN, CHOWN, …) is removed.
+    #   - no-new-privileges: a child can never gain privileges via a setuid bit (compatible with su-exec,
+    #     which drops privilege using the worker's existing CAP_SETUID — it does not escalate).
+    #   - pids_limit / mem_limit: container-wide ceilings so a runaway sim can't exhaust processes or memory
+    #     on the host. mem_limit is a cgroup RSS cap — stronger than the per-process RLIMIT_AS the wrapper
+    #     already sets. (The worker KEEPS normal networking: it must reach Postgres/Redis/MinIO. ngspice
+    #     itself needs no network; isolating the child's network is the optional bubblewrap follow-up.)
+    read_only: true
+    tmpfs:
+      - /tmp/sim
+      - /tmp
+    cap_drop:
+      - ALL
+    cap_add:
+      - SETUID
+      - SETGID
+    security_opt:
+      - no-new-privileges:true
+    pids_limit: 256
+    mem_limit: 2g
     environment:
       DATABASE_URL: postgresql://postgres:postgres@postgres:5432/circuitforge
       REDIS_URL: redis://redis:6379
