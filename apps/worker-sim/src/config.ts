@@ -44,6 +44,9 @@ const ConfigSchema = z.object({
     SIM_SANDBOX_CPU_SEC: z.string().transform(Number).optional(),
     SIM_SANDBOX_FSIZE_MB: z.string().transform(Number).optional(),
     SIM_SANDBOX_NPROC: z.string().transform(Number).optional(),
+    // Run ngspice as this dedicated low-privilege user on Linux (via su-exec) — its own process-count
+    // limit + no worker privileges. Set by the worker image (SIM_SANDBOX_USER=simrunner); unset = no drop.
+    SIM_SANDBOX_USER: z.string().optional(),
 
     // Queue
     QUEUE_NAME: z.string().default('simulations'),

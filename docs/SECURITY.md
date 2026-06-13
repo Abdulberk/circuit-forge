@@ -288,6 +288,7 @@ Supporting helpers (defense-in-depth for values/identifiers):
 - **No shell.** ngspice is launched with `spawn(config.NGSPICE_PATH, ['-b', '-o', 'stdout.log', netlistPath], { cwd, stdio: ['ignore','pipe','pipe'], timeout })` — an **args array, never a shell string**, so netlist content cannot break out into shell. `cwd` is the job dir, confining relative includes.
 - **Timeout + hard kill.** Two layers: `spawn(..., { timeout: config.SIM_TIMEOUT_MS })` plus an explicit `setTimeout` that sets `timedOut = true` and calls `process.kill('SIGKILL')` after `SIM_TIMEOUT_MS`. A timed-out job returns `{ success: false, error: 'Simulation timed out' }`.
 - **Output cap.** After reading `output.csv`, the runner computes `Buffer.byteLength` and rejects results larger than `config.SIM_MAX_OUTPUT_BYTES` (`Output too large: …`), bounding memory/disk.
+- **Kernel resource limits + dedicated user (Linux).** [sandbox.ts](../apps/worker-sim/src/simulation/sandbox.ts) wraps the spawn as `bash -c 'ulimit -v <mem> -t <cpu> -f <fsize> -u <procs>; exec [su-exec <user>] "$@"'`, so the kernel caps virtual memory (RLIMIT_AS), CPU seconds (RLIMIT_CPU), output-file size (RLIMIT_FSIZE) and process/thread count (RLIMIT_NPROC) per run; and when `SIM_SANDBOX_USER` is set (the worker image creates `simrunner` and sets it) ngspice runs as a **dedicated low-privilege user** — its own process-count limit, none of the worker's privileges. Args ride as argv (`"$@"`), never interpolated, so the netlist can't inject shell. No-op on non-Linux dev. **Verified on Alpine:** an over-CPU loop and an over-size write are terminated (SIGXCPU / SIGXFSZ, file capped) and the privilege drop yields `simrunner`.
 - **Guaranteed cleanup.** A `finally` block runs `fs.rm(jobDir, { recursive: true, force: true })` whether the job succeeds, fails, or throws — no per-job artifacts persist.
 
 Relevant config defaults (validated by Zod in [config.ts](../apps/worker-sim/src/config.ts)):
@@ -298,10 +299,13 @@ Relevant config defaults (validated by Zod in [config.ts](../apps/worker-sim/src
 | `SIM_MAX_OUTPUT_BYTES` | `5242880` (5 MB) | max parsed output size |
 | `SIM_TEMP_DIR` | `/tmp/sim` | base dir for per-job folders |
 | `NGSPICE_PATH` | `ngspice` | executable (resolved from `PATH`) |
+| `SIM_SANDBOX` | `auto` | `rlimit` on Linux, `none` elsewhere — kernel resource caps for ngspice |
+| `SIM_SANDBOX_{MEMORY_MB,CPU_SEC,FSIZE_MB,NPROC}` | 2048 / ~2×timeout / 256 / 64 | RLIMIT_AS / CPU / FSIZE / NPROC |
+| `SIM_SANDBOX_USER` | `simrunner` (set by the worker image) | dedicated low-privilege user for the ngspice child (Linux) |
 
 The worker config self-validates with Zod at startup and `process.exit(1)` on any invalid/missing required var (e.g., `DATABASE_URL`, S3 keys), so a misconfigured worker fails fast rather than running insecurely.
 
-> Note: these are **application-level** controls. There is no container/seccomp/cgroup sandbox or dropped-privilege user configured in the code reviewed; in production, run the worker in a locked-down container with CPU/memory/PID limits as an additional layer (Section 7).
+> Note: beyond the app-level controls, the worker now applies **kernel resource limits (RLIMIT_AS/CPU/FSIZE/NPROC)** and runs the ngspice child as a **dedicated low-privilege user** on Linux (verified — see the resource-limits bullet). Still NOT present: a namespace/seccomp/cgroup sandbox, network-egress restriction, or a read-only root FS — run the worker in a locked-down container (Section 7) for those stronger layers. Also: the worker process itself still runs as root in the image (it drops to `simrunner` only for the ngspice child) — running the whole worker non-root is a further hardening step.
 
 ---
 

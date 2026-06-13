@@ -1,11 +1,15 @@
 # Worker Simulation Dockerfile with ngspice
 FROM node:20-alpine AS base
 
-# Install ngspice and required tools
+# Install ngspice and required tools (su-exec drops the ngspice child to a low-privilege user)
 RUN apk add --no-cache \
     ngspice \
     bash \
-    curl
+    curl \
+    su-exec
+
+# Dedicated low-privilege user the ngspice child runs as (its own process-count limit; no worker privileges)
+RUN adduser -D -H -s /sbin/nologin simrunner
 
 # Install pnpm
 RUN npm install -g pnpm@8.14.1
@@ -39,10 +43,15 @@ RUN pnpm run build --filter=@circuitforge/worker-sim
 # Production stage
 FROM node:20-alpine AS production
 
-# Install ngspice in production image
+# Install ngspice in production image (su-exec drops the ngspice child to a low-privilege user)
 RUN apk add --no-cache \
     ngspice \
-    bash
+    bash \
+    su-exec
+
+# Dedicated low-privilege user the ngspice child runs as; tell the sandbox to use it.
+RUN adduser -D -H -s /sbin/nologin simrunner
+ENV SIM_SANDBOX_USER=simrunner
 
 RUN npm install -g pnpm@8.14.1
 
