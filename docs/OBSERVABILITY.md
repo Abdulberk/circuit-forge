@@ -63,11 +63,12 @@ Via `getNodeAutoInstrumentations()`. With the SDK on you get spans for, among ot
 
 The `fs` instrumentation is explicitly **disabled** — far too noisy.
 
-**Partially wired:**
-- **Prisma DB-query spans.** `@prisma/instrumentation` is registered in both apps' `telemetry.ts`, but on
-  Prisma **5.22** the client must be (re)generated with `previewFeatures = ["tracing"]` for it to emit
-  spans. Until `prisma generate` runs (with the dev stack stopped, to clear Windows file locks), DB-query
-  spans don't appear — the instrumentation sits as a harmless no-op. Follow-up (see §5).
+**Not wired (version conflict):**
+- **Prisma DB-query spans — disabled.** `@prisma/instrumentation@5.22` is **incompatible** with this
+  repo's `@opentelemetry/sdk-trace-base@1.30.1`: it calls the removed `parentTracer.getActiveSpanProcessor()`
+  and **crashes the process on the first query** (`TypeError` in `createEngineSpan`). It was tried (schema
+  `previewFeatures=["tracing"]` + the instrumentation) and backed out. Revisit only when the two package
+  versions line up (a compatible `@prisma/instrumentation` for OTel SDK 1.30.x, or matching upgrades).
 
 ### 2.2 Metrics
 
@@ -136,10 +137,10 @@ queue-depth alerts are early-warning / capacity signals.
 
 Called out honestly rather than implied:
 
-- **Prisma DB-query spans pending.** `@prisma/instrumentation` is wired (§2.1) but won't emit until the
-  Prisma client is regenerated with `previewFeatures = ["tracing"]` (Prisma 5.22) — blocked by Windows
-  file locks while `pnpm dev` runs. Do it with the dev stack stopped: add the preview flag to
-  `schema.prisma`, `pnpm --filter api db:generate`, restart. (BullMQ/job tracing already works — §2.1.)
+- **Prisma DB-query spans — disabled (version conflict).** `@prisma/instrumentation@5.22` crashes against
+  `@opentelemetry/sdk-trace-base@1.30.1` (removed `getActiveSpanProcessor`) — see §2.1. Backed out; revisit
+  when the versions are compatible. (BullMQ/distributed `sim.process` tracing works — §2.1.) The unused
+  `@prisma/instrumentation` dependency can be dropped on the next lockfile change.
 - **API log export unconfirmed.** Worker pino logs reach Loki; the API uses the same wiring but its lines
   weren't yet confirmed in Loki — verify after the API serves some traffic.
 - **No collector / dashboards enabled by default.** The app only emits OTLP. For LOCAL viewing there's an

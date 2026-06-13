@@ -21,7 +21,6 @@ import { OTLPMetricExporter } from '@opentelemetry/exporter-metrics-otlp-http';
 import { PeriodicExportingMetricReader } from '@opentelemetry/sdk-metrics';
 import { OTLPLogExporter } from '@opentelemetry/exporter-logs-otlp-http';
 import { BatchLogRecordProcessor } from '@opentelemetry/sdk-logs';
-import { PrismaInstrumentation } from '@prisma/instrumentation';
 
 let sdk: NodeSDK | undefined;
 
@@ -58,7 +57,9 @@ export function startTelemetry(serviceName: string): void {
                 getNodeAutoInstrumentations({
                     '@opentelemetry/instrumentation-fs': { enabled: false }, // far too noisy
                 }),
-                new PrismaInstrumentation(), // DB query spans (Prisma uses its own engine; needs this)
+                // NOTE: @prisma/instrumentation@5.22 is INCOMPATIBLE with sdk-trace-base@1.30.1 (it calls
+                // the removed parentTracer.getActiveSpanProcessor() → crashes on the first query). Prisma
+                // DB-query spans are therefore disabled until the versions line up. See docs/OBSERVABILITY.md.
             ],
         });
         sdk.start();
