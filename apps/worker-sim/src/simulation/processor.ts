@@ -203,6 +203,9 @@ async function handleSuccess(jobId: string, result: SimulationJobResult): Promis
                 runtimeMs,
                 outputSizeBytes,
                 pointsCount: originalPointsCount, // the TRUE simulated resolution, not the stored cap
+                // Present when the Convergence Doctor's remedy ladder rescued an initial non-convergence
+                // (recovered:true + the remedy that worked). The API surfaces it on the verify evidence.
+                ...(result.convergence ? { convergence: result.convergence as unknown as Prisma.InputJsonValue } : {}),
             },
         },
     });
@@ -233,6 +236,10 @@ async function handleFailure(jobId: string, result: SimulationJobResult): Promis
                 runtimeMs,
                 error,
                 failureClass: infra ? 'infra' : 'sim',
+                // A convergence-class failure where the remedy ladder was walked but NONE recovered the run
+                // (recovered:false + every remedy tried) — surfaced so the user/AI sees it was a genuine,
+                // remedy-resistant non-convergence, not an un-diagnosed crash.
+                ...(result.convergence ? { convergence: result.convergence as unknown as Prisma.InputJsonValue } : {}),
             },
         },
     });

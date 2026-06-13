@@ -1,4 +1,8 @@
-import { diagnoseConvergence, convergenceRemedyLadder, type ConvergenceKind } from './convergence';
+/**
+ * Convergence Doctor — diagnosis + remedy ladder. Pure + deterministic (no ngspice). Migrated into
+ * eda-core (from the API) when the worker began running the same ladder.
+ */
+import { diagnoseConvergence, convergenceRemedyLadder, type ConvergenceKind } from '../src/netlist/convergence';
 
 describe('diagnoseConvergence', () => {
     const cases: { text: string; kind: ConvergenceKind }[] = [

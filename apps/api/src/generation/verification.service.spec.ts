@@ -267,6 +267,26 @@ describe('VerificationService — worker delegation (prod path, userId present)'
         expect(ev.simStatus).toBe('failed');
     });
 
+    it('surfaces the worker Convergence Doctor report when a remedy rescued the run (recovered → PASS + report)', async () => {
+        // The worker walked the ladder, the first remedy fixed a singular matrix, and it persisted the
+        // report in metrics. verify() must surface it on the evidence even though the verdict is a clean pass.
+        const convergence = { recovered: true, kind: 'singular_matrix', diagnosis: 'matrix singular', remedyApplied: 'add gmin', rationale: 'a tiny conductance to ground', attempts: 1 };
+        const { svc } = makeWorkerService({ status: 'SUCCEEDED', metrics: { pointsCount: 1, convergence } });
+        const ev = await svc.verify(DIVIDER, { type: 'op' }, [A('out', 'final', 'approx', 5.0, 0.1)], 'user-1');
+        expect(ev.verdict).toBe('pass'); // the rescued run still passes the spec
+        expect(ev.convergence).toMatchObject({ recovered: true, kind: 'singular_matrix', remedyApplied: 'add gmin' });
+    });
+
+    it('surfaces a recovered:false Convergence report on a remedy-resistant FAILED run (FAIL + report)', async () => {
+        // ngspice ran, the ladder was fully walked, nothing converged → a genuine, remedy-resistant fault.
+        const convergence = { recovered: false, kind: 'no_convergence', diagnosis: 'no solution at default accuracy', attempts: 3, triedRemedies: ['add gmin', 'relaxed tolerances + gmin', 'aggressive relaxation (last resort)'] };
+        const { svc } = makeWorkerService({ status: 'FAILED', metrics: { failureClass: 'sim', error: 'no convergence', convergence } });
+        const ev = await svc.verify(DIVIDER, { type: 'op' }, [A('out', 'final', 'approx', 5)], 'user-1');
+        expect(ev.verdict).toBe('fail');
+        expect(ev.convergence).toMatchObject({ recovered: false, kind: 'no_convergence' });
+        expect(ev.convergence!.triedRemedies!.length).toBe(3);
+    });
+
     it('a SUCCEEDED job whose result is unavailable from storage (S3 outage) is INCONCLUSIVE, not a fail', async () => {
         const { svc } = makeWorkerService({ status: 'SUCCEEDED', result: null, resultError: 'Result data is currently unavailable from storage.' });
         const ev = await svc.verify(DIVIDER, { type: 'op' }, [A('out', 'final', 'approx', 5)], 'user-1');

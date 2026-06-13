@@ -121,6 +121,19 @@ export {
     SecurityError,
 } from './netlist';
 
+// Solver options + Convergence Doctor (shared by the inline API simulator and the worker)
+export {
+    solverOptionTokens,
+    applySolverOptions,
+    diagnoseConvergence,
+    convergenceRemedyLadder,
+    type ConvergenceKind,
+    type ConvergenceDiagnosis,
+    type RemedyStep,
+    type ConvergenceReport,
+    type SolverOptions,
+} from './netlist';
+
 // Parsing
 export {
     parseCsv,
