@@ -9,6 +9,7 @@ import { config } from '../config';
 import { logger } from '../logger';
 import { parseSimulationOutput, sanitizeNetlist, extractProbes, parseSpiceValue } from '@circuit-forge/eda-core';
 import type { SimulationResult } from '@circuit-forge/eda-core';
+import { sandboxedCommand, resolveSandboxConfig } from './sandbox';
 
 /**
  * Simulation job input
@@ -202,9 +203,14 @@ async function executeNgspice(
         const args = ['-b', '-o', 'stdout.log', netlistPath];
         const cwd = path.dirname(netlistPath);
 
-        logger.debug({ cmd: config.NGSPICE_PATH, args, cwd }, 'Executing ngspice');
+        // Wrap with OS resource limits (Linux prod) so an untrusted circuit can't OOM/fill-disk/spin
+        // the host. No-op (runs ngspice directly) on Windows dev or when SIM_SANDBOX=none.
+        const sandbox = resolveSandboxConfig(config);
+        const { file, args: spawnArgs } = sandboxedCommand(config.NGSPICE_PATH, args, sandbox);
 
-        const process: ChildProcess = spawn(config.NGSPICE_PATH, args, {
+        logger.debug({ cmd: file, args: spawnArgs, cwd, sandbox: sandbox.mode }, 'Executing ngspice');
+
+        const process: ChildProcess = spawn(file, spawnArgs, {
             cwd,
             stdio: ['ignore', 'pipe', 'pipe'],
             timeout: config.SIM_TIMEOUT_MS,
