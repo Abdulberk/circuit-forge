@@ -4,6 +4,8 @@
  */
 import { VerificationService, isCurrentProbe } from './verification.service';
 import type { CircuitSimulatorService, SimSummary } from './circuit-simulator.service';
+import type { SimulationService } from '../simulation/simulation.service';
+import { sanitizeNodeName, type CircuitJson } from '@circuit-forge/eda-core';
 import type { AssertionDto } from './dto';
 
 const okSim = (over: Partial<SimSummary> = {}): SimSummary => ({
@@ -140,5 +142,93 @@ describe('VerificationService', () => {
         expect(isCurrentProbe('@r1[i]')).toBe(true);
         expect(isCurrentProbe('out')).toBe(false);
         expect(isCurrentProbe('v(out)')).toBe(false);
+    });
+});
+
+/** A real 10V/1k/1k divider (out=5V) so runErc + generateNetlist succeed in the worker path. */
+const DIVIDER: CircuitJson = {
+    version: '1.0',
+    components: [
+        { id: 'v1', type: 'voltage_source', designator: 'V1', value: 'DC 10', pins: [{ pinId: '+', netId: 'in' }, { pinId: '-', netId: 'gnd' }] },
+        { id: 'r1', type: 'resistor', designator: 'R1', value: '1k', pins: [{ pinId: '1', netId: 'in' }, { pinId: '2', netId: 'out' }] },
+        { id: 'r2', type: 'resistor', designator: 'R2', value: '1k', pins: [{ pinId: '1', netId: 'out' }, { pinId: '2', netId: 'gnd' }] },
+        { id: 'gnd', type: 'ground', designator: 'GND1', pins: [{ pinId: '1', netId: 'gnd' }] },
+    ],
+    nets: [{ id: 'in', name: 'in' }, { id: 'out', name: 'out' }, { id: 'gnd', name: 'gnd', isGround: true }],
+};
+
+/** The worker's SimulationResult — series names are the sanitized SPICE nodes ngspice actually emits
+ *  (build them via sanitizeNodeName so they match nodeKey() regardless of the n-/x_- prefix rule). */
+const workerResult = {
+    meta: { analysisType: 'op', xLabel: 't', pointsCount: 1 },
+    series: [
+        { name: `v(${sanitizeNodeName('in')})`, points: [{ x: 0, y: 10 }] },
+        { name: `v(${sanitizeNodeName('out')})`, points: [{ x: 0, y: 5 }] },
+    ],
+};
+
+function makeWorkerService(opts: { status?: string; result?: unknown; createThrows?: boolean } = {}) {
+    const createQuickSim = jest.fn(async (_netlist: string, _analysis: unknown, _userId: string) => {
+        if (opts.createThrows) throw new Error('Redis down');
+        return { jobId: 'job-1' };
+    });
+    const getStatus = jest.fn(async () => ({ status: opts.status ?? 'SUCCEEDED' }));
+    const getResult = jest.fn(async () => ({ result: opts.result ?? workerResult }));
+    const simulation = { createQuickSim, getStatus, getResult } as unknown as SimulationService;
+    const simulateWithRemedies = jest.fn(); // must NOT be called on the worker path
+    const simulator = { simulateWithRemedies } as unknown as CircuitSimulatorService;
+    return { svc: new VerificationService(simulator, simulation), createQuickSim, getStatus, getResult, simulateWithRemedies };
+}
+
+describe('VerificationService — worker delegation (prod path, userId present)', () => {
+    it('delegates ngspice to the worker (NOT inline), polls, and builds evidence from the result', async () => {
+        const { svc, createQuickSim, getStatus, getResult, simulateWithRemedies } = makeWorkerService();
+        const ev = await svc.verify(DIVIDER, { type: 'op' }, [A('out', 'final', 'approx', 5.0, 0.1)], 'user-1');
+        expect(createQuickSim).toHaveBeenCalledTimes(1); // enqueued to the worker
+        expect(createQuickSim.mock.calls[0]![2]).toBe('user-1'); // with the user's id (for org/quota)
+        expect(getStatus).toHaveBeenCalled(); // server-side polled
+        expect(getResult).toHaveBeenCalledTimes(1);
+        expect(simulateWithRemedies).not.toHaveBeenCalled(); // inline path NOT used in prod
+        expect(ev.verdict).toBe('pass'); // out≈5V meets the spec; ERC clean on the divider
+        expect(ev.measurements.find((m) => m.node === `v(${sanitizeNodeName('out')})`)!.final).toBe(5);
+        expect(ev.power).toBeDefined(); // power review still runs on the worker-returned measurements
+    });
+
+    it('a failed/timed-out worker job becomes a failed verdict (no throw)', async () => {
+        const { svc } = makeWorkerService({ status: 'FAILED' });
+        const ev = await svc.verify(DIVIDER, { type: 'op' }, [A('out', 'final', 'approx', 5)], 'user-1');
+        expect(ev.verdict).toBe('fail');
+        expect(ev.simStatus).toBe('failed');
+        expect(ev.assertions[0]!.actual).toBeNull();
+    });
+
+    it('an unreachable queue (enqueue throws) is reported, not thrown', async () => {
+        const { svc } = makeWorkerService({ createThrows: true });
+        const ev = await svc.verify(DIVIDER, { type: 'op' }, [], 'user-1');
+        expect(ev.verdict).toBe('fail');
+        expect(ev.runError).toMatch(/queue|worker/i);
+    });
+
+    it('ERC errors are caught API-side BEFORE enqueuing (no point simulating a broken circuit)', async () => {
+        const noGround: CircuitJson = {
+            version: '1.0',
+            components: [
+                { id: 'v1', type: 'voltage_source', designator: 'V1', value: 'DC 5', pins: [{ pinId: '+', netId: 'a' }, { pinId: '-', netId: 'b' }] },
+                { id: 'r1', type: 'resistor', designator: 'R1', value: '1k', pins: [{ pinId: '1', netId: 'a' }, { pinId: '2', netId: 'b' }] },
+            ],
+            nets: [{ id: 'a', name: 'a' }, { id: 'b', name: 'b' }],
+        };
+        const { svc } = makeWorkerService();
+        const ev = await svc.verify(noGround, { type: 'op' }, [], 'user-1');
+        expect(ev.erc.errors.length).toBeGreaterThan(0); // ERC ran API-side
+        expect(ev.verdict).toBe('fail');
+    });
+
+    it('falls back to the inline simulator when there is no userId (dev / live specs)', async () => {
+        const { svc, createQuickSim, simulateWithRemedies } = makeWorkerService();
+        (simulateWithRemedies as jest.Mock).mockResolvedValue(okSim());
+        await svc.verify(DIVIDER, { type: 'op' }, []); // no userId
+        expect(simulateWithRemedies).toHaveBeenCalledTimes(1);
+        expect(createQuickSim).not.toHaveBeenCalled();
     });
 });

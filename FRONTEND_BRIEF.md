@@ -189,7 +189,7 @@ This section enumerates every screen the v1 frontend must ship, with its purpose
 | POST | `/edit-circuit` | JWT | AI dialog | Throttled 5/60s |
 | POST | `/explain-circuit` | JWT | AI dialog, Editor | Throttled 10/60s |
 | POST | `/design-circuit` | JWT | AI Design dialog | Agentic; throttled 3/60s; ~10–60s |
-| POST | `/verify-design` | JWT | "Verify" button / review panel | Body `{ circuit, analysisConfig?, assertions? }` → a **DesignEvidence** pack (ERC + ngspice + measured-vs-requested specs → `verdict` pass/fail/inconclusive). Deterministic, no AI. 10/60s. See §4 / §7. |
+| POST | `/verify-design` | JWT | "Verify" button / review panel | Body `{ circuit, analysisConfig?, assertions? }` → a **DesignEvidence** pack (ERC + ngspice + measured-vs-requested specs → `verdict` pass/fail/inconclusive). Deterministic, no AI. **Synchronous response, but ngspice runs on the worker queue** — under load it can take a few seconds (server-side polled, up to 90s); show a brief "verifying…" state. 10/60s. See §4 / §7. |
 | GET | `/parts/search` | JWT | Editor (part picker) | `?q=` (+ `manufacturerId?`/`categoryId?`) → real-part search; 30/60s |
 | GET | `/parts/manufacturers` | JWT | Editor (part picker) | Manufacturer facet `[{ id, name, productsCount }]`; 60/60s |
 | GET | `/parts/categories` | JWT | Editor (part picker) | Category tree facet (nested + counts); 60/60s |
