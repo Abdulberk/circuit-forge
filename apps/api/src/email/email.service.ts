@@ -1,23 +1,26 @@
 /**
  * Transactional email.
  *
- * Ships with a LOG transport (default): the message — including the verification / reset link — is
- * written to the application log, so the account-lifecycle flows work end-to-end in dev/staging with
- * zero configuration. Production wires a real transport (SMTP / provider) at the marked seam in
- * `send()`. "Inert until configured", mirroring the rest of the system: no email infra to stand up
- * before the security mechanism (tokens, expiry, single-use) is usable.
+ * Provider-agnostic: the active transport (SES / SMTP / log) is chosen at boot from config (see
+ * email-transports.ts), SES-first. With nothing configured it uses the LOG transport, so the
+ * account-lifecycle flows work end-to-end in dev/CI with zero setup. Sending is best-effort — a
+ * delivery failure is logged, never thrown, so it can't break registration or password-reset
+ * (the token is already persisted; the user can resend / retry).
  */
 import { Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
+import { resolveEmailTransport, type EmailTransport } from './email-transports';
 
 @Injectable()
 export class EmailService {
     private readonly logger = new Logger(EmailService.name);
     private readonly appUrl: string;
+    private readonly transport: EmailTransport;
 
     constructor(private readonly config: ConfigService) {
         // Where the browser app lives — the links in emails point here. Trailing slash trimmed.
         this.appUrl = (this.config.get<string>('APP_URL') ?? 'http://localhost:3000').replace(/\/+$/, '');
+        this.transport = resolveEmailTransport(this.config);
     }
 
     /** Absolute link the user clicks to confirm their email. */
@@ -47,11 +50,15 @@ export class EmailService {
     }
 
     /**
-     * Deliver a message. Default: log transport. PRODUCTION SEAM — to send real email, add an SMTP
-     * or provider transport here (e.g. nodemailer gated on SMTP_HOST) and fall back to logging when
-     * it isn't configured. Kept log-only for now so this ships dependency-free.
+     * Deliver a message via the configured transport. Best-effort: a transport failure is logged and
+     * swallowed so the calling auth flow (register / forgot-password) still completes — the security
+     * token is already stored, and the user can resend or retry verification.
      */
-    private async send(to: string, subject: string, body: string): Promise<void> {
-        this.logger.log(`[email:log-transport] to=<${to}> subject="${subject}"\n${body}`);
+    private async send(to: string, subject: string, text: string): Promise<void> {
+        try {
+            await this.transport.send({ to, subject, text });
+        } catch (e) {
+            this.logger.error(`email send failed (transport=${this.transport.name}, to=<${to}>): ${e instanceof Error ? e.message : e}`);
+        }
     }
 }
