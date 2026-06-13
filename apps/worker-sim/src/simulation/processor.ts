@@ -110,7 +110,11 @@ async function processJob(job: Job<SimulationJobPayload>): Promise<void> {
         const errorMessage = error instanceof Error ? error.message : String(error);
         logger.error({ jobId, error: errorMessage }, 'Job processing error');
 
-        // Pre-run/processing failure (download, DB, parse) — no ngspice runtime to report, count only.
+        // Reached by a throw OUTSIDE the ngspice result path — S3 model download, the RUNNING/DB update,
+        // or a result upload on an otherwise-successful sim. These are INFRASTRUCTURE failures, not circuit
+        // faults, so tag failureClass='infra' (status stays FAILED — no operational enum value); the API
+        // maps it to an 'inconclusive' verify verdict rather than telling the user their design failed.
+        // The OTel metric counts it as a failed run (throughput); the failureClass tag drives the verdict.
         recordSim({ status: 'failed' });
 
         await prisma.simulationJob.update({
@@ -121,6 +125,7 @@ async function processJob(job: Job<SimulationJobPayload>): Promise<void> {
                 finishedAt: new Date(),
                 metrics: {
                     error: errorMessage,
+                    failureClass: 'infra',
                 },
             },
         });
@@ -184,9 +189,13 @@ async function handleSuccess(jobId: string, result: SimulationJobResult): Promis
  * Handle failed simulation
  */
 async function handleFailure(jobId: string, result: SimulationJobResult): Promise<void> {
-    const { stdout, stderr, runtimeMs, error } = result;
+    const { stdout, stderr, runtimeMs, error, infra } = result;
 
-    const status = error?.includes('timed out') ? 'TIMED_OUT' : 'FAILED';
+    // INFRA failures (ngspice couldn't be launched, fs/setup) are NOT a circuit fault. The SimJobStatus
+    // enum has no operational value, so we persist FAILED but tag metrics.failureClass='infra'; the API
+    // reads that and reports the verify verdict as 'inconclusive', never a design 'fail'. A genuine
+    // ngspice wall-clock timeout stays TIMED_OUT; any other genuine ngspice failure is FAILED + 'sim'.
+    const status = !infra && error?.includes('timed out') ? 'TIMED_OUT' : 'FAILED';
 
     recordSim({ status: status === 'TIMED_OUT' ? 'timed_out' : 'failed', durationMs: runtimeMs });
 
@@ -200,6 +209,7 @@ async function handleFailure(jobId: string, result: SimulationJobResult): Promis
             metrics: {
                 runtimeMs,
                 error,
+                failureClass: infra ? 'infra' : 'sim',
             },
         },
     });
