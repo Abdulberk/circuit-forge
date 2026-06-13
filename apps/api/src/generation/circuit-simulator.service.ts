@@ -346,11 +346,22 @@ export class CircuitSimulatorService {
 }
 
 /** Distil one series to {min,max,final,pp}. Empty series degrade to zeros (caller reports nodeCount=0). */
-function summarizeSeries(s: DataSeries): SimMeasurement {
-    const ys = s.points.map((p) => p.y).filter((y) => Number.isFinite(y));
-    if (ys.length === 0) return { node: s.name, min: 0, max: 0, final: 0, pp: 0 };
-    const min = Math.min(...ys);
-    const max = Math.max(...ys);
+export function summarizeSeries(s: DataSeries): SimMeasurement {
+    // Single pass: Math.min(...ys)/Math.max(...ys) would throw RangeError ("max call stack") once a
+    // transient series passes ~100k points — exactly the large runs we care about. This also avoids
+    // allocating the intermediate ys array.
+    let min = Infinity;
+    let max = -Infinity;
+    let final = 0;
+    let count = 0;
+    for (const p of s.points) {
+        if (!Number.isFinite(p.y)) continue;
+        if (p.y < min) min = p.y;
+        if (p.y > max) max = p.y;
+        final = p.y; // last finite sample
+        count++;
+    }
+    if (count === 0) return { node: s.name, min: 0, max: 0, final: 0, pp: 0 };
     const round = (n: number) => Number(n.toPrecision(4));
-    return { node: s.name, min: round(min), max: round(max), final: round(ys[ys.length - 1]!), pp: round(max - min) };
+    return { node: s.name, min: round(min), max: round(max), final: round(final), pp: round(max - min) };
 }

@@ -3,14 +3,20 @@
  */
 import { NestFactory } from '@nestjs/core';
 import { ValidationPipe } from '@nestjs/common';
+import { NestExpressApplication } from '@nestjs/platform-express';
 import { SwaggerModule, DocumentBuilder } from '@nestjs/swagger';
 import helmet from 'helmet';
 import { AppModule } from './app.module';
 
 async function bootstrap() {
-    const app = await NestFactory.create(AppModule, {
+    const app = await NestFactory.create<NestExpressApplication>(AppModule, {
         logger: ['error', 'warn', 'log', 'debug', 'verbose'],
+        bodyParser: true,
     });
+    // Raise the JSON body limit above Express's 100KB default so the documented 200KB netlist
+    // contract (netlist/import) is actually reachable; 1MB also bounds large circuitJson uploads.
+    // (Without this, a 150KB netlist is rejected by Express with a raw 413 before validation.)
+    app.useBodyParser('json', { limit: '1mb' });
 
     const isProd = process.env.NODE_ENV === 'production';
 
