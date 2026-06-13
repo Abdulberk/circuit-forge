@@ -91,3 +91,73 @@ describe('DesignService grounding (flagship /design-circuit)', () => {
         expect(result.ok).toBe(true);
     });
 });
+
+/** SimulationService whose status / enqueue behavior is configurable for the operational-outcome tests. */
+function makeSimWith(opts: { status?: string; createThrows?: boolean; failureClass?: string }): SimulationService {
+    return {
+        createQuickSim: jest.fn(async () => {
+            if (opts.createThrows) throw new Error('Redis down');
+            return { jobId: 'job-1' };
+        }),
+        getStatus: jest.fn(async () => ({
+            status: opts.status ?? 'SUCCEEDED',
+            metrics: { pointsCount: 42, ...(opts.failureClass ? { failureClass: opts.failureClass } : {}) },
+        })),
+        getResult: jest.fn(async () => ({ result: { meta: { pointsCount: 42 } }, metrics: { pointsCount: 42 } })),
+    } as unknown as SimulationService;
+}
+
+/** Make the model return one valid design (the initial generate call). */
+function initialDesignOnce() {
+    mockCreate.mockResolvedValueOnce({
+        content: [{ type: 'text', text: JSON.stringify({ circuit: VALID_CIRCUIT, analysisConfig: { type: 'op' }, explanation: 'x' }) }],
+    });
+}
+
+function makeService(sim: SimulationService): DesignService {
+    const cfg = makeConfig();
+    return new DesignService(cfg, sim, new CatalogGroundingService(cfg, makeParts() as unknown as PartsService, noSimulator));
+}
+
+describe('DesignService — infra/operational outcomes are inconclusive, not a design fault', () => {
+    beforeEach(() => mockCreate.mockReset());
+
+    it('a queue/worker outage (enqueue throws) is INCONCLUSIVE — circuit returned, LLM NOT asked to "fix" it', async () => {
+        initialDesignOnce();
+        const r = (await makeService(makeSimWith({ createThrows: true })).design({ prompt: 'x', maxRounds: 2 } as never, 'user-1')) as Record<string, unknown>;
+        expect(r.ok).toBe(false);
+        expect(r.inconclusive).toBe(true);
+        expect(r.circuit).toBeDefined();
+        expect(mockCreate).toHaveBeenCalledTimes(1); // initial design only — no fix round on an infra outage
+    });
+
+    it('a job nothing consumes (poll never reaches a terminal state) is INCONCLUSIVE, not a sim failure', async () => {
+        const prev = process.env.DESIGN_POLL_TIMEOUT_MS;
+        process.env.DESIGN_POLL_TIMEOUT_MS = '1500'; // expire the server-side poll fast
+        try {
+            initialDesignOnce();
+            const r = (await makeService(makeSimWith({ status: 'RUNNING' })).design({ prompt: 'x', maxRounds: 2 } as never, 'user-1')) as Record<string, unknown>;
+            expect(r.ok).toBe(false);
+            expect(r.inconclusive).toBe(true);
+            expect(mockCreate).toHaveBeenCalledTimes(1); // no fix round
+        } finally {
+            if (prev === undefined) delete process.env.DESIGN_POLL_TIMEOUT_MS;
+            else process.env.DESIGN_POLL_TIMEOUT_MS = prev;
+        }
+    });
+
+    it('a genuine FAILED sim is NOT inconclusive — it stays a (fixable) circuit fault', async () => {
+        initialDesignOnce();
+        const r = (await makeService(makeSimWith({ status: 'FAILED' })).design({ prompt: 'x', maxRounds: 1 } as never, 'user-1')) as Record<string, unknown>;
+        expect(r.ok).toBe(false);
+        expect(r.inconclusive).toBeUndefined(); // ngspice ran and failed → a real fault, not an operational outcome
+    });
+
+    it('a worker INFRA failure (FAILED + failureClass=infra) is INCONCLUSIVE, NOT fed to the LLM', async () => {
+        initialDesignOnce();
+        const r = (await makeService(makeSimWith({ status: 'FAILED', failureClass: 'infra' })).design({ prompt: 'x', maxRounds: 2 } as never, 'user-1')) as Record<string, unknown>;
+        expect(r.ok).toBe(false);
+        expect(r.inconclusive).toBe(true);
+        expect(mockCreate).toHaveBeenCalledTimes(1); // worker infra error → no "fix" round, no design-failed
+    });
+});

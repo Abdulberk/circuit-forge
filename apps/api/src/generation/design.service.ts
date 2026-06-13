@@ -30,6 +30,9 @@ export interface RoundRecord {
 @Injectable()
 export class DesignService {
     private readonly logger = new Logger(DesignService.name);
+    /** Server-side poll budget (ms) per design round's simulation. Env-tunable (ops) + small in tests so
+     *  the "job never consumed → inconclusive" path is fast to exercise. */
+    private readonly pollTimeoutMs = Number(process.env.DESIGN_POLL_TIMEOUT_MS) || 90_000;
 
     constructor(
         private readonly config: ConfigService,
@@ -74,17 +77,50 @@ export class DesignService {
                     continue;
                 }
 
-                const { jobId } = await this.simulation.createQuickSim(
-                    netlist,
-                    analysis as unknown as Record<string, unknown>,
-                    userId,
-                );
-                const status = await this.pollJob(jobId, userId, 90_000);
-                const result = (await this.simulation.getResult(jobId, userId)) as {
+                // Run the sim on the worker. Transport/infra errors (queue/Redis/DB) and operational
+                // outcomes (job never consumed → POLL_TIMEOUT, or CANCELED) are NOT circuit faults: they
+                // must not be fed to the LLM as something to "fix", nor reported as "design failed".
+                // Handle them as INCONCLUSIVE — return the generated, sim-unverified circuit + try-again.
+                let jobId: string;
+                let status: { status: string; metrics?: unknown };
+                let result: {
                     result?: { meta?: { pointsCount?: number } };
                     metrics?: { pointsCount?: number };
                     error?: string;
                 };
+                try {
+                    ({ jobId } = await this.simulation.createQuickSim(
+                        netlist,
+                        analysis as unknown as Record<string, unknown>,
+                        userId,
+                    ));
+                    status = await this.pollJob(jobId, userId, this.pollTimeoutMs);
+                    if (status.status === 'POLL_TIMEOUT' || status.status === 'CANCELED') {
+                        history.push({ round, status: status.status, pointsCount: 0, jobId, note: 'simulation capacity unavailable' });
+                        return this.inconclusive(circuit, analysis, explanation, history, groundingOpts,
+                            'Simulation capacity was unavailable, so the design could not be verified — try again. The circuit was generated but its simulation checks did not run.');
+                    }
+                    result = (await this.simulation.getResult(jobId, userId)) as typeof result;
+                } catch (e) {
+                    if (e instanceof HttpException) throw e; // 429 QUOTA_EXCEEDED etc. carry intent — keep them
+                    this.logger.error(`design round ${round} simulation infrastructure error: ${errMsg(e)}`);
+                    history.push({ round, status: 'INFRA_ERROR', pointsCount: 0, note: errMsg(e) });
+                    return this.inconclusive(circuit, analysis, explanation, history, groundingOpts,
+                        'Simulation could not be run (worker/queue unavailable), so the design could not be verified — try again.');
+                }
+
+                // The worker tags pre/around-ngspice INFRA failures (bad NGSPICE_PATH/spawn, S3 model
+                // download, DB, result upload) as status FAILED + metrics.failureClass='infra' (the
+                // SimJobStatus enum has no operational value). That's an OPERATIONAL outcome, NOT a circuit
+                // fault — same contract as POLL_TIMEOUT above; don't feed it to the LLM (mirror
+                // verification.service.ts). Genuine ngspice faults carry 'sim' (or nothing on older rows).
+                const failureClass = (status.metrics as { failureClass?: string } | undefined)?.failureClass;
+                if (status.status !== 'SUCCEEDED' && failureClass === 'infra') {
+                    history.push({ round, status: status.status, pointsCount: 0, jobId, note: 'worker infrastructure error' });
+                    return this.inconclusive(circuit, analysis, explanation, history, groundingOpts,
+                        'The worker could not run the simulation (infrastructure error), so the design could not be verified — try again.');
+                }
+
                 // pointsCount lives in `metrics` (always persisted by the worker). The full
                 // `resultJson` — and thus `result.meta` — is undefined when the worker offloads
                 // large results (>1MB) to S3, so reading it there falsely reports 0 points and
@@ -112,6 +148,9 @@ export class DesignService {
                     };
                 }
 
+                // A GENUINE sim fault — ngspice actually ran and FAILED / hit its own (terminal) TIMED_OUT,
+                // or SUCCEEDED with 0 points (floating node / unexcited analysis) — IS a circuit problem →
+                // ask the AI to fix it. (Operational outcomes were already returned as inconclusive above.)
                 if (round < maxRounds) {
                     const problem =
                         status.status !== 'SUCCEEDED'
@@ -159,6 +198,31 @@ export class DesignService {
         return { circuit: fixed.circuit, analysis: fixed.analysisConfig, explanation: fixed.explanation };
     }
 
+    /** Operational outcome (no verdict): the sim couldn't run — worker/queue unavailable or the job was
+     *  never consumed. Return the AI-generated circuit honestly as sim-UNVERIFIED (ok:false + inconclusive)
+     *  so the client can retry — rather than asking the LLM to "fix" a sound design or claiming it failed. */
+    private async inconclusive(
+        circuit: CircuitJson,
+        analysis: AnalysisConfig,
+        explanation: string | undefined,
+        history: RoundRecord[],
+        grounding: unknown,
+        warning: string,
+    ) {
+        if (grounding) await this.grounding.enrichSourcing(circuit);
+        return {
+            ok: false,
+            inconclusive: true,
+            circuit,
+            analysisConfig: analysis,
+            explanation,
+            rounds: history.length,
+            history,
+            simulation: { status: history[history.length - 1]?.status ?? 'UNAVAILABLE' },
+            warning,
+        };
+    }
+
     private async pollJob(
         jobId: string,
         userId: string,
@@ -167,10 +231,13 @@ export class DesignService {
         const start = Date.now();
         while (Date.now() - start < timeoutMs) {
             const s = (await this.simulation.getStatus(jobId, userId)) as { status: string; metrics?: unknown };
-            if (s.status === 'SUCCEEDED' || s.status === 'FAILED' || s.status === 'TIMED_OUT') return s;
+            if (s.status === 'SUCCEEDED' || s.status === 'FAILED' || s.status === 'TIMED_OUT' || s.status === 'CANCELED') return s;
             await new Promise((r) => setTimeout(r, 1000));
         }
-        return { status: 'TIMED_OUT' };
+        // Budget exhausted without a terminal state = nothing consumed the job (no worker / queue backlog).
+        // Distinct sentinel — NOT a terminal 'TIMED_OUT' (where ngspice actually ran) — so the caller treats
+        // it as an OPERATIONAL outcome, not a circuit fault to feed back to the LLM.
+        return { status: 'POLL_TIMEOUT' };
     }
 }
 
