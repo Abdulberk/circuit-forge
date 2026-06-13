@@ -11,6 +11,7 @@ import { runSimulation, type SimulationJobResult } from './runner';
 import { downloadFile, uploadJsonResult } from '../storage/s3-client';
 import { downsampleResult } from '@circuit-forge/eda-core';
 import { Prisma } from '@prisma/client';
+import { recordSim } from '../observability/telemetry';
 
 /**
  * Job payload from the queue
@@ -109,6 +110,9 @@ async function processJob(job: Job<SimulationJobPayload>): Promise<void> {
         const errorMessage = error instanceof Error ? error.message : String(error);
         logger.error({ jobId, error: errorMessage }, 'Job processing error');
 
+        // Pre-run/processing failure (download, DB, parse) — no ngspice runtime to report, count only.
+        recordSim({ status: 'failed' });
+
         await prisma.simulationJob.update({
             where: { id: jobId },
             data: {
@@ -139,6 +143,9 @@ async function handleSuccess(jobId: string, result: SimulationJobResult): Promis
     // nobody renders a million points, and the inline AI-verify path is unaffected (it summarizes).
     const originalPointsCount = simResult?.meta.pointsCount;
     const bounded = simResult ? downsampleResult(simResult, config.WORKER_MAX_POINTS) : simResult;
+
+    // pointsCount is the TRUE pre-downsample resolution — the memory-pressure signal worth alerting on.
+    recordSim({ status: 'succeeded', durationMs: runtimeMs, points: originalPointsCount });
 
     // Decide whether to store result in DB or S3 (single stringify; no redundant clone).
     const resultJson = bounded ? JSON.stringify(bounded) : 'null';
@@ -180,6 +187,8 @@ async function handleFailure(jobId: string, result: SimulationJobResult): Promis
     const { stdout, stderr, runtimeMs, error } = result;
 
     const status = error?.includes('timed out') ? 'TIMED_OUT' : 'FAILED';
+
+    recordSim({ status: status === 'TIMED_OUT' ? 'timed_out' : 'failed', durationMs: runtimeMs });
 
     await prisma.simulationJob.update({
         where: { id: jobId },

@@ -1,6 +1,9 @@
 /**
  * API Main Entry Point
  */
+// MUST stay first: starts OpenTelemetry (when configured) before any instrumented module loads.
+import './observability/instrumentation';
+import { shutdownTelemetry } from './observability/telemetry';
 import { NestFactory } from '@nestjs/core';
 import { ValidationPipe } from '@nestjs/common';
 import { NestExpressApplication } from '@nestjs/platform-express';
@@ -76,6 +79,21 @@ async function bootstrap() {
 
     console.log(`Application is running on: http://localhost:${port}`);
     if (swaggerEnabled) console.log(`Swagger docs: http://localhost:${port}/docs`);
+
+    // Graceful shutdown: close the HTTP server + Nest lifecycle hooks, then flush telemetry, then exit.
+    // Telemetry registers no signal handler of its own, so this is the single owner of process exit.
+    const shutdown = async (signal: string) => {
+        console.log(`Received ${signal}, shutting down...`);
+        try {
+            await app.close();
+        } catch (e) {
+            console.error('Error during app.close():', e instanceof Error ? e.message : e);
+        }
+        await shutdownTelemetry();
+        process.exit(0);
+    };
+    process.once('SIGTERM', () => void shutdown('SIGTERM'));
+    process.once('SIGINT', () => void shutdown('SIGINT'));
 }
 
 bootstrap();

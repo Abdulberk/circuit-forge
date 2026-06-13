@@ -1,0 +1,127 @@
+# Observability Reference
+
+This document describes the telemetry Circuit Forge emits **as implemented in the source tree**, how to
+turn it on, and what to alert on. Every claim is tied to a specific file.
+
+Telemetry is built on [OpenTelemetry](https://opentelemetry.io/) and is **inert by default** — the SDK
+does not start, and there is zero runtime overhead, until you configure it. This mirrors the rest of the
+system's "configure to activate" philosophy (quotas, email, sandbox).
+
+| Concern | Where it lives |
+|---------|----------------|
+| API bootstrap (traces + metrics) | [apps/api/src/observability/telemetry.ts](../apps/api/src/observability/telemetry.ts), started by [instrumentation.ts](../apps/api/src/observability/instrumentation.ts) |
+| Worker bootstrap + custom sim metrics | [apps/worker-sim/src/observability/telemetry.ts](../apps/worker-sim/src/observability/telemetry.ts), started by [instrumentation.ts](../apps/worker-sim/src/observability/instrumentation.ts) |
+
+---
+
+## 1. Enabling it
+
+The SDK starts only when **either** of these is set (see `telemetryEnabled()`):
+
+- `OTEL_ENABLED=true`, or
+- `OTEL_EXPORTER_OTLP_ENDPOINT=<url>` (a base OTLP/HTTP URL, e.g. `http://localhost:4318`).
+
+With neither set, `startTelemetry()` returns immediately — no SDK, no exporters, no listeners.
+
+| Variable | Default | Meaning |
+|----------|---------|---------|
+| `OTEL_ENABLED` | (unset) | `true` turns telemetry on without needing an endpoint (uses the OTLP default `http://localhost:4318`). |
+| `OTEL_EXPORTER_OTLP_ENDPOINT` | (unset) | Base OTLP/HTTP URL. The exporters append `/v1/traces` and `/v1/metrics`. Setting this alone also enables telemetry. |
+| `OTEL_SERVICE_NAME` | `circuit-forge-api` / `circuit-forge-worker` | Overrides the per-app `service.name` on all spans/metrics. |
+| `OTEL_METRIC_EXPORT_INTERVAL_MS` | `30000` | How often metrics are pushed to the collector. |
+| `OTEL_DEBUG` | `false` | `true` logs OTel SDK diagnostics to the console (use when wiring up a collector). |
+
+These are also documented in [.env.example](../.env.example). Standard OTLP env vars
+(`OTEL_EXPORTER_OTLP_HEADERS` for auth, `OTEL_EXPORTER_OTLP_TRACES_ENDPOINT`, etc.) are honored by the
+exporters directly — we don't intercept them.
+
+### Load order
+
+`startTelemetry()` must run **before any instrumented module is loaded**, otherwise auto-instrumentation
+can't patch `http`/`express`/Prisma/`ioredis`. That is why the side-effecting call lives in
+`observability/instrumentation.ts`, which is the **first import** in each app's `main.ts`. Don't reorder
+those imports. (Both apps compile to CommonJS, so the first `require` fully evaluates — SDK started —
+before the next import runs.)
+
+---
+
+## 2. What it emits
+
+### 2.1 Traces (both apps, auto-instrumented)
+
+Via `getNodeAutoInstrumentations()`. With the SDK on you get spans for, among others:
+
+- **HTTP / Express / NestJS** request handling on the API (latency, status code, route).
+- **Prisma** queries (both apps).
+- **ioredis** commands and **BullMQ** queue operations (job enqueue/process — spans link the API's
+  enqueue to the worker's processing when context propagates through the queue).
+
+The `fs` instrumentation is explicitly **disabled** — it is far too noisy to be useful.
+
+### 2.2 Metrics
+
+**Auto-instrumentation** contributes runtime + HTTP metrics (e.g. `http.server.duration`) on the API.
+
+**Custom simulation metrics** (worker only — the worker is what actually runs ngspice). Emitted by
+`recordSim()` in [telemetry.ts](../apps/worker-sim/src/observability/telemetry.ts), called from
+[processor.ts](../apps/worker-sim/src/simulation/processor.ts). The only attribute is `status`
+(`succeeded` | `failed` | `timed_out`) — kept deliberately low-cardinality (no `jobId`/`orgId`, which
+would explode a metrics backend).
+
+| Metric | Type | Unit | What it tells you |
+|--------|------|------|-------------------|
+| `circuitforge.sim.runs` | Counter | `{run}` | Throughput and the **failure/timeout rate** (split by `status`). |
+| `circuitforge.sim.duration` | Histogram | `ms` | ngspice wall-clock runtime → p50/p95/p99 latency, saturation. |
+| `circuitforge.sim.points` | Histogram | `{point}` | The **TRUE pre-downsample** point count of a run — a direct **memory-pressure proxy**. A stiff/long transient that materializes a giant M×N result shows up here *before* it OOMs a worker. (The stored series is capped at `WORKER_MAX_POINTS`; this metric records the real size.) |
+
+`recordSim()` is a no-op when telemetry is off and is wrapped in try/catch — metrics never break a job.
+
+---
+
+## 3. Recommended alerts
+
+Circuit Forge emits the signals; **wiring alerts is collector/vendor-specific** (Prometheus
+Alertmanager, Grafana, Datadog, etc.) and intentionally not baked into the app. Recommended starting
+points, mapped to the signals above:
+
+| Alert | Signal | Suggested condition |
+|-------|--------|---------------------|
+| Sim failure rate high | `circuitforge.sim.runs{status="failed"}` / total | > 10% over 5m |
+| Sim timeouts climbing | `circuitforge.sim.runs{status="timed_out"}` | > 5% over 5m (often a generation/convergence regression) |
+| Sim latency regression | `circuitforge.sim.duration` p95 | > 2× the rolling baseline, or near `SIM_TIMEOUT_MS` |
+| **Memory blow-up risk** | `circuitforge.sim.points` p99 | sustained near the OOM threshold for your worker memory — the early warning for the transient-memory bottleneck |
+| Queue backlog | BullMQ `waiting` depth (auto-instr) | grows for > 5m → workers under-provisioned |
+| API 5xx rate | `http.server.duration` count by status | 5xx > 1% over 5m |
+| API latency | `http.server.duration` p95 | breaches your route SLO |
+| Telemetry pipeline down | absence of any metric for > 2× `OTEL_METRIC_EXPORT_INTERVAL_MS` | collector or exporter is broken |
+
+Page on the customer-facing SLO breaches (failure rate, API 5xx, latency); the memory-pressure and
+queue-depth alerts are early-warning / capacity signals.
+
+---
+
+## 4. Failure & safety properties
+
+- **Never crashes the app.** `startTelemetry()` and `recordSim()` are both wrapped in try/catch; an
+  unreachable collector logs `[otel] init failed …` and the service continues without telemetry.
+- **Graceful shutdown, app-owned.** Telemetry registers **no** signal handler of its own. Each app's
+  existing shutdown path calls `shutdownTelemetry()` (flush `sdk.shutdown()`) **last** — the worker only
+  after it has drained the in-flight job (`worker.close()`) and disconnected Prisma, the API after
+  `app.close()`. This is deliberate: a telemetry-owned `process.exit()` would otherwise race the worker's
+  drain and abandon a running simulation.
+- **No secrets in telemetry.** We don't attach request bodies, credentials, or per-tenant identifiers to
+  spans/metrics. Auth headers for the collector itself go via the standard `OTEL_EXPORTER_OTLP_HEADERS`.
+
+---
+
+## 5. Gaps / not yet done
+
+Called out honestly rather than implied:
+
+- **No logs pipeline.** Only traces + metrics are exported. App logs still go to stdout via `pino`
+  (API/worker). Log↔trace correlation (injecting `trace_id` into pino lines) is not wired up.
+- **No bundled collector / dashboards.** This repo emits OTLP; standing up a collector, a metrics store,
+  and dashboards/alert rules is a deployment concern (not in the app).
+- **API does not emit the custom sim metrics.** The API's inline verify-and-fix ngspice path (dev/
+  fallback) is not instrumented with `recordSim` — those metrics come from the worker, which owns the
+  production simulation path. If/when the inline path is used in prod, add `recordSim` there too.
