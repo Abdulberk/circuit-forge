@@ -33,6 +33,11 @@ export interface SimulationJobResult {
     runtimeMs: number;
     outputSizeBytes?: number;
     error?: string;
+    /** True when the failure is INFRASTRUCTURE/setup — ngspice couldn't be launched (bad NGSPICE_PATH /
+     *  missing sandbox), or an fs/mkdir/writeFile/parse error — NOT a genuine ngspice result. The API
+     *  maps this to an 'inconclusive' verify verdict: an infra outage must never be reported to the user
+     *  as a design failure. */
+    infra?: boolean;
 }
 
 /**
@@ -65,7 +70,7 @@ export async function runSimulation(input: SimulationJobInput): Promise<Simulati
         }
 
         // Run ngspice
-        const { stdout, stderr, exitCode, timedOut } = await executeNgspice(netlistPath);
+        const { stdout, stderr, exitCode, timedOut, spawnError } = await executeNgspice(netlistPath);
 
         if (timedOut) {
             return {
@@ -83,7 +88,12 @@ export async function runSimulation(input: SimulationJobInput): Promise<Simulati
                 stdout,
                 stderr,
                 runtimeMs: Date.now() - startTime,
-                error: `ngspice exited with code ${exitCode}`,
+                // A spawn failure = ngspice NEVER RAN (infra: wrong NGSPICE_PATH, choco GUI shim, missing
+                // sandbox), distinct from ngspice running and exiting non-zero (a genuine sim fault).
+                ...(spawnError ? { infra: true } : {}),
+                error: spawnError
+                    ? `ngspice could not be launched (check NGSPICE_PATH / sandbox): ${stderr.trim() || 'spawn error'}`
+                    : `ngspice exited with code ${exitCode}`,
             };
         }
 
@@ -180,6 +190,9 @@ export async function runSimulation(input: SimulationJobInput): Promise<Simulati
             stdout: '',
             stderr: '',
             runtimeMs: Date.now() - startTime,
+            // Reached via mkdir / writeFile / readFile / parse throwing — setup/IO, i.e. INFRA, not a
+            // circuit fault → the API reports inconclusive, not a design failure.
+            infra: true,
             error: errorMessage,
         };
     } finally {
@@ -198,7 +211,7 @@ export async function runSimulation(input: SimulationJobInput): Promise<Simulati
  */
 async function executeNgspice(
     netlistPath: string,
-): Promise<{ stdout: string; stderr: string; exitCode: number | null; timedOut: boolean }> {
+): Promise<{ stdout: string; stderr: string; exitCode: number | null; timedOut: boolean; spawnError?: boolean }> {
     return new Promise((resolve) => {
         const args = ['-b', '-o', 'stdout.log', netlistPath];
         const cwd = path.dirname(netlistPath);
@@ -246,11 +259,15 @@ async function executeNgspice(
         process.on('error', (err) => {
             clearTimeout(timeoutId);
             stderr += err.message;
+            // spawn failed (ENOENT/EACCES — wrong NGSPICE_PATH, the choco GUI shim, or a missing bash
+            // sandbox wrapper). ngspice never ran: flag it as a spawn error so the caller marks the job
+            // INFRA (→ inconclusive), not a design failure.
             resolve({
                 stdout,
                 stderr,
                 exitCode: 1,
                 timedOut: false,
+                spawnError: true,
             });
         });
     });

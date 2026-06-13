@@ -34,8 +34,10 @@ export interface AssertionResult {
 }
 
 export interface DesignEvidence {
-    /** pass = sim ok, no ERC errors, all assertions pass. fail = any of those failed. inconclusive =
-     *  simulation couldn't run (ngspice not configured / capacity) so specs couldn't be checked. */
+    /** pass = sim ok, no ERC errors, all assertions pass. fail = an ERC error, OR ngspice actually ran
+     *  and the circuit failed/couldn't simulate, OR an assertion was not met. inconclusive = the
+     *  simulation couldn't RUN (ngspice not configured, OR the worker/queue was unavailable / backed up)
+     *  so specs couldn't be checked — an OPERATIONAL state, never a statement about the design. */
     verdict: 'pass' | 'fail' | 'inconclusive';
     summary: string;
     simStatus: SimSummary['simStatus'];
@@ -77,6 +79,9 @@ export function isCurrentProbe(probe: string): boolean {
 @Injectable()
 export class VerificationService {
     private readonly logger = new Logger(VerificationService.name);
+    /** Server-side poll budget (ms) before giving up on the worker job. Env-tunable for ops; also lets
+     *  tests drive the "no worker consuming the queue → inconclusive" path quickly. */
+    private readonly pollTimeoutMs = Number(process.env.VERIFY_POLL_TIMEOUT_MS) || VERIFY_POLL_TIMEOUT_MS;
 
     constructor(
         private readonly simulator: CircuitSimulatorService,
@@ -179,31 +184,71 @@ export class VerificationService {
 
         try {
             const { jobId } = await this.simulation!.createQuickSim(netlist, an as unknown as Record<string, unknown>, userId);
-            const status = await this.pollJob(jobId, userId);
-            if (status !== 'SUCCEEDED') {
+            const { status, metrics } = await this.pollJob(jobId, userId);
+            // The worker tags pre/around-ngspice INFRA failures (bad NGSPICE_PATH/spawn, S3 model download,
+            // DB, result upload) with metrics.failureClass='infra' — those land as job status FAILED but are
+            // NOT design faults (the SimJobStatus enum has no operational value, so the discriminator rides
+            // in metrics). Genuine ngspice faults carry 'sim' (or nothing on older rows).
+            const infraFailure = (metrics as { failureClass?: string } | null | undefined)?.failureClass === 'infra';
+
+            // ngspice ACTUALLY RAN and the circuit could not be simulated (exit≠0 / non-convergence, or it
+            // exceeded the worker's own ngspice timeout) → a genuine simulation/design fault → 'fail'.
+            // A worker-flagged infra failure is excluded here and handled as inconclusive below.
+            if ((status === 'FAILED' || status === 'TIMED_OUT') && !infraFailure) {
                 return { simStatus: 'failed', ercErrors, ercWarnings, runError: `simulation ${status.toLowerCase()}`, ...empty };
             }
-            const res = (await this.simulation!.getResult(jobId, userId)) as { result?: SimulationResult | null };
+            // NO design verdict was produced for an OPERATIONAL reason: the job never started (nothing
+            // consumed the queue / backlog beyond our budget → POLL_TIMEOUT), was aborted (CANCELED), or the
+            // worker hit an infrastructure error before/around ngspice (failureClass 'infra'). The evidence
+            // contract FORBIDS reducing any of these to a design 'fail' (that would tell a user with a sound
+            // design "verification failed"). → 'skipped' → inconclusive (try again).
+            if (status !== 'SUCCEEDED') {
+                const why = status === 'POLL_TIMEOUT'
+                    ? `simulation did not start within ${Math.round(this.pollTimeoutMs / 1000)}s (no worker available or queue backlog)`
+                    : infraFailure
+                        ? 'the worker could not run the simulation (infrastructure error)'
+                        : `simulation was ${status.toLowerCase()}`;
+                return { simStatus: 'skipped', ercErrors, ercWarnings, runError: `${why} — try again`, ...empty };
+            }
+
+            const res = (await this.simulation!.getResult(jobId, userId)) as { result?: SimulationResult | null; error?: string };
             const series = res.result?.series;
             if (!series || series.length === 0) {
+                // A SUCCEEDED job with no series: getResult sets `error` when the payload spilled to S3 and
+                // couldn't be fetched — a STORAGE OUTAGE, not a design fault → inconclusive. Only a genuinely
+                // empty dataset (no such error) is a degenerate no-data run → fail.
+                if (res.error) {
+                    return { simStatus: 'skipped', ercErrors, ercWarnings, runError: `${res.error} — try again`, ...empty };
+                }
                 return { simStatus: 'failed', ercErrors, ercWarnings, runError: 'simulation produced no result data', ...empty };
             }
             return { simStatus: 'ok', ercErrors, ercWarnings, measurements: series.map(summarizeSeries), nodeCount: series.length, analysisType: an.type };
         } catch (e) {
+            // The queue/Redis/DB was unreachable (createQuickSim / getStatus / getResult threw). Same
+            // contract rule as POLL_TIMEOUT above: a transient infra outage is NOT a design fault. → inconclusive.
             this.logger.error(`verify-design worker run failed: ${e instanceof Error ? e.message : e}`);
-            return { simStatus: 'failed', ercErrors, ercWarnings, runError: 'simulation could not be queued (worker/queue unavailable)', ...empty };
+            return { simStatus: 'skipped', ercErrors, ercWarnings, runError: 'simulation could not be run (worker/queue unavailable) — try again', ...empty };
         }
     }
 
-    /** Server-side poll a worker job to a terminal state (mirrors design.service.pollJob). */
-    private async pollJob(jobId: string, userId: string): Promise<string> {
+    /**
+     * Server-side poll a worker job to a terminal state (mirrors design.service.pollJob). Returns the
+     * terminal status (SUCCEEDED / FAILED / TIMED_OUT / CANCELED), or the sentinel 'POLL_TIMEOUT' when
+     * the job never reached a terminal state within the budget — i.e. nothing consumed it (no worker /
+     * queue backlog). That sentinel is an INFRA signal the caller maps to inconclusive, NOT a design
+     * failure — and it is deliberately DISTINCT from a terminal 'TIMED_OUT' (where ngspice actually ran
+     * and exceeded its own limit, which IS a sim fault).
+     */
+    private async pollJob(jobId: string, userId: string): Promise<{ status: string; metrics?: unknown }> {
         const start = Date.now();
-        while (Date.now() - start < VERIFY_POLL_TIMEOUT_MS) {
-            const s = (await this.simulation!.getStatus(jobId, userId)) as { status: string };
-            if (s.status === 'SUCCEEDED' || s.status === 'FAILED' || s.status === 'TIMED_OUT' || s.status === 'CANCELED') return s.status;
+        while (Date.now() - start < this.pollTimeoutMs) {
+            const s = (await this.simulation!.getStatus(jobId, userId)) as { status: string; metrics?: unknown };
+            if (s.status === 'SUCCEEDED' || s.status === 'FAILED' || s.status === 'TIMED_OUT' || s.status === 'CANCELED') {
+                return { status: s.status, metrics: s.metrics };
+            }
             await new Promise((r) => setTimeout(r, 1000));
         }
-        return 'TIMED_OUT';
+        return { status: 'POLL_TIMEOUT' };
     }
 
     /** Evaluate each assertion against the measurements. When the sim didn't run (simOk=false) every
@@ -248,9 +293,14 @@ export class VerificationService {
 
     private summarize(verdict: DesignEvidence['verdict'], sim: SimSummary, results: AssertionResult[]): string {
         if (verdict === 'inconclusive') {
-            return sim.simStatus === 'skipped'
-                ? 'Simulation is not configured on the server, so the design could not be verified.'
-                : 'The simulation produced no measurable data, so the design could not be verified.';
+            if (sim.simStatus === 'skipped') {
+                // skipped = the simulation couldn't RUN (not configured in dev, OR worker/queue capacity
+                // in prod). Surface the specific reason via runError; never phrase it as a design failure.
+                return sim.runError
+                    ? `The design could not be verified: ${sim.runError}.`
+                    : 'The simulation could not run on the server, so the design could not be verified.';
+            }
+            return 'The simulation produced no measurable data, so the design could not be verified.';
         }
         const parts: string[] = [];
         if (sim.simStatus === 'failed') parts.push(`simulation failed (${sim.runError ?? 'unknown error'})`);
