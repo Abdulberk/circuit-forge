@@ -205,6 +205,7 @@ Full per-endpoint reference (methods, paths, auth, request/response): **[docs/AP
 | [docs/EDA_CORE.md](docs/EDA_CORE.md) | `eda-core` & `llm-core`: circuit JSON, netlist gen, sanitizer, ERC, parsers, schemas |
 | [docs/SIMULATION.md](docs/SIMULATION.md) | Worker pipeline, ngspice execution, result storage, known quirks |
 | [docs/SECURITY.md](docs/SECURITY.md) | Auth, RBAC, validation, rate limiting, simulation sandboxing |
+| [docs/OBSERVABILITY.md](docs/OBSERVABILITY.md) | OpenTelemetry traces + metrics, enabling it, custom sim metrics, recommended alerts |
 | [docs/ASSUMPTIONS.md](docs/ASSUMPTIONS.md) | Design decisions & assumptions (historical) |
 | [plans/IMPLEMENTATION_PLAN.md](plans/IMPLEMENTATION_PLAN.md) | Original implementation plan (historical) |
 

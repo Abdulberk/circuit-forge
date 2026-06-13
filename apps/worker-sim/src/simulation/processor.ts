@@ -11,6 +11,7 @@ import { runSimulation, type SimulationJobResult } from './runner';
 import { downloadFile, uploadJsonResult } from '../storage/s3-client';
 import { downsampleResult } from '@circuit-forge/eda-core';
 import { Prisma } from '@prisma/client';
+import { recordSim } from '../observability/telemetry';
 
 /**
  * Job payload from the queue
@@ -113,6 +114,9 @@ async function processJob(job: Job<SimulationJobPayload>): Promise<void> {
         // or a result upload on an otherwise-successful sim. These are INFRASTRUCTURE failures, not circuit
         // faults, so tag failureClass='infra' (status stays FAILED — no operational enum value); the API
         // maps it to an 'inconclusive' verify verdict rather than telling the user their design failed.
+        // The OTel metric counts it as a failed run (throughput); the failureClass tag drives the verdict.
+        recordSim({ status: 'failed' });
+
         await prisma.simulationJob.update({
             where: { id: jobId },
             data: {
@@ -144,6 +148,9 @@ async function handleSuccess(jobId: string, result: SimulationJobResult): Promis
     // nobody renders a million points, and the inline AI-verify path is unaffected (it summarizes).
     const originalPointsCount = simResult?.meta.pointsCount;
     const bounded = simResult ? downsampleResult(simResult, config.WORKER_MAX_POINTS) : simResult;
+
+    // pointsCount is the TRUE pre-downsample resolution — the memory-pressure signal worth alerting on.
+    recordSim({ status: 'succeeded', durationMs: runtimeMs, points: originalPointsCount });
 
     // Decide whether to store result in DB or S3 (single stringify; no redundant clone).
     const resultJson = bounded ? JSON.stringify(bounded) : 'null';
@@ -189,6 +196,8 @@ async function handleFailure(jobId: string, result: SimulationJobResult): Promis
     // reads that and reports the verify verdict as 'inconclusive', never a design 'fail'. A genuine
     // ngspice wall-clock timeout stays TIMED_OUT; any other genuine ngspice failure is FAILED + 'sim'.
     const status = !infra && error?.includes('timed out') ? 'TIMED_OUT' : 'FAILED';
+
+    recordSim({ status: status === 'TIMED_OUT' ? 'timed_out' : 'failed', durationMs: runtimeMs });
 
     await prisma.simulationJob.update({
         where: { id: jobId },
