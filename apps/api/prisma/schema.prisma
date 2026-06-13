@@ -3,6 +3,9 @@
 
 generator client {
   provider = "prisma-client-js"
+  // NOTE: Prisma query tracing ("tracing" previewFeature + @prisma/instrumentation) is intentionally
+  // OFF — @prisma/instrumentation@5.22 is incompatible with this repo's @opentelemetry/sdk-trace-base
+  // (crashes via the removed getActiveSpanProcessor). Re-enable once the versions are compatible.
 }
 
 datasource db {
