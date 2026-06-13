@@ -1,0 +1,82 @@
+apiVersion: 1
+groups:
+  - orgId: 1
+    name: Circuit Forge
+    folder: Circuit Forge
+    interval: 1m
+    rules:
+      - uid: cf_sim_failure_rate
+        title: Sim failure rate high (>10%)
+        condition: C
+        for: 5m
+        noDataState: NoData
+        execErrState: Error
+        labels:
+          severity: warning
+        annotations:
+          summary: "ngspice simulation failure+timeout rate is above 10% over 5m"
+        data:
+          - refId: A
+            relativeTimeRange: { from: 600, to: 0 }
+            datasourceUid: prometheus
+            model:
+              datasource: { type: prometheus, uid: prometheus }
+              editorMode: code
+              expr: 'sum(rate(circuitforge_sim_runs_total{status!="succeeded"}[5m])) / clamp_min(sum(rate(circuitforge_sim_runs_total[5m])), 0.0001)'
+              instant: true
+              intervalMs: 1000
+              maxDataPoints: 43200
+              range: false
+              refId: A
+          - refId: C
+            relativeTimeRange: { from: 600, to: 0 }
+            datasourceUid: __expr__
+            model:
+              conditions:
+                - evaluator: { params: [0.1], type: gt }
+                  operator: { type: and }
+                  query: { params: [C] }
+                  reducer: { type: last }
+                  type: query
+              datasource: { type: __expr__, uid: __expr__ }
+              expression: A
+              refId: C
+              type: threshold
+
+      - uid: cf_sim_points_p99
+        title: Sim point-count p99 very high (memory pressure)
+        condition: C
+        for: 5m
+        noDataState: NoData
+        execErrState: Error
+        labels:
+          severity: warning
+        annotations:
+          summary: "p99 pre-downsample sim point count > 500k over 5m — risk of OOMing a worker"
+        data:
+          - refId: A
+            relativeTimeRange: { from: 600, to: 0 }
+            datasourceUid: prometheus
+            model:
+              datasource: { type: prometheus, uid: prometheus }
+              editorMode: code
+              expr: 'histogram_quantile(0.99, sum by (le) (rate(circuitforge_sim_points_bucket[5m])))'
+              instant: true
+              intervalMs: 1000
+              maxDataPoints: 43200
+              range: false
+              refId: A
+          - refId: C
+            relativeTimeRange: { from: 600, to: 0 }
+            datasourceUid: __expr__
+            model:
+              conditions:
+                - evaluator: { params: [500000], type: gt }
+                  operator: { type: and }
+                  query: { params: [C] }
+                  reducer: { type: last }
+                  type: query
+              datasource: { type: __expr__, uid: __expr__ }
+              expression: A
+              refId: C
+              type: threshold

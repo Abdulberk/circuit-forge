@@ -1,0 +1,100 @@
+{
+  "annotations": { "list": [] },
+  "editable": true,
+  "schemaVersion": 39,
+  "title": "Circuit Forge — Simulations & API",
+  "uid": "circuit-forge",
+  "tags": ["circuit-forge"],
+  "time": { "from": "now-1h", "to": "now" },
+  "refresh": "10s",
+  "templating": { "list": [] },
+  "panels": [
+    {
+      "type": "row",
+      "title": "Simulations (worker)",
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 0 },
+      "id": 1
+    },
+    {
+      "type": "timeseries",
+      "title": "Sim runs/sec by status",
+      "description": "circuitforge_sim_runs_total — throughput split by succeeded / failed / timed_out.",
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 1 },
+      "id": 2,
+      "fieldConfig": { "defaults": { "custom": { "drawStyle": "line", "fillOpacity": 15, "stacking": { "mode": "normal" } } }, "overrides": [] },
+      "targets": [
+        { "refId": "A", "datasource": { "type": "prometheus", "uid": "prometheus" }, "expr": "sum by (status) (rate(circuitforge_sim_runs_total[$__rate_interval]))", "legendFormat": "{{status}}" }
+      ]
+    },
+    {
+      "type": "stat",
+      "title": "Sim failure rate (5m)",
+      "description": "Share of runs that did NOT succeed. Alert threshold: > 10%.",
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 1 },
+      "id": 3,
+      "fieldConfig": { "defaults": { "unit": "percentunit", "min": 0, "max": 1, "thresholds": { "mode": "absolute", "steps": [ { "color": "green", "value": null }, { "color": "orange", "value": 0.1 }, { "color": "red", "value": 0.25 } ] } }, "overrides": [] },
+      "options": { "colorMode": "background", "graphMode": "area", "reduceOptions": { "calcs": ["lastNotNull"] } },
+      "targets": [
+        { "refId": "A", "datasource": { "type": "prometheus", "uid": "prometheus" }, "expr": "sum(rate(circuitforge_sim_runs_total{status!=\"succeeded\"}[5m])) / clamp_min(sum(rate(circuitforge_sim_runs_total[5m])), 0.0001)", "legendFormat": "failure rate" }
+      ]
+    },
+    {
+      "type": "timeseries",
+      "title": "Sim duration p50 / p95 / p99 (ms)",
+      "description": "circuitforge_sim_duration_milliseconds — ngspice wall-clock per run.",
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 9 },
+      "id": 4,
+      "fieldConfig": { "defaults": { "unit": "ms", "custom": { "drawStyle": "line", "fillOpacity": 5 } }, "overrides": [] },
+      "targets": [
+        { "refId": "A", "datasource": { "type": "prometheus", "uid": "prometheus" }, "expr": "histogram_quantile(0.5, sum by (le) (rate(circuitforge_sim_duration_milliseconds_bucket[$__rate_interval])))", "legendFormat": "p50" },
+        { "refId": "B", "datasource": { "type": "prometheus", "uid": "prometheus" }, "expr": "histogram_quantile(0.95, sum by (le) (rate(circuitforge_sim_duration_milliseconds_bucket[$__rate_interval])))", "legendFormat": "p95" },
+        { "refId": "C", "datasource": { "type": "prometheus", "uid": "prometheus" }, "expr": "histogram_quantile(0.99, sum by (le) (rate(circuitforge_sim_duration_milliseconds_bucket[$__rate_interval])))", "legendFormat": "p99" }
+      ]
+    },
+    {
+      "type": "timeseries",
+      "title": "Sim points p99 (memory-pressure proxy)",
+      "description": "circuitforge_sim_points — TRUE pre-downsample point count. A high p99 = a transient that materialized a giant result (OOM early-warning).",
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 9 },
+      "id": 5,
+      "fieldConfig": { "defaults": { "unit": "short", "custom": { "drawStyle": "line", "fillOpacity": 5 } }, "overrides": [] },
+      "targets": [
+        { "refId": "A", "datasource": { "type": "prometheus", "uid": "prometheus" }, "expr": "histogram_quantile(0.99, sum by (le) (rate(circuitforge_sim_points_bucket[$__rate_interval])))", "legendFormat": "p99 points" }
+      ]
+    },
+    {
+      "type": "row",
+      "title": "API",
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 17 },
+      "id": 6
+    },
+    {
+      "type": "timeseries",
+      "title": "HTTP server p95 latency (s)",
+      "description": "Auto-instrumented http.server request duration. If empty, check the exact metric name (http_server_request_duration_seconds_* vs http_server_duration_milliseconds_*) in Explore.",
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 18 },
+      "id": 7,
+      "fieldConfig": { "defaults": { "unit": "s", "custom": { "drawStyle": "line", "fillOpacity": 5 } }, "overrides": [] },
+      "targets": [
+        { "refId": "A", "datasource": { "type": "prometheus", "uid": "prometheus" }, "expr": "histogram_quantile(0.95, sum by (le) (rate(http_server_request_duration_seconds_bucket[$__rate_interval])))", "legendFormat": "p95" }
+      ]
+    },
+    {
+      "type": "timeseries",
+      "title": "HTTP requests/sec by status",
+      "description": "Request throughput; watch the 5xx series.",
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 18 },
+      "id": 8,
+      "fieldConfig": { "defaults": { "custom": { "drawStyle": "line", "fillOpacity": 15, "stacking": { "mode": "normal" } } }, "overrides": [] },
+      "targets": [
+        { "refId": "A", "datasource": { "type": "prometheus", "uid": "prometheus" }, "expr": "sum by (http_response_status_code) (rate(http_server_request_duration_seconds_count[$__rate_interval]))", "legendFormat": "{{http_response_status_code}}" }
+      ]
+    }
+  ]
+}

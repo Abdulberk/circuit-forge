@@ -17,6 +17,9 @@ jest.mock('@opentelemetry/auto-instrumentations-node', () => ({ getNodeAutoInstr
 jest.mock('@opentelemetry/exporter-trace-otlp-http', () => ({ OTLPTraceExporter: jest.fn() }));
 jest.mock('@opentelemetry/exporter-metrics-otlp-http', () => ({ OTLPMetricExporter: jest.fn() }));
 jest.mock('@opentelemetry/sdk-metrics', () => ({ PeriodicExportingMetricReader: jest.fn() }));
+jest.mock('@opentelemetry/exporter-logs-otlp-http', () => ({ OTLPLogExporter: jest.fn() }));
+jest.mock('@opentelemetry/sdk-logs', () => ({ BatchLogRecordProcessor: jest.fn() }));
+jest.mock('@prisma/instrumentation', () => ({ PrismaInstrumentation: jest.fn() }));
 
 describe('telemetry bootstrap', () => {
     const OLD_ENV = process.env;

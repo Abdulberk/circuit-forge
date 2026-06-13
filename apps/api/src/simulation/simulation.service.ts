@@ -12,6 +12,15 @@ import { OrgsService } from '../orgs/orgs.service';
 import { UsageService } from '../usage/usage.service';
 import { generateNetlist, safeValidateCircuitJson, safeValidateAnalysisConfig, downsampleResult } from '@circuit-forge/eda-core';
 import type { CircuitJson, AnalysisConfig, SimulationResult } from '@circuit-forge/eda-core';
+import { propagation, context as otelContext } from '@opentelemetry/api';
+
+/** Capture the current trace context as a W3C carrier to ride on the queued job, so the worker's
+ *  processing span links back to this API request (one end-to-end trace). Empty when telemetry is off. */
+function otelCarrier(): Record<string, string> {
+    const carrier: Record<string, string> = {};
+    propagation.inject(otelContext.active(), carrier);
+    return carrier;
+}
 
 /** Max uploaded model files attachable to one simulation (each is a separate S3 download in the worker). */
 const MAX_MODEL_ASSETS = 32;
@@ -108,6 +117,7 @@ export class SimulationService {
             probeNames: probes || [],
             analysisType,
             analysisConfig,
+            otel: otelCarrier(),
             ...(s3Keys.length > 0 ? { modelAssets: s3Keys } : {}),
         });
 
@@ -158,6 +168,7 @@ export class SimulationService {
             probeNames: [],
             analysisType,
             analysisConfig: analysisConfig || {},
+            otel: otelCarrier(),
             ...(s3Keys.length > 0 ? { modelAssets: s3Keys } : {}),
         });
 

@@ -1,0 +1,9 @@
+apiVersion: 1
+providers:
+  - name: "Circuit Forge"
+    type: file
+    allowUiUpdates: true
+    options:
+      # Dashboard JSON files are mounted here (see docker-compose otel-lgtm volumes).
+      path: /etc/circuit-forge/dashboards
+      foldersFromFilesStructure: false
