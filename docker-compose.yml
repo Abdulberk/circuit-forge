@@ -81,6 +81,10 @@ services:
       JWT_REFRESH_SECRET: dev-refresh-secret-min-32-characters-long
       NODE_ENV: development
       API_PORT: 3000
+      # Observability — uncomment to emit traces/metrics to the otel-lgtm viewer (start the stack with
+      # `docker compose --profile observability up`). View at http://localhost:3030.
+      # OTEL_ENABLED: "true"
+      # OTEL_EXPORTER_OTLP_ENDPOINT: http://otel-lgtm:4318
     ports:
       - "3000:3000"
     depends_on:
@@ -113,6 +117,9 @@ services:
       SIM_TIMEOUT_MS: 10000
       SIM_MAX_OUTPUT_BYTES: 5242880
       NODE_ENV: development
+      # Observability — uncomment to emit traces/metrics to the otel-lgtm viewer (see the api service).
+      # OTEL_ENABLED: "true"
+      # OTEL_EXPORTER_OTLP_ENDPOINT: http://otel-lgtm:4318
     depends_on:
       postgres:
         condition: service_healthy
@@ -125,6 +132,21 @@ services:
       - ./packages:/app/packages
       - /app/node_modules
       - /app/apps/worker-sim/node_modules
+
+  # Observability viewer (OPT-IN): Grafana + Tempo (traces) + Prometheus/Mimir (metrics), all-in-one.
+  # Behind a compose profile so the default `docker compose up` stays lean. Start it with:
+  #   docker compose --profile observability up -d otel-lgtm
+  # then enable telemetry on the apps (OTEL_ENABLED=true + OTEL_EXPORTER_OTLP_ENDPOINT) and open
+  # Grafana at http://localhost:3030. Dev/ephemeral (no volume → restart clears data); NOT for production
+  # — see docs/OBSERVABILITY.md §6 (local) and §7 (production).
+  otel-lgtm:
+    image: grafana/otel-lgtm:latest
+    container_name: circuitforge-otel-lgtm
+    profiles: ["observability"]
+    ports:
+      - "3030:3000"   # Grafana UI (host 3030 — the API already uses 3000)
+      - "4317:4317"   # OTLP gRPC
+      - "4318:4318"   # OTLP HTTP  →  OTEL_EXPORTER_OTLP_ENDPOINT=http://localhost:4318
 
 volumes:
   postgres-data:

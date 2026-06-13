@@ -120,8 +120,82 @@ Called out honestly rather than implied:
 
 - **No logs pipeline.** Only traces + metrics are exported. App logs still go to stdout via `pino`
   (API/worker). Log↔trace correlation (injecting `trace_id` into pino lines) is not wired up.
-- **No bundled collector / dashboards.** This repo emits OTLP; standing up a collector, a metrics store,
-  and dashboards/alert rules is a deployment concern (not in the app).
+- **No collector / dashboards enabled by default.** The app only emits OTLP. For LOCAL viewing there's an
+  opt-in Grafana stack (§6); for PRODUCTION you point it at a real backend (§7). Neither ships on by default.
 - **API does not emit the custom sim metrics.** The API's inline verify-and-fix ngspice path (dev/
   fallback) is not instrumented with `recordSim` — those metrics come from the worker, which owns the
   production simulation path. If/when the inline path is used in prod, add `recordSim` there too.
+
+---
+
+## 6. Viewing it locally (Grafana)
+
+A one-container viewer is wired into [docker-compose.yml](../docker-compose.yml) behind the
+`observability` **profile** — the [`grafana/otel-lgtm`](https://github.com/grafana/docker-otel-lgtm)
+all-in-one (Grafana UI + Tempo for traces + Prometheus/Mimir for metrics + a built-in OTel Collector).
+It's **opt-in** (the default `docker compose up` stays lean) and **ephemeral** (no volume — a restart
+clears the data, which is fine for dev).
+
+1. **Start the viewer:**
+   ```bash
+   docker compose --profile observability up -d otel-lgtm
+   ```
+   It accepts OTLP on `4317` (gRPC) / `4318` (HTTP) and serves **Grafana on http://localhost:3030**
+   (mapped off the container's 3000 so it never clashes with the API).
+
+2. **Point the apps at it** — in your root `.env` (or exported before `pnpm dev`):
+   ```
+   OTEL_ENABLED=true
+   OTEL_EXPORTER_OTLP_ENDPOINT=http://localhost:4318
+   ```
+   (Running the API/worker INSIDE docker instead? Uncomment the `OTEL_*` lines on those services in
+   `docker-compose.yml` — they target `http://otel-lgtm:4318`.)
+
+3. **Generate signal** — run the API + worker and hit `POST /verify-design` or queue a simulation. On
+   boot the app logs `[otel] telemetry started …`.
+
+4. **Open Grafana** → http://localhost:3030 (no login — anonymous Admin is enabled; if ever prompted,
+   `admin`/`admin`). Use **Explore**:
+   - **Traces** (Tempo): filter `service.name = circuit-forge-api` / `circuit-forge-worker`. A
+     verify-design request shows the full span tree: HTTP → BullMQ enqueue → (worker) Prisma + the job.
+   - **Metrics** (Prometheus): search `circuitforge` for the custom sim metrics — they arrive as
+     `circuitforge_sim_runs_total` (counter, label `status`), `circuitforge_sim_duration_milliseconds_{bucket,sum,count}`
+     and `circuitforge_sim_points_{bucket,sum,count}` (histograms). (OTLP dots → underscores; Prometheus
+     adds `_total` to counters, `_bucket/_sum/_count` to histograms, and the unit, e.g. `_milliseconds`.)
+     Search `http_server` for API request latency. Example panels: failure rate
+     `sum(rate(circuitforge_sim_runs_total{status!="succeeded"}[5m])) / sum(rate(circuitforge_sim_runs_total[5m]))`;
+     p95 duration `histogram_quantile(0.95, sum by (le) (rate(circuitforge_sim_duration_milliseconds_bucket[5m])))`.
+
+Stop it with `docker compose --profile observability down` (or `stop otel-lgtm`).
+
+---
+
+## 7. Production
+
+**Do NOT run `otel-lgtm` in production** — it's a single-process dev/demo bundle with no HA, retention,
+access control, or durable storage. In prod the app is unchanged (it still just emits OTLP); you change
+WHERE it points and add a real backend. Two paths:
+
+**A — Managed / SaaS (least ops).** Grafana Cloud, Honeycomb, Datadog, New Relic, or a cloud-native
+backend (e.g. AWS via the ADOT collector). Set the endpoint + auth header and you're done:
+```
+OTEL_ENABLED=true
+OTEL_EXPORTER_OTLP_ENDPOINT=https://otlp.<vendor>.example
+OTEL_EXPORTER_OTLP_HEADERS=authorization=Bearer <token>   # standard OTLP env, honored by the exporters
+```
+
+**B — Self-hosted.** Run a standalone **OpenTelemetry Collector** as a gateway service that fans out to
+Tempo (traces) + Mimir/Prometheus (metrics) [+ Loki for logs later], with Grafana for dashboards. The
+apps point at the collector, not at storage.
+
+**Best practices either way:**
+- **Apps → Collector (gateway) → backends.** Don't point apps straight at storage. The collector
+  centralizes batching, retry, attribute redaction, and sampling, and lets you swap backends without a redeploy.
+- **Tail-based sampling** for traces at scale — storing 100% of spans gets expensive fast.
+- **Secure the pipeline** — TLS + an auth header on the OTLP endpoint (`OTEL_EXPORTER_OTLP_HEADERS`);
+  never expose Grafana or the collector publicly without SSO/auth.
+- **Tag the environment** — `OTEL_RESOURCE_ATTRIBUTES=deployment.environment=production,service.version=<git-sha>`
+  (`service.name` is already set per app).
+- **Wire the alerts** from §3 in Grafana Alerting / Alertmanager (sim failure rate, p95 `sim.duration`,
+  the `sim.points` memory-pressure proxy, API 5xx, queue depth).
+- **Mind retention + cost** and tune `OTEL_METRIC_EXPORT_INTERVAL_MS` to the backend's ingest model.
