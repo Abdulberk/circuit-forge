@@ -66,12 +66,15 @@ export async function runSimulation(input: SimulationJobInput): Promise<Simulati
     logger.info({ jobId: input.jobId, jobDir }, 'Starting simulation');
 
     try {
-        // Create the isolated per-job directory. Make it group/other-writable so that when ngspice runs
-        // as a dedicated low-privilege user (SIM_SANDBOX_USER on Linux), it can still write output.csv
-        // here (the worker writes circuit.cir/model files as its own user). No-op on Windows. The dir is
-        // an ephemeral per-job temp under SIM_TEMP_DIR and is removed in the finally block.
+        // Create the isolated per-job directory (ephemeral; removed in the finally block).
         await fs.mkdir(jobDir, { recursive: true });
-        await fs.chmod(jobDir, 0o777).catch(() => undefined);
+        // Only loosen perms in the legacy TWO-USER model, where a SEPARATE low-privilege user
+        // (SIM_SANDBOX_USER, via su-exec) runs ngspice and must write output.csv into this worker-created
+        // dir. In the default SINGLE-UID model — the whole worker, and thus ngspice, run as one non-root
+        // user — the dir's default perms already suffice, so keep them tight. No-op on Windows.
+        if (config.SIM_SANDBOX_USER) {
+            await fs.chmod(jobDir, 0o777).catch(() => undefined);
+        }
 
         // Sanitize the netlist ONCE. Each convergence-remedy attempt only injects validated `.options`
         // tokens onto this already-sanitized deck (applySolverOptions), so remedies need no re-sanitizing.

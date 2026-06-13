@@ -105,32 +105,29 @@ services:
       context: .
       dockerfile: infra/docker/worker-sim.Dockerfile
     container_name: circuitforge-worker-sim
-    # Least-privilege containment for the tier that runs untrusted ngspice. These are host-independent
-    # (no user-namespace / seccomp relaxation required, unlike bubblewrap) and stack UNDER the existing
-    # in-process rlimit wrapper + dedicated low-privilege ngspice user (SIM_SANDBOX_USER=simrunner).
-    #   - read_only root + tmpfs: the only writable paths are the per-job temp areas. SIM_TEMP_DIR=/tmp/sim
-    #     is where job dirs live; /tmp is needed because ngspice spools `.control` blocks there via libc
-    #     tmpfile() (which ignores $TMPDIR). Built-image runtime needs no other writes. NOTE: the dev
-    #     source-mount flow (volumes below) keeps those paths writable; confirm with a container smoke-test
-    #     before relying on read_only in a built-image prod deploy.
-    #   - cap_drop ALL, then re-add only SETUID/SETGID — the worker runs as root SOLELY so su-exec can DROP
-    #     the ngspice child to simrunner; those two caps are exactly what that drop needs. Everything else
-    #     (NET_RAW, SYS_ADMIN, CHOWN, …) is removed.
-    #   - no-new-privileges: a child can never gain privileges via a setuid bit (compatible with su-exec,
-    #     which drops privilege using the worker's existing CAP_SETUID — it does not escalate).
-    #   - pids_limit / mem_limit: container-wide ceilings so a runaway sim can't exhaust processes or memory
-    #     on the host. mem_limit is a cgroup RSS cap — stronger than the per-process RLIMIT_AS the wrapper
-    #     already sets. (The worker KEEPS normal networking: it must reach Postgres/Redis/MinIO. ngspice
-    #     itself needs no network; isolating the child's network is the optional bubblewrap follow-up.)
+    # Least-privilege containment for the tier that runs untrusted ngspice. Host-independent (no
+    # user-namespace / seccomp relaxation, unlike bubblewrap) and stacked UNDER the in-process rlimit
+    # wrapper. The worker image runs the WHOLE process as a single non-root user (ngsim) — no su-exec,
+    # no second user — so the container needs NO Linux capabilities at all.
+    #   - read_only root + tmpfs (mode 1777 so the non-root user can create per-job dirs): the only writable
+    #     paths are the per-job temp areas. SIM_TEMP_DIR=/tmp/sim is where job dirs live; /tmp is needed
+    #     because ngspice spools `.control` blocks there via libc tmpfile() (which ignores $TMPDIR). The
+    #     built image needs no other writes. NOTE: the dev source-mount flow (volumes below) keeps paths
+    #     writable; confirm read_only + USER ngsim with a container smoke-test before a prod rollout.
+    #   - cap_drop ALL with NO re-add — the single-uid worker performs no privilege transition, so it needs
+    #     zero capabilities (NET_RAW, SYS_ADMIN, SETUID, CHOWN, … all removed).
+    #   - no-new-privileges: belt-and-suspenders — no setuid-bit escalation is ever possible.
+    #   - pids_limit / mem_limit: container-wide ceilings so a runaway sim can't exhaust processes or memory.
+    #     mem_limit is a cgroup RSS cap — stronger than the per-process RLIMIT_AS the wrapper sets, and (with
+    #     one uid) pids_limit is the hard process ceiling backing the per-uid RLIMIT_NPROC. (The worker KEEPS
+    #     normal networking: it must reach Postgres/Redis/MinIO. ngspice itself needs no network; isolating
+    #     the child's network is the optional, host-conditional bubblewrap follow-up.)
     read_only: true
     tmpfs:
-      - /tmp/sim
-      - /tmp
+      - /tmp/sim:mode=1777
+      - /tmp:mode=1777
     cap_drop:
       - ALL
-    cap_add:
-      - SETUID
-      - SETGID
     security_opt:
       - no-new-privileges:true
     pids_limit: 256
