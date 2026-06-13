@@ -223,8 +223,12 @@ export class SimulationService {
     }
 
     async getStatus(jobId: string, userId: string) {
+        // Select only the light status fields — NEVER the heavy netlist/resultJson/stdout/stderr
+        // columns. This is polled every ~1s for up to 90s per AI design round, so pulling the full
+        // row (incl. the up-to-1MB resultJson) would move tens of MB per design request for nothing.
         const job = await this.prisma.simulationJob.findUnique({
             where: { id: jobId },
+            select: { id: true, orgId: true, status: true, createdAt: true, startedAt: true, finishedAt: true, metrics: true },
         });
 
         if (!job) {
@@ -244,8 +248,12 @@ export class SimulationService {
     }
 
     async getResult(jobId: string, userId: string, maxPoints?: number) {
+        // First pull only the light fields needed to authorize + branch. The heavy resultJson (up to
+        // 1MB) is fetched in a SECOND query only when the job actually SUCCEEDED and wasn't spilled to
+        // S3 — so the non-success path (and the S3 path) never touches that column.
         const job = await this.prisma.simulationJob.findUnique({
             where: { id: jobId },
+            select: { id: true, orgId: true, status: true, stderr: true, resultS3Key: true, metrics: true },
         });
 
         if (!job) {
@@ -262,24 +270,32 @@ export class SimulationService {
             };
         }
 
-        // Large results (>1MB) are spilled to S3 by the worker, which leaves resultJson
-        // null and sets resultS3Key. Hydrate from S3 so the response always carries the
-        // full SimulationResult ({ meta, series }) — matching small, DB-stored results.
-        let result: unknown = job.resultJson ?? null;
-        if (result === null && job.resultS3Key) {
+        // Large results are spilled to S3 by the worker (resultJson null, resultS3Key set); small ones
+        // live in resultJson. Fetch whichever applies — the DB column only via a targeted second read.
+        let result: unknown = null;
+        if (job.resultS3Key) {
             result = await this.fetchResultFromS3(job.resultS3Key);
+        } else {
+            const row = await this.prisma.simulationJob.findUnique({ where: { id: jobId }, select: { resultJson: true } });
+            result = row?.resultJson ?? null;
         }
 
         // Optional display decimation (?maxPoints): min-max bucketing keeps peaks/glitches, so a
         // 100k-point transient renders fast without hiding exactly the artifacts an engineer looks
-        // for. meta.downsampledFrom carries the original count whenever anything was reduced.
+        // for. The worker already caps stored series (WORKER_MAX_POINTS), so re-downsampling here is a
+        // second reduction — preserve the TRUE original count (the worker's meta.downsampledFrom, else
+        // the stored pointsCount) so meta.downsampledFrom doesn't degrade to the intermediate cap.
         if (
             maxPoints !== undefined &&
             result !== null &&
             typeof result === 'object' &&
             Array.isArray((result as { series?: unknown }).series)
         ) {
-            result = downsampleResult(result as SimulationResult, maxPoints);
+            const before = (result as SimulationResult).meta;
+            const trueOriginal = before.downsampledFrom ?? before.pointsCount;
+            const reduced = downsampleResult(result as SimulationResult, maxPoints);
+            if (reduced.meta.downsampledFrom !== undefined) reduced.meta.downsampledFrom = trueOriginal;
+            result = reduced;
         }
 
         return {

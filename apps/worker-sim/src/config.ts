@@ -32,6 +32,10 @@ const ConfigSchema = z.object({
     SIM_MAX_OUTPUT_BYTES: z.string().transform(Number).default('5242880'), // 5MB
     SIM_TEMP_DIR: z.string().default('/tmp/sim'),
     NGSPICE_PATH: z.string().default('ngspice'),
+    // Cap the STORED series length (per probe). A long transient can emit ~1M rows; we min-max
+    // bucket down to this before persisting so the DB/S3 payload, the API hydrate, and the response
+    // are all bounded — without losing visible waveform features. Full original count kept in metrics.
+    WORKER_MAX_POINTS: z.string().transform(Number).default('20000'),
 
     // Queue
     QUEUE_NAME: z.string().default('simulations'),
