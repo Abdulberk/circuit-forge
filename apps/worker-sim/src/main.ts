@@ -1,10 +1,13 @@
 /**
  * Worker-Sim Main Entry Point
  */
+// MUST stay first: starts OpenTelemetry (when configured) before any instrumented module loads.
+import './observability/instrumentation';
 import { createSimulationWorker } from './simulation/processor';
 import { prisma, disconnectPrisma } from './prisma/client';
 import { logger } from './logger';
 import { config } from './config';
+import { shutdownTelemetry } from './observability/telemetry';
 
 let worker: ReturnType<typeof createSimulationWorker> | null = null;
 
@@ -23,6 +26,11 @@ async function shutdown(signal: string): Promise<void> {
 
         // Disconnect Prisma
         await disconnectPrisma();
+
+        // Flush telemetry LAST — after the in-flight job has drained and DB queries are done — so the
+        // final spans/metrics export. Telemetry deliberately owns no signal handler of its own, so this
+        // graceful path is the single owner of process exit (no race that could abandon a running job).
+        await shutdownTelemetry();
 
         logger.info('Shutdown complete');
         process.exit(0);
