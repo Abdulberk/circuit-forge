@@ -82,4 +82,17 @@ const A = (probe: string, metric: AssertionDto['metric'], op: AssertionDto['op']
         expect(ev.verdict).toBe('fail');
         expect(ev.erc.errors.some((e) => e.code === 'ERC001')).toBe(true);
     });
+
+    it('POWER: reports per-resistor dissipation from the real simulation (≈25mW each on the divider)', async () => {
+        const ev = await svc.verify(DIVIDER, { type: 'op' }, []);
+        expect(ev.verdict).toBe('pass');
+        expect(ev.power).toBeDefined();
+        expect(ev.power!.basis).toBe('operating-point');
+        const r1 = ev.power!.components.find((c) => c.designator === 'R1')!;
+        const r2 = ev.power!.components.find((c) => c.designator === 'R2')!;
+        // 10V / 1k / 1k → 5V mid; each resistor drops 5V → P = 5²/1000 = 25 mW.
+        expect(r1.dissipationW).toBeCloseTo(0.025, 3);
+        expect(r2.dissipationW).toBeCloseTo(0.025, 3);
+        expect(ev.power!.anyOverRating).toBe(false); // 25mW << 0.25W default
+    });
 });
