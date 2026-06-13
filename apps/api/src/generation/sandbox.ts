@@ -19,6 +19,10 @@ export interface SandboxLimits {
 export interface SandboxConfig {
     mode: SandboxMode;
     limits: SandboxLimits;
+    /** Optional dedicated low-privilege user to run the child as (Linux, via su-exec). Worker-only in
+     *  practice (this inline path is dev-only and leaves it unset); supported here so the two sandbox
+     *  builders stay parallel + the same unit tests cover both shapes. */
+    user?: string;
 }
 
 export function sandboxedCommand(
@@ -32,9 +36,11 @@ export function sandboxedCommand(
     }
     const { memoryMb, cpuSec, fileSizeMb, maxProcs } = cfg.limits;
     // bash ulimit units: -v (KB), -t (CPU s), -f (1024-byte blocks), -u (procs). exec replaces the
-    // shell with ngspice (same PID), and args are argv (no interpolation → no injection surface).
+    // shell with the target (same PID), and args are argv (no interpolation → no injection surface).
     const preamble = `ulimit -v ${memoryMb * 1024} -t ${cpuSec} -f ${fileSizeMb * 1024} -u ${maxProcs}`;
-    return { file: 'bash', args: ['-c', `${preamble}; exec "$@"`, 'bash', bin, ...args] };
+    // Optionally drop to a dedicated user via su-exec (exec-replaces itself, same PID); user is validated.
+    const run = cfg.user ? `exec su-exec ${cfg.user} "$@"` : `exec "$@"`;
+    return { file: 'bash', args: ['-c', `${preamble}; ${run}`, 'bash', bin, ...args] };
 }
 
 export function resolveSandboxConfig(env: {
@@ -43,6 +49,7 @@ export function resolveSandboxConfig(env: {
     SIM_SANDBOX_CPU_SEC?: number;
     SIM_SANDBOX_FSIZE_MB?: number;
     SIM_SANDBOX_NPROC?: number;
+    SIM_SANDBOX_USER?: string;
     SIM_TIMEOUT_MS?: number;
     platform?: NodeJS.Platform;
 }): SandboxConfig {
@@ -50,8 +57,11 @@ export function resolveSandboxConfig(env: {
     const requested = (env.SIM_SANDBOX ?? 'auto').toLowerCase();
     const mode: SandboxMode = requested === 'none' ? 'none' : requested === 'rlimit' ? 'rlimit' : platform === 'linux' ? 'rlimit' : 'none';
     const cpuBackstop = Math.ceil((env.SIM_TIMEOUT_MS ?? 10000) / 1000) * 2 + 5;
+    // Only a plain username (no shell metacharacters) — it is interpolated into the bash preamble.
+    const user = env.SIM_SANDBOX_USER && /^[a-z_][a-z0-9_-]*$/.test(env.SIM_SANDBOX_USER) ? env.SIM_SANDBOX_USER : undefined;
     return {
         mode,
+        ...(user ? { user } : {}),
         limits: {
             memoryMb: env.SIM_SANDBOX_MEMORY_MB ?? 2048,
             cpuSec: env.SIM_SANDBOX_CPU_SEC ?? cpuBackstop,

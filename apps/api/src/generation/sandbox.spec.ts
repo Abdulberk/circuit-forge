@@ -19,6 +19,14 @@ describe('sandboxedCommand', () => {
         expect(cmd.args.slice(3)).toEqual(['/usr/bin/ngspice', '-b', '-o', 'stdout.log', 'circuit.cir']);
     });
 
+    it('drops to a dedicated user via su-exec when one is configured (Linux)', () => {
+        const cmd = sandboxedCommand('/usr/bin/ngspice', ['-b', 'circuit.cir'], { ...rlimit, user: 'simrunner' }, 'linux');
+        expect(cmd.file).toBe('bash');
+        // limits still applied, then exec hands off to su-exec which exec-replaces itself with ngspice.
+        expect(cmd.args[1]).toBe('ulimit -v 2097152 -t 25 -f 262144 -u 64; exec su-exec simrunner "$@"');
+        expect(cmd.args.slice(3)).toEqual(['/usr/bin/ngspice', '-b', 'circuit.cir']); // bin/args stay argv
+    });
+
     it('runs the binary directly on non-Linux (Windows dev) even when mode is rlimit', () => {
         const cmd = sandboxedCommand('ngspice_con.exe', ['-b', 'circuit.cir'], rlimit, 'win32');
         expect(cmd).toEqual({ file: 'ngspice_con.exe', args: ['-b', 'circuit.cir'] });
@@ -51,5 +59,15 @@ describe('resolveSandboxConfig', () => {
     it('honors explicit limit overrides', () => {
         const c = resolveSandboxConfig({ platform: 'linux', SIM_SANDBOX_MEMORY_MB: 512, SIM_SANDBOX_CPU_SEC: 15, SIM_SANDBOX_FSIZE_MB: 64, SIM_SANDBOX_NPROC: 16 });
         expect(c.limits).toEqual({ memoryMb: 512, cpuSec: 15, fileSizeMb: 64, maxProcs: 16 });
+    });
+
+    it('runs as SIM_SANDBOX_USER when it is a valid username', () => {
+        expect(resolveSandboxConfig({ platform: 'linux', SIM_SANDBOX_USER: 'simrunner' }).user).toBe('simrunner');
+    });
+
+    it('ignores an unsafe SIM_SANDBOX_USER so nothing but a plain name reaches the preamble', () => {
+        expect(resolveSandboxConfig({ platform: 'linux', SIM_SANDBOX_USER: 'x; rm -rf /' }).user).toBeUndefined();
+        expect(resolveSandboxConfig({ platform: 'linux', SIM_SANDBOX_USER: '$(whoami)' }).user).toBeUndefined();
+        expect(resolveSandboxConfig({ platform: 'linux' }).user).toBeUndefined();
     });
 });

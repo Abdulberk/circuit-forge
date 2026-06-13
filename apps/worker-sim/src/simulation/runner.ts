@@ -50,8 +50,12 @@ export async function runSimulation(input: SimulationJobInput): Promise<Simulati
     logger.info({ jobId: input.jobId, jobDir }, 'Starting simulation');
 
     try {
-        // Create job directory
+        // Create the isolated per-job directory. Make it group/other-writable so that when ngspice runs
+        // as a dedicated low-privilege user (SIM_SANDBOX_USER on Linux), it can still write output.csv
+        // here (the worker writes circuit.cir/model files as its own user). No-op on Windows. The dir is
+        // an ephemeral per-job temp under SIM_TEMP_DIR and is removed in the finally block.
         await fs.mkdir(jobDir, { recursive: true });
+        await fs.chmod(jobDir, 0o777).catch(() => undefined);
 
         // Sanitize netlist
         const sanitizedNetlist = sanitizeNetlist(input.netlist, jobDir);
