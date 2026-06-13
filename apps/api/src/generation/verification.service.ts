@@ -1,19 +1,25 @@
 /**
  * Verified Designs — deterministic evidence packs.
  *
- * Turns a circuit + (optional) spec assertions into a structured, defensible report: run ERC + real
- * ngspice (inline, via CircuitSimulatorService), measure the result, check each requested spec against
- * the MEASURED value, and return a pass/fail verdict with the evidence attached. No LLM in this path —
- * the whole point is that a "verified design" is backed by deterministic simulation, not a model's
- * say-so. This is both the productized closed-loop output and the "AI design review with receipts"
- * surface (review an existing circuit, generation optional).
+ * Turns a circuit + (optional) spec assertions into a structured, defensible report: run ERC, run real
+ * ngspice (on the WORKER in prod — see runSimulation; the API image ships no ngspice), measure the
+ * result, check each requested spec against the MEASURED value, and return a pass/fail verdict with the
+ * evidence attached. No LLM in this path — a "verified design" is backed by deterministic simulation,
+ * not a model's say-so. Both the productized closed-loop output and the "AI design review with
+ * receipts" surface (review an existing circuit, generation optional). Stays a SYNCHRONOUS request via
+ * server-side job polling.
  */
-import { Injectable } from '@nestjs/common';
-import { sanitizeNodeName, type AnalysisConfig } from '@circuit-forge/eda-core';
+import { Injectable, Optional, Logger } from '@nestjs/common';
+import { sanitizeNodeName, runErc, generateNetlist, type AnalysisConfig, type SimulationResult } from '@circuit-forge/eda-core';
 import { safeValidateCircuitJson, type CircuitJson } from '@circuit-forge/eda-core';
-import { CircuitSimulatorService, type SimMeasurement, type SimSummary, type ConvergenceReport } from './circuit-simulator.service';
+import { CircuitSimulatorService, summarizeSeries, type SimMeasurement, type SimSummary, type ConvergenceReport } from './circuit-simulator.service';
+import { attachGenericModels } from './model-resolution';
 import { computeResistorPower, type PowerReport } from './power-analysis';
+import { SimulationService } from '../simulation/simulation.service';
 import type { AssertionDto } from './dto';
+
+/** How long the API server-side-polls the worker job before giving up (mirrors the AI design loop). */
+const VERIFY_POLL_TIMEOUT_MS = 90_000;
 
 export interface AssertionResult {
     label: string;
@@ -70,16 +76,21 @@ export function isCurrentProbe(probe: string): boolean {
 
 @Injectable()
 export class VerificationService {
-    constructor(private readonly simulator: CircuitSimulatorService) {}
+    private readonly logger = new Logger(VerificationService.name);
+
+    constructor(
+        private readonly simulator: CircuitSimulatorService,
+        // Optional so the service can be constructed without the queue in unit/live specs (→ inline).
+        @Optional() private readonly simulation?: SimulationService,
+    ) {}
 
     async verify(
         circuit: unknown,
         analysisConfig?: AnalysisConfig,
         assertions: AssertionDto[] = [],
+        userId?: string,
     ): Promise<DesignEvidence> {
-        // Convergence Doctor: if the run hits a solver-convergence failure, auto-retry with remedies
-        // before reporting — a design that merely needed gmin/itl4 verifies instead of failing.
-        const sim = await this.simulator.simulateWithRemedies(circuit, analysisConfig);
+        const sim = await this.runSimulation(circuit, analysisConfig, userId);
         const assertionResults = this.evaluate(sim.measurements, assertions, sim.simStatus === 'ok');
 
         // Power-dissipation review (resistors): only meaningful once we have real node voltages.
@@ -123,6 +134,76 @@ export class VerificationService {
             ...(sim.convergence ? { convergence: sim.convergence } : {}),
             ...(power ? { power } : {}),
         };
+    }
+
+    /**
+     * Produce the SimSummary verify() builds evidence on. PROD path delegates ngspice to the WORKER
+     * (the API image ships no ngspice; the worker has it + the rlimit sandbox) — keeping untrusted
+     * execution in one isolated tier. Falls back to the INLINE simulator only when there's no userId/
+     * queue (local dev + the live specs), where the Convergence Doctor's remedy ladder still applies.
+     * (Slice 1: the worker path is single-pass; moving the ladder worker-side is the next slice.)
+     */
+    private async runSimulation(circuit: unknown, analysis: AnalysisConfig | undefined, userId?: string): Promise<SimSummary> {
+        if (userId && this.simulation) return this.runViaWorker(circuit, analysis, userId);
+        return this.simulator.simulateWithRemedies(circuit, analysis);
+    }
+
+    /**
+     * Worker-backed run: ERC + netlist are pure (done here), ngspice runs on the worker queue, and the
+     * API server-side-polls for the result (same pattern as the AI design loop) so verify-design stays
+     * a SYNCHRONOUS request. Returns the SimSummary; never throws (failures become a 'failed' summary).
+     */
+    private async runViaWorker(circuit: unknown, analysis: AnalysisConfig | undefined, userId: string): Promise<SimSummary> {
+        const an: AnalysisConfig = analysis ?? { type: 'op' };
+        const empty = { measurements: [], nodeCount: 0, analysisType: an.type };
+
+        const validated = safeValidateCircuitJson(circuit);
+        if (!validated.success) {
+            const issues = validated.error.errors.map((e) => `${e.path.join('.') || '(root)'}: ${e.message}`).join('; ');
+            return { simStatus: 'failed', ercErrors: [], ercWarnings: [], runError: `invalid circuit: ${issues}`, ...empty };
+        }
+        const c = validated.data as CircuitJson;
+        attachGenericModels(c);
+
+        // ERC always runs (pure, API-side) — the worker only does the ngspice execution.
+        const erc = runErc(c);
+        const ercErrors = erc.issues.filter((i) => i.severity === 'error').map((i) => ({ code: i.code, message: i.message, relatedIds: i.relatedIds }));
+        const ercWarnings = erc.issues.filter((i) => i.severity === 'warning').map((i) => ({ code: i.code, message: i.message, relatedIds: i.relatedIds }));
+
+        let netlist: string;
+        try {
+            netlist = generateNetlist(c, an);
+        } catch (e) {
+            return { simStatus: 'failed', ercErrors, ercWarnings, runError: `netlist generation failed: ${e instanceof Error ? e.message : String(e)}`, ...empty };
+        }
+
+        try {
+            const { jobId } = await this.simulation!.createQuickSim(netlist, an as unknown as Record<string, unknown>, userId);
+            const status = await this.pollJob(jobId, userId);
+            if (status !== 'SUCCEEDED') {
+                return { simStatus: 'failed', ercErrors, ercWarnings, runError: `simulation ${status.toLowerCase()}`, ...empty };
+            }
+            const res = (await this.simulation!.getResult(jobId, userId)) as { result?: SimulationResult | null };
+            const series = res.result?.series;
+            if (!series || series.length === 0) {
+                return { simStatus: 'failed', ercErrors, ercWarnings, runError: 'simulation produced no result data', ...empty };
+            }
+            return { simStatus: 'ok', ercErrors, ercWarnings, measurements: series.map(summarizeSeries), nodeCount: series.length, analysisType: an.type };
+        } catch (e) {
+            this.logger.error(`verify-design worker run failed: ${e instanceof Error ? e.message : e}`);
+            return { simStatus: 'failed', ercErrors, ercWarnings, runError: 'simulation could not be queued (worker/queue unavailable)', ...empty };
+        }
+    }
+
+    /** Server-side poll a worker job to a terminal state (mirrors design.service.pollJob). */
+    private async pollJob(jobId: string, userId: string): Promise<string> {
+        const start = Date.now();
+        while (Date.now() - start < VERIFY_POLL_TIMEOUT_MS) {
+            const s = (await this.simulation!.getStatus(jobId, userId)) as { status: string };
+            if (s.status === 'SUCCEEDED' || s.status === 'FAILED' || s.status === 'TIMED_OUT' || s.status === 'CANCELED') return s.status;
+            await new Promise((r) => setTimeout(r, 1000));
+        }
+        return 'TIMED_OUT';
     }
 
     /** Evaluate each assertion against the measurements. When the sim didn't run (simOk=false) every
