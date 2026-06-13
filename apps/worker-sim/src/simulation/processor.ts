@@ -12,6 +12,7 @@ import { downloadFile, uploadJsonResult } from '../storage/s3-client';
 import { downsampleResult } from '@circuit-forge/eda-core';
 import { Prisma } from '@prisma/client';
 import { recordSim } from '../observability/telemetry';
+import { propagation, context as otelContext, trace, SpanStatusCode } from '@opentelemetry/api';
 
 /**
  * Job payload from the queue
@@ -24,6 +25,9 @@ export interface SimulationJobPayload {
     analysisType: string;
     analysisConfig: Record<string, unknown>;
     modelAssets?: string[]; // S3 keys
+    /** W3C trace context injected by the API at enqueue — links this job's span to the request that
+     *  created it, so a verify-design / simulate trace spans API → queue → worker end-to-end. */
+    otel?: Record<string, string>;
 }
 
 /**
@@ -70,68 +74,87 @@ async function processJob(job: Job<SimulationJobPayload>): Promise<void> {
 
     logger.info({ jobId, orgId }, 'Processing simulation job');
 
-    try {
-        // Update job status to RUNNING
-        await prisma.simulationJob.update({
-            where: { id: jobId },
-            data: {
-                status: 'RUNNING',
-                startedAt: new Date(),
-            },
-        });
+    // Link this worker span to the API request that enqueued the job (context propagated via
+    // job.data.otel) so Tempo shows ONE trace: HTTP → enqueue → worker process, with the Prisma queries
+    // and the ngspice run window as children. Falls back to a fresh root span when no context was passed.
+    const parentCtx = propagation.extract(otelContext.active(), job.data.otel ?? {});
+    const tracer = trace.getTracer('circuit-forge-worker');
 
-        // Download model files if needed
-        const modelFiles: Array<{ name: string; content: Buffer }> = [];
-        if (modelAssets && modelAssets.length > 0) {
-            for (const s3Key of modelAssets) {
-                const content = await downloadFile(s3Key);
-                const name = s3Key.split('/').pop() || 'model.lib';
-                modelFiles.push({ name, content });
-                logger.debug({ s3Key, name }, 'Model file downloaded');
+    await tracer.startActiveSpan(
+        'sim.process',
+        { attributes: { 'sim.job_id': jobId, 'sim.org_id': orgId, 'sim.analysis_type': analysisType } },
+        parentCtx,
+        async (span) => {
+            try {
+                // Update job status to RUNNING
+                await prisma.simulationJob.update({
+                    where: { id: jobId },
+                    data: {
+                        status: 'RUNNING',
+                        startedAt: new Date(),
+                    },
+                });
+
+                // Download model files if needed
+                const modelFiles: Array<{ name: string; content: Buffer }> = [];
+                if (modelAssets && modelAssets.length > 0) {
+                    for (const s3Key of modelAssets) {
+                        const content = await downloadFile(s3Key);
+                        const name = s3Key.split('/').pop() || 'model.lib';
+                        modelFiles.push({ name, content });
+                        logger.debug({ s3Key, name }, 'Model file downloaded');
+                    }
+                }
+
+                // Run the simulation
+                const result = await runSimulation({
+                    jobId,
+                    netlist,
+                    probeNames,
+                    analysisType,
+                    modelFiles: modelFiles.length > 0 ? modelFiles : undefined,
+                });
+
+                // Handle result
+                if (result.success && result.result) {
+                    await handleSuccess(jobId, result);
+                } else {
+                    await handleFailure(jobId, result);
+                }
+                span.setAttribute('sim.outcome', result.success ? 'succeeded' : 'failed');
+                span.setStatus({ code: SpanStatusCode.OK });
+            } catch (error) {
+                const errorMessage = error instanceof Error ? error.message : String(error);
+                logger.error({ jobId, error: errorMessage }, 'Job processing error');
+                span.recordException(error instanceof Error ? error : new Error(errorMessage));
+                span.setStatus({ code: SpanStatusCode.ERROR, message: errorMessage });
+
+                // Reached by a throw OUTSIDE the ngspice result path — S3 model download, the RUNNING/DB
+                // update, or a result upload on an otherwise-successful sim. These are INFRASTRUCTURE
+                // failures, not circuit faults, so tag failureClass='infra' (status stays FAILED — no
+                // operational enum value); the API maps it to an 'inconclusive' verify verdict rather than
+                // telling the user their design failed. The OTel metric counts it as a failed run.
+                recordSim({ status: 'failed' });
+
+                await prisma.simulationJob.update({
+                    where: { id: jobId },
+                    data: {
+                        status: 'FAILED',
+                        stderr: errorMessage,
+                        finishedAt: new Date(),
+                        metrics: {
+                            error: errorMessage,
+                            failureClass: 'infra',
+                        },
+                    },
+                });
+
+                throw error;
+            } finally {
+                span.end();
             }
-        }
-
-        // Run the simulation
-        const result = await runSimulation({
-            jobId,
-            netlist,
-            probeNames,
-            analysisType,
-            modelFiles: modelFiles.length > 0 ? modelFiles : undefined,
-        });
-
-        // Handle result
-        if (result.success && result.result) {
-            await handleSuccess(jobId, result);
-        } else {
-            await handleFailure(jobId, result);
-        }
-    } catch (error) {
-        const errorMessage = error instanceof Error ? error.message : String(error);
-        logger.error({ jobId, error: errorMessage }, 'Job processing error');
-
-        // Reached by a throw OUTSIDE the ngspice result path — S3 model download, the RUNNING/DB update,
-        // or a result upload on an otherwise-successful sim. These are INFRASTRUCTURE failures, not circuit
-        // faults, so tag failureClass='infra' (status stays FAILED — no operational enum value); the API
-        // maps it to an 'inconclusive' verify verdict rather than telling the user their design failed.
-        // The OTel metric counts it as a failed run (throughput); the failureClass tag drives the verdict.
-        recordSim({ status: 'failed' });
-
-        await prisma.simulationJob.update({
-            where: { id: jobId },
-            data: {
-                status: 'FAILED',
-                stderr: errorMessage,
-                finishedAt: new Date(),
-                metrics: {
-                    error: errorMessage,
-                    failureClass: 'infra',
-                },
-            },
-        });
-
-        throw error;
-    }
+        },
+    );
 }
 
 /**

@@ -147,6 +147,12 @@ services:
       - "3030:3000"   # Grafana UI (host 3030 — the API already uses 3000)
       - "4317:4317"   # OTLP gRPC
       - "4318:4318"   # OTLP HTTP  →  OTEL_EXPORTER_OTLP_ENDPOINT=http://localhost:4318
+    volumes:
+      # Auto-provision the Circuit Forge dashboard + alert rules every start (so they're always there,
+      # no manual import / no querying by hand). Read-only mounts into Grafana's provisioning dirs.
+      - ./infra/observability/grafana/dashboards:/etc/circuit-forge/dashboards:ro
+      - ./infra/observability/grafana/provisioning/dashboards/circuit-forge.yaml:/otel-lgtm/grafana/conf/provisioning/dashboards/circuit-forge.yaml:ro
+      - ./infra/observability/grafana/provisioning/alerting/circuit-forge.yaml:/otel-lgtm/grafana/conf/provisioning/alerting/circuit-forge.yaml:ro
 
 volumes:
   postgres-data:

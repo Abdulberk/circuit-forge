@@ -2,9 +2,9 @@
  * OpenTelemetry bootstrap. INERT until configured — the SDK only starts when OTEL_ENABLED=true or an
  * OTEL_EXPORTER_OTLP_ENDPOINT is set, so there is zero overhead by default (mirrors the rest of the
  * system's "configure to activate" philosophy). When on, auto-instrumentation captures HTTP/Express/
- * Nest requests (+ outgoing HTTP) and ioredis/Redis commands as traces, and a periodic reader exports
- * metrics — both over OTLP/HTTP to a collector. (Prisma queries are NOT traced — that needs
- * @prisma/instrumentation + schema `tracing`, which isn't set up.) Telemetry must NEVER crash the app: init is
+ * Nest requests (+ outgoing HTTP), ioredis/Redis commands, and Prisma DB queries as traces; pino logs
+ * are exported as OTLP logs (trace-correlated); and a periodic reader exports metrics — all over
+ * OTLP/HTTP to a collector. Telemetry must NEVER crash the app: init is
  * wrapped in try/catch and failures are logged and swallowed.
  *
  * startTelemetry() must run before any instrumented module is loaded, so the side-effecting call lives
@@ -17,6 +17,9 @@ import { getNodeAutoInstrumentations } from '@opentelemetry/auto-instrumentation
 import { OTLPTraceExporter } from '@opentelemetry/exporter-trace-otlp-http';
 import { OTLPMetricExporter } from '@opentelemetry/exporter-metrics-otlp-http';
 import { PeriodicExportingMetricReader } from '@opentelemetry/sdk-metrics';
+import { OTLPLogExporter } from '@opentelemetry/exporter-logs-otlp-http';
+import { BatchLogRecordProcessor } from '@opentelemetry/sdk-logs';
+import { PrismaInstrumentation } from '@prisma/instrumentation';
 
 let sdk: NodeSDK | undefined;
 
@@ -45,10 +48,15 @@ export function startTelemetry(serviceName: string): void {
                     exportIntervalMillis: Number(process.env.OTEL_METRIC_EXPORT_INTERVAL_MS) || 30_000,
                 }),
             ],
+            // pino logs → OTLP logs (the pino auto-instrumentation bridges them once a LoggerProvider
+            // is registered, which these processors do). Trace context is injected, so logs correlate
+            // with their span in Grafana.
+            logRecordProcessors: [new BatchLogRecordProcessor(new OTLPLogExporter())],
             instrumentations: [
                 getNodeAutoInstrumentations({
                     '@opentelemetry/instrumentation-fs': { enabled: false }, // far too noisy
                 }),
+                new PrismaInstrumentation(), // DB query spans (Prisma uses its own engine; needs this)
             ],
         });
         sdk.start();

@@ -54,16 +54,20 @@ Via `getNodeAutoInstrumentations()`. With the SDK on you get spans for, among ot
 - **HTTP / Express / NestJS** on the API — every REST request: route, status code, latency (plus the
   matching `http.server.duration` metric).
 - **Outgoing HTTP** from the API — its calls to the TME parts catalog and the LLM provider (client spans).
-- **ioredis / Redis commands** on both apps. BullMQ runs on ioredis, so the queue's Redis operations
-  appear as ioredis spans — note these are raw Redis ops, **not** a single semantic "job processed" span.
+- **ioredis / Redis commands** on both apps (incl. the BullMQ enqueue ops on the API side).
+- **Simulation job span (distributed).** The worker opens a `sim.process` span per job
+  ([processor.ts](../apps/worker-sim/src/simulation/processor.ts)), and the API injects W3C trace context
+  into the queued job ([simulation.service.ts](../apps/api/src/simulation/simulation.service.ts)), so a
+  verify-design / simulate is **one end-to-end trace**: `POST /verify-design` → ioredis enqueue → worker
+  `sim.process` (with the ngspice run inside). **Verified live.**
 
 The `fs` instrumentation is explicitly **disabled** — far too noisy.
 
-**Not traced (gaps to be aware of):**
-- **Prisma DB queries.** Prisma runs its own query engine (not the `pg` driver), so capturing query
-  timing needs `previewFeatures = ["tracing"]` in `schema.prisma` + `@prisma/instrumentation` — neither is
-  set up, so DB latency is **not** in the traces today (see §5).
-- **Semantic BullMQ job spans** (one span covering enqueue → process). Only the underlying Redis ops show.
+**Partially wired:**
+- **Prisma DB-query spans.** `@prisma/instrumentation` is registered in both apps' `telemetry.ts`, but on
+  Prisma **5.22** the client must be (re)generated with `previewFeatures = ["tracing"]` for it to emit
+  spans. Until `prisma generate` runs (with the dev stack stopped, to clear Windows file locks), DB-query
+  spans don't appear — the instrumentation sits as a harmless no-op. Follow-up (see §5).
 
 ### 2.2 Metrics
 
@@ -82,6 +86,13 @@ would explode a metrics backend).
 | `circuitforge.sim.points` | Histogram | `{point}` | The **TRUE pre-downsample** point count of a run — a direct **memory-pressure proxy**. A stiff/long transient that materializes a giant M×N result shows up here *before* it OOMs a worker. (The stored series is capped at `WORKER_MAX_POINTS`; this metric records the real size.) |
 
 `recordSim()` is a no-op when telemetry is off and is wrapped in try/catch — metrics never break a job.
+
+### 2.3 Logs
+
+`pino` logs are exported as **OTLP logs** to the collector (→ Loki) via `logRecordProcessors` in
+`telemetry.ts`; the pino auto-instrumentation injects `trace_id`/`span_id`, so a log line links to its
+span in Grafana. **Worker log export is verified** (`{service_name="circuit-forge-worker"}` in Loki); the
+API uses the same wiring (pino-http) — confirm its lines once it has served traffic.
 
 ---
 
@@ -125,13 +136,12 @@ queue-depth alerts are early-warning / capacity signals.
 
 Called out honestly rather than implied:
 
-- **No logs pipeline.** Only traces + metrics are exported. App logs still go to stdout via `pino`
-  (API/worker) — they are not shipped to a backend (no Loki), so you can't view/correlate them in Grafana
-  yet. (The pino auto-instrumentation does inject `trace_id`/`span_id` into log lines when a span is
-  active, so the correlation IDs are there once a log pipeline exists.)
-- **No DB / queue span depth.** Prisma DB queries and semantic BullMQ job lifecycle are not traced (see
-  §2.1) — adding `@prisma/instrumentation` (+ schema `tracing` preview) and a BullMQ instrumentation
-  would surface query latency and per-job spans.
+- **Prisma DB-query spans pending.** `@prisma/instrumentation` is wired (§2.1) but won't emit until the
+  Prisma client is regenerated with `previewFeatures = ["tracing"]` (Prisma 5.22) — blocked by Windows
+  file locks while `pnpm dev` runs. Do it with the dev stack stopped: add the preview flag to
+  `schema.prisma`, `pnpm --filter api db:generate`, restart. (BullMQ/job tracing already works — §2.1.)
+- **API log export unconfirmed.** Worker pino logs reach Loki; the API uses the same wiring but its lines
+  weren't yet confirmed in Loki — verify after the API serves some traffic.
 - **No collector / dashboards enabled by default.** The app only emits OTLP. For LOCAL viewing there's an
   opt-in Grafana stack (§6); for PRODUCTION you point it at a real backend (§7). Neither ships on by default.
 - **API does not emit the custom sim metrics.** The API's inline verify-and-fix ngspice path (dev/
@@ -168,9 +178,9 @@ clears the data, which is fine for dev).
 
 4. **Open Grafana** → http://localhost:3030 (no login — anonymous Admin is enabled; if ever prompted,
    `admin`/`admin`). Use **Explore**:
-   - **Traces** (Tempo): filter `service.name = circuit-forge-api` / `circuit-forge-worker`. A
-     verify-design request shows the API's HTTP span + the Redis (ioredis) ops for the enqueue/poll. (The
-     worker's DB + job work isn't its own span yet — see the §2.1 gaps.)
+   - **Traces** (Tempo): filter `service.name = circuit-forge-api` and open a `POST /verify-design` trace —
+     it's ONE distributed trace: HTTP → Nest controller → ioredis enqueue → worker `sim.process` (with the
+     ngspice run inside). The context is propagated through the BullMQ job (§2.1).
    - **Metrics** (Prometheus): search `circuitforge` for the custom sim metrics — they arrive as
      `circuitforge_sim_runs_total` (counter, label `status`), `circuitforge_sim_duration_milliseconds_{bucket,sum,count}`
      and `circuitforge_sim_points_{bucket,sum,count}` (histograms). (OTLP dots → underscores; Prometheus
@@ -178,6 +188,17 @@ clears the data, which is fine for dev).
      Search `http_server` for API request latency. Example panels: failure rate
      `sum(rate(circuitforge_sim_runs_total{status!="succeeded"}[5m])) / sum(rate(circuitforge_sim_runs_total[5m]))`;
      p95 duration `histogram_quantile(0.95, sum by (le) (rate(circuitforge_sim_duration_milliseconds_bucket[5m])))`.
+
+**Dashboard + alerts auto-provision** (no manual building / querying). A **"Circuit Forge — Simulations
+& API"** dashboard (Dashboards menu) and two **alert rules** (Alerting → Alert rules → "Circuit Forge"
+folder) load on every start from [infra/observability/grafana/](../infra/observability/grafana) (mounted
+read-only into the container). Edit those files to change them; they survive restarts because they're
+provisioned from disk, not stored in the (ephemeral) container.
+
+> **Host dev note:** `instrumentation.ts` loads the root `.env` itself (via `process.loadEnvFile`) before
+> starting telemetry, so once `OTEL_ENABLED`/`OTEL_EXPORTER_OTLP_ENDPOINT` are in `.env`, every `pnpm dev`
+> emits automatically — no per-run env exporting. (The SDK starts before instrumented modules load, which
+> is *why* the .env must be loaded there and not left to `@nestjs/config`.)
 
 Stop it with `docker compose --profile observability down` (or `stop otel-lgtm`).
 
