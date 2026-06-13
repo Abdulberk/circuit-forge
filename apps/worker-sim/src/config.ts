@@ -37,6 +37,14 @@ const ConfigSchema = z.object({
     // are all bounded — without losing visible waveform features. Full original count kept in metrics.
     WORKER_MAX_POINTS: z.string().transform(Number).default('20000'),
 
+    // OS resource-limit hardening for the ngspice child (Linux only — see sandbox.ts).
+    // 'auto' (default): rlimit on Linux, none elsewhere. 'rlimit' forces it; 'none' disables it.
+    SIM_SANDBOX: z.string().optional(),
+    SIM_SANDBOX_MEMORY_MB: z.string().transform(Number).optional(),
+    SIM_SANDBOX_CPU_SEC: z.string().transform(Number).optional(),
+    SIM_SANDBOX_FSIZE_MB: z.string().transform(Number).optional(),
+    SIM_SANDBOX_NPROC: z.string().transform(Number).optional(),
+
     // Queue
     QUEUE_NAME: z.string().default('simulations'),
     CONCURRENCY: z.string().transform(Number).default('2'),

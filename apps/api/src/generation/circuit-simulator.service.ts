@@ -33,6 +33,7 @@ import {
 } from '@circuit-forge/eda-core';
 import { attachGenericModels } from './model-resolution';
 import { diagnoseConvergence, convergenceRemedyLadder, type ConvergenceKind } from './convergence';
+import { sandboxedCommand, resolveSandboxConfig, type SandboxConfig } from './sandbox';
 
 /** One node's behaviour over the run, distilled to four numbers the model can reason about. */
 export interface SimMeasurement {
@@ -316,11 +317,30 @@ export class CircuitSimulatorService {
         };
     }
 
+    /** Sandbox config for the inline ngspice child, read once from env. */
+    private sandboxConfig(timeoutMs: number): SandboxConfig {
+        const num = (k: string) => {
+            const v = Number(this.config.get<string>(k));
+            return Number.isFinite(v) && v > 0 ? v : undefined;
+        };
+        return resolveSandboxConfig({
+            SIM_SANDBOX: this.config.get<string>('SIM_SANDBOX'),
+            SIM_SANDBOX_MEMORY_MB: num('SIM_SANDBOX_MEMORY_MB'),
+            SIM_SANDBOX_CPU_SEC: num('SIM_SANDBOX_CPU_SEC'),
+            SIM_SANDBOX_FSIZE_MB: num('SIM_SANDBOX_FSIZE_MB'),
+            SIM_SANDBOX_NPROC: num('SIM_SANDBOX_NPROC'),
+            SIM_TIMEOUT_MS: timeoutMs,
+        });
+    }
+
     /** Spawn ngspice in batch mode, mirroring the worker (apps/worker-sim/src/simulation/runner.ts). */
     private runNgspice(ngspicePath: string, cwd: string): Promise<{ stderr: string; exitCode: number | null; timedOut: boolean }> {
         const timeoutMs = Number(this.config.get<string>('SIM_TIMEOUT_MS')) || DEFAULT_TIMEOUT_MS;
+        // OS resource limits (Linux prod) so an untrusted/verify-design circuit can't exhaust the host;
+        // direct spawn on Windows dev / SIM_SANDBOX=none.
+        const { file, args } = sandboxedCommand(ngspicePath, ['-b', '-o', 'stdout.log', 'circuit.cir'], this.sandboxConfig(timeoutMs));
         return new Promise((resolve) => {
-            const proc: ChildProcess = spawn(ngspicePath, ['-b', '-o', 'stdout.log', 'circuit.cir'], {
+            const proc: ChildProcess = spawn(file, args, {
                 cwd,
                 stdio: ['ignore', 'pipe', 'pipe'],
                 timeout: timeoutMs,
