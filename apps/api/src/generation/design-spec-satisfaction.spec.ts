@@ -123,6 +123,35 @@ describe('DesignService — spec satisfaction (#2: verified means meets-the-spec
         expect(mockCreate).toHaveBeenCalledTimes(1); // NOT fed to the LLM as a "fix" — no fix round
     });
 
+    it('G — MIXED criteria (one passes, one fails) → ok:false, only the FAILING one drives the fix', async () => {
+        generateOnce([
+            { probe: 'out', metric: 'final', op: 'approx', value: 5, tol: 0.1 }, // passes (final 5)
+            { probe: 'out', metric: 'pp', op: 'gte', value: 10, label: 'swing ≥ 10' }, // fails (pp 0)
+        ]);
+        fixOnce();
+        const r = (await makeService(makeSimSeries({ ys: [5, 5] })).design({ prompt: 'x', maxRounds: 2 } as never, 'u')) as Record<string, unknown>;
+        expect(r.ok).toBe(false);
+        expect(r.verified).toBe(false);
+        const a = r.assertions as { pass: boolean }[];
+        expect(a.filter((x) => x.pass).length).toBe(1);
+        expect(a.filter((x) => !x.pass).length).toBe(1);
+        // the fix prompt names the FAILING criterion (not the passing one)
+        expect(JSON.stringify(mockCreate.mock.calls[1]![0])).toMatch(/swing|pp/);
+    });
+
+    it('H — malformed acceptance criteria are dropped by the REAL parser; only valid ones are checked', async () => {
+        generateOnce([
+            { probe: 'out', metric: 'final', op: 'approx', value: 5, tol: 0.1 }, // valid
+            { probe: 'out', metric: 'BOGUS', op: 'gt', value: 1 }, // invalid metric → dropped
+            { nonsense: true }, // junk → dropped
+            { probe: 'out', metric: 'final', op: 'gt', value: 'NaNstring' }, // non-numeric value → dropped
+        ]);
+        const r = (await makeService(makeSimSeries({ ys: [5] })).design({ prompt: 'x', maxRounds: 1 } as never, 'u')) as Record<string, unknown>;
+        expect((r.assertions as unknown[]).length).toBe(1); // 3 malformed dropped by parseAcceptanceCriteria
+        expect(r.ok).toBe(true);
+        expect(r.verified).toBe(true);
+    });
+
     it('E — the worker convergence diagnosis is fed into the AI fix prompt (cheap win)', async () => {
         generateOnce();
         fixOnce();

@@ -65,6 +65,42 @@ describe('compareAssertion operators', () => {
     });
 });
 
+describe('evaluateAssertions — edge cases', () => {
+    it('evaluates each criterion INDEPENDENTLY (mixed pass/fail in one call)', () => {
+        const rs = evaluateAssertions([meas(OUT, { final: 5, pp: 0 })], [
+            { probe: 'out', metric: 'final', op: 'approx', value: 5, tol: 0.1 }, // pass
+            { probe: 'out', metric: 'pp', op: 'gte', value: 10 }, // fail
+        ]);
+        expect(rs.map((r) => r.pass)).toEqual([true, false]);
+    });
+
+    it('approx with target 0 uses the 1e-9 floor (no false pass on a tiny value)', () => {
+        expect(compareAssertion(0, 'approx', 0)).toBe(true);
+        expect(compareAssertion(1e-8, 'approx', 0)).toBe(false);
+    });
+
+    it('negative target → signed distance is still correct', () => {
+        const r = evaluateAssertions([meas(OUT, { final: -3 })], [{ probe: 'out', metric: 'final', op: 'lte', value: -5 }])[0]!;
+        // -3 <= -5 is false; distance = actual - target = -3 - (-5) = +2
+        expect(r.pass).toBe(false);
+        expect(r.distance).toBe(2);
+    });
+
+    it('a flat DC node (pp = 0) fails an amplitude/pp criterion cleanly', () => {
+        const r = evaluateAssertions([meas(OUT, { pp: 0 })], [{ probe: 'out', metric: 'pp', op: 'gt', value: 1 }])[0]!;
+        expect(r.pass).toBe(false);
+        expect(r.actual).toBe(0);
+        expect(r.distance).toBe(-1);
+    });
+
+    it('describeFailure on a not-found probe does not crash or emit NaN', () => {
+        const r = evaluateAssertions([], [{ probe: 'ghost', metric: 'final', op: 'gt', value: 0 }])[0]!;
+        const s = describeFailure(r);
+        expect(s).toContain('ghost');
+        expect(s).not.toMatch(/NaN/);
+    });
+});
+
 describe('isCurrentProbe', () => {
     it('flags current/power probes the voltage-only sim cannot measure', () => {
         expect(isCurrentProbe('i(R1)')).toBe(true);
