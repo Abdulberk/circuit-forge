@@ -318,37 +318,54 @@ async function executeNgspice(
         const args = ['-b', '-o', 'stdout.log', netlistPath];
         const cwd = path.dirname(netlistPath);
 
-        // Wrap with OS resource limits (Linux prod) so an untrusted circuit can't OOM/fill-disk/spin
-        // the host. No-op (runs ngspice directly) on Windows dev or when SIM_SANDBOX=none.
+        // Wrap with OS resource limits + (optionally) a bubblewrap namespace cage so an untrusted circuit
+        // can't OOM/fill-disk/spin the host or reach the network. No-op (runs ngspice directly) on Windows
+        // dev or when SIM_SANDBOX=none. cwd is the job dir — passed so bwrap binds it as the one writable path.
         const sandbox = resolveSandboxConfig(config);
-        const { file, args: spawnArgs } = sandboxedCommand(config.NGSPICE_PATH, args, sandbox);
+        const { file, args: spawnArgs } = sandboxedCommand(config.NGSPICE_PATH, args, { ...sandbox, jobDir: cwd });
 
-        logger.debug({ cmd: file, args: spawnArgs, cwd, sandbox: sandbox.mode }, 'Executing ngspice');
+        // Detach into its own process group on Linux when sandboxed, so a timeout SIGKILLs the WHOLE group
+        // (bwrap + bash + ngspice) — and with bwrap's --unshare-pid that also tears down the inner namespace,
+        // leaving no orphan. Off elsewhere (Windows dev runs ngspice directly as a single process).
+        const detached = process.platform === 'linux' && sandbox.mode !== 'none';
+        logger.debug({ cmd: file, args: spawnArgs, cwd, sandbox: sandbox.mode, bwrap: !!sandbox.bwrap, detached }, 'Executing ngspice');
 
-        const process: ChildProcess = spawn(file, spawnArgs, {
+        const child: ChildProcess = spawn(file, spawnArgs, {
             cwd,
             stdio: ['ignore', 'pipe', 'pipe'],
             timeout: config.SIM_TIMEOUT_MS,
+            detached,
         });
 
         let stdout = '';
         let stderr = '';
         let timedOut = false;
 
-        process.stdout?.on('data', (data: Buffer) => {
+        child.stdout?.on('data', (data: Buffer) => {
             stdout += data.toString();
         });
 
-        process.stderr?.on('data', (data: Buffer) => {
+        child.stderr?.on('data', (data: Buffer) => {
             stderr += data.toString();
         });
 
+        // Kill the whole process group when detached (negative PID), so no sandbox/ngspice descendant
+        // survives a timeout; fall back to the direct child otherwise.
+        const hardKill = () => {
+            try {
+                if (detached && child.pid) process.kill(-child.pid, 'SIGKILL');
+                else child.kill('SIGKILL');
+            } catch {
+                try { child.kill('SIGKILL'); } catch { /* already gone */ }
+            }
+        };
+
         const timeoutId = setTimeout(() => {
             timedOut = true;
-            process.kill('SIGKILL');
+            hardKill();
         }, config.SIM_TIMEOUT_MS);
 
-        process.on('close', (code) => {
+        child.on('close', (code) => {
             clearTimeout(timeoutId);
             resolve({
                 stdout,
@@ -358,10 +375,10 @@ async function executeNgspice(
             });
         });
 
-        process.on('error', (err) => {
+        child.on('error', (err) => {
             clearTimeout(timeoutId);
             stderr += err.message;
-            // spawn failed (ENOENT/EACCES — wrong NGSPICE_PATH, the choco GUI shim, or a missing bash
+            // spawn failed (ENOENT/EACCES — wrong NGSPICE_PATH, the choco GUI shim, or a missing bash/bwrap
             // sandbox wrapper). ngspice never ran: flag it as a spawn error so the caller marks the job
             // INFRA (→ inconclusive), not a design failure.
             resolve({

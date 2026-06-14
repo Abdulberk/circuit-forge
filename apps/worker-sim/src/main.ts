@@ -8,6 +8,7 @@ import { prisma, disconnectPrisma } from './prisma/client';
 import { logger } from './logger';
 import { config } from './config';
 import { shutdownTelemetry } from './observability/telemetry';
+import { probeBwrap, isBwrapEnabled } from './simulation/sandbox';
 
 let worker: ReturnType<typeof createSimulationWorker> | null = null;
 
@@ -53,6 +54,25 @@ async function main(): Promise<void> {
     } catch (error) {
         logger.error({ error }, 'Failed to connect to database');
         process.exit(1);
+    }
+
+    // Preflight the optional bubblewrap isolation up front (if enabled), so we know whether the host can
+    // create the namespaces it needs — and, if not, log loudly and fall back to the rlimit hardening
+    // rather than failing every job. The result is cached for resolveSandboxConfig.
+    if (isBwrapEnabled(config.SIM_BWRAP)) {
+        await probeBwrap({
+            enabled: true,
+            bin: config.SIM_BWRAP_PATH,
+            log: (ok, detail) =>
+                ok
+                    ? logger.info({ detail }, 'bubblewrap isolation ENABLED for the ngspice child (preflight passed)')
+                    : logger.warn(
+                          { detail },
+                          'SIM_BWRAP is set but bubblewrap is NOT usable on this host (needs unprivileged user namespaces + a permissive seccomp profile) — falling back to the rlimit hardening',
+                      ),
+        });
+    } else {
+        logger.info('bubblewrap isolation disabled (SIM_BWRAP not set); ngspice runs under the rlimit + non-root hardening');
     }
 
     // Create and start worker

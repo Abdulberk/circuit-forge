@@ -45,8 +45,18 @@ const ConfigSchema = z.object({
     SIM_SANDBOX_FSIZE_MB: z.string().transform(Number).optional(),
     SIM_SANDBOX_NPROC: z.string().transform(Number).optional(),
     // Run ngspice as this dedicated low-privilege user on Linux (via su-exec) — its own process-count
-    // limit + no worker privileges. Set by the worker image (SIM_SANDBOX_USER=simrunner); unset = no drop.
+    // limit + no worker privileges. Legacy two-user mode; the default image runs the whole worker non-root
+    // instead, so this is normally unset. NOTE: ignored when SIM_BWRAP is active (a bwrap userns has one uid).
     SIM_SANDBOX_USER: z.string().optional(),
+
+    // Optional bubblewrap (rootless namespace) isolation of the ngspice CHILD — OFF by default. When
+    // enabled ('1'/'true'/'on') AND a startup preflight confirms the host allows unprivileged user
+    // namespaces, each ngspice run is wrapped in a fresh mount/PID/IPC/UTS + NETWORK namespace over a
+    // read-only root, so a compromised ngspice has no network and no host-FS view beyond its job dir.
+    // Needs a host that permits unprivileged userns + a seccomp profile allowing unshare/clone (e.g.
+    // self-managed EC2/K8s nodes). Falls back to the rlimit hardening if the preflight fails. See SECURITY.md.
+    SIM_BWRAP: z.string().optional(),
+    SIM_BWRAP_PATH: z.string().default('bwrap'),
 
     // Queue
     QUEUE_NAME: z.string().default('simulations'),
