@@ -144,6 +144,16 @@ services:
       SIM_TIMEOUT_MS: 10000
       SIM_MAX_OUTPUT_BYTES: 5242880
       NODE_ENV: development
+      # OPTIONAL bubblewrap isolation of the ngspice child (default OFF). On a host you control (e.g. a
+      # self-managed EC2 / K8s node) you can give ngspice its own mount/PID + NETWORK namespace. To enable:
+      #   1) set SIM_BWRAP: "1"
+      #   2) relax seccomp so bubblewrap can create an unprivileged user namespace — add
+      #      `security_opt: [seccomp=unconfined]` here (trusted host) or a custom profile that allows
+      #      clone/unshare with CLONE_NEWUSER; AND ensure the host kernel permits unprivileged userns
+      #      (sysctl kernel.unprivileged_userns_clone=1 / user.max_user_namespaces>0 — on by default on AL2023).
+      # The worker PREFLIGHTS at startup: if the host can't create the namespaces it logs loudly and falls
+      # back to the rlimit + non-root hardening, so enabling it can never break job processing. See SECURITY.md §5.4.
+      # SIM_BWRAP: "1"
       # Observability — uncomment to emit traces/metrics to the otel-lgtm viewer (see the api service).
       # OTEL_ENABLED: "true"
       # OTEL_EXPORTER_OTLP_ENDPOINT: http://otel-lgtm:4318

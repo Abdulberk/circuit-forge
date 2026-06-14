@@ -2,13 +2,15 @@
 FROM node:20-alpine AS base
 
 # ngspice + bash (the rlimit wrapper uses bash); curl for local debugging; openssl for the Prisma query
-# engine (musl needs libssl to be detectable). No su-exec: the worker runs entirely as a single non-root
-# user (see the production stage), so there is no second-user drop.
+# engine (musl needs libssl to be detectable); bubblewrap for the OPTIONAL namespace isolation of the
+# ngspice child (only active when SIM_BWRAP=1 + the host allows unprivileged userns). No su-exec: the
+# worker runs entirely as a single non-root user (see the production stage), so there is no second-user drop.
 RUN apk add --no-cache \
     ngspice \
     bash \
     curl \
-    openssl
+    openssl \
+    bubblewrap
 
 # Install pnpm
 RUN npm install -g pnpm@8.14.1
@@ -54,12 +56,14 @@ RUN pnpm run build --filter=@circuitforge/worker-sim
 # Production stage
 FROM node:20-alpine AS production
 
-# ngspice + bash (the rlimit wrapper uses bash); openssl for the Prisma query engine (musl libssl). No
-# su-exec — the whole worker runs as one non-root user.
+# ngspice + bash (the rlimit wrapper uses bash); openssl for the Prisma query engine (musl libssl);
+# bubblewrap for the OPTIONAL ngspice-child namespace isolation (active only when SIM_BWRAP=1 + the host
+# permits unprivileged userns). No su-exec — the whole worker runs as one non-root user.
 RUN apk add --no-cache \
     ngspice \
     bash \
-    openssl
+    openssl \
+    bubblewrap
 
 # Single dedicated NON-ROOT user the ENTIRE worker (and therefore the ngspice child it spawns) runs as.
 # Running the worker process itself unprivileged is stronger than the old model (root worker dropping only
