@@ -13,11 +13,14 @@ import {
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { generateCircuit, fixCircuit, CircuitGenerationError } from '@circuitforge/llm-core';
-import { generateNetlist, type CircuitJson, type AnalysisConfig } from '@circuit-forge/eda-core';
+import { generateNetlist, type CircuitJson, type AnalysisConfig, type DataSeries } from '@circuit-forge/eda-core';
 import { SimulationService } from '../simulation/simulation.service';
 import { CatalogGroundingService } from './catalog-grounding.service';
 import { attachGenericModels } from './model-resolution';
+import { summarizeSeries } from './circuit-simulator.service';
+import { evaluateAssertions, describeFailure, type AssertionResult } from './assertions';
 import { DesignCircuitDto } from './dto';
+import type { AssertionDto } from './dto';
 
 export interface RoundRecord {
     round: number;
@@ -64,6 +67,12 @@ export class DesignService {
             let analysis: AnalysisConfig = gen.analysisConfig;
             let explanation = gen.explanation;
             const history: RoundRecord[] = [];
+            // Acceptance criteria the model derived from the user's intent (e.g. "gain 10" → out pp ≥ 9.5).
+            // Captured ONCE from the initial generation (the intent is stable across fix rounds) and checked
+            // against EVERY healthy sim — "verified" means these pass, not merely that ngspice ran. Empty
+            // when the prompt states no measurable target → behavior is unchanged (sim-ran = best effort).
+            const criteria = (gen.acceptanceCriteria ?? []) as AssertionDto[];
+            let lastAssertions: AssertionResult[] = [];
 
             for (let round = 1; round <= maxRounds; round++) {
                 // Build the netlist; a throw here is itself a fixable problem.
@@ -84,7 +93,7 @@ export class DesignService {
                 let jobId: string;
                 let status: { status: string; metrics?: unknown };
                 let result: {
-                    result?: { meta?: { pointsCount?: number } };
+                    result?: { meta?: { pointsCount?: number }; series?: DataSeries[] };
                     metrics?: { pointsCount?: number };
                     error?: string;
                 };
@@ -131,48 +140,110 @@ export class DesignService {
                     result?.metrics?.pointsCount ??
                     result?.result?.meta?.pointsCount ??
                     0;
-                const succeeded = status.status === 'SUCCEEDED' && pointsCount > 0;
-                history.push({ round, status: status.status, pointsCount, jobId });
+                const simHealthy = status.status === 'SUCCEEDED' && pointsCount > 0;
+
+                // Check the design against the user's INTENT: a healthy sim that does NOT meet the acceptance
+                // criteria is a real, fixable design fault — not a "verified" design. (No criteria → vacuously
+                // met via [].every, so behavior is unchanged for prompts with no measurable numeric target.)
+                if (simHealthy && criteria.length > 0) {
+                    const measurements = (result.result?.series ?? []).map(summarizeSeries);
+                    if (measurements.length === 0 && result?.error) {
+                        // SUCCEEDED with data points (per metrics) but NO series AND getResult flagged an
+                        // error → the worker offloaded the result to S3 and it couldn't be fetched here. We
+                        // can't check the spec, so this is INCONCLUSIVE (a storage issue is never a design
+                        // fault) — not "specs failed". Keyed on result.error to stay in lock-step with
+                        // verification.service (a genuinely empty series with NO error falls through to a
+                        // normal — all-unmet — evaluation, the same as a degenerate no-data fault there).
+                        history.push({ round, status: status.status, pointsCount, jobId, note: 'results unavailable to check specs' });
+                        return this.inconclusive(circuit, analysis, explanation, history, groundingOpts,
+                            'The simulation ran but its results were unavailable to check the design specifications — try again.');
+                    }
+                    lastAssertions = evaluateAssertions(measurements, criteria);
+                }
+                const specsMet = lastAssertions.every((a) => a.pass);
+                const succeeded = simHealthy && specsMet;
+                history.push({
+                    round,
+                    status: status.status,
+                    pointsCount,
+                    jobId,
+                    note: !simHealthy
+                        ? undefined
+                        : criteria.length === 0
+                            ? 'no acceptance criteria'
+                            : specsMet
+                                ? 'all acceptance criteria met'
+                                : `${lastAssertions.filter((a) => !a.pass).length}/${lastAssertions.length} acceptance criteria unmet`,
+                });
 
                 if (succeeded) {
-                    // Attach authoritative sourcing to the final, simulation-verified circuit.
+                    // Attach authoritative sourcing to the final, simulation-AND-spec-verified circuit.
                     if (groundingOpts) await this.grounding.enrichSourcing(circuit);
                     return {
                         ok: true,
+                        verified: criteria.length > 0, // true = checked against acceptance criteria AND met
                         circuit,
                         analysisConfig: analysis,
                         explanation,
+                        acceptanceCriteria: criteria,
+                        assertions: lastAssertions,
                         rounds: round,
                         history,
                         simulation: { jobId, status: status.status, metrics: status.metrics, result: result.result },
                     };
                 }
 
-                // A GENUINE sim fault — ngspice actually ran and FAILED / hit its own (terminal) TIMED_OUT,
-                // or SUCCEEDED with 0 points (floating node / unexcited analysis) — IS a circuit problem →
-                // ask the AI to fix it. (Operational outcomes were already returned as inconclusive above.)
+                // Not done → ask the AI to fix. Two genuinely-fixable fault classes (operational outcomes
+                // were already returned as inconclusive above):
+                //   (1) the sim itself failed (FAILED / terminal TIMED_OUT, or 0 points) — a circuit fault;
+                //       enrich the problem with the worker's Convergence Doctor diagnosis when present.
+                //   (2) the sim is healthy but the measured behavior MISSES the spec — feed the failing
+                //       criteria WITH how-far-off so the model knows marginal (4.99 vs 5) from catastrophic (3 vs 10).
                 if (round < maxRounds) {
-                    const problem =
-                        status.status !== 'SUCCEEDED'
-                            ? `Simulation ${status.status}. ${result?.error ?? ''}`.trim()
-                            : 'Simulation succeeded but produced no data points (pointsCount = 0) — likely a floating node or an analysis that does not excite the circuit.';
-                    this.logger.log(`design round ${round} not ok (${status.status}, pts=${pointsCount}); asking AI to fix`);
+                    let problem: string;
+                    if (!simHealthy) {
+                        problem =
+                            status.status !== 'SUCCEEDED'
+                                ? `Simulation ${status.status}. ${result?.error ?? ''}`.trim()
+                                : 'Simulation succeeded but produced no data points (pointsCount = 0) — likely a floating node or an analysis that does not excite the circuit.';
+                        const conv = (status.metrics as { convergence?: { diagnosis?: string; triedRemedies?: string[] } } | undefined)?.convergence;
+                        if (conv?.diagnosis) {
+                            problem += ` Solver diagnosis: ${conv.diagnosis}${conv.triedRemedies?.length ? ` (already tried: ${conv.triedRemedies.join('; ')})` : ''}`;
+                        }
+                    } else {
+                        const failed = lastAssertions.filter((a) => !a.pass);
+                        problem =
+                            'The circuit simulates cleanly but does NOT meet the required specification(s):\n' +
+                            failed.map((f) => `- ${describeFailure(f)}`).join('\n') +
+                            '\nRevise the design so these are satisfied; keep the parts that already pass.';
+                    }
+                    this.logger.log(`design round ${round} not ok (status=${status.status}, pts=${pointsCount}, specsMet=${specsMet}); asking AI to fix`);
                     ({ circuit, analysis, explanation } = await this.applyFix(circuit, analysis, problem, llmConfig));
                 }
             }
 
-            // Budget exhausted without a clean run — return the best effort + history.
+            // Budget exhausted without a clean, spec-meeting run — return the best effort + history. If the
+            // sim was healthy but the spec wasn't met, say so honestly (NOT "verified"), surfacing the gaps.
             if (groundingOpts) await this.grounding.enrichSourcing(circuit);
             const last = history[history.length - 1];
+            // Only call it a spec-miss if the FINAL round actually simulated — otherwise lastAssertions is
+            // stale from an earlier healthy round and the honest reason is "couldn't simulate".
+            const lastRoundHealthy = last?.status === 'SUCCEEDED' && (last?.pointsCount ?? 0) > 0;
+            const specMiss = lastRoundHealthy && lastAssertions.length > 0 && lastAssertions.some((a) => !a.pass);
             return {
                 ok: false,
+                verified: false,
                 circuit,
                 analysisConfig: analysis,
                 explanation,
+                acceptanceCriteria: criteria,
+                assertions: lastAssertions,
                 rounds: history.length,
                 history,
                 simulation: { status: last?.status ?? 'FAILED' },
-                warning: 'Could not produce a successful simulation within the round budget.',
+                warning: specMiss
+                    ? 'The circuit simulates but did not meet all acceptance criteria within the round budget.'
+                    : 'Could not produce a successful simulation within the round budget.',
             };
         } catch (err) {
             // HTTP errors from nested services carry intent — most importantly the structured 429

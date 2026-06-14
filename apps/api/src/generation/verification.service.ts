@@ -10,28 +10,22 @@
  * server-side job polling.
  */
 import { Injectable, Optional, Logger } from '@nestjs/common';
-import { sanitizeNodeName, runErc, generateNetlist, type AnalysisConfig, type SimulationResult } from '@circuit-forge/eda-core';
+import { runErc, generateNetlist, type AnalysisConfig, type SimulationResult } from '@circuit-forge/eda-core';
 import { safeValidateCircuitJson, type CircuitJson } from '@circuit-forge/eda-core';
 import { CircuitSimulatorService, summarizeSeries, type SimMeasurement, type SimSummary, type ConvergenceReport } from './circuit-simulator.service';
 import { attachGenericModels } from './model-resolution';
 import { computeResistorPower, type PowerReport } from './power-analysis';
 import { SimulationService } from '../simulation/simulation.service';
 import type { AssertionDto } from './dto';
+import { evaluateAssertions, type AssertionResult } from './assertions';
+
+// Assertion evaluation now lives in the shared, pure ./assertions module (used by the AI design loop too).
+// Re-export so existing importers (controllers, specs) keep their './verification.service' path unchanged.
+export { isCurrentProbe } from './assertions';
+export type { AssertionResult } from './assertions';
 
 /** How long the API server-side-polls the worker job before giving up (mirrors the AI design loop). */
 const VERIFY_POLL_TIMEOUT_MS = 90_000;
-
-export interface AssertionResult {
-    label: string;
-    probe: string;
-    metric: AssertionDto['metric'];
-    op: AssertionDto['op'];
-    target: number;
-    tol?: number;
-    actual: number | null; // null = the probe wasn't found in the simulation output
-    pass: boolean;
-    detail: string;
-}
 
 export interface DesignEvidence {
     /** pass = sim ok, no ERC errors, all assertions pass. fail = an ERC error, OR ngspice actually ran
@@ -56,26 +50,6 @@ export interface DesignEvidence {
     power?: PowerReport;
 }
 
-/**
- * Map a user-facing probe to the SPICE node the simulator actually reports. The user thinks in NET
- * names ("out"); the netlist generator runs each net id through sanitizeNodeName (which prefixes a
- * plain name with "n", e.g. "vin" → "nvin", and escapes a reserved word, e.g. "out" → "x_out"). We
- * apply the SAME transform to both the assertion probe and the measured node, after stripping a
- * v() wrapper, so "out" / "v(out)" / "V(OUT)" all resolve to the one node the measurement carries.
- * Lowercased because ngspice emits node names in lower case. (Current probes are rejected upstream —
- * the default simulation measures node voltages only.)
- */
-function nodeKey(probe: string): string {
-    const m = probe.trim().match(/^v\(([^)]+)\)$/i);
-    const bare = m ? m[1]! : probe.trim();
-    return sanitizeNodeName(bare).toLowerCase();
-}
-
-/** A current/power probe the voltage-only default simulation can't measure (i(R1), @r1[i]). */
-export function isCurrentProbe(probe: string): boolean {
-    return /^\s*i\s*\(/i.test(probe) || /\[\s*i\s*\]\s*$/i.test(probe);
-}
-
 @Injectable()
 export class VerificationService {
     private readonly logger = new Logger(VerificationService.name);
@@ -96,7 +70,7 @@ export class VerificationService {
         userId?: string,
     ): Promise<DesignEvidence> {
         const sim = await this.runSimulation(circuit, analysisConfig, userId);
-        const assertionResults = this.evaluate(sim.measurements, assertions, sim.simStatus === 'ok');
+        const assertionResults = evaluateAssertions(sim.measurements, assertions, sim.simStatus === 'ok');
 
         // Power-dissipation review (resistors): only meaningful once we have real node voltages.
         let power: PowerReport | undefined;
@@ -254,46 +228,6 @@ export class VerificationService {
             await new Promise((r) => setTimeout(r, 1000));
         }
         return { status: 'POLL_TIMEOUT' };
-    }
-
-    /** Evaluate each assertion against the measurements. When the sim didn't run (simOk=false) every
-     *  assertion is unmet (actual=null) — you can't certify a spec you couldn't measure. */
-    private evaluate(measurements: SimMeasurement[], assertions: AssertionDto[], simOk: boolean): AssertionResult[] {
-        const byKey = new Map(measurements.map((m) => [nodeKey(m.node), m]));
-        return assertions.map((a) => {
-            const label = a.label ?? `${a.probe} ${a.metric} ${a.op} ${a.value}`;
-            const base = { label, probe: a.probe, metric: a.metric, op: a.op, target: a.value, tol: a.tol };
-            const m = simOk ? byKey.get(nodeKey(a.probe)) : undefined;
-            if (!m) {
-                return {
-                    ...base,
-                    actual: null,
-                    pass: false,
-                    detail: simOk ? `probe "${a.probe}" not found in simulation output` : 'simulation did not produce results',
-                };
-            }
-            const actual = m[a.metric];
-            const pass = this.compare(actual, a.op, a.value, a.tol);
-            return { ...base, actual, pass, detail: `${a.metric}(${a.probe}) = ${actual} ${pass ? '✓' : '✗'} ${a.op} ${a.value}` };
-        });
-    }
-
-    private compare(actual: number, op: AssertionDto['op'], target: number, tol?: number): boolean {
-        switch (op) {
-            case 'lt':
-                return actual < target;
-            case 'lte':
-                return actual <= target;
-            case 'gt':
-                return actual > target;
-            case 'gte':
-                return actual >= target;
-            case 'approx': {
-                // Default tolerance: 5% of |target|, or an absolute 1e-9 floor so target=0 still works.
-                const t = tol ?? Math.max(Math.abs(target) * 0.05, 1e-9);
-                return Math.abs(actual - target) <= t;
-            }
-        }
     }
 
     private summarize(verdict: DesignEvidence['verdict'], sim: SimSummary, results: AssertionResult[]): string {
