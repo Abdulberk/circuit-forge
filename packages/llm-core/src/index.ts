@@ -38,12 +38,36 @@ export interface FixCircuitInput {
     problem: string;
 }
 
+/**
+ * A measurable pass/fail check the model derives from the user's stated numeric intent (e.g. "gain 10"
+ * → { probe: "out", metric: "pp", op: "gte", value: 9.5 }). The design loop runs these against the real
+ * simulation and only reports a design "verified" when they pass — so "verified" means "meets the spec",
+ * not merely "the sim ran". Mirrors the API's AssertionDto shape (kept in sync structurally).
+ */
+export interface AcceptanceCriterion {
+    /** Probe/node to measure, e.g. "out" or "v(out)" (the v()/i() wrapper is optional). */
+    probe: string;
+    /** Which measured quantity. */
+    metric: 'min' | 'max' | 'final' | 'pp';
+    /** Comparison operator. */
+    op: 'lt' | 'lte' | 'gt' | 'gte' | 'approx';
+    /** Target value in SI base units (volts, amps, seconds). */
+    value: number;
+    /** Absolute tolerance for op="approx" (default 5% of |value|). */
+    tol?: number;
+    /** Human label, e.g. "Gain ≥ 10". */
+    label?: string;
+}
+
 export interface GenerateCircuitResult {
     circuit: CircuitJson;
     /** Suggested analysis to run for this circuit. */
     analysisConfig: AnalysisConfig;
     /** Short natural-language explanation of the circuit, if the model provided one. */
     explanation?: string;
+    /** Measurable acceptance criteria the model derived from the user's intent (may be empty/omitted when
+     *  the prompt states no measurable numeric target). The design loop checks these against the sim. */
+    acceptanceCriteria?: AcceptanceCriterion[];
     /** Whether a JSON-repair retry was needed to produce a valid circuit. */
     repaired: boolean;
 }
@@ -378,8 +402,37 @@ async function callModel(
     }
 }
 
-type ParseOk = { circuit: CircuitJson; analysisConfig: AnalysisConfig; explanation?: string };
+type ParseOk = { circuit: CircuitJson; analysisConfig: AnalysisConfig; explanation?: string; acceptanceCriteria?: AcceptanceCriterion[] };
 type ParseResult = { ok: true; value: ParseOk } | { ok: false; error: string };
+
+const ACCEPTANCE_METRICS = new Set(['min', 'max', 'final', 'pp']);
+const ACCEPTANCE_OPS = new Set(['lt', 'lte', 'gt', 'gte', 'approx']);
+
+/** Best-effort, lenient parse of model-emitted acceptance criteria — like analysisConfig, a malformed
+ *  entry is dropped rather than failing the whole generation. Caps at 20 (mirrors the API's ArrayMaxSize). */
+function parseAcceptanceCriteria(raw: unknown): AcceptanceCriterion[] | undefined {
+    if (!Array.isArray(raw)) return undefined;
+    const out: AcceptanceCriterion[] = [];
+    for (const c of raw) {
+        if (!c || typeof c !== 'object') continue;
+        const o = c as Record<string, unknown>;
+        if (typeof o.probe !== 'string' || !o.probe.trim()) continue;
+        if (typeof o.metric !== 'string' || !ACCEPTANCE_METRICS.has(o.metric)) continue;
+        if (typeof o.op !== 'string' || !ACCEPTANCE_OPS.has(o.op)) continue;
+        if (typeof o.value !== 'number' || !Number.isFinite(o.value)) continue;
+        const crit: AcceptanceCriterion = {
+            probe: o.probe.trim().slice(0, 64),
+            metric: o.metric as AcceptanceCriterion['metric'],
+            op: o.op as AcceptanceCriterion['op'],
+            value: o.value,
+        };
+        if (typeof o.tol === 'number' && Number.isFinite(o.tol) && o.tol >= 0) crit.tol = o.tol;
+        if (typeof o.label === 'string' && o.label.trim()) crit.label = o.label.trim().slice(0, 120);
+        out.push(crit);
+        if (out.length >= 20) break;
+    }
+    return out.length ? out : undefined;
+}
 
 function parseAndValidate(text: string): ParseResult {
     let obj: unknown;
@@ -409,9 +462,17 @@ function parseAndValidate(text: string): ParseResult {
         if (ac.success) analysisConfig = ac.data as AnalysisConfig;
     }
 
+    // acceptanceCriteria is best-effort too: the model's measurable intent checks, leniently validated.
+    const acceptanceCriteria = parseAcceptanceCriteria((obj as { acceptanceCriteria?: unknown }).acceptanceCriteria);
+
     return {
         ok: true,
-        value: { circuit: circuitResult.data as CircuitJson, analysisConfig, explanation },
+        value: {
+            circuit: circuitResult.data as CircuitJson,
+            analysisConfig,
+            explanation,
+            ...(acceptanceCriteria ? { acceptanceCriteria } : {}),
+        },
     };
 }
 
@@ -487,7 +548,8 @@ Output contract — return ONLY a single JSON object, no markdown fences, no com
 {
   "circuit": <CircuitJson>,
   "analysisConfig": <AnalysisConfig>,
-  "explanation": "<one short paragraph describing the circuit and why this analysis>"
+  "explanation": "<one short paragraph describing the circuit and why this analysis>",
+  "acceptanceCriteria": [ <AcceptanceCriterion>, ... ]   // measurable pass/fail checks — see "Acceptance criteria" below
 }
 
 CircuitJson schema (every field validated; invalid output is rejected):
@@ -523,6 +585,23 @@ AnalysisConfig — choose the analysis that best reveals the circuit's behavior:
 - DC sweep:   { "type": "dc", "source": "V1", "startVal": "0", "stopVal": "5", "increment": "0.1" }
 - AC:         { "type": "ac", "variation": "dec", "points": 20, "startFreq": "10", "stopFreq": "1Meg" }   // note: AC result columns are complex — prefer tran/op/dc unless a frequency response is explicitly requested
 (values are SPICE strings)
+
+Acceptance criteria — THIS IS HOW THE DESIGN IS GRADED. Derive measurable pass/fail checks from the user's
+stated intent and return them in "acceptanceCriteria". After simulation, the loop runs these against the REAL
+measured result; the design is reported "verified" ONLY if they all pass — otherwise the failing checks are
+fed back and the circuit is revised. So: encode the user's actual numeric goal, not a trivially-true check.
+Each criterion:
+{ "probe": "out", "metric": "min|max|final|pp", "op": "lt|lte|gt|gte|approx", "value": <number, SI base units>, "tol": <number, optional>, "label": "<short human label>" }
+- "probe" is a net/node name from your circuit (the v() wrapper is optional). "metric": min/max/final = the
+  minimum/maximum/last value of that node over the run; "pp" = peak-to-peak (max−min), i.e. amplitude.
+- Values are SI base units: volts, amps, seconds (e.g. 9.5 not "9.5V"). Use "approx" with "tol" for
+  "about X"; use gte/lte/gt/lt for thresholds.
+- DERIVE FROM INTENT: "gain 10" on a 1V-amplitude input → output amplitude ≥ ~10 → {probe:"out", metric:"pp",
+  op:"gte", value:9.5}. "regulates to 5V" → {probe:"out", metric:"final", op:"approx", value:5, tol:0.25}.
+  "ripple under 50mV" → {probe:"out", metric:"pp", op:"lt", value:0.05}.
+- Do NOT relax an explicit user spec to make it pass, and do NOT invent a lax check just to succeed — the
+  point is to catch a circuit that simulates but is WRONG. If the prompt truly states no measurable numeric
+  target, you may return a small sanity check (e.g. output is non-trivial) or an empty array.
 - A "tran" may add "initialConditions": { "<netId>": <volts> } to seed node voltages at t=0. Use it to KICK a symmetric oscillator (Wien bridge, ring, relaxation) off its dead equilibrium — seed one internal node (e.g. {"fb": 0.5}); do NOT add "uic" for circuits with supplies. Keep stepTime sane: stopTime/stepTime ≤ ~100k points.
 
 Component conventions:
