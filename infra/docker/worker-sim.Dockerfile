@@ -1,12 +1,14 @@
 # Worker Simulation Dockerfile with ngspice
 FROM node:20-alpine AS base
 
-# ngspice + bash (the rlimit wrapper uses bash); curl for local debugging. No su-exec: the worker now
-# runs entirely as a single non-root user (see the production stage), so there is no second-user drop.
+# ngspice + bash (the rlimit wrapper uses bash); curl for local debugging; openssl for the Prisma query
+# engine (musl needs libssl to be detectable). No su-exec: the worker runs entirely as a single non-root
+# user (see the production stage), so there is no second-user drop.
 RUN apk add --no-cache \
     ngspice \
     bash \
-    curl
+    curl \
+    openssl
 
 # Install pnpm
 RUN npm install -g pnpm@8.14.1
@@ -23,9 +25,21 @@ COPY tsconfig.base.json ./
 # Copy package directories
 COPY packages/ ./packages/
 COPY apps/worker-sim/ ./apps/worker-sim/
+# The Prisma schema lives in the API package; the worker shares the generated client and has no schema of
+# its own. Copy it into the worker's OWN default location (apps/worker-sim/prisma) so `prisma generate`
+# infers the worker package as the project root — which lists prisma + @prisma/client, so Prisma's
+# auto-install-on-generate does not trip (it would, and fail, if the schema sat under apps/api with no
+# package.json beside it).
+COPY apps/api/prisma/ ./apps/worker-sim/prisma/
 
 # Install dependencies
 RUN pnpm install --frozen-lockfile
+
+# Generate the Prisma client explicitly. The @prisma/client postinstall couldn't find the schema during
+# install, so without this the worker's `tsc` fails — Prisma.InputJsonValue / Prisma.JsonNull don't exist
+# on an ungenerated client. `--filter` runs it in the worker package dir, where prisma + @prisma/client
+# resolve and the schema is at the default ./prisma/schema.prisma.
+RUN pnpm --filter @circuitforge/worker-sim exec prisma generate --schema=prisma/schema.prisma
 
 # Development stage
 FROM base AS development
@@ -40,10 +54,12 @@ RUN pnpm run build --filter=@circuitforge/worker-sim
 # Production stage
 FROM node:20-alpine AS production
 
-# ngspice + bash (the rlimit wrapper uses bash). No su-exec — the whole worker runs as one non-root user.
+# ngspice + bash (the rlimit wrapper uses bash); openssl for the Prisma query engine (musl libssl). No
+# su-exec — the whole worker runs as one non-root user.
 RUN apk add --no-cache \
     ngspice \
-    bash
+    bash \
+    openssl
 
 # Single dedicated NON-ROOT user the ENTIRE worker (and therefore the ngspice child it spawns) runs as.
 # Running the worker process itself unprivileged is stronger than the old model (root worker dropping only
@@ -68,6 +84,11 @@ COPY --from=builder /app/apps/worker-sim/dist ./apps/worker-sim/dist
 COPY --from=builder /app/apps/worker-sim/package.json ./apps/worker-sim/
 
 RUN pnpm install --frozen-lockfile --prod
+
+# The --prod install omits the prisma CLI (a devDep) and so can't regenerate the client. Bring the client
+# generated in the builder stage instead (same locked versions → identical pnpm virtual-store path). This
+# includes the linux-musl query engine; `openssl` (installed above) lets it load libssl at runtime.
+COPY --from=builder /app/node_modules/.pnpm/@prisma+client@5.22.0_prisma@5.22.0/node_modules/.prisma /app/node_modules/.pnpm/@prisma+client@5.22.0_prisma@5.22.0/node_modules/.prisma
 
 ENV NODE_ENV=production
 WORKDIR /app/apps/worker-sim
