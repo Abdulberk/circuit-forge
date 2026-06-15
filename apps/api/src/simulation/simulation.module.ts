@@ -23,6 +23,20 @@ import { UsageModule } from '../usage/usage.module';
         }),
         BullModule.registerQueue({
             name: 'simulations',
+            defaultJobOptions: {
+                // INFRA-ONLY retry. Only a THROWN job is retried; the worker RETURNS genuine simulation
+                // faults (non-convergence, bad circuit) so those complete-as-failed and are NEVER retried
+                // — re-running a deterministically-bad deck just wastes a slot. The worker only THROWS on
+                // infrastructure hiccups (ngspice couldn't launch, a transient S3/DB/Redis blip), which a
+                // retry can genuinely recover. Backoff spaces the 2 retries (1s, 2s) past a brief outage.
+                attempts: 3,
+                backoff: { type: 'exponential', delay: 1000 },
+                // Bound Redis memory: the job's lifecycle status/result lives in Postgres (the API polls
+                // there, never BullMQ), so the queue record is disposable once finished. Keep a short
+                // window for debugging via any queue dashboard, then auto-evict.
+                removeOnComplete: { age: 3600, count: 1000 }, // 1h or last 1000, whichever first
+                removeOnFail: { age: 24 * 3600, count: 1000 }, // keep failures a day for triage
+            },
         }),
         VersionsModule,
         OrgsModule,
