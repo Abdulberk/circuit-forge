@@ -141,7 +141,7 @@ export class CircuitSimulatorService {
      * Validate → attach generic models → ERC → netlist → ngspice → parse → summarize.
      * Never throws: every failure mode is reported in the summary so the agentic loop stays alive.
      */
-    async simulate(circuitInput: unknown, analysis?: AnalysisConfig): Promise<SimSummary> {
+    async simulate(circuitInput: unknown, analysis?: AnalysisConfig, extraProbes?: string[]): Promise<SimSummary> {
         const ngspicePath = this.config.get<string>('NGSPICE_PATH');
         if (!ngspicePath) {
             return { simStatus: 'skipped', ercErrors: [], ercWarnings: [], measurements: [], nodeCount: 0, runError: 'simulation not configured' };
@@ -168,7 +168,8 @@ export class CircuitSimulatorService {
         // 4) Generate the netlist (can throw on a conflicting model body — report, don't crash).
         let netlist: string;
         try {
-            netlist = generateNetlist(circuit, an);
+            // Branch-current assertion probes (i(R1)) aren't in the voltage-only defaults — UNION them in.
+            netlist = generateNetlist(circuit, an, extraProbes?.length ? { extraProbes } : {});
         } catch (e) {
             return { simStatus: 'failed', ercErrors, ercWarnings, measurements: [], nodeCount: 0, analysisType: an.type, runError: `netlist generation failed: ${e instanceof Error ? e.message : String(e)}` };
         }
@@ -254,8 +255,8 @@ export class CircuitSimulatorService {
      * convergence failures (bad netlist, timeout) and successful runs pass straight through unchanged,
      * so the proven happy path costs exactly one run.
      */
-    async simulateWithRemedies(circuitInput: unknown, analysis?: AnalysisConfig): Promise<SimSummary> {
-        const base = await this.simulate(circuitInput, analysis);
+    async simulateWithRemedies(circuitInput: unknown, analysis?: AnalysisConfig, extraProbes?: string[]): Promise<SimSummary> {
+        const base = await this.simulate(circuitInput, analysis, extraProbes);
         if (base.simStatus !== 'failed') return base;
 
         const diag = diagnoseConvergence(base.runError, base.analysisType);
@@ -268,7 +269,7 @@ export class CircuitSimulatorService {
 
         for (const remedy of ladder) {
             const mergedAnalysis = { ...baseAnalysis, options: { ...baseOptions, ...remedy.options } } as AnalysisConfig;
-            const retry = await this.simulate(circuitInput, mergedAnalysis);
+            const retry = await this.simulate(circuitInput, mergedAnalysis, extraProbes);
             if (retry.simStatus === 'ok') {
                 return {
                     ...retry,

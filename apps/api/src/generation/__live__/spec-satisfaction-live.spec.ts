@@ -41,6 +41,17 @@ const DIVIDER_SINE: CircuitJson = {
     components: DIVIDER_5V.components.map((c) => (c.id === 'v1' ? { ...c, value: 'SIN(0 5 1k)' } : c)),
 };
 
+/** 5V through a single 300Ω resistor to ground → i(R1) = 5/300 = 16.67 mA exactly (the "current spec" case). */
+const CURRENT_300: CircuitJson = {
+    version: '1.0',
+    components: [
+        { id: 'v1', type: 'voltage_source', designator: 'V1', value: 'DC 5', pins: [{ pinId: '+', netId: 'n1' }, { pinId: '-', netId: 'gnd' }] },
+        { id: 'r1', type: 'resistor', designator: 'R1', value: '300', pins: [{ pinId: '1', netId: 'n1' }, { pinId: '2', netId: 'gnd' }] },
+        { id: 'gnd', type: 'ground', designator: 'GND1', pins: [{ pinId: '1', netId: 'gnd' }] },
+    ],
+    nets: [{ id: 'n1', name: 'n1' }, { id: 'gnd', name: 'gnd', isGround: true }],
+};
+
 live('spec-satisfaction over REAL ngspice', () => {
     it('OP: a MET criterion passes and an UNMET one fails — with the real measured value + correct distance', async () => {
         const sim = new CircuitSimulatorService(cfg);
@@ -70,5 +81,25 @@ live('spec-satisfaction over REAL ngspice', () => {
         const unmet = evaluateAssertions(summary.measurements, [{ probe: 'out', metric: 'pp', op: 'gte', value: 8 }]); // "gain too low"
         expect(met[0]!.pass).toBe(true);
         expect(unmet[0]!.pass).toBe(false);
+    }, 30000);
+
+    it('CURRENT: an i(R1) criterion is saved (extraProbes), measured by REAL ngspice, and matched (i(R1) ↔ @r1[i])', async () => {
+        const sim = new CircuitSimulatorService(cfg);
+        // The voltage-only defaults never save a branch current; extraProbes UNIONs i(R1) in (→ @R1[i] +
+        // .options savecurrents). This is the exact gap that let an LED "≈10mA" spec be "verified" by a
+        // voltage proxy — here we prove the current itself is measurable end-to-end on the real binary.
+        const summary = await sim.simulate(CURRENT_300, { type: 'op' }, ['i(R1)']);
+        expect(summary.simStatus).toBe('ok');
+        const m = summary.measurements.find((x) => x.node.toLowerCase().includes('r1'));
+        expect(m).toBeDefined();
+        expect(m!.final).toBeCloseTo(5 / 300, 4); // 16.67 mA, computed by real ngspice
+
+        // The criterion "i(R1)" must resolve to that "@r1[i]" series (currentKey) — NOT read "probe not found".
+        const met = evaluateAssertions(summary.measurements, [{ probe: 'i(R1)', metric: 'final', op: 'approx', value: 5 / 300, tol: 0.001 }]);
+        const unmet = evaluateAssertions(summary.measurements, [{ probe: 'i(R1)', metric: 'final', op: 'approx', value: 0.05, tol: 0.005 }]);
+        expect(met[0]!.actual).toBeCloseTo(5 / 300, 4); // matched, not null
+        expect(met[0]!.pass).toBe(true);
+        expect(unmet[0]!.pass).toBe(false);
+        expect(unmet[0]!.distance).toBeCloseTo(5 / 300 - 0.05, 3); // signed gap from the real current
     }, 30000);
 });

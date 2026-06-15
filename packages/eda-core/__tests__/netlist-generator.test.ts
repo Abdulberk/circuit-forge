@@ -139,6 +139,53 @@ describe('NetlistGenerator', () => {
             expect(netlist).toContain('i(V1)');
         });
 
+        it('extraProbes ADD a branch-current probe while KEEPING the default node-voltage probes', () => {
+            const circuit: CircuitJson = {
+                version: '1.0',
+                components: [
+                    createComponent('V1', 'voltage_source', 'V1', 'DC 5', [
+                        { pinId: '+', netId: 'n1' },
+                        { pinId: '-', netId: '0' },
+                    ]),
+                    createComponent('R1', 'resistor', 'R1', '300', [
+                        { pinId: '1', netId: 'n1' },
+                        { pinId: '2', netId: '0' },
+                    ]),
+                ],
+                nets: [createNet('n1', 'n1'), createNet('0', '0', true)],
+            };
+
+            const netlist = generateNetlist(circuit, { type: 'op' }, { extraProbes: ['i(R1)'] });
+
+            // The current probe is rewritten to the device-current vector + savecurrents is emitted...
+            expect(netlist).toContain('@R1[i]');
+            expect(netlist).toMatch(/\.options[^\n]*\bsavecurrents\b/);
+            // ...AND the auto-generated node-voltage probe is still there (extraProbes ADDS, never replaces).
+            expect(netlist).toContain('v(n1)');
+        });
+
+        it('extraProbes are IGNORED when an explicit probes override is given', () => {
+            const circuit: CircuitJson = {
+                version: '1.0',
+                components: [
+                    createComponent('V1', 'voltage_source', 'V1', 'DC 5', [
+                        { pinId: '+', netId: 'n1' },
+                        { pinId: '-', netId: '0' },
+                    ]),
+                    createComponent('R1', 'resistor', 'R1', '300', [
+                        { pinId: '1', netId: 'n1' },
+                        { pinId: '2', netId: '0' },
+                    ]),
+                ],
+                nets: [createNet('n1', 'n1'), createNet('0', '0', true)],
+            };
+
+            const netlist = generateNetlist(circuit, { type: 'op' }, { probes: ['v(n1)'], extraProbes: ['i(R1)'] });
+
+            expect(netlist).toContain('v(n1)');
+            expect(netlist).not.toContain('@R1[i]');
+        });
+
         it('should generate AC analysis command', () => {
             const circuit: CircuitJson = {
                 version: '1.0',

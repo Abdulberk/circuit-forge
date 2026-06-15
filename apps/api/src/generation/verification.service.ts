@@ -17,7 +17,7 @@ import { attachGenericModels } from './model-resolution';
 import { computeResistorPower, type PowerReport } from './power-analysis';
 import { SimulationService } from '../simulation/simulation.service';
 import type { AssertionDto } from './dto';
-import { evaluateAssertions, type AssertionResult } from './assertions';
+import { evaluateAssertions, isCurrentProbe, type AssertionResult } from './assertions';
 
 // Assertion evaluation now lives in the shared, pure ./assertions module (used by the AI design loop too).
 // Re-export so existing importers (controllers, specs) keep their './verification.service' path unchanged.
@@ -69,7 +69,10 @@ export class VerificationService {
         assertions: AssertionDto[] = [],
         userId?: string,
     ): Promise<DesignEvidence> {
-        const sim = await this.runSimulation(circuit, analysisConfig, userId);
+        // Branch-current assertions (i(R1)) need their probe UNIONed into the netlist — the voltage-only
+        // defaults never save it, so without this a current assertion would always read "probe not found".
+        const currentProbes = assertions.filter((a) => isCurrentProbe(a.probe)).map((a) => a.probe);
+        const sim = await this.runSimulation(circuit, analysisConfig, userId, currentProbes);
         const assertionResults = evaluateAssertions(sim.measurements, assertions, sim.simStatus === 'ok');
 
         // Power-dissipation review (resistors): only meaningful once we have real node voltages.
@@ -122,9 +125,9 @@ export class VerificationService {
      * queue (local dev + the live specs), where the Convergence Doctor's remedy ladder still applies.
      * (Slice 1: the worker path is single-pass; moving the ladder worker-side is the next slice.)
      */
-    private async runSimulation(circuit: unknown, analysis: AnalysisConfig | undefined, userId?: string): Promise<SimSummary> {
-        if (userId && this.simulation) return this.runViaWorker(circuit, analysis, userId);
-        return this.simulator.simulateWithRemedies(circuit, analysis);
+    private async runSimulation(circuit: unknown, analysis: AnalysisConfig | undefined, userId?: string, extraProbes?: string[]): Promise<SimSummary> {
+        if (userId && this.simulation) return this.runViaWorker(circuit, analysis, userId, extraProbes);
+        return this.simulator.simulateWithRemedies(circuit, analysis, extraProbes);
     }
 
     /**
@@ -132,7 +135,7 @@ export class VerificationService {
      * API server-side-polls for the result (same pattern as the AI design loop) so verify-design stays
      * a SYNCHRONOUS request. Returns the SimSummary; never throws (failures become a 'failed' summary).
      */
-    private async runViaWorker(circuit: unknown, analysis: AnalysisConfig | undefined, userId: string): Promise<SimSummary> {
+    private async runViaWorker(circuit: unknown, analysis: AnalysisConfig | undefined, userId: string, extraProbes?: string[]): Promise<SimSummary> {
         const an: AnalysisConfig = analysis ?? { type: 'op' };
         const empty = { measurements: [], nodeCount: 0, analysisType: an.type };
 
@@ -151,7 +154,7 @@ export class VerificationService {
 
         let netlist: string;
         try {
-            netlist = generateNetlist(c, an);
+            netlist = generateNetlist(c, an, extraProbes?.length ? { extraProbes } : {});
         } catch (e) {
             return { simStatus: 'failed', ercErrors, ercWarnings, runError: `netlist generation failed: ${e instanceof Error ? e.message : String(e)}`, ...empty };
         }

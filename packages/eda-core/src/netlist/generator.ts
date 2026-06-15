@@ -20,6 +20,14 @@ const VALID_COMPONENT_TYPES = new Set<string>(COMPONENT_TYPES);
 export interface NetlistOptions {
     title?: string;
     probes?: string[];
+    /**
+     * Extra probes to UNION with the auto-generated default probes (unlike `probes`, which REPLACES them).
+     * Use this to add probes the defaults don't cover — chiefly branch-CURRENT probes (`i(R1)`), since the
+     * defaults only save node voltages. Each is run through the same rewrite/drop pipeline as any other
+     * probe (R/C currents → `@<dev>[i]` + savecurrents; unobservable ones are silently dropped, leaving the
+     * default voltage probes intact). Ignored when `probes` is set (an explicit override already wins).
+     */
+    extraProbes?: string[];
     includeFiles?: string[];
     outputFormat?: 'csv' | 'raw';
     jobDir?: string; // For include path validation
@@ -354,21 +362,31 @@ export function generateNetlist(
         const raw = nodeMap.get(net.id);
         if (raw) netRefToNode.set(raw.toLowerCase(), twin);
     }
-    const rawProbes = options.probes || generateDefaultProbes(circuit, nodeMap, ms);
+    // Default = auto-probe every node's voltage. An explicit `probes` REPLACES that; `extraProbes` ADDS to
+    // it (deduped) — the seam for branch-current criteria, which the voltage-only defaults never save.
+    const baseProbes = options.probes || generateDefaultProbes(circuit, nodeMap, ms);
+    const rawProbes =
+        !options.probes && options.extraProbes?.length
+            ? [...new Set([...baseProbes, ...options.extraProbes])]
+            : baseProbes;
     let needSaveCurrents = false;
-    const probes = rawProbes
-        .map((p) => rewriteProbeNodeRefs(rewriteProbeDeviceRefs(p, designatorToInstance), netRefToNode))
-        .filter((p) => p.trim().length > 0) // a probe that reduced to nothing (e.g. v(gnd)) is dropped
-        .filter((p) => !isDigitalCurrentProbe(p, digitalDeviceRefs)) // i(<digital a-device>) has no current vector → drop (else it aborts the whole wrdata line)
-        .map((p) => {
-            // Make analog current probes outputtable: keep native i() for V/L/E/H, rewrite R/C to @<dev>[i]
-            // (+ savecurrents) in op/dc/tran, drop everything else (diodes, multi-terminal devices, and R/C
-            // in AC where @<dev>[i] is unresolvable) — so no i() term can abort the shared wrdata line.
-            const { token, savecurrents } = rewriteCurrentProbeVector(p, seenDevices, analysis.type);
-            if (savecurrents) needSaveCurrents = true;
-            return token;
-        })
-        .filter((p) => p.trim().length > 0); // a current probe on an unsupported/multi-terminal device was dropped
+    const probes = [
+        ...new Set(
+            rawProbes
+                .map((p) => rewriteProbeNodeRefs(rewriteProbeDeviceRefs(p, designatorToInstance), netRefToNode))
+                .filter((p) => p.trim().length > 0) // a probe that reduced to nothing (e.g. v(gnd)) is dropped
+                .filter((p) => !isDigitalCurrentProbe(p, digitalDeviceRefs)) // i(<digital a-device>) has no current vector → drop (else it aborts the whole wrdata line)
+                .map((p) => {
+                    // Make analog current probes outputtable: keep native i() for V/L/E/H, rewrite R/C to @<dev>[i]
+                    // (+ savecurrents) in op/dc/tran, drop everything else (diodes, multi-terminal devices, and R/C
+                    // in AC where @<dev>[i] is unresolvable) — so no i() term can abort the shared wrdata line.
+                    const { token, savecurrents } = rewriteCurrentProbeVector(p, seenDevices, analysis.type);
+                    if (savecurrents) needSaveCurrents = true;
+                    return token;
+                })
+                .filter((p) => p.trim().length > 0), // a current probe on an unsupported/multi-terminal device was dropped
+        ),
+    ];
 
     // If the caller EXPLICITLY asked for probes but every one was dropped (e.g. only i(D1)/i(Q1), or v(0)),
     // the deck would emit no `wrdata` line and ngspice would exit 0 with no output.csv — an opaque empty

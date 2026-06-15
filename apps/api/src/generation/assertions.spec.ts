@@ -2,7 +2,17 @@
  * Pure assertion evaluation — the shared rubric used by BOTH verify-design and the AI design loop.
  * No mocks, no ngspice: operates on already-summarized measurements.
  */
-import { evaluateAssertions, describeFailure, compareAssertion, isCurrentProbe } from './assertions';
+import {
+    evaluateAssertions,
+    describeFailure,
+    compareAssertion,
+    isCurrentProbe,
+    isObservableCurrentProbe,
+    currentKey,
+    criterionDimension,
+    requiredDimensions,
+    uncoveredRequiredDimensions,
+} from './assertions';
 import type { SimMeasurement } from './circuit-simulator.service';
 import type { AssertionDto } from './dto';
 import { sanitizeNodeName } from '@circuit-forge/eda-core';
@@ -107,5 +117,117 @@ describe('isCurrentProbe', () => {
         expect(isCurrentProbe('@r1[i]')).toBe(true);
         expect(isCurrentProbe('out')).toBe(false);
         expect(isCurrentProbe('v(out)')).toBe(false);
+    });
+});
+
+describe('currentKey — bridges the criterion form i(R1) and the measured form @r1[i]', () => {
+    it('extracts the same device key from both forms (case-insensitive)', () => {
+        expect(currentKey('i(R1)')).toBe('r1');
+        expect(currentKey('I( V1 )')).toBe('v1');
+        expect(currentKey('@r1[i]')).toBe('r1');
+        expect(currentKey('@R1[ i ]')).toBe('r1');
+        expect(currentKey('i(R1)')).toBe(currentKey('@r1[i]')); // the whole point
+    });
+    it('returns null for a voltage probe', () => {
+        expect(currentKey('out')).toBeNull();
+        expect(currentKey('v(out)')).toBeNull();
+    });
+});
+
+describe('evaluateAssertions — current criterion matches its @<dev>[i] measurement', () => {
+    it('a criterion probe "i(R1)" resolves to the measured series named "@r1[i]"', () => {
+        // This is exactly how ngspice/wrdata names a saved R/C branch current. Before currentKey, this
+        // would read as "probe not found" (nodeKey("i(R1)") !== nodeKey("@r1[i]")).
+        const r = evaluateAssertions(
+            [meas('@r1[i]', { final: 0.0167 })],
+            [{ probe: 'i(R1)', metric: 'final', op: 'approx', value: 0.0167, tol: 0.001 }],
+        )[0]!;
+        expect(r.actual).toBeCloseTo(0.0167, 5);
+        expect(r.pass).toBe(true);
+    });
+
+    it('a current criterion does NOT accidentally match a voltage node, and vice-versa', () => {
+        // voltage node present, but a current criterion has no current measurement → not found
+        const cur = evaluateAssertions([meas(OUT, { final: 5 })], [{ probe: 'i(R1)', metric: 'final', op: 'gt', value: 0 }])[0]!;
+        expect(cur.actual).toBeNull();
+        // current measurement present, but a voltage criterion on "out" has no voltage measurement → not found
+        const volt = evaluateAssertions([meas('@r1[i]', { final: 0.01 })], [{ probe: 'out', metric: 'final', op: 'gt', value: 0 }])[0]!;
+        expect(volt.actual).toBeNull();
+    });
+
+    it('compares the MAGNITUDE of a current (ngspice signs @r1[i] by pin order) — a negative reading still passes a positive target', () => {
+        // A correctly-wired resistor can read -10mA depending on pin order; "~10mA" is a magnitude spec.
+        const r = evaluateAssertions(
+            [meas('@r1[i]', { final: -0.01 })],
+            [{ probe: 'i(R1)', metric: 'final', op: 'approx', value: 0.01, tol: 0.001 }],
+        )[0]!;
+        expect(r.actual).toBeCloseTo(0.01, 5); // |−0.01| reported as the magnitude
+        expect(r.pass).toBe(true);
+        // a voltage is NOT abs'd — a −5V node stays −5V
+        const v = evaluateAssertions([meas(OUT, { final: -5 })], [{ probe: 'out', metric: 'final', op: 'approx', value: 5, tol: 0.1 }])[0]!;
+        expect(v.actual).toBe(-5);
+        expect(v.pass).toBe(false);
+    });
+});
+
+describe('isObservableCurrentProbe — which current probes ngspice can actually measure', () => {
+    it('accepts R/C/V/L/E/H currents and rejects diode/transistor/subckt terminal currents', () => {
+        expect(isObservableCurrentProbe('i(R1)')).toBe(true);
+        expect(isObservableCurrentProbe('i(C2)')).toBe(true);
+        expect(isObservableCurrentProbe('i(V1)')).toBe(true);
+        expect(isObservableCurrentProbe('i(L3)')).toBe(true);
+        expect(isObservableCurrentProbe('i(D1)')).toBe(false); // diode — no branch vector
+        expect(isObservableCurrentProbe('i(Q1)')).toBe(false); // transistor
+        expect(isObservableCurrentProbe('i(X1)')).toBe(false); // subckt
+        expect(isObservableCurrentProbe('out')).toBe(false); // not a current probe at all
+    });
+});
+
+describe('criterionDimension', () => {
+    it('classifies a current probe as current and a node probe as voltage', () => {
+        expect(criterionDimension({ probe: 'i(R1)' })).toBe('current');
+        expect(criterionDimension({ probe: '@r1[i]' })).toBe('current');
+        expect(criterionDimension({ probe: 'out' })).toBe('voltage');
+        expect(criterionDimension({ probe: 'v(out)' })).toBe('voltage');
+    });
+});
+
+describe('requiredDimensions — conservative, code-side detection of the user-named quantity', () => {
+    it('detects a CURRENT target only when a real magnitude+unit is present', () => {
+        expect(requiredDimensions('about 10 mA flows through the LED').has('current')).toBe(true);
+        expect(requiredDimensions('limit to 20mA from 5V').has('current')).toBe(true);
+        expect(requiredDimensions('bias the transistor at 1 milliamp').has('current')).toBe(true);
+    });
+    it('does NOT flag current for voltage-only prompts (no false positives on the battery)', () => {
+        for (const p of [
+            'Design a resistive voltage divider that outputs 5V from a 12V DC supply.',
+            'outputs 3.3V from a 5V DC supply, with the output loaded by a 10k resistor',
+            'outputs 2V from a 10V DC supply. The output must be within 2% of 2V.',
+            'a gain 10 amplifier', // "10 amplifier" must NOT read as amps
+        ]) {
+            expect(requiredDimensions(p).has('current')).toBe(false);
+        }
+    });
+    it('detects a FREQUENCY target from a unit or a cutoff keyword', () => {
+        expect(requiredDimensions('RC low-pass with a 1 kHz cutoff').has('frequency')).toBe(true);
+        expect(requiredDimensions('attenuate above 60 Hz').has('frequency')).toBe(true);
+        expect(requiredDimensions('a divider that outputs 5V').has('frequency')).toBe(false);
+    });
+});
+
+describe('uncoveredRequiredDimensions — the verified-coverage gate', () => {
+    const voltageCrit = [{ probe: 'out' }];
+    const currentCrit = [{ probe: 'i(R1)' }];
+    it('flags a current spec checked only by a voltage proxy', () => {
+        expect(uncoveredRequiredDimensions('10 mA through the load', voltageCrit)).toEqual(['current']);
+    });
+    it('is satisfied once a current criterion is present', () => {
+        expect(uncoveredRequiredDimensions('10 mA through the load', [...voltageCrit, ...currentCrit])).toEqual([]);
+    });
+    it('never gates a pure voltage spec', () => {
+        expect(uncoveredRequiredDimensions('outputs 5V from 12V', voltageCrit)).toEqual([]);
+    });
+    it('does NOT hard-gate frequency (no metric yet — disclosed as a caveat instead)', () => {
+        expect(uncoveredRequiredDimensions('1 kHz cutoff filter', voltageCrit)).toEqual([]);
     });
 });

@@ -116,11 +116,17 @@ describe('VerificationService', () => {
         expect(ev.checks.passed).toBe(5);
     });
 
-    it('passes the analysis config through to the simulator', async () => {
+    it('passes the analysis config through to the simulator (+ current-probe list; [] when no current assertions)', async () => {
         const { svc, simulate } = makeService(okSim());
         const analysis = { type: 'tran', stopTime: '5m', timeStep: '10u' } as never;
         await svc.verify({ foo: 1 }, analysis, []);
-        expect(simulate).toHaveBeenCalledWith({ foo: 1 }, analysis);
+        expect(simulate).toHaveBeenCalledWith({ foo: 1 }, analysis, []);
+    });
+
+    it('UNIONs a current assertion probe into the simulator call so i(R1) is actually saved/measured', async () => {
+        const { svc, simulate } = makeService(okSim());
+        await svc.verify({ foo: 1 }, undefined, [{ probe: 'i(R1)', metric: 'final', op: 'approx', value: 0.01 }]);
+        expect(simulate).toHaveBeenCalledWith({ foo: 1 }, undefined, ['i(R1)']);
     });
 
     it('INCONCLUSIVE: an ok run that produced no measurements cannot certify anything', async () => {

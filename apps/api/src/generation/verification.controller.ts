@@ -7,7 +7,8 @@ import { Throttle } from '@nestjs/throttler';
 import { safeValidateCircuitJson, safeValidateAnalysisConfig, type AnalysisConfig } from '@circuit-forge/eda-core';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { CurrentUser } from '../auth/decorators/current-user.decorator';
-import { VerificationService, isCurrentProbe, type DesignEvidence } from './verification.service';
+import { VerificationService, type DesignEvidence } from './verification.service';
+import { isCurrentProbe, isObservableCurrentProbe } from './assertions';
 import { VerifyDesignDto } from './dto';
 
 @ApiTags('ai')
@@ -35,13 +36,14 @@ export class VerificationController {
             throw new BadRequestException(`Invalid circuit: ${issues}`);
         }
 
-        // The default simulation measures node VOLTAGES only — a current/power probe would silently
-        // never match and report a spurious failure. Reject it up front with a clear message rather
-        // than mis-verify. (Current/power assertions are a planned follow-up.)
-        const current = (dto.assertions ?? []).find((a) => isCurrentProbe(a.probe));
-        if (current) {
+        // Branch currents on R/C/V/L/E/H are now measured (saved via extraProbes → @<dev>[i] / native i()).
+        // But a diode/transistor/subckt terminal current has no branch-current vector — the generator would
+        // silently drop it and the assertion would read "probe not found" (a spurious fail). Reject THAT
+        // up front with an actionable message instead (probe a series sense resistor's current).
+        const badCurrent = (dto.assertions ?? []).find((a) => isCurrentProbe(a.probe) && !isObservableCurrentProbe(a.probe));
+        if (badCurrent) {
             throw new BadRequestException(
-                `Current-probe assertions ("${current.probe}") aren't supported yet — assert on a node voltage (e.g. "out"). Current/power specs are coming in a later release.`,
+                `Current probe "${badCurrent.probe}" can't be measured directly — a diode/transistor/subckt terminal current has no branch-current vector in ngspice. Probe a SERIES RESISTOR's current instead (e.g. "i(R1)").`,
             );
         }
 
