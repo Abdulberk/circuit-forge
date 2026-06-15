@@ -8,11 +8,24 @@ import { prisma } from '../prisma/client';
 import { config } from '../config';
 import { logger } from '../logger';
 import { runSimulation, type SimulationJobResult } from './runner';
+import { classifyJobOutcome, isFinalAttempt } from './outcome';
 import { downloadFile, uploadJsonResult } from '../storage/s3-client';
 import { downsampleResult } from '@circuit-forge/eda-core';
 import { Prisma } from '@prisma/client';
 import { recordSim } from '../observability/telemetry';
 import { propagation, context as otelContext, trace, SpanStatusCode } from '@opentelemetry/api';
+
+/**
+ * Thrown to push an INFRA failure back to BullMQ for retry (or final failure). By the time it's thrown,
+ * the terminal-DB decision is already made — persisted on the final attempt, deliberately skipped while
+ * retries remain — so the catch block must only PROPAGATE it, never write the row a second time.
+ */
+class RetryableInfraError extends Error {
+    constructor(message: string) {
+        super(message);
+        this.name = 'RetryableInfraError';
+    }
+}
 
 /**
  * Job payload from the queue
@@ -72,7 +85,16 @@ export function createSimulationWorker(): Worker {
 async function processJob(job: Job<SimulationJobPayload>): Promise<void> {
     const { jobId, orgId, netlist, probeNames, analysisType, modelAssets } = job.data;
 
-    logger.info({ jobId, orgId }, 'Processing simulation job');
+    // Is this the LAST attempt BullMQ will run? Drives WHEN it's safe to write a terminal FAILED row:
+    // while retries remain we leave the row RUNNING so a poll mid-retry keeps waiting (never a premature
+    // 'inconclusive'). `attempts` is undefined for a job enqueued before retries were configured →
+    // treated as final → behaves exactly like the legacy no-retry path.
+    const finalAttempt = isFinalAttempt(job.attemptsMade, job.opts.attempts);
+
+    logger.info(
+        { jobId, orgId, attempt: job.attemptsMade + 1, attempts: job.opts.attempts ?? 1 },
+        'Processing simulation job',
+    );
 
     // Link this worker span to the API request that enqueued the job (context propagated via
     // job.data.otel) so Tempo shows ONE trace: HTTP → enqueue → worker process, with the Prisma queries
@@ -115,39 +137,79 @@ async function processJob(job: Job<SimulationJobPayload>): Promise<void> {
                     modelFiles: modelFiles.length > 0 ? modelFiles : undefined,
                 });
 
-                // Handle result
-                if (result.success && result.result) {
-                    await handleSuccess(jobId, result);
-                } else {
-                    await handleFailure(jobId, result);
+                // Decide what the result means for the queue (pure logic in outcome.ts).
+                const action = classifyJobOutcome(result, finalAttempt);
+                switch (action.type) {
+                    case 'success':
+                        await handleSuccess(jobId, result);
+                        span.setAttribute('sim.outcome', 'succeeded');
+                        span.setStatus({ code: SpanStatusCode.OK });
+                        break;
+                    case 'fault':
+                        // Genuine, deterministic sim fault (ngspice ran and rejected the deck, or timed
+                        // out): persist terminal FAILED/TIMED_OUT and finish normally. Never retried —
+                        // re-running a deterministically-bad circuit just wastes a slot.
+                        await handleFailure(jobId, result);
+                        span.setAttribute('sim.outcome', 'failed');
+                        span.setStatus({ code: SpanStatusCode.OK });
+                        break;
+                    case 'terminal-infra':
+                        // Infra failure, retries exhausted: persist the rich FAILED+infra row, THEN throw
+                        // so BullMQ finalizes the job as failed. RetryableInfraError tells the catch block
+                        // the DB write is already done — don't persist twice. The API maps FAILED+infra →
+                        // 'inconclusive', never a design failure.
+                        await handleFailure(jobId, result);
+                        span.setAttribute('sim.outcome', 'failed');
+                        throw new RetryableInfraError(result.error ?? 'simulation infrastructure failure');
+                    case 'retry':
+                        // Infra failure with retries remaining: DON'T write a terminal status (the row
+                        // stays RUNNING so a poll mid-retry keeps waiting); throw so BullMQ schedules the
+                        // retry. No recordSim — a pending retry is not a failed run yet.
+                        span.setAttribute('sim.outcome', 'retry');
+                        logger.warn(
+                            { jobId, attempt: job.attemptsMade + 1, error: result.error },
+                            'Infra failure — will retry',
+                        );
+                        throw new RetryableInfraError(
+                            result.error ?? 'simulation infrastructure failure (will retry)',
+                        );
                 }
-                span.setAttribute('sim.outcome', result.success ? 'succeeded' : 'failed');
-                span.setStatus({ code: SpanStatusCode.OK });
             } catch (error) {
                 const errorMessage = error instanceof Error ? error.message : String(error);
-                logger.error({ jobId, error: errorMessage }, 'Job processing error');
                 span.recordException(error instanceof Error ? error : new Error(errorMessage));
                 span.setStatus({ code: SpanStatusCode.ERROR, message: errorMessage });
 
-                // Reached by a throw OUTSIDE the ngspice result path — S3 model download, the RUNNING/DB
-                // update, or a result upload on an otherwise-successful sim. These are INFRASTRUCTURE
-                // failures, not circuit faults, so tag failureClass='infra' (status stays FAILED — no
-                // operational enum value); the API maps it to an 'inconclusive' verify verdict rather than
-                // telling the user their design failed. The OTel metric counts it as a failed run.
-                recordSim({ status: 'failed' });
+                // The controlled infra path above (terminal-infra / retry) already decided the terminal-DB
+                // write — persisted on the final attempt, deliberately skipped while retries remain. Just
+                // propagate so BullMQ retries or finalizes; never double-write the row.
+                if (error instanceof RetryableInfraError) {
+                    logger.error({ jobId, error: errorMessage }, 'Job processing infra failure');
+                    throw error;
+                }
 
-                await prisma.simulationJob.update({
-                    where: { id: jobId },
-                    data: {
-                        status: 'FAILED',
-                        stderr: errorMessage,
-                        finishedAt: new Date(),
-                        metrics: {
-                            error: errorMessage,
-                            failureClass: 'infra',
+                // Otherwise an UNEXPECTED throw escaped the runner result path — S3 model download, the
+                // RUNNING/DB update, or a result upload on an otherwise-successful sim. These are
+                // INFRASTRUCTURE failures, not circuit faults, so tag failureClass='infra' (status stays
+                // FAILED — no operational enum value); the API maps it to an 'inconclusive' verify verdict
+                // rather than telling the user their design failed. Persist the terminal FAILED row ONLY
+                // on the final attempt (so a poll during a retry window sees RUNNING, never a premature
+                // 'inconclusive'); on earlier attempts leave the row as-is and let BullMQ retry.
+                logger.error({ jobId, error: errorMessage }, 'Job processing error');
+                if (finalAttempt) {
+                    recordSim({ status: 'failed' });
+                    await prisma.simulationJob.update({
+                        where: { id: jobId },
+                        data: {
+                            status: 'FAILED',
+                            stderr: errorMessage,
+                            finishedAt: new Date(),
+                            metrics: {
+                                error: errorMessage,
+                                failureClass: 'infra',
+                            },
                         },
-                    },
-                });
+                    });
+                }
 
                 throw error;
             } finally {

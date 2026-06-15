@@ -3,14 +3,18 @@
  */
 import { PrismaClient } from '@prisma/client';
 import { logger } from '../logger';
+import { withConnectionLimit } from './connection-limit';
 
 const globalForPrisma = globalThis as unknown as {
     prisma: PrismaClient | undefined;
 };
 
+const datasourceUrl = withConnectionLimit(process.env.DATABASE_URL);
+
 export const prisma =
     globalForPrisma.prisma ??
     new PrismaClient({
+        ...(datasourceUrl ? { datasources: { db: { url: datasourceUrl } } } : {}),
         log: [
             { level: 'query', emit: 'event' },
             { level: 'error', emit: 'stdout' },
