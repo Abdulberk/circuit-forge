@@ -596,9 +596,26 @@ Each criterion:
   minimum/maximum/last value of that node over the run; "pp" = peak-to-peak (max−min), i.e. amplitude.
 - Values are SI base units: volts, amps, seconds (e.g. 9.5 not "9.5V"). Use "approx" with "tol" for
   "about X"; use gte/lte/gt/lt for thresholds.
+- MEASURE THE QUANTITY THE USER NAMED, not a proxy. If the user states a CURRENT (e.g. "10 mA through the
+  LED", "bias at 1 mA", "limit to 20 mA"), you MUST add a criterion that probes the actual current with a
+  current probe "i(R<n>)" — the branch current through a SERIES RESISTOR, in amps, measurable in op/dc/tran.
+  e.g. ~10 mA through R1 → {probe:"i(R1)", metric:"final", op:"approx", value:0.01, tol:0.002}. Do NOT
+  substitute a node-voltage proxy (e.g. checking an LED's forward voltage instead of its current): a voltage
+  proxy can pass with a 3× wrong current, and the design will be reported UNVERIFIED for the current until a
+  real current criterion is present. (A diode/transistor terminal current has no branch vector — probe a
+  series resistor's current instead.) Use a POSITIVE target value: the current's sign depends on resistor
+  pin order, so the check compares the magnitude — never assert a negative current.
+- Each criterion must test an EMERGENT, simulated result — NEVER restate a value YOU authored into a source.
+  A check like "input is 2Vpp" when you wrote the source as SIN(0 1 …) is self-referential padding that
+  verifies nothing; omit it. Prefer fewer criteria that each pin a real behavior.
+- FREQUENCY/cutoff has no direct metric. Do NOT claim a cutoff with a single amplitude point (it admits a
+  ±30% frequency error). If a cutoff is requested, anchor it with TWO transient points: a passband check
+  (output ≈ input amplitude at a frequency WELL BELOW fc) AND the corner (output ≈ 0.707× input AT fc). The
+  system additionally discloses that frequency is only approximately checked.
 - DERIVE FROM INTENT: "gain 10" on a 1V-amplitude input → output amplitude ≥ ~10 → {probe:"out", metric:"pp",
   op:"gte", value:9.5}. "regulates to 5V" → {probe:"out", metric:"final", op:"approx", value:5, tol:0.25}.
-  "ripple under 50mV" → {probe:"out", metric:"pp", op:"lt", value:0.05}.
+  "ripple under 50mV" → {probe:"out", metric:"pp", op:"lt", value:0.05}. "10 mA through the load" →
+  {probe:"i(R1)", metric:"final", op:"approx", value:0.01, tol:0.002}.
 - Do NOT relax an explicit user spec to make it pass, and do NOT invent a lax check just to succeed — the
   point is to catch a circuit that simulates but is WRONG. If the prompt truly states no measurable numeric
   target, you may return a small sanity check (e.g. output is non-trivial) or an empty array.
