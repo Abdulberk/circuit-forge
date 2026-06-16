@@ -98,13 +98,42 @@ export function getAnalysisType(config: AnalysisConfig): string {
 }
 
 /**
+ * Hard ceiling on the OUTPUT rows a single analysis may request. A tiny step over a long stop (tran), a
+ * tiny dc increment, or an absurd ac points-per-decade could otherwise ask ngspice for millions/billions
+ * of rows — a memory/IO/time runaway. The print step only sets OUTPUT density (solver accuracy is
+ * governed by maxStep + tolerances, not the print step), and downstream stores at most ~20k points, so
+ * flooring the step coarser is safe and invisible for any reasonable request. The worker's byte cap
+ * (SIM_MAX_OUTPUT_BYTES) remains the final backstop.
+ */
+export const MAX_SIM_POINTS = 1_000_000;
+
+/**
+ * Floor a tran/dc step so (|stop - start|)/step <= MAX_SIM_POINTS. Returns the step UNCHANGED when it is
+ * already within budget, or when the values can't be parsed (let ngspice surface its own error).
+ */
+function clampStepToPointBudget(start: string, stop: string, step: string): string {
+    let span: number;
+    let st: number;
+    try {
+        span = Math.abs(parseSpiceValue(stop) - parseSpiceValue(start));
+        st = parseSpiceValue(step);
+    } catch {
+        return step; // unparseable — emit as-authored
+    }
+    if (!(span > 0) || !(st > 0)) return step;
+    if (span / st <= MAX_SIM_POINTS) return step;
+    return formatSpiceValue(span / MAX_SIM_POINTS);
+}
+
+/**
  * Convert analysis config to SPICE command
  */
 export function analysisToSpice(config: AnalysisConfig): string {
     switch (config.type) {
         case 'tran': {
-            const step = config.stepTime || calculateDefaultStep(config.stopTime);
             const start = config.startTime || '0';
+            // Bound output density so a tiny step over a long stop can't request billions of rows.
+            const step = clampStepToPointBudget(start, config.stopTime, config.stepTime || calculateDefaultStep(config.stopTime));
             let cmd = `.tran ${step} ${config.stopTime} ${start}`;
             if (config.maxStep) {
                 cmd += ` ${config.maxStep}`;
@@ -127,10 +156,15 @@ export function analysisToSpice(config: AnalysisConfig): string {
                 }
             }
             if (samePoint) return `.ac lin 1 ${config.startFreq} ${config.stopFreq}`;
-            return `.ac ${config.variation} ${config.points} ${config.startFreq} ${config.stopFreq}`;
+            // Bound points-per-decade/total so an absurd count can't blow up the row count.
+            const points = Math.min(config.points, MAX_SIM_POINTS);
+            return `.ac ${config.variation} ${points} ${config.startFreq} ${config.stopFreq}`;
         }
-        case 'dc':
-            return `.dc ${config.source} ${config.startVal} ${config.stopVal} ${config.increment}`;
+        case 'dc': {
+            // Bound the sweep density so a tiny increment over a wide range can't request millions of rows.
+            const increment = clampStepToPointBudget(config.startVal, config.stopVal, config.increment);
+            return `.dc ${config.source} ${config.startVal} ${config.stopVal} ${increment}`;
+        }
         case 'op':
             return '.op';
         default:

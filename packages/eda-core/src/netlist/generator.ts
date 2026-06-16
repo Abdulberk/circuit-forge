@@ -812,6 +812,15 @@ function rewriteExprNodeRefs(expr: string, nodeMap: Map<string, string>): string
  * Generate default probes (all node voltages). For a pure-digital net, the raw event node is unreliable
  * through `wrdata`, so the mixed-signal plan bridged it to an analog node — probe THAT instead.
  */
+/**
+ * Cap on AUTO-generated voltage probes. A pathologically large circuit would otherwise emit a `wrdata`
+ * line with hundreds of columns — a wide CSV the worker then parses into one in-memory series per column.
+ * Plotting more than this many nodes is not a real use case here, and any probe a caller actually NEEDS
+ * (e.g. a verification criterion) is supplied explicitly via `options.probes`/`extraProbes`, which are NOT
+ * subject to this cap. Keeps the default voltage sweep bounded without affecting normal designs (<<64 nodes).
+ */
+const MAX_DEFAULT_PROBES = 64;
+
 function generateDefaultProbes(
     circuit: CircuitJson,
     nodeMap: Map<string, string>,
@@ -827,7 +836,9 @@ function generateDefaultProbes(
         }
     }
 
-    return probes;
+    // Bound the default sweep width on huge circuits (see MAX_DEFAULT_PROBES). Explicit/extra probes are
+    // added by the caller and bypass this cap, so verification is never starved.
+    return probes.length > MAX_DEFAULT_PROBES ? probes.slice(0, MAX_DEFAULT_PROBES) : probes;
 }
 
 /**
