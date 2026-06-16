@@ -106,7 +106,17 @@ export class GenerationService {
             baseUrl: this.config.get<string>('LLM_BASE_URL'),
             model: this.config.get<string>('LLM_MODEL'),
             userAgent: this.config.get<string>('LLM_USER_AGENT'),
+            // Optional operator overrides; llm-core applies sane defaults (90s / 300k) when unset.
+            timeoutMs: this.positiveIntEnv('LLM_TIMEOUT_MS'),
+            tokenBudget: this.positiveIntEnv('LLM_TOKEN_BUDGET'),
         };
+    }
+
+    /** Parse a positive-integer env var, or undefined if unset/invalid (so llm-core's default applies). */
+    private positiveIntEnv(key: string): number | undefined {
+        const raw = this.config.get<string>(key);
+        const n = raw === undefined ? NaN : Number(raw);
+        return Number.isFinite(n) && n > 0 ? n : undefined;
     }
 
     private requireValidCircuit(input: unknown): CircuitJson {

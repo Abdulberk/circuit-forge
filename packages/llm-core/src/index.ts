@@ -11,6 +11,13 @@ import {
     type CircuitJson,
     type AnalysisConfig,
 } from '@circuit-forge/eda-core';
+import {
+    DEFAULT_TIMEOUT_MS,
+    DEFAULT_TOKEN_BUDGET,
+    isRetryableModelError,
+    tokensUsed,
+    budgetExceeded,
+} from './policy';
 
 /** Defaults — overridable via config / env. */
 const DEFAULT_BASE_URL = 'https://api.zentio.dev'; // SDK appends /v1/messages
@@ -86,6 +93,13 @@ export interface GenerateCircuitConfig {
     /** Max model<->tool round-trips before forcing a tool-less final answer (default 5). Raise it (~10)
      *  when the simulate-and-fix loop is enabled so verification iterations don't starve catalog search. */
     maxToolIters?: number;
+    /** Hard wall-clock timeout per model call in ms (default 90000). The SDK aborts past this; our retry
+     *  treats the timeout as transient and re-tries ONCE. Bounds a hung/overloaded provider. */
+    timeoutMs?: number;
+    /** Cumulative input+output token budget for ONE generate/fix/edit call across its tool loop
+     *  (default 300000). When spent, the loop stops offering tools and forces a final answer rather than
+     *  burning another round — a safety ceiling on a pathological tool loop's cost. */
+    tokenBudget?: number;
 }
 
 /**
@@ -176,6 +190,7 @@ interface Resolved {
     model: string;
     maxTokens: number;
     maxToolIters: number;
+    tokenBudget: number;
 }
 
 function setup(config: GenerateCircuitConfig): Resolved {
@@ -187,12 +202,19 @@ function setup(config: GenerateCircuitConfig): Resolved {
         baseURL: config.baseUrl || DEFAULT_BASE_URL,
         // Neutral UA — the gateway's WAF blocks the SDK's default "Anthropic/JS" User-Agent.
         defaultHeaders: { 'User-Agent': config.userAgent || DEFAULT_USER_AGENT },
+        // Hard per-call wall-clock timeout so a hung/overloaded provider can't block the request
+        // indefinitely (the SDK aborts past this and throws APIConnectionTimeoutError).
+        timeout: config.timeoutMs ?? DEFAULT_TIMEOUT_MS,
+        // We own retries (createWithRetry retries ONCE on a transient/timeout error); disable the SDK's
+        // own retry so a slow call isn't silently re-attempted up to maxRetries x timeout.
+        maxRetries: 0,
     });
     return {
         client,
         model: config.model || DEFAULT_MODEL,
         maxTokens: config.maxTokens || DEFAULT_MAX_TOKENS,
         maxToolIters: config.maxToolIters ?? MAX_TOOL_ITERS,
+        tokenBudget: config.tokenBudget ?? DEFAULT_TOKEN_BUDGET,
     };
 }
 
@@ -323,32 +345,28 @@ async function callModel(
 ): Promise<string> {
     const useTools = !!(opts?.tools?.length && opts.executor);
     const convo: Anthropic.MessageParam[] = [...messages];
-    // The zentio gateway intermittently rejects an otherwise-valid request with a 4xx carrying its own
-    // Turkish operational message ("İşlem gerçekleştirilemiyor / İlgili modele erişim yok") + a request id —
-    // observed to succeed on immediate retry with the identical payload. Retry ONCE on that signature and
-    // on any 5xx/overload; never on genuine validation errors (they don't match the signature).
-    const isTransientGatewayError = (e: unknown): boolean => {
-        const status = (e as { status?: number })?.status;
-        const msg = e instanceof Error ? e.message : String(e);
-        if (status !== undefined && status >= 500) return true;
-        if (status === 529 || /overloaded/i.test(msg)) return true;
-        return /İşlem gerçekleştirilemiyor|İlgili modele erişim yok|request id: \d/u.test(msg);
-    };
+    // Retry ONCE on a transient error (5xx / overload / wall-clock timeout / connection drop / the zentio
+    // gateway's transient Turkish rejection) with the identical payload; never on genuine 4xx validation.
+    // See policy.isRetryableModelError. The SDK's own retry is disabled (maxRetries:0 in setup) so this is
+    // the single source of retry truth.
     const createWithRetry = async (
         params: Anthropic.MessageCreateParamsNonStreaming,
     ): Promise<Anthropic.Message> => {
         try {
             return await r.client.messages.create(params);
         } catch (e) {
-            if (!isTransientGatewayError(e)) throw e;
+            if (!isRetryableModelError(e)) throw e;
             await new Promise((resolve) => setTimeout(resolve, 1500));
             return await r.client.messages.create(params); // second failure propagates
         }
     };
+    // Cumulative input+output tokens across this call's tool loop — a per-request cost ceiling.
+    let totalTokens = 0;
     try {
         for (let iter = 0; ; iter++) {
-            // Offer tools until the cap; the final iteration runs tool-less to force a text answer.
-            const allowTools = useTools && iter < r.maxToolIters;
+            // Offer tools until the cap OR until the token budget is spent; either way the next iteration
+            // runs tool-less to force a final text answer rather than burning another (growing) round.
+            const allowTools = useTools && iter < r.maxToolIters && !budgetExceeded(totalTokens, r.tokenBudget);
             const response = await createWithRetry({
                 model: r.model,
                 max_tokens: r.maxTokens,
@@ -356,6 +374,7 @@ async function callModel(
                 messages: convo,
                 ...(allowTools ? { tools: opts!.tools } : {}),
             });
+            totalTokens += tokensUsed(response.usage);
 
             const toolUses = allowTools
                 ? response.content.filter((b): b is Anthropic.ToolUseBlock => b.type === 'tool_use')
