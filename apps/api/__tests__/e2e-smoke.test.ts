@@ -265,15 +265,39 @@ describe('E2E Smoke Test - Full Simulation Workflow', () => {
         });
 
         it('should return readiness with dependency status', async () => {
-            const response = await request(app.getHttpServer())
-                .get('/health/ready')
-                .expect(200);
+            // Readiness now probes Postgres + Redis + S3 and returns 503 when ANY is unreachable (so k8s
+            // pulls the pod). CI provides Postgres + Redis as services but intentionally NOT object
+            // storage (S3 creds are dummies — see ci.yml), so S3 is expected unreachable here and the
+            // probe correctly reports 'degraded' (503). Assert the CONTRACT — the dependency-status shape,
+            // that the deps CI guarantees are healthy, and the status⟺all-ok invariant — rather than
+            // pinning a 200 that would require the full stack (the 200/503 matrix is unit-tested in
+            // health.controller.spec.ts).
+            const response = await request(app.getHttpServer()).get('/health/ready');
 
+            expect([200, 503]).toContain(response.status);
             expect(response.body).toHaveProperty('status');
             expect(response.body).toHaveProperty('checks');
             expect(response.body.checks).toHaveProperty('database');
+            expect(response.body.checks).toHaveProperty('redis');
+            expect(response.body.checks).toHaveProperty('s3');
+            // Postgres + Redis are CI services → must be healthy.
+            expect(response.body.checks.database.status).toBe('ok');
+            expect(response.body.checks.redis.status).toBe('ok');
+            // status is 'ok' exactly when every dependency check passed, else 'degraded' + HTTP 503.
+            const everyOk = Object.values<{ status: string }>(response.body.checks).every((c) => c.status === 'ok');
+            expect(response.body.status).toBe(everyOk ? 'ok' : 'degraded');
+            expect(response.status).toBe(everyOk ? 200 : 503);
 
-            console.log('✓ Readiness check passed, database:', response.body.checks.database.status);
+            console.log(
+                '✓ Readiness check:',
+                response.body.status,
+                '| db:',
+                response.body.checks.database.status,
+                'redis:',
+                response.body.checks.redis.status,
+                's3:',
+                response.body.checks.s3.status,
+            );
         });
     });
 
