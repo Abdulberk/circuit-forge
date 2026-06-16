@@ -88,6 +88,7 @@ model Organization {
   templates      Template[]
   assets         Asset[]
   simulationJobs SimulationJob[]
+  designJobs     DesignJob[]
   auditLogs      AuditLog[]
 
   @@map("organizations")
@@ -248,6 +249,49 @@ enum SimJobStatus {
 
 enum SimEngine {
   NGSPICE
+}
+
+// ============================================================================
+// AI Design Jobs (async closed-loop design)
+// ============================================================================
+
+// One persisted record per /design-jobs request — the long-running-operation (LRO) handle the client
+// polls. The agentic loop (generate → simulate → fix, up to maxRounds) can take minutes, so the request
+// returns 202 + this row's id immediately and the loop runs detached, writing its outcome here. `result`
+// holds the full design() payload (circuit/analysis/explanation/history/verdict/criteria/assertions/
+// caveats). `abortRequested` is the cooperative-cancel flag the loop checks (honored mid-loop once the
+// loop core is relocated; today it stops a not-yet-started job). Mirrors SimulationJob's shape/indexing.
+model DesignJob {
+  id             String          @id @default(uuid())
+  orgId          String
+  userId         String
+  status         DesignJobStatus @default(QUEUED)
+  // Input (the DesignCircuitDto)
+  prompt         String          @db.Text
+  constraints    String?         @db.Text
+  maxRounds      Int             @default(2)
+  // Output — the full design() result object; null until the loop finishes.
+  result         Json?
+  errorMessage   String?
+  // Cooperative-cancel flag the detached/worker loop checks (between rounds / before start).
+  abortRequested Boolean         @default(false)
+  createdAt      DateTime        @default(now())
+  startedAt      DateTime?
+  finishedAt     DateTime?
+
+  org Organization @relation(fields: [orgId], references: [id], onDelete: Cascade)
+
+  @@index([orgId, createdAt])
+  @@index([status])
+  @@map("design_jobs")
+}
+
+enum DesignJobStatus {
+  QUEUED
+  RUNNING
+  SUCCEEDED
+  FAILED
+  CANCELED
 }
 
 // ============================================================================
