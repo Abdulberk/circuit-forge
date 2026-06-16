@@ -60,11 +60,19 @@ export class DesignService {
                 'AI circuit generation is not configured (LLM_API_KEY is not set).',
             );
         }
+        // Optional operator overrides; llm-core applies sane defaults (90s / 300k) when unset/invalid.
+        const num = (key: string): number | undefined => {
+            const raw = this.config.get<string>(key);
+            const n = raw === undefined ? NaN : Number(raw);
+            return Number.isFinite(n) && n > 0 ? n : undefined;
+        };
         const llmConfig = {
             apiKey,
             baseUrl: this.config.get<string>('LLM_BASE_URL'),
             model: this.config.get<string>('LLM_MODEL'),
             userAgent: this.config.get<string>('LLM_USER_AGENT'),
+            timeoutMs: num('LLM_TIMEOUT_MS'),
+            tokenBudget: num('LLM_TOKEN_BUDGET'),
         };
         const maxRounds = Math.min(Math.max(dto.maxRounds ?? 2, 1), 4);
         // Ground the initial design in the live catalog (same as /generate-circuit) when configured.
