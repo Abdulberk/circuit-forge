@@ -76,6 +76,28 @@ describe('runMonteCarlo', () => {
         expect(y.yield).toBeCloseTo(y.passed / y.evaluated, 10); // denominator excludes errored
     });
 
+    it('shouldStop (per-batch budget) halts the loop early and reports the honest count', async () => {
+        const crit: AcceptanceCriterion[] = [{ probe: 'mid', metric: 'final', op: 'approx', value: 5, tol: 0.05 }];
+        let calls = 0;
+        // Stop after 10 variants have been drawn (simulates a wall-clock budget hit).
+        const y = await runMonteCarlo(DIVIDER, crit, dividerRunner, {
+            n: 300, seed: 9, ciStopHalfWidth: 0, shouldStop: () => ++calls > 10,
+        });
+        expect(y.stoppedEarly).toBe(true);
+        expect(y.ran).toBeLessThan(300);
+        expect(y.ran).toBeLessThanOrEqual(11);
+    });
+
+    it('onProgress fires once per evaluated variant (checkpoint hook)', async () => {
+        const crit: AcceptanceCriterion[] = [{ probe: 'mid', metric: 'final', op: 'approx', value: 5, tol: 0.5 }];
+        const seen: number[] = [];
+        const y = await runMonteCarlo(DIVIDER, crit, dividerRunner, {
+            n: 15, seed: 4, ciStopHalfWidth: 0, onProgress: (r) => seen.push(r),
+        });
+        expect(seen).toHaveLength(y.evaluated); // one checkpoint per evaluated variant
+        expect(seen[seen.length - 1]).toBe(y.evaluated); // monotonic running count
+    });
+
     it('a thrown runner counts as errored, not a crash', async () => {
         const crit: AcceptanceCriterion[] = [{ probe: 'mid', metric: 'final', op: 'approx', value: 5, tol: 0.5 }];
         const throwingRunner = (v: CircuitJson, i: number) => {

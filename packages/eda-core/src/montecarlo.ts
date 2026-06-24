@@ -101,6 +101,13 @@ export interface MonteCarloOptions {
     ciStopHalfWidth?: number;
     /** Don't stop adaptively before this many evaluated runs (an early CI off 3 samples is meaningless). */
     minRuns?: number;
+    /** Checked at the top of EACH iteration; returning true stops the batch (stoppedEarly=true). The worker
+     *  uses this for a per-batch wall-clock BUDGET (`() => Date.now() > deadline`) — kept as a callback so
+     *  eda-core stays wall-clock-free and the orchestrator stays deterministic in tests. */
+    shouldStop?: () => boolean;
+    /** Called after each variant with the count run so far — the worker uses it to CHECKPOINT progress
+     *  (job.updateProgress) so a mid-batch death doesn't lose everything. */
+    onProgress?: (ran: number) => void;
 }
 
 export interface MonteCarloYield extends YieldSummary {
@@ -132,6 +139,11 @@ export async function runMonteCarlo(
     let stoppedEarly = false;
     let ran = 0;
     for (let i = 0; i < n; i++) {
+        // Per-batch budget (wall-clock, supplied by the worker) — stop before drawing another variant.
+        if (opts.shouldStop?.()) {
+            stoppedEarly = true;
+            break;
+        }
         const variant = perturbCircuit(circuit, rand, dist);
         ran++;
         let measurements: SimMeasurement[] | null;
@@ -146,6 +158,7 @@ export async function runMonteCarlo(
         }
         const results = evaluateAssertions(measurements, criteria);
         outcomes.push(results.length > 0 && results.every((r) => r.pass) ? 'pass' : 'fail');
+        opts.onProgress?.(outcomes.length); // checkpoint hook (worker persists partial progress)
 
         // Adaptive-N: stop once the interval is tight enough (but not before minRuns evaluated samples).
         if (ciStop > 0) {

@@ -309,9 +309,10 @@ async function runOneAttempt(
 }
 
 /**
- * Execute ngspice with timeout
+ * Execute ngspice with timeout. Exported so the Monte-Carlo batch runner reuses the IDENTICAL sandboxed
+ * spawn (rlimits / bwrap / group-kill) per variant.
  */
-async function executeNgspice(
+export async function executeNgspice(
     netlistPath: string,
 ): Promise<{ stdout: string; stderr: string; exitCode: number | null; timedOut: boolean; spawnError?: boolean }> {
     return new Promise((resolve) => {
