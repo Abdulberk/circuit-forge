@@ -35,7 +35,41 @@ const PREFIX_TO_TYPE: Record<string, ComponentType> = {
     J: 'jfet',
     X: 'subckt',
     T: 'tline',
+    // NOTE: 'A' (XSPICE digital) is deliberately ABSENT — one 'A' device maps to many ComponentTypes
+    // depending on its CFD_* model, so digital lines are handled separately (parseDigitalLine), not here.
 };
+
+/**
+ * Reverse of the generator's DIGITAL_BASENAME map: a CFD_* model base name -> the digital ComponentType
+ * that emitted it. (CFD_ADC/CFD_DAC are analog<->digital BRIDGES, not components — recognized separately
+ * and skipped on import.) A custom-timing variant is suffixed CFD_<TYPE>_<n>; the trailing _<n> is stripped
+ * before lookup. Lets a digital 'A'-device line round-trip back to its gate / flip-flop / latch / tristate type.
+ */
+const CFD_MODEL_TO_TYPE: Record<string, ComponentType> = {
+    CFD_AND: 'logic_and', CFD_OR: 'logic_or', CFD_NAND: 'logic_nand', CFD_NOR: 'logic_nor',
+    CFD_XOR: 'logic_xor', CFD_XNOR: 'logic_xnor', CFD_NOT: 'logic_not', CFD_BUF: 'logic_buffer',
+    CFD_DFF: 'dff', CFD_JKFF: 'jkff', CFD_TFF: 'tff', CFD_DLATCH: 'dlatch', CFD_TRI: 'tristate',
+};
+
+/** Fixed XSPICE port orders (match the generator's emitDigitalComponent emission), for mapping a bare
+ *  node list on a sequential/tristate 'A'-device back to named pins. Gates are variable-arity (handled
+ *  separately: all-but-last nodes are inputs in1..inN, last node is the output). */
+const DIGITAL_PORT_ORDER: Partial<Record<ComponentType, string[]>> = {
+    dff: ['d', 'clk', 'set', 'rst', 'q', 'qb'],
+    jkff: ['j', 'k', 'clk', 'set', 'rst', 'q', 'qb'],
+    tff: ['t', 'clk', 'set', 'rst', 'q', 'qb'],
+    dlatch: ['d', 'en', 'set', 'rst', 'q', 'qb'],
+    tristate: ['in1', 'en', 'out'],
+};
+
+/** A node synthesized by the mixed-signal planner: a split digital twin (`<net>_d`) or a probe mirror
+ *  (`<net>_p`), optionally uniquified with a trailing `_<n>`. Used to decide which side of a bridge is the
+ *  REAL net (the other side) when re-merging a split mixed net on import. */
+const SYNTH_NODE = /(?:_d|_p)(?:_\d+)?$/i;
+/** The synthesized constant digital-LOW rail node (`dlogic_lo`, analog twin `dlogic_lo_a`, uniquified
+ *  `dlogic_lo_<n>`). A flip-flop set/rst tied here was AUTO-tied (absent in the authored circuit) and is
+ *  dropped on import so the re-export re-synthesizes it. */
+const LOW_RAIL_NODE = /^dlogic_lo(?:_a)?(?:_\d+)?$/i;
 
 /**
  * Parse a SPICE netlist to CircuitJson
@@ -46,6 +80,12 @@ export function parseNetlist(netlist: string): NetlistParseResult {
     // wrapped this way, and our own generator may wrap too. Each logical line keeps its FIRST source line
     // number for warnings.
     const logical = foldContinuations(netlist.split('\n'));
+    // Re-merge mixed-signal nets that the generator SPLIT (a mixed net's digital pins were moved onto a
+    // synthesized `<net>_d` node, bridged back to the analog `<net>` by an adc/dac a-device). Pre-scan the
+    // bridges to map each synthesized node back to its real net, so digital pins re-attach to the same net
+    // the analog devices use. Empty for a netlist with no digital bridges (analog import is unaffected).
+    const digitalMerge = buildDigitalMergeMap(logical);
+    const canonNode = (n: string): string => digitalMerge.get(n) ?? n;
     const components: Component[] = [];
     const netSet = new Set<string>();
     const errors: string[] = [];
@@ -115,6 +155,10 @@ export function parseNetlist(netlist: string): NetlistParseResult {
                 const tok = line.split(/\s+/);
                 const name = tok[1];
                 const typeToken = tok[2];
+                // Skip the engine-synthesized digital/bridge models (namespaced CFD_*): they are regenerated
+                // from the digital components on export, so carrying them in circuit.models would duplicate
+                // them (and shuffle their section). Caller-supplied models (bjt/diode/subckt) are kept.
+                if (name && /^cfd_/i.test(name)) continue;
                 if (name && typeToken && !seenModelNames.has(name.toLowerCase())) {
                     seenModelNames.add(name.toLowerCase());
                     models.push({ name, device: inferModelDevice(typeToken), body: line });
@@ -155,6 +199,31 @@ export function parseNetlist(netlist: string): NetlistParseResult {
         // with an explicit note rather than a misleading "could not parse" error.
         if (/^k/i.test(line)) {
             warnings.push(`Line ${lineNo}: mutual coupling not imported (export-only): ${line}`);
+            continue;
+        }
+
+        const firstTok = line.split(/\s+/)[0] ?? '';
+
+        // The synthesized constant digital-LOW rail source (vxsynN <node> 0 DC 0) is regenerated on export —
+        // import it as a real voltage_source and we'd emit a spurious extra source. Skip it.
+        if (/^vxsyn\d/i.test(firstTok)) {
+            warnings.push(`Line ${lineNo}: synthesized digital LOW rail not imported (export-only): ${line}`);
+            continue;
+        }
+
+        // XSPICE 'a'-device: a digital gate/flip-flop/tristate (mapped back via its CFD_* model) OR a
+        // synthesized adc/dac bridge (CFD_ADC/CFD_DAC — regenerated on export, so skipped). 'A' is never an
+        // analog component prefix, so any 'A' line is digital.
+        if (/^a/i.test(firstTok)) {
+            const d = parseDigitalLine(line, componentCounter, canonNode);
+            if (d === 'bridge') continue; // synthesized analog<->digital bridge — re-synthesized on export
+            if (d) {
+                components.push(d.component);
+                d.nets.forEach((n) => netSet.add(n));
+                componentCounter = d.counter;
+            } else {
+                warnings.push(`Line ${lineNo}: Could not parse digital device: ${line}`);
+            }
             continue;
         }
 
@@ -291,6 +360,91 @@ function parseIcLine(line: string): Record<string, number> {
         if (Number.isFinite(val)) ic[node] = val;
     }
     return ic;
+}
+
+/**
+ * Build the synthesized-node -> real-net merge map from the adc/dac bridge a-devices in a (folded) netlist.
+ * A mixed net is emitted as a real analog node `<net>` plus a synthesized digital twin `<net>_d`, joined by
+ * a bridge `axsynN [<net>] [<net>_d] CFD_ADC` (or the dac direction); a pure-digital net gets a probe mirror
+ * `<net>_p`. Mapping the synthesized side back to the real side lets digital pins re-attach to the net the
+ * analog devices use, so a round-tripped mixed-signal circuit reconnects instead of fragmenting.
+ */
+function buildDigitalMergeMap(logical: { text: string; lineNo: number }[]): Map<string, string> {
+    const merge = new Map<string, string>();
+    for (const e of logical) {
+        const line = e.text.trim();
+        const tok = line.split(/\s+/);
+        const inst = tok[0] ?? '';
+        if (!/^a/i.test(inst)) continue;
+        const modelBase = (tok[tok.length - 1] ?? '').replace(/_\d+$/i, '').toUpperCase();
+        if (modelBase !== 'CFD_ADC' && modelBase !== 'CFD_DAC') continue; // only bridges carry a merge
+        const m = line.match(/\[\s*([^\]\s]+)\s*\]\s*\[\s*([^\]\s]+)\s*\]/);
+        if (!m) continue;
+        const a = m[1]!;
+        const b = m[2]!;
+        // The rail bridge ([dlogic_lo_a] [dlogic_lo]) joins two synthesized nodes — nothing real to merge to.
+        if (LOW_RAIL_NODE.test(a) || LOW_RAIL_NODE.test(b)) continue;
+        // Merge the synthesized side (the `_d`/`_p` twin) into the real net (the other side).
+        if (SYNTH_NODE.test(a) && !SYNTH_NODE.test(b)) merge.set(a, b);
+        else if (SYNTH_NODE.test(b) && !SYNTH_NODE.test(a)) merge.set(b, a);
+    }
+    return merge;
+}
+
+/**
+ * Parse an XSPICE 'a'-device line back into a digital Component, or the sentinel 'bridge' for a synthesized
+ * adc/dac bridge the caller should skip, or null for an unrecognized a-device. Node names are run through
+ * `canon` to re-merge split mixed nets; an auto-tied set/rst on the synthesized LOW rail is dropped (the
+ * generator re-ties it on export). The designator keeps the emitted 'A'-prefixed instance name (e.g. AU1).
+ */
+function parseDigitalLine(
+    line: string,
+    counter: Record<string, number>,
+    canon: (n: string) => string,
+): { component: Component; nets: string[]; counter: Record<string, number> } | 'bridge' | null {
+    const tok = line.split(/\s+/);
+    if (tok.length < 3) return null;
+    const inst = tok[0]!;
+    const modelBase = (tok[tok.length - 1] ?? '').replace(/_\d+$/i, '').toUpperCase();
+    if (modelBase === 'CFD_ADC' || modelBase === 'CFD_DAC') return 'bridge';
+    const type = CFD_MODEL_TO_TYPE[modelBase];
+    if (!type) return null;
+
+    // Node tokens between the instance name and the model name, with bracket grouping flattened, canon()'d.
+    const nodes = tok
+        .slice(1, -1)
+        .join(' ')
+        .replace(/[[\]]/g, ' ')
+        .trim()
+        .split(/\s+/)
+        .filter(Boolean)
+        .map(canon);
+    if (nodes.length < 2) return null;
+
+    counter['A'] = (counter['A'] || 0) + 1;
+    const id = `a${counter['A']}`;
+    let pins: { pinId: string; netId: string }[];
+
+    if (type.startsWith('logic_')) {
+        // Gate: every node but the last is an input (in1..inN), the last node is the output.
+        const out = nodes[nodes.length - 1]!;
+        const inputs = nodes.slice(0, -1);
+        pins = inputs.map((netId, i) => ({ pinId: `in${i + 1}`, netId }));
+        pins.push({ pinId: 'out', netId: out });
+    } else {
+        const order = DIGITAL_PORT_ORDER[type];
+        if (!order || nodes.length < order.length) return null;
+        pins = [];
+        order.forEach((pinId, i) => {
+            const netId = nodes[i]!;
+            // Drop an auto-tied set/rst on the synthesized LOW rail (it was absent in the authored circuit).
+            if ((pinId === 'set' || pinId === 'rst') && LOW_RAIL_NODE.test(netId)) return;
+            pins.push({ pinId, netId });
+        });
+    }
+
+    const nets = pins.map((p) => p.netId);
+    return { component: { id, type, designator: inst, pins }, nets, counter };
 }
 
 /**
