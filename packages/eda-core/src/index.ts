@@ -148,6 +148,14 @@ export {
     type NetlistParseResult,
 } from './parser';
 
+// Result export (CSV / VCD writers — take a finished SimulationResult out to other tools)
+export {
+    resultToCsv,
+    resultToVcd,
+    type CsvExportOptions,
+    type VcdExportOptions,
+} from './parser';
+
 // ERC
 export {
     runErc,

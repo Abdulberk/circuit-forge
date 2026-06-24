@@ -8,3 +8,9 @@ export {
     parseSimulationOutput
 } from './csv-parser';
 export { parseNetlist, extractProbes, type NetlistParseResult } from './netlist-parser';
+export {
+    resultToCsv,
+    resultToVcd,
+    type CsvExportOptions,
+    type VcdExportOptions,
+} from './result-export';
