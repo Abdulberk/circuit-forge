@@ -125,6 +125,8 @@ export interface Component {
     designator: string; // R1, C1, V1, etc.
     value?: string; // "10k", "100n", "5V", "SIN(0 1 1k)"
     model?: string; // For diodes, transistors - model name
+    /** Fractional manufacturing tolerance (e.g. 0.05 = ±5%) used by Monte-Carlo yield analysis. */
+    tolerance?: number;
     pins: PinConnection[];
     properties?: Record<string, unknown>;
     // Optional real-part / catalog metadata (added when a component is created from a parts catalog)

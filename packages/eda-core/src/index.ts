@@ -156,6 +156,17 @@ export {
     type VcdExportOptions,
 } from './parser';
 
+// Monte-Carlo / tolerance (verify at X% yield, not just nominal)
+export {
+    perturbValue,
+    perturbCircuit,
+    monteCarloVariants,
+    computeYield,
+    type TolDistribution,
+    type YieldSummary,
+} from './montecarlo';
+export { mulberry32 } from './utils/prng';
+
 // ERC
 export {
     runErc,
