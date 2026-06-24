@@ -8,6 +8,8 @@ import { ErcCode, ErcSeverity, ErcResult, ErcIssue } from '../types/erc';
 import { ERC_DESCRIPTIONS, ERC_SEVERITIES } from './codes';
 import { buildZenerModel, normalizeControlledSourceGain, parseTransformerParams, parseTransmissionLineParams } from '../models/library';
 import { sourceHighLevel, sourceLowLevel } from '../netlist/digital';
+import { parseSpiceValue } from '../utils/unit-parser';
+import { isESeriesValue, snapValueString } from '../utils/eseries';
 
 /**
  * Expected pin counts for each component type
@@ -444,6 +446,27 @@ function checkComponentValues(circuit: CircuitJson): ErcIssue[] {
                     `${component.designator || component.id} (${component.type})`,
                 ),
             );
+        }
+
+        // E-series advisory (info): a passive whose value is not a standard IEC 60063 preferred value is
+        // hard to SOURCE — a formula/AI-derived 1591.5 Ω or 3.27 kΩ can't be bought and the BOM layer can't
+        // map a real MPN to it. Flag it with the nearest E24 value. Non-blocking (it still simulates); a
+        // value that already IS standard (4.7k, 100n) is silent. E24 is the common manufacturing grid.
+        if (
+            (component.type === 'resistor' || component.type === 'capacitor' || component.type === 'inductor') &&
+            component.value
+        ) {
+            const parsed = parseSpiceValue(component.value);
+            if (parsed.isValid && parsed.value > 0 && !isESeriesValue(parsed.value, 'E24')) {
+                const nearest = snapValueString(component.value, 'E24');
+                issues.push(
+                    createIssue(
+                        ErcCode.NON_STANDARD_VALUE,
+                        [component.id],
+                        `${component.designator || component.id}: ${component.value}${nearest ? ` — nearest standard (E24) is ${nearest}` : ''}`,
+                    ),
+                );
+            }
         }
 
         // A zener's value must parse to a breakdown voltage. A present-but-unparseable value (an MPN,

@@ -650,6 +650,9 @@ Each criterion:
 - A "tran" may add "initialConditions": { "<netId>": <volts> } to seed node voltages at t=0. Use it to KICK a symmetric oscillator (Wien bridge, ring, relaxation) off its dead equilibrium — seed one internal node (e.g. {"fb": 0.5}); do NOT add "uic" for circuits with supplies. Keep stepTime sane: stopTime/stepTime ≤ ~100k points.
 
 Component conventions:
+- USE STANDARD VALUES: round passive values to a real E-series (IEC 60063) preferred value — E24 (5%) by
+  default, E96 (1%) when precision matters. A formula may give 1591.5 ohm or 3.27k; emit the buyable nearest
+  (1.6k, 3.3k) so the part can actually be sourced. (The design loop flags a non-standard value as advisory.)
 - resistor (R): two pins "1","2"; value in ohms, e.g. "10k", "1Meg", "470".
 - capacitor (C): two pins "1","2"; value in farads, e.g. "100n", "10u", "1p".
 - inductor (L): two pins "1","2"; value in henries, e.g. "1m", "10u".

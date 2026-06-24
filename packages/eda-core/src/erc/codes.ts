@@ -24,6 +24,7 @@ export const ERC_DESCRIPTIONS: Record<ErcCode, string> = {
     [ErcCode.MODEL_REQUIRED]: 'Active device has no model and no default — it cannot be simulated',
     [ErcCode.UNRESOLVED_MODEL]:
         'Component references a model that is not defined in the circuit (must be supplied by an included model library)',
+    [ErcCode.NON_STANDARD_VALUE]: 'Component value is not a standard E-series (IEC 60063) preferred value — hard to source',
     [ErcCode.UNCONNECTED_NET]: 'Net defined but not connected to any components',
     [ErcCode.NET_HAS_SINGLE_PIN]: 'Net has only one pin connection (dead end)',
     [ErcCode.DIGITAL_PIN_SHAPE]: 'Digital component is missing a required pin (output and/or inputs)',
@@ -53,6 +54,7 @@ export const ERC_SEVERITIES: Record<ErcCode, ErcSeverity> = {
     // A present-but-undefined model name may still be satisfied by a `.include`d library at sim time,
     // so this is a warning (observable), not a hard error.
     [ErcCode.UNRESOLVED_MODEL]: 'warning',
+    [ErcCode.NON_STANDARD_VALUE]: 'info', // advisory: still simulates fine; just not a buyable preferred value
     [ErcCode.UNCONNECTED_NET]: 'info',
     [ErcCode.NET_HAS_SINGLE_PIN]: 'warning',
     [ErcCode.DIGITAL_PIN_SHAPE]: 'error', // can't emit a valid a-device without the right pins
