@@ -11,7 +11,7 @@ import { VersionsService } from '../versions/versions.service';
 import { OrgsService } from '../orgs/orgs.service';
 import { UsageService } from '../usage/usage.service';
 import { generateNetlist, safeValidateCircuitJson, safeValidateAnalysisConfig, downsampleResult } from '@circuit-forge/eda-core';
-import type { CircuitJson, AnalysisConfig, SimulationResult } from '@circuit-forge/eda-core';
+import type { CircuitJson, AnalysisConfig, SimulationResult, AcceptanceCriterion } from '@circuit-forge/eda-core';
 import { propagation, context as otelContext } from '@opentelemetry/api';
 
 /** Capture the current trace context as a W3C carrier to ride on the queued job, so the worker's
@@ -170,6 +170,71 @@ export class SimulationService {
             analysisConfig: analysisConfig || {},
             otel: otelCarrier(),
             ...(s3Keys.length > 0 ? { modelAssets: s3Keys } : {}),
+        });
+
+        return { jobId: job.id };
+    }
+
+    /**
+     * Enqueue a Monte-Carlo YIELD job: the worker runs N perturbed variants of `circuit` (each component's
+     * `tolerance` sampled) and aggregates how many meet `criteria` → a yield + Wilson CI. ONE queue job (not
+     * N) — so it counts as a single sim against the quota, not 300. Informational: the design loop attaches
+     * the result as a non-authoritative field and never lets it flip "verified". Reuses the same 'simulation'
+     * queue with a `mode` discriminator (a dedicated low-priority queue is the scale-time upgrade).
+     */
+    async createMonteCarloJob(
+        circuit: CircuitJson,
+        analysisConfig: Record<string, unknown> | undefined,
+        criteria: AcceptanceCriterion[],
+        opts: { n?: number; seed?: number },
+        userId: string,
+    ) {
+        const orgs = await this.orgsService.findAllForUser(userId);
+        const orgId = orgs[0]?.id;
+        if (!orgId) throw new NotFoundException('No organization found for user');
+
+        const validCircuit = safeValidateCircuitJson(circuit);
+        if (!validCircuit.success) {
+            const issues = validCircuit.error.errors.slice(0, 5).map((e) => `${e.path.join('.') || '(root)'}: ${e.message}`).join('; ');
+            throw new BadRequestException(`Invalid circuit for Monte-Carlo: ${issues}`);
+        }
+        const validAnalysis = safeValidateAnalysisConfig(analysisConfig);
+        if (!validAnalysis.success) {
+            const issues = validAnalysis.error.errors.map((e) => `${e.path.join('.') || '(root)'}: ${e.message}`).join('; ');
+            throw new BadRequestException(`Invalid analysis config for Monte-Carlo: ${issues}`);
+        }
+
+        // ONE job under the quota guard (the whole batch = 1 unit, not N).
+        const job = await this.usageService.createSimGuarded(orgId, (tx) =>
+            tx.simulationJob.create({
+                data: {
+                    orgId,
+                    status: 'QUEUED',
+                    engine: 'NGSPICE',
+                    analysisConfig: (analysisConfig || {}) as Prisma.InputJsonValue,
+                    // The MC worker path regenerates a netlist PER VARIANT from montecarlo.circuit (carried on
+                    // the queue payload), so the row's single netlist is unused — store empty (column is required).
+                    netlist: '',
+                },
+            }),
+        );
+
+        await this.simulationQueue.add('simulation', {
+            jobId: job.id,
+            orgId,
+            mode: 'monte-carlo',
+            netlist: '', // the worker regenerates a netlist per variant from `montecarlo.circuit`
+            probeNames: [],
+            analysisType: (analysisConfig as { type?: string } | undefined)?.type || 'op',
+            analysisConfig: analysisConfig || {},
+            montecarlo: {
+                circuit: validCircuit.data as CircuitJson,
+                analysis: validAnalysis.data as AnalysisConfig,
+                criteria,
+                ...(opts.n ? { n: opts.n } : {}),
+                ...(opts.seed ? { seed: opts.seed } : {}),
+            },
+            otel: otelCarrier(),
         });
 
         return { jobId: job.id };

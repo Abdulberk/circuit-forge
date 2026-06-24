@@ -13,7 +13,7 @@ import {
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { generateCircuit, fixCircuit, CircuitGenerationError } from '@circuitforge/llm-core';
-import { generateNetlist, type CircuitJson, type AnalysisConfig, type DataSeries } from '@circuit-forge/eda-core';
+import { generateNetlist, type CircuitJson, type AnalysisConfig, type DataSeries, type AcceptanceCriterion } from '@circuit-forge/eda-core';
 import { SimulationService } from '../simulation/simulation.service';
 import { CatalogGroundingService } from './catalog-grounding.service';
 import { attachGenericModels } from './model-resolution';
@@ -223,6 +223,11 @@ export class DesignService {
                 if (succeeded) {
                     // Attach authoritative sourcing to the final, simulation-AND-spec-verified circuit.
                     if (groundingOpts) await this.grounding.enrichSourcing(circuit);
+                    // INFORMATIONAL yield analysis: when the design has toleranced components, run a
+                    // Monte-Carlo batch and attach the estimated manufacturing yield + CI. Best-effort —
+                    // it NEVER changes `verified` (that stays = nominal criteria met), and any failure
+                    // (capacity/infra) just omits the field. Skipped when no component declares a tolerance.
+                    const yieldReport = await this.runYieldAnalysis(circuit, analysis, criteria, userId);
                     return {
                         ok: true,
                         verified: criteria.length > 0, // true = checked against acceptance criteria AND met
@@ -234,6 +239,7 @@ export class DesignService {
                         rounds: round,
                         history,
                         simulation: { jobId, status: status.status, metrics: status.metrics, result: result.result },
+                        ...(yieldReport ? { yield: yieldReport } : {}),
                         ...(freqCaveat ? { caveats: freqCaveat } : {}),
                     };
                 }
@@ -387,6 +393,51 @@ export class DesignService {
         // Distinct sentinel — NOT a terminal 'TIMED_OUT' (where ngspice actually ran) — so the caller treats
         // it as an OPERATIONAL outcome, not a circuit fault to feed back to the LLM.
         return { status: 'POLL_TIMEOUT' };
+    }
+
+    /**
+     * INFORMATIONAL Monte-Carlo yield analysis for a verified design. Runs ONE batch job (the worker loops N
+     * perturbed variants) and returns the estimated manufacturing yield + Wilson CI. Best-effort and
+     * NON-AUTHORITATIVE: returns undefined (field omitted) when disabled, when no component declares a
+     * tolerance (nothing would vary), or when the batch can't run (capacity/infra). It NEVER throws and NEVER
+     * affects the `verified` verdict — yield is a robustness datapoint, not a pass/fail gate.
+     */
+    private async runYieldAnalysis(
+        circuit: CircuitJson,
+        analysis: AnalysisConfig,
+        criteria: AssertionDto[],
+        userId: string,
+    ): Promise<Record<string, unknown> | undefined> {
+        if (this.config.get<string>('DESIGN_MC_ENABLED') === 'false') return undefined;
+        if (criteria.length === 0) return undefined;
+        const hasTolerance = circuit.components.some(
+            (c) => typeof (c as { tolerance?: number }).tolerance === 'number' && ((c as { tolerance?: number }).tolerance ?? 0) > 0,
+        );
+        if (!hasTolerance) return undefined; // nothing varies → a yield run is a no-op (trivially 0% or 100%)
+
+        const n = Number(this.config.get<string>('DESIGN_MC_RUNS')) || undefined;
+        try {
+            const { jobId } = await this.simulation.createMonteCarloJob(
+                circuit,
+                analysis as unknown as Record<string, unknown>,
+                criteria as unknown as AcceptanceCriterion[],
+                n ? { n } : {},
+                userId,
+            );
+            const status = await this.pollJob(jobId, userId, this.pollTimeoutMs);
+            const mc = (status.metrics as { monteCarlo?: { evaluated?: number } } | undefined)?.monteCarlo;
+            if (status.status === 'SUCCEEDED' && mc && (mc.evaluated ?? 0) > 0) {
+                return {
+                    ...mc,
+                    assumptions:
+                        'Estimated manufacturing yield: each toleranced component value sampled (Gaussian, ±tolerance) and the acceptance criteria re-checked over the run. Models component-value spread ONLY (not temperature/aging/active-device spread); the 95% CI reflects the run count. NOT a certified production figure.',
+                };
+            }
+            return { available: false, reason: 'yield analysis could not be completed (capacity or no evaluable variants)' };
+        } catch {
+            // 429 quota / infra outage — informational, so omit a number rather than failing the design.
+            return { available: false, reason: 'yield analysis unavailable (simulation capacity)' };
+        }
     }
 }
 
