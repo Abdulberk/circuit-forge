@@ -10,6 +10,8 @@
 import type { CircuitJson } from './types/circuit';
 import { parseSpiceValue, formatSpiceValue } from './utils/unit-parser';
 import { mulberry32 } from './utils/prng';
+import { evaluateAssertions, type AcceptanceCriterion } from './analysis/assertions';
+import type { SimMeasurement } from './analysis/measurements';
 
 export type TolDistribution = 'gaussian' | 'uniform';
 
@@ -79,6 +81,86 @@ export interface YieldSummary {
     yield: number;
     /** Wilson 95% confidence interval on the yield, over `evaluated` — honest about how few runs back it. */
     ci95: { low: number; high: number };
+}
+
+/**
+ * Runs ONE Monte-Carlo variant: returns the per-node measurements when ngspice ran, or `null` when the
+ * variant could NOT be run (spawn/infra fault) — `null` is counted `errored` and EXCLUDED from yield, never
+ * a spec failure. Injected by the caller (the worker supplies the real ngspice runner; tests supply a fake),
+ * so this orchestrator is pure and ngspice-free.
+ */
+export type VariantRunner = (variant: CircuitJson, index: number) => Promise<SimMeasurement[] | null>;
+
+export interface MonteCarloOptions {
+    /** Max variants to run (also the hard cap). Default 300. */
+    n?: number;
+    seed?: number;
+    dist?: TolDistribution;
+    /** Adaptive-N: once `minRuns` have run, stop early when the Wilson 95% half-width ≤ this (e.g. 0.03 = ±3%)
+     *  — a clearly-robust or clearly-bad design converges in far fewer than `n` runs. Set 0 to disable. */
+    ciStopHalfWidth?: number;
+    /** Don't stop adaptively before this many evaluated runs (an early CI off 3 samples is meaningless). */
+    minRuns?: number;
+}
+
+export interface MonteCarloYield extends YieldSummary {
+    /** True when adaptive-N stopped before reaching `n` (the CI was already tight enough). */
+    stoppedEarly: boolean;
+    /** Variants actually attempted (≤ n). */
+    ran: number;
+}
+
+/**
+ * Orchestrate a Monte-Carlo yield run: draw perturbed variants one at a time (single seeded PRNG stream),
+ * run each via the injected `runVariant`, evaluate the acceptance criteria locally, and aggregate a yield +
+ * Wilson CI — with three-way accounting (errored variants excluded) and optional adaptive-N early stop. Pure
+ * and deterministic given the seed; the only impurity (ngspice) is the injected runner.
+ */
+export async function runMonteCarlo(
+    circuit: CircuitJson,
+    criteria: AcceptanceCriterion[],
+    runVariant: VariantRunner,
+    opts: MonteCarloOptions = {},
+): Promise<MonteCarloYield> {
+    const n = Math.max(1, Math.min(opts.n ?? 300, 300));
+    const minRuns = Math.max(1, opts.minRuns ?? 24);
+    const ciStop = opts.ciStopHalfWidth ?? 0.03;
+    const dist = opts.dist ?? 'gaussian';
+    const rand = mulberry32(opts.seed ?? 1);
+
+    const outcomes: VariantOutcome[] = [];
+    let stoppedEarly = false;
+    let ran = 0;
+    for (let i = 0; i < n; i++) {
+        const variant = perturbCircuit(circuit, rand, dist);
+        ran++;
+        let measurements: SimMeasurement[] | null;
+        try {
+            measurements = await runVariant(variant, i);
+        } catch {
+            measurements = null; // a thrown runner = the variant could not be run → errored
+        }
+        if (!measurements) {
+            outcomes.push('errored');
+            continue;
+        }
+        const results = evaluateAssertions(measurements, criteria);
+        outcomes.push(results.length > 0 && results.every((r) => r.pass) ? 'pass' : 'fail');
+
+        // Adaptive-N: stop once the interval is tight enough (but not before minRuns evaluated samples).
+        if (ciStop > 0) {
+            const evaluated = outcomes.filter((o) => o !== 'errored').length;
+            if (evaluated >= minRuns) {
+                const passed = outcomes.filter((o) => o === 'pass').length;
+                const ci = wilson95(passed, evaluated);
+                if ((ci.high - ci.low) / 2 <= ciStop) {
+                    stoppedEarly = true;
+                    break;
+                }
+            }
+        }
+    }
+    return { ...computeYield(outcomes), stoppedEarly, ran };
 }
 
 /** Wilson score 95% interval for a binomial proportion (better than normal-approx at small n / extreme p). */
