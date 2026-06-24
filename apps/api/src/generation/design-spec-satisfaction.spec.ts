@@ -274,3 +274,61 @@ describe('DesignService — spec satisfaction (#2: verified means meets-the-spec
         expect(fixArgs).toMatch(/add gmin/);
     });
 });
+
+describe('DesignService — Monte-Carlo yield (informational; never flips verified)', () => {
+    beforeEach(() => mockCreate.mockReset());
+
+    const OUT = `v(${sanitizeNodeName('out')})`;
+    // VALID_CIRCUIT with a toleranced R1, so the yield hook fires (it skips circuits with no tolerance).
+    const tolCircuit = { ...VALID_CIRCUIT, components: VALID_CIRCUIT.components.map((c) => (c.id === 'r1' ? { ...c, tolerance: 0.05 } : c)) };
+    const genTolDesign = () =>
+        mockCreate.mockResolvedValueOnce({
+            content: [{ type: 'text', text: JSON.stringify({ circuit: tolCircuit, analysisConfig: { type: 'op' }, explanation: 'x', acceptanceCriteria: [{ probe: 'out', metric: 'final', op: 'approx', value: 5, tol: 0.1 }] }) }],
+        });
+    /** SimulationService where the nominal sim succeeds and the MC job (jobId 'mc-1') returns canned yield metrics. */
+    const simWithYield = (mc: Record<string, unknown> | 'throw') =>
+        ({
+            createQuickSim: jest.fn(async () => ({ jobId: 'sim-1' })),
+            createMonteCarloJob: mc === 'throw' ? jest.fn(async () => { throw new Error('QUOTA_EXCEEDED'); }) : jest.fn(async () => ({ jobId: 'mc-1' })),
+            getStatus: jest.fn(async (id: string) =>
+                id === 'mc-1'
+                    ? { status: 'SUCCEEDED', metrics: { monteCarlo: mc } }
+                    : { status: 'SUCCEEDED', metrics: { pointsCount: 2 } },
+            ),
+            getResult: jest.fn(async () => ({ result: { meta: { pointsCount: 2 }, series: [{ name: OUT, points: [{ x: 0, y: 5 }, { x: 1, y: 5 }] }] }, metrics: { pointsCount: 2 } })),
+        } as unknown as SimulationService);
+
+    it('N — a verified design with toleranced parts attaches an informational yield + CI (verified unchanged)', async () => {
+        genTolDesign();
+        const mc = { yield: 0.92, ci95: { low: 0.85, high: 0.96 }, total: 100, evaluated: 100, passed: 92, failed: 8, errored: 0 };
+        const sim = simWithYield(mc);
+        const r = (await makeService(sim).design({ prompt: 'a divider that outputs 5V', maxRounds: 1 } as never, 'u')) as Record<string, unknown>;
+        expect(r.ok).toBe(true);
+        expect(r.verified).toBe(true);
+        const y = r.yield as Record<string, unknown>;
+        expect(y).toBeDefined();
+        expect(y.yield).toBe(0.92);
+        expect(y.evaluated).toBe(100);
+        expect(String(y.assumptions)).toMatch(/not a certified/i); // honest framing carried through
+        expect((sim.createMonteCarloJob as jest.Mock)).toHaveBeenCalled();
+    });
+
+    it('O — yield analysis failure (429/capacity) is NON-FATAL: design stays verified, yield marked unavailable', async () => {
+        genTolDesign();
+        const sim = simWithYield('throw');
+        const r = (await makeService(sim).design({ prompt: 'a divider that outputs 5V', maxRounds: 1 } as never, 'u')) as Record<string, unknown>;
+        expect(r.ok).toBe(true);
+        expect(r.verified).toBe(true); // UNCHANGED despite the yield run failing
+        expect((r.yield as Record<string, unknown>).available).toBe(false);
+    });
+
+    it('P — a design with NO toleranced parts runs no yield job (the field is omitted)', async () => {
+        // VALID_CIRCUIT has no tolerance → the hook short-circuits before enqueuing anything.
+        generateOnce([{ probe: 'out', metric: 'final', op: 'approx', value: 5, tol: 0.1 }]);
+        const sim = simWithYield({ yield: 1 });
+        const r = (await makeService(sim).design({ prompt: 'a divider that outputs 5V', maxRounds: 1 } as never, 'u')) as Record<string, unknown>;
+        expect(r.ok).toBe(true);
+        expect(r.yield).toBeUndefined();
+        expect((sim.createMonteCarloJob as jest.Mock)).not.toHaveBeenCalled();
+    });
+});

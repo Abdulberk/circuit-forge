@@ -8,9 +8,11 @@ import { prisma } from '../prisma/client';
 import { config } from '../config';
 import { logger } from '../logger';
 import { runSimulation, type SimulationJobResult } from './runner';
+import { runMonteCarloBatch } from './montecarlo-runner';
 import { classifyJobOutcome, isFinalAttempt } from './outcome';
 import { downloadFile, uploadJsonResult } from '../storage/s3-client';
 import { downsampleResult } from '@circuit-forge/eda-core';
+import type { CircuitJson, AnalysisConfig, AcceptanceCriterion } from '@circuit-forge/eda-core';
 import { Prisma } from '@prisma/client';
 import { recordSim } from '../observability/telemetry';
 import { propagation, context as otelContext, trace, SpanStatusCode } from '@opentelemetry/api';
@@ -41,6 +43,17 @@ export interface SimulationJobPayload {
     /** W3C trace context injected by the API at enqueue — links this job's span to the request that
      *  created it, so a verify-design / simulate trace spans API → queue → worker end-to-end. */
     otel?: Record<string, string>;
+    /** Monte-Carlo YIELD job: instead of one sim, run N perturbed variants locally and aggregate a yield.
+     *  When set, the normal single-sim path is skipped (see handleMonteCarlo). Informational — never a
+     *  design failure. */
+    mode?: 'monte-carlo';
+    montecarlo?: {
+        circuit: CircuitJson;
+        analysis: AnalysisConfig;
+        criteria: AcceptanceCriterion[];
+        n?: number;
+        seed?: number;
+    };
 }
 
 /**
@@ -126,6 +139,16 @@ async function processJob(job: Job<SimulationJobPayload>): Promise<void> {
                         modelFiles.push({ name, content });
                         logger.debug({ s3Key, name }, 'Model file downloaded');
                     }
+                }
+
+                // Monte-Carlo YIELD job: run N perturbed variants locally + aggregate, instead of one sim.
+                // Informational only — persisted SUCCEEDED with metrics.monteCarlo (or FAILED+infra → the API
+                // reports "yield unavailable"); never retried, never a design failure.
+                if (job.data.mode === 'monte-carlo' && job.data.montecarlo) {
+                    await handleMonteCarlo(job, modelFiles.length > 0 ? modelFiles : undefined);
+                    span.setAttribute('sim.outcome', 'montecarlo');
+                    span.setStatus({ code: SpanStatusCode.OK });
+                    return;
                 }
 
                 // Run the simulation
@@ -217,6 +240,63 @@ async function processJob(job: Job<SimulationJobPayload>): Promise<void> {
             }
         },
     );
+}
+
+/**
+ * Handle a Monte-Carlo YIELD job: run the batch locally (N perturbed variants) and persist the aggregate
+ * yield + Wilson CI in metrics.monteCarlo. Informational — runMonteCarloBatch never throws on a sim fault
+ * (a dead ngspice just yields all-errored → evaluated 0 → the API reports "yield unavailable"); the catch is
+ * a defensive net that persists FAILED+infra so the API treats it as inconclusive, never a design failure.
+ * Not retried (MC is best-effort, not part of the verified verdict).
+ */
+async function handleMonteCarlo(
+    job: Job<SimulationJobPayload>,
+    modelFiles?: Array<{ name: string; content: Buffer }>,
+): Promise<void> {
+    const { jobId } = job.data;
+    const mc = job.data.montecarlo!;
+    try {
+        const summary = await runMonteCarloBatch(
+            { jobId, circuit: mc.circuit, analysis: mc.analysis, criteria: mc.criteria, n: mc.n, seed: mc.seed, modelFiles },
+            // Checkpoint progress so a mid-batch death surfaces how far it got (best-effort; ignore errors).
+            (ran) => void job.updateProgress({ ran }).catch(() => undefined),
+        );
+        recordSim({ status: 'succeeded', durationMs: summary.runtimeMs });
+        await prisma.simulationJob.update({
+            where: { id: jobId },
+            data: {
+                status: 'SUCCEEDED',
+                finishedAt: new Date(),
+                metrics: {
+                    runtimeMs: summary.runtimeMs,
+                    monteCarlo: {
+                        yield: summary.yield,
+                        ci95: summary.ci95,
+                        total: summary.total,
+                        evaluated: summary.evaluated,
+                        passed: summary.passed,
+                        failed: summary.failed,
+                        errored: summary.errored,
+                        ran: summary.ran,
+                        stoppedEarly: summary.stoppedEarly,
+                        budgetHit: summary.budgetHit,
+                    },
+                } as unknown as Prisma.InputJsonValue,
+            },
+        });
+    } catch (error) {
+        const msg = error instanceof Error ? error.message : String(error);
+        logger.error({ jobId, error: msg }, 'Monte-Carlo batch failed');
+        recordSim({ status: 'failed' });
+        await prisma.simulationJob.update({
+            where: { id: jobId },
+            data: {
+                status: 'FAILED',
+                finishedAt: new Date(),
+                metrics: { error: msg, failureClass: 'infra' } as unknown as Prisma.InputJsonValue,
+            },
+        });
+    }
 }
 
 /**
