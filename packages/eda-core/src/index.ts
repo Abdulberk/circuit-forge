@@ -162,9 +162,13 @@ export {
     perturbCircuit,
     monteCarloVariants,
     computeYield,
+    runMonteCarlo,
     type TolDistribution,
     type YieldSummary,
     type VariantOutcome,
+    type VariantRunner,
+    type MonteCarloOptions,
+    type MonteCarloYield,
 } from './montecarlo';
 export { mulberry32 } from './utils/prng';
 
