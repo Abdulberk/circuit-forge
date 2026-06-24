@@ -83,8 +83,26 @@ describe('monteCarloVariants', () => {
 });
 
 describe('computeYield', () => {
-    it('counts the passing fraction', () => {
-        expect(computeYield([true, true, true, false])).toEqual({ n: 4, passed: 3, yield: 0.75 });
-        expect(computeYield([])).toEqual({ n: 0, passed: 0, yield: 0 });
+    it('counts the passing fraction (boolean form) with a Wilson CI bracketing the point estimate', () => {
+        const y = computeYield([true, true, true, false]);
+        expect(y).toMatchObject({ total: 4, evaluated: 4, passed: 3, failed: 1, errored: 0, yield: 0.75 });
+        expect(y.ci95.low).toBeGreaterThan(0);
+        expect(y.ci95.low).toBeLessThanOrEqual(0.75);
+        expect(y.ci95.high).toBeGreaterThanOrEqual(0.75);
+        expect(y.ci95.high).toBeLessThanOrEqual(1);
+    });
+    it('EXCLUDES errored variants from the yield denominator (infra blip ≠ a spec failure)', () => {
+        // 3 pass, 1 fail, 2 errored → yield = 3/4 = 0.75 (NOT 3/6), evaluated = 4.
+        const y = computeYield(['pass', 'pass', 'pass', 'fail', 'errored', 'errored']);
+        expect(y).toMatchObject({ total: 6, evaluated: 4, passed: 3, failed: 1, errored: 2, yield: 0.75 });
+    });
+    it('a tighter CI for more runs (300 vs 30 at the same proportion)', () => {
+        const few = computeYield(Array(30).fill('pass').concat(Array(3).fill('fail')));
+        const many = computeYield(Array(300).fill('pass').concat(Array(30).fill('fail')));
+        const width = (s: { ci95: { low: number; high: number } }) => s.ci95.high - s.ci95.low;
+        expect(width(many)).toBeLessThan(width(few)); // more runs → narrower interval
+    });
+    it('empty input → zero yield, full [0,1] interval', () => {
+        expect(computeYield([])).toMatchObject({ total: 0, evaluated: 0, passed: 0, yield: 0, ci95: { low: 0, high: 1 } });
     });
 });

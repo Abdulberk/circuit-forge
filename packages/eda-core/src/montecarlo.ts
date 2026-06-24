@@ -61,18 +61,62 @@ export function monteCarloVariants(circuit: CircuitJson, n: number, seed = 1, di
     return variants;
 }
 
+/** Per-variant outcome. `errored` = the variant's sim could not be RUN (spawn/infra fault) — it is NOT a
+ *  spec failure and must be EXCLUDED from the yield denominator (counting an infra blip as a "fail" would
+ *  understate yield). `pass`/`fail` = the variant ran and its acceptance criteria did/didn't all hold. */
+export type VariantOutcome = 'pass' | 'fail' | 'errored';
+
 export interface YieldSummary {
-    /** Number of variants simulated. */
-    n: number;
-    /** Variants whose acceptance criteria ALL passed. */
+    /** Variants attempted (pass + fail + errored). */
+    total: number;
+    /** Variants that actually ran and were evaluated (pass + fail) — the yield denominator. */
+    evaluated: number;
     passed: number;
-    /** passed / n in [0,1]. */
+    failed: number;
+    /** Variants whose sim could not be run (infra/spawn) — excluded from yield. */
+    errored: number;
+    /** passed / evaluated in [0,1] (0 when nothing was evaluated). */
     yield: number;
+    /** Wilson 95% confidence interval on the yield, over `evaluated` — honest about how few runs back it. */
+    ci95: { low: number; high: number };
 }
 
-/** Aggregate per-variant pass/fail flags (the caller evaluates the acceptance criteria per variant). */
-export function computeYield(passFlags: boolean[]): YieldSummary {
-    const n = passFlags.length;
-    const passed = passFlags.reduce((acc, ok) => acc + (ok ? 1 : 0), 0);
-    return { n, passed, yield: n > 0 ? passed / n : 0 };
+/** Wilson score 95% interval for a binomial proportion (better than normal-approx at small n / extreme p). */
+function wilson95(passed: number, n: number): { low: number; high: number } {
+    if (n <= 0) return { low: 0, high: 1 };
+    const z = 1.959963984540054; // 97.5th percentile of N(0,1)
+    const z2 = z * z;
+    const p = passed / n;
+    const denom = 1 + z2 / n;
+    const center = (p + z2 / (2 * n)) / denom;
+    const half = (z * Math.sqrt(p * (1 - p) / n + z2 / (4 * n * n))) / denom;
+    return { low: Math.max(0, center - half), high: Math.min(1, center + half) };
+}
+
+/**
+ * Aggregate per-variant outcomes into a yield + Wilson 95% CI. The caller evaluates each variant's acceptance
+ * criteria (pass/fail) and flags un-runnable variants `errored`; this excludes the errored ones from the
+ * denominator so an infrastructure blip never masquerades as a low yield. Accepts a plain boolean[] too
+ * (true=pass, false=fail) for callers with no error channel.
+ */
+export function computeYield(outcomes: Array<VariantOutcome | boolean>): YieldSummary {
+    let passed = 0;
+    let failed = 0;
+    let errored = 0;
+    for (const o of outcomes) {
+        const v = o === true ? 'pass' : o === false ? 'fail' : o;
+        if (v === 'pass') passed++;
+        else if (v === 'fail') failed++;
+        else errored++;
+    }
+    const evaluated = passed + failed;
+    return {
+        total: outcomes.length,
+        evaluated,
+        passed,
+        failed,
+        errored,
+        yield: evaluated > 0 ? passed / evaluated : 0,
+        ci95: wilson95(passed, evaluated),
+    };
 }

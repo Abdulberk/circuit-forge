@@ -164,8 +164,29 @@ export {
     computeYield,
     type TolDistribution,
     type YieldSummary,
+    type VariantOutcome,
 } from './montecarlo';
 export { mulberry32 } from './utils/prng';
+
+// Analysis — measurement distillation + assertion evaluation (shared by the API AND the Monte-Carlo worker,
+// which is why they live here and not in the API).
+export { summarizeSeries, type SimMeasurement } from './analysis/measurements';
+export { cutoffFrequency, isAcMagnitudeSeries, type FreqMagPoint } from './analysis/ac-measurements';
+export {
+    nodeKey,
+    isCurrentProbe,
+    currentKey,
+    isObservableCurrentProbe,
+    compareAssertion,
+    evaluateAssertions,
+    describeFailure,
+    criterionDimension,
+    requiredDimensions,
+    uncoveredRequiredDimensions,
+    type AcceptanceCriterion,
+    type AssertionResult,
+    type SpecDimension,
+} from './analysis/assertions';
 
 // ERC
 export {
