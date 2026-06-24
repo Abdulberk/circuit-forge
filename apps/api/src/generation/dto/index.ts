@@ -21,21 +21,25 @@ import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 
 /** One measurable spec checked against the simulation — the unit of a "verified design" report. */
 export class AssertionDto {
-    @ApiProperty({ description: 'Probe/node to measure, e.g. "out" or "v(out)" (the v()/i() wrapper is optional)' })
+    @ApiProperty({ description: 'Probe/node to measure, e.g. "out" or "v(out)" (the v()/i() wrapper is optional). For metric "cutoff" this is the output node of the frequency response.' })
     @IsString()
     @MinLength(1)
     @MaxLength(64)
     probe!: string;
 
-    @ApiProperty({ description: 'Which measured quantity', enum: ['min', 'max', 'final', 'pp'] })
-    @IsIn(['min', 'max', 'final', 'pp'])
-    metric!: 'min' | 'max' | 'final' | 'pp';
+    @ApiProperty({
+        description:
+            'Which measured quantity. min/max/final/pp are over the time/DC run; "cutoff" is the −3 dB corner frequency (Hz) of the node\'s AC magnitude response and requires an "ac" analysis.',
+        enum: ['min', 'max', 'final', 'pp', 'cutoff'],
+    })
+    @IsIn(['min', 'max', 'final', 'pp', 'cutoff'])
+    metric!: 'min' | 'max' | 'final' | 'pp' | 'cutoff';
 
     @ApiProperty({ description: 'Comparison operator', enum: ['lt', 'lte', 'gt', 'gte', 'approx'] })
     @IsIn(['lt', 'lte', 'gt', 'gte', 'approx'])
     op!: 'lt' | 'lte' | 'gt' | 'gte' | 'approx';
 
-    @ApiProperty({ description: 'Target value (SI base units: volts, amps, seconds)' })
+    @ApiProperty({ description: 'Target value (SI base units: volts, amps, seconds; Hz for metric "cutoff")' })
     @IsNumber()
     value!: number;
 

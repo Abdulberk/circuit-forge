@@ -204,7 +204,7 @@ export class VerificationService {
                 }
                 return { simStatus: 'failed', ercErrors, ercWarnings, runError: 'simulation produced no result data', ...empty };
             }
-            return { simStatus: 'ok', ercErrors, ercWarnings, measurements: series.map(summarizeSeries), nodeCount: series.length, analysisType: an.type, ...(convergence ? { convergence } : {}) };
+            return { simStatus: 'ok', ercErrors, ercWarnings, measurements: series.map((s) => summarizeSeries(s, an.type)), nodeCount: series.length, analysisType: an.type, ...(convergence ? { convergence } : {}) };
         } catch (e) {
             // The queue/Redis/DB was unreachable (createQuickSim / getStatus / getResult threw). Same
             // contract rule as POLL_TIMEOUT above: a transient infra outage is NOT a design fault. → inconclusive.
