@@ -62,6 +62,11 @@ const ConfigSchema = z.object({
     QUEUE_NAME: z.string().default('simulations'),
     CONCURRENCY: z.string().transform(Number).default('2'),
 
+    // Monte-Carlo yield analysis (the worker runs N perturbed variants of a verified design locally).
+    MC_N_DEFAULT: z.string().transform(Number).default('300'), // max variants (also the orchestrator cap)
+    MC_CI_HALFWIDTH_STOP: z.string().transform(Number).default('0.03'), // adaptive-N: stop at ±3% Wilson CI
+    MC_BATCH_BUDGET_MS: z.string().transform(Number).default('60000'), // per-batch wall-clock cap (honest partial on hit)
+
     // Logging
     LOG_LEVEL: z.enum(['trace', 'debug', 'info', 'warn', 'error', 'fatal']).default('info'),
     NODE_ENV: z.enum(['development', 'production', 'test']).default('development'),
