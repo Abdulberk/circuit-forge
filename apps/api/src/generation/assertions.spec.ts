@@ -184,11 +184,51 @@ describe('isObservableCurrentProbe — which current probes ngspice can actually
 });
 
 describe('criterionDimension', () => {
-    it('classifies a current probe as current and a node probe as voltage', () => {
+    it('classifies a current probe as current, a cutoff metric as frequency, and any other node probe as voltage', () => {
         expect(criterionDimension({ probe: 'i(R1)' })).toBe('current');
         expect(criterionDimension({ probe: '@r1[i]' })).toBe('current');
         expect(criterionDimension({ probe: 'out' })).toBe('voltage');
         expect(criterionDimension({ probe: 'v(out)' })).toBe('voltage');
+        // The cutoff metric measures a frequency even though the probe is a plain node voltage.
+        expect(criterionDimension({ probe: 'out', metric: 'cutoff' })).toBe('frequency');
+        expect(criterionDimension({ probe: 'v(out)', metric: 'final' })).toBe('voltage');
+    });
+});
+
+describe('evaluateAssertions — the cutoff (−3 dB) metric', () => {
+    // An AC magnitude series is summarized with a `cutoff` field (number or null); evaluateAssertions reads it.
+    it('passes when the measured −3 dB corner is within tolerance of the target', () => {
+        const [r] = evaluateAssertions(
+            [meas(OUT, { cutoff: 1020 })],
+            [{ probe: 'out', metric: 'cutoff', op: 'approx', value: 1000, tol: 150 }],
+        );
+        expect(r!.pass).toBe(true);
+        expect(r!.actual).toBe(1020);
+    });
+    it('fails when the measured corner is off-target, with a signed distance the fix loop can read', () => {
+        const [r] = evaluateAssertions(
+            [meas(OUT, { cutoff: 1700 })],
+            [{ probe: 'out', metric: 'cutoff', op: 'approx', value: 1000, tol: 150 }],
+        );
+        expect(r!.pass).toBe(false);
+        expect(r!.distance).toBe(700);
+    });
+    it('is an honest FAIL (not a pass, not a crash) when the cutoff was not determinable (null)', () => {
+        const [r] = evaluateAssertions(
+            [meas(OUT, { cutoff: null })],
+            [{ probe: 'out', metric: 'cutoff', op: 'approx', value: 1000, tol: 150 }],
+        );
+        expect(r!.pass).toBe(false);
+        expect(r!.actual).toBeNull();
+        expect(r!.detail).toMatch(/not determinable/i);
+    });
+    it('is an honest FAIL when the metric is cutoff but the run was not AC (field absent → treated as null)', () => {
+        const [r] = evaluateAssertions(
+            [meas(OUT, {})], // no cutoff field, e.g. a tran run
+            [{ probe: 'out', metric: 'cutoff', op: 'approx', value: 1000, tol: 150 }],
+        );
+        expect(r!.pass).toBe(false);
+        expect(r!.actual).toBeNull();
     });
 });
 
@@ -218,6 +258,7 @@ describe('requiredDimensions — conservative, code-side detection of the user-n
 describe('uncoveredRequiredDimensions — the verified-coverage gate', () => {
     const voltageCrit = [{ probe: 'out' }];
     const currentCrit = [{ probe: 'i(R1)' }];
+    const cutoffCrit = [{ probe: 'out', metric: 'cutoff' }];
     it('flags a current spec checked only by a voltage proxy', () => {
         expect(uncoveredRequiredDimensions('10 mA through the load', voltageCrit)).toEqual(['current']);
     });
@@ -227,7 +268,13 @@ describe('uncoveredRequiredDimensions — the verified-coverage gate', () => {
     it('never gates a pure voltage spec', () => {
         expect(uncoveredRequiredDimensions('outputs 5V from 12V', voltageCrit)).toEqual([]);
     });
-    it('does NOT hard-gate frequency (no metric yet — disclosed as a caveat instead)', () => {
-        expect(uncoveredRequiredDimensions('1 kHz cutoff filter', voltageCrit)).toEqual([]);
+    it('now HARD-GATES a frequency spec checked only by a voltage proxy (the cutoff metric exists)', () => {
+        expect(uncoveredRequiredDimensions('1 kHz cutoff filter', voltageCrit)).toEqual(['frequency']);
+    });
+    it('is satisfied once a cutoff criterion measures the named frequency', () => {
+        expect(uncoveredRequiredDimensions('1 kHz cutoff filter', [...voltageCrit, ...cutoffCrit])).toEqual([]);
+    });
+    it('flags BOTH a current and a frequency target left to voltage proxies', () => {
+        expect(uncoveredRequiredDimensions('20 mA bias and a 1 kHz cutoff', voltageCrit).sort()).toEqual(['current', 'frequency']);
     });
 });

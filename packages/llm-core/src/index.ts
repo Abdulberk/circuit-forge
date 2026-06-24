@@ -54,8 +54,9 @@ export interface FixCircuitInput {
 export interface AcceptanceCriterion {
     /** Probe/node to measure, e.g. "out" or "v(out)" (the v()/i() wrapper is optional). */
     probe: string;
-    /** Which measured quantity. */
-    metric: 'min' | 'max' | 'final' | 'pp';
+    /** Which measured quantity. min/max/final/pp are over the time/DC run; "cutoff" is the −3 dB corner
+     *  frequency (Hz) of the node's AC magnitude response (requires an "ac" analysis). */
+    metric: 'min' | 'max' | 'final' | 'pp' | 'cutoff';
     /** Comparison operator. */
     op: 'lt' | 'lte' | 'gt' | 'gte' | 'approx';
     /** Target value in SI base units (volts, amps, seconds). */
@@ -424,7 +425,7 @@ async function callModel(
 type ParseOk = { circuit: CircuitJson; analysisConfig: AnalysisConfig; explanation?: string; acceptanceCriteria?: AcceptanceCriterion[] };
 type ParseResult = { ok: true; value: ParseOk } | { ok: false; error: string };
 
-const ACCEPTANCE_METRICS = new Set(['min', 'max', 'final', 'pp']);
+const ACCEPTANCE_METRICS = new Set(['min', 'max', 'final', 'pp', 'cutoff']);
 const ACCEPTANCE_OPS = new Set(['lt', 'lte', 'gt', 'gte', 'approx']);
 
 /** Best-effort, lenient parse of model-emitted acceptance criteria — like analysisConfig, a malformed
@@ -602,7 +603,7 @@ AnalysisConfig — choose the analysis that best reveals the circuit's behavior:
 - Transient:  { "type": "tran", "stopTime": "5m", "stepTime": "20u" }            // time-domain; use for sources that vary in time (SIN/PULSE)
 - Operating point: { "type": "op" }                                              // DC steady state
 - DC sweep:   { "type": "dc", "source": "V1", "startVal": "0", "stopVal": "5", "increment": "0.1" }
-- AC:         { "type": "ac", "variation": "dec", "points": 20, "startFreq": "10", "stopFreq": "1Meg" }   // note: AC result columns are complex — prefer tran/op/dc unless a frequency response is explicitly requested
+- AC:         { "type": "ac", "variation": "dec", "points": 20, "startFreq": "10", "stopFreq": "1Meg" }   // small-signal frequency response; REQUIRED for a cutoff/corner-frequency spec (see the "cutoff" metric). One source MUST declare an AC magnitude, e.g. value "AC 1". Center the sweep ~two decades either side of the expected fc.
 (values are SPICE strings)
 
 Acceptance criteria — THIS IS HOW THE DESIGN IS GRADED. Derive measurable pass/fail checks from the user's
@@ -610,9 +611,10 @@ stated intent and return them in "acceptanceCriteria". After simulation, the loo
 measured result; the design is reported "verified" ONLY if they all pass — otherwise the failing checks are
 fed back and the circuit is revised. So: encode the user's actual numeric goal, not a trivially-true check.
 Each criterion:
-{ "probe": "out", "metric": "min|max|final|pp", "op": "lt|lte|gt|gte|approx", "value": <number, SI base units>, "tol": <number, optional>, "label": "<short human label>" }
+{ "probe": "out", "metric": "min|max|final|pp|cutoff", "op": "lt|lte|gt|gte|approx", "value": <number, SI base units>, "tol": <number, optional>, "label": "<short human label>" }
 - "probe" is a net/node name from your circuit (the v() wrapper is optional). "metric": min/max/final = the
-  minimum/maximum/last value of that node over the run; "pp" = peak-to-peak (max−min), i.e. amplitude.
+  minimum/maximum/last value of that node over the run; "pp" = peak-to-peak (max−min), i.e. amplitude;
+  "cutoff" = the −3 dB corner frequency (Hz) of that node's AC magnitude response (requires an "ac" analysis).
 - Values are SI base units: volts, amps, seconds (e.g. 9.5 not "9.5V"). Use "approx" with "tol" for
   "about X"; use gte/lte/gt/lt for thresholds.
 - MEASURE THE QUANTITY THE USER NAMED, not a proxy. If the user states a CURRENT (e.g. "10 mA through the
@@ -627,14 +629,21 @@ Each criterion:
 - Each criterion must test an EMERGENT, simulated result — NEVER restate a value YOU authored into a source.
   A check like "input is 2Vpp" when you wrote the source as SIN(0 1 …) is self-referential padding that
   verifies nothing; omit it. Prefer fewer criteria that each pin a real behavior.
-- FREQUENCY/cutoff has no direct metric. Do NOT claim a cutoff with a single amplitude point (it admits a
-  ±30% frequency error). If a cutoff is requested, anchor it with TWO transient points: a passband check
-  (output ≈ input amplitude at a frequency WELL BELOW fc) AND the corner (output ≈ 0.707× input AT fc). The
-  system additionally discloses that frequency is only approximately checked.
+- FREQUENCY/cutoff: when the user names a cutoff, corner, −3 dB, or bandwidth frequency, you MUST verify it
+  DIRECTLY with the "cutoff" metric — NOT a single amplitude point (that admits a ±30% error in fc). Do this:
+  (1) set analysisConfig to an "ac" sweep that brackets the corner by ~two decades each side, e.g. for a
+  1 kHz cutoff {"type":"ac","variation":"dec","points":20,"startFreq":"10","stopFreq":"100k"}; (2) declare an
+  AC magnitude on one input source — value "AC 1" (this is the small-signal drive; it does not affect the
+  located corner, which is peak-relative); (3) add {probe:"out", metric:"cutoff", op:"approx", value:<fc in
+  Hz>, tol:<Hz, ~10-20% of fc>}. The system measures the −3 dB corner from the swept magnitude and reports
+  UNVERIFIED for the frequency until a real "cutoff" criterion is present. The sweep must be wide enough that
+  the response crosses −3 dB exactly once (a first-order low-/high-pass); for a band-pass, the single-corner
+  check does not apply.
 - DERIVE FROM INTENT: "gain 10" on a 1V-amplitude input → output amplitude ≥ ~10 → {probe:"out", metric:"pp",
   op:"gte", value:9.5}. "regulates to 5V" → {probe:"out", metric:"final", op:"approx", value:5, tol:0.25}.
   "ripple under 50mV" → {probe:"out", metric:"pp", op:"lt", value:0.05}. "10 mA through the load" →
-  {probe:"i(R1)", metric:"final", op:"approx", value:0.01, tol:0.002}.
+  {probe:"i(R1)", metric:"final", op:"approx", value:0.01, tol:0.002}. "1 kHz low-pass cutoff" → analysis
+  "ac" 10..100k with the source "AC 1" → {probe:"out", metric:"cutoff", op:"approx", value:1000, tol:150}.
 - Do NOT relax an explicit user spec to make it pass, and do NOT invent a lax check just to succeed — the
   point is to catch a circuit that simulates but is WRONG. If the prompt truly states no measurable numeric
   target, you may return a small sanity check (e.g. output is non-trivial) or an empty array.
@@ -712,7 +721,8 @@ When finished, stop calling tools and return ONLY the JSON object specified abov
 const VERIFY_PROMPT = `CIRCUIT VERIFICATION — simulate before you answer (use this tool):
 You have a simulate_circuit({ circuit, analysis? }) tool that runs ERC + an ngspice simulation on a
 circuit and returns a compact report: ercErrors / ercWarnings (code + message + relatedIds), simStatus
-('ok' | 'failed'), runError, and per-node measurements { node, min, max, final, pp }.
+('ok' | 'failed'), runError, and per-node measurements { node, min, max, final, pp } (an "ac" run also adds
+"cutoff" — the node's −3 dB corner frequency in Hz, or null when the sweep doesn't bracket exactly one corner).
 
 Workflow: BEFORE returning your final JSON, call simulate_circuit with your CURRENT circuit. Then:
 - Fix every ercError (e.g. NO_GROUND, a floating/single-pin net, a missing model/value) and simulate again.

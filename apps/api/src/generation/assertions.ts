@@ -119,11 +119,29 @@ export function evaluateAssertions(
                 detail: simOk ? `probe "${a.probe}" not found in simulation output` : 'simulation did not produce results',
             };
         }
-        // Current is SIGNED by device pin order in ngspice (a correctly-wired resistor's @r1[i] can read
-        // negative); a current spec is a magnitude ("~10mA through R1"), so compare |current|. Node
-        // voltages are unaffected; pp is already ≥ 0. Without this, a sound design fails its own current
-        // criterion forever (the fix loop can never satisfy a positive target against a negative reading).
-        const actual = isCurrentProbe(a.probe) ? Math.abs(m[a.metric]) : m[a.metric];
+        let actual: number;
+        if (a.metric === 'cutoff') {
+            // The −3 dB corner is derived ONLY for an AC magnitude series; it is `null` when the sweep didn't
+            // bracket exactly one crossing (flat / out-of-band / band-pass) and absent for a non-AC run.
+            // Either way the frequency target was not actually MEASURED → not verified (never a silent pass).
+            const fc = m.cutoff ?? null;
+            if (fc === null) {
+                return {
+                    ...base,
+                    actual: null,
+                    distance: null,
+                    pass: false,
+                    detail: `cutoff(${a.probe}) not determinable — use an AC analysis ("type":"ac") on a source declared "AC 1" and widen the sweep so |H| crosses −3 dB exactly once around the corner`,
+                };
+            }
+            actual = fc;
+        } else {
+            // Current is SIGNED by device pin order in ngspice (a correctly-wired resistor's @r1[i] can read
+            // negative); a current spec is a magnitude ("~10mA through R1"), so compare |current|. Node
+            // voltages are unaffected; pp is already ≥ 0. Without this, a sound design fails its own current
+            // criterion forever (the fix loop can never satisfy a positive target against a negative reading).
+            actual = isCurrentProbe(a.probe) ? Math.abs(m[a.metric]) : m[a.metric];
+        }
         const pass = compareAssertion(actual, a.op, a.value, a.tol);
         return {
             ...base,
@@ -159,10 +177,11 @@ export function describeFailure(r: AssertionResult): string {
 
 export type SpecDimension = 'voltage' | 'current' | 'frequency';
 
-/** Physical quantity a single criterion actually measures. A node probe is a voltage; an i()/@…[i] probe
- *  is a current. There is no 'frequency' criterion — the metric vocabulary (min|max|final|pp) cannot
- *  express one, which is exactly why a frequency spec can only be proxied today. */
-export function criterionDimension(c: { probe: string }): SpecDimension {
+/** Physical quantity a single criterion actually measures. The `cutoff` metric measures a frequency (the
+ *  −3 dB corner of an AC magnitude response); an i()/@…[i] probe measures a current; any other node probe
+ *  measures a voltage. So a `cutoff` criterion now COVERS the frequency dimension the gate requires. */
+export function criterionDimension(c: { probe: string; metric?: string }): SpecDimension {
+    if (c.metric === 'cutoff') return 'frequency';
     return isCurrentProbe(c.probe) ? 'current' : 'voltage';
 }
 
@@ -187,12 +206,16 @@ export function requiredDimensions(prompt: string): Set<SpecDimension> {
 }
 
 /** Required dimensions that we can ACTUALLY verify (have a metric for) yet NO criterion measures — these
- *  must block a "verified" verdict. Only 'current' is enforceable today: 'frequency' is detected by
- *  requiredDimensions but has no AC-magnitude/freq metric yet, so it is disclosed as a caveat upstream
- *  rather than hard-gated (gating it would make every filter design unverifiable until that metric lands). */
-export function uncoveredRequiredDimensions(prompt: string, criteria: { probe: string }[]): SpecDimension[] {
+ *  must block a "verified" verdict. Both 'current' (i(Rn) branch-current) and 'frequency' (the `cutoff`
+ *  metric over an AC sweep) are now enforceable: a current/frequency target checked only by a node-voltage
+ *  proxy is a fidelity gap, not "verified". (Voltage is never gated — it is the default and almost always
+ *  already carries a criterion.) */
+export function uncoveredRequiredDimensions(
+    prompt: string,
+    criteria: { probe: string; metric?: string }[],
+): SpecDimension[] {
     const required = requiredDimensions(prompt);
     const covered = new Set(criteria.map(criterionDimension));
-    const ENFORCEABLE: SpecDimension[] = ['current'];
+    const ENFORCEABLE: SpecDimension[] = ['current', 'frequency'];
     return ENFORCEABLE.filter((d) => required.has(d) && !covered.has(d));
 }

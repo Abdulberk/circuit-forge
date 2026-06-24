@@ -80,7 +80,10 @@ describe('DesignService grounding (flagship /design-circuit)', () => {
         const parts = makeParts();
         const service = new DesignService(cfg, makeSim(), new CatalogGroundingService(cfg, parts as unknown as PartsService, noSimulator));
 
-        const result = await service.design({ prompt: 'RC low-pass 1kHz', maxRounds: 1 } as never, 'user-1');
+        // No frequency/current target in the prompt: this test is about GROUNDING the happy path, not the
+        // spec-coverage gate (which would otherwise block ok:true for an unmeasured named frequency — see
+        // design-spec-satisfaction scenarios L/M). A plain description reaches the verified path cleanly.
+        const result = await service.design({ prompt: 'an RC low-pass filter', maxRounds: 1 } as never, 'user-1');
 
         // Grounding was offered to the model on the initial design call.
         expect(mockCreate.mock.calls[0][0].tools).toBeDefined();

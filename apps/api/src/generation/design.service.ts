@@ -99,8 +99,12 @@ export class DesignService {
             // verified-COVERAGE gate (a current spec must be checked by a current criterion, not a
             // voltage proxy) and an honest frequency caveat. Stable across fix rounds (intent doesn't change).
             const requiredDims = requiredDimensions(dto.prompt);
+            // Frequency is now ENFORCED, not merely disclosed: a cutoff target must be checked by a `cutoff`
+            // criterion (the −3 dB corner of an AC sweep) or the coverage gate blocks "verified". The residual
+            // caveat is the honest scope of that check — it pins the corner, not the full passband/stopband
+            // shape or roll-off order — and is surfaced only on a frequency-spec design.
             const freqCaveat = requiredDims.has('frequency')
-                ? ['Frequency/cutoff behavior is checked only approximately (a single-point amplitude proxy at one frequency); a true frequency-response (AC-magnitude) check is not yet supported, so treat the cutoff as indicative rather than verified.']
+                ? ['Frequency response is verified at the −3 dB corner (cutoff) only; passband flatness, stopband attenuation, and roll-off order are not separately asserted.']
                 : undefined;
 
             for (let round = 1; round <= maxRounds; round++) {
@@ -175,7 +179,9 @@ export class DesignService {
                 // criteria is a real, fixable design fault — not a "verified" design. (No criteria → vacuously
                 // met via [].every, so behavior is unchanged for prompts with no measurable numeric target.)
                 if (simHealthy && criteria.length > 0) {
-                    const measurements = (result.result?.series ?? []).map(summarizeSeries);
+                    // Pass the analysis type so an `.ac` run also yields each node's −3 dB cutoff (a `cutoff`
+                    // criterion reads it); for tran/dc/op it's a no-op and only min/max/final/pp are derived.
+                    const measurements = (result.result?.series ?? []).map((s) => summarizeSeries(s, analysis.type));
                     if (measurements.length === 0 && result?.error) {
                         // SUCCEEDED with data points (per metrics) but NO series AND getResult flagged an
                         // error → the worker offloaded the result to S3 and it couldn't be fetched here. We
@@ -263,6 +269,9 @@ export class DesignService {
                             `Add a criterion that probes the quantity DIRECTLY` +
                             (uncovered.includes('current')
                                 ? `: for a current, probe a series resistor's branch current, e.g. {"probe":"i(R1)","metric":"final","op":"approx","value":<amps>,"tol":<amps>}`
+                                : '') +
+                            (uncovered.includes('frequency')
+                                ? `: for a cutoff/corner frequency, switch analysisConfig to an AC sweep {"type":"ac","variation":"dec","points":20,"startFreq":"<~fc/100>","stopFreq":"<~fc*100>"} driven by a source declared "AC 1", and add {"probe":"out","metric":"cutoff","op":"approx","value":<fc in Hz>,"tol":<Hz>}`
                                 : '') +
                             `. KEEP every existing criterion unchanged (do not relax or remove any).`;
                     }

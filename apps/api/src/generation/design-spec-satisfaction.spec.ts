@@ -36,6 +36,13 @@ const VALID_CIRCUIT = {
     nets: [{ id: 'in', name: 'IN' }, { id: 'out', name: 'OUT' }, { id: 'gnd', name: 'GND', isGround: true }],
 };
 
+// Same RC topology but the source declares an AC magnitude, so the REAL generateNetlist accepts an `.ac`
+// analysis (it rejects a frequency-response request with a DC-only source). Used by the cutoff scenario.
+const VALID_CIRCUIT_AC = {
+    ...VALID_CIRCUIT,
+    components: VALID_CIRCUIT.components.map((c) => (c.id === 'v1' ? { ...c, value: 'AC 1' } : c)),
+};
+
 function makeConfig(): ConfigService {
     const v: Record<string, string | undefined> = { LLM_API_KEY: 'k', TME_TOKEN: 't', TME_SECRET: 's' };
     return { get: (k: string) => v[k] } as unknown as ConfigService;
@@ -207,15 +214,50 @@ describe('DesignService — spec satisfaction (#2: verified means meets-the-spec
         expect(mockCreate).toHaveBeenCalledTimes(2);
     });
 
-    it('L — FREQUENCY spec is NOT hard-gated (no freq metric) but the response DISCLOSES a caveat', async () => {
-        generateOnce([{ probe: 'out', metric: 'pp', op: 'approx', value: 1.414, tol: 0.3 }]);
-        const sim = makeSimSeries({ ys: [-0.707, 0.707] }); // pp = 1.414
+    it('L — a FREQUENCY spec checked only by a voltage proxy is NOT verified (frequency is now hard-gated)', async () => {
+        generateOnce([{ probe: 'out', metric: 'pp', op: 'approx', value: 1.414, tol: 0.3 }]); // voltage proxy only
+        fixOnce(); // the fix round fails to add a cutoff criterion → the frequency gap stays open
+        const sim = makeSimSeries({ ys: [-0.707, 0.707] }); // the voltage criterion itself passes (pp = 1.414)
+        const r = (await makeService(sim).design({ prompt: 'RC low-pass with a 1 kHz cutoff', maxRounds: 2 } as never, 'u')) as Record<string, unknown>;
+        expect(r.ok).toBe(false);
+        expect(r.verified).toBe(false); // simulates + meets its stated criteria, but the named frequency is unmeasured
+        expect(String(r.warning)).toMatch(/frequency/i);
+        expect(mockCreate).toHaveBeenCalledTimes(2); // gen + one fix attempt that didn't close the gap
+    });
+
+    it('M — a cutoff criterion over an AC sweep verifies the named −3 dB corner DIRECTLY (frequency gap closed)', async () => {
+        const fc = 1000;
+        // First-order low-pass magnitude over a log sweep 10..100k Hz — the locator should find ~fc.
+        const node = `v(${sanitizeNodeName('out')})`;
+        const decades = Math.log10(100_000 / 10);
+        const n = Math.round(decades * 20);
+        const points = Array.from({ length: n + 1 }, (_, i) => {
+            const f = 10 * 10 ** ((i / n) * decades);
+            return { x: f, y: 1 / Math.sqrt(1 + (f / fc) ** 2) };
+        });
+        const sim = {
+            createQuickSim: jest.fn(async () => ({ jobId: 'job-ac' })),
+            getStatus: jest.fn(async () => ({ status: 'SUCCEEDED', metrics: { pointsCount: points.length } })),
+            getResult: jest.fn(async () => ({ result: { meta: { pointsCount: points.length }, series: [{ name: node, points }] }, metrics: { pointsCount: points.length } })),
+        } as unknown as SimulationService;
+        mockCreate.mockResolvedValueOnce({
+            content: [{ type: 'text', text: JSON.stringify({
+                circuit: VALID_CIRCUIT_AC,
+                analysisConfig: { type: 'ac', variation: 'dec', points: 20, startFreq: '10', stopFreq: '100k' },
+                explanation: 'rc low-pass',
+                acceptanceCriteria: [{ probe: 'out', metric: 'cutoff', op: 'approx', value: 1000, tol: 200 }],
+            }) }],
+        });
         const r = (await makeService(sim).design({ prompt: 'RC low-pass with a 1 kHz cutoff', maxRounds: 2 } as never, 'u')) as Record<string, unknown>;
         expect(r.ok).toBe(true);
-        expect(r.verified).toBe(true); // the voltage criterion passes; frequency is disclosed, not gated
-        expect(Array.isArray(r.caveats)).toBe(true);
-        expect(JSON.stringify(r.caveats)).toMatch(/frequency/i);
-        expect(mockCreate).toHaveBeenCalledTimes(1);
+        expect(r.verified).toBe(true);
+        const cut = (r.assertions as { metric: string; pass: boolean; actual: number }[]).find((x) => x.metric === 'cutoff')!;
+        expect(cut.pass).toBe(true);
+        expect(cut.actual).toBeGreaterThan(900);
+        expect(cut.actual).toBeLessThan(1100);
+        // The narrowed caveat now states the corner is verified (not "approximate") — and bounds the claim.
+        expect(JSON.stringify(r.caveats)).toMatch(/−3 dB corner|corner/i);
+        expect(mockCreate).toHaveBeenCalledTimes(1); // verified in one round, no fix needed
     });
 
     it('E — the worker convergence diagnosis is fed into the AI fix prompt (cheap win)', async () => {
