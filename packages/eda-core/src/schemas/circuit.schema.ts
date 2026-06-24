@@ -39,6 +39,8 @@ export const ComponentSchema = z.object({
     designator: z.string().regex(/^[A-Z][A-Z0-9]*[0-9]+$/i, 'Invalid designator format'),
     value: z.string().max(100).optional(),
     model: z.string().max(100).optional(),
+    /** Fractional manufacturing tolerance (e.g. 0.05 = ±5%) for Monte-Carlo yield analysis. */
+    tolerance: z.number().min(0).max(1).optional(),
     pins: z.array(PinConnectionSchema).min(1).max(64), // up to wide multi-terminal subckt ICs
     properties: z.record(z.unknown()).optional(),
     // Optional real-part / catalog metadata
