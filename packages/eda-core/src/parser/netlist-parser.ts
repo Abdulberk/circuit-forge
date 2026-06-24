@@ -2,8 +2,8 @@
  * SPICE Netlist Parser
  * Parses SPICE netlists back to CircuitJson (for import functionality)
  */
-import type { CircuitJson, Component, Net, ComponentType } from '../types/circuit';
-import type { AnalysisConfig, TranAnalysis, AcAnalysis, DcAnalysis, OpAnalysis } from '../types/analysis';
+import type { CircuitJson, Component, Net, ComponentType, ModelDef } from '../types/circuit';
+import type { AnalysisConfig, TranAnalysis, AcAnalysis, DcAnalysis, OpAnalysis, SolverOptions } from '../types/analysis';
 
 /**
  * Parse result including circuit and detected analysis
@@ -41,31 +41,107 @@ const PREFIX_TO_TYPE: Record<string, ComponentType> = {
  * Parse a SPICE netlist to CircuitJson
  */
 export function parseNetlist(netlist: string): NetlistParseResult {
-    const lines = netlist.split('\n');
+    // Fold SPICE line-continuations ('+' at start of a line continues the previous logical line) BEFORE
+    // anything else — real-world .model / long .subckt / source cards from KiCad/LTspice are routinely
+    // wrapped this way, and our own generator may wrap too. Each logical line keeps its FIRST source line
+    // number for warnings.
+    const logical = foldContinuations(netlist.split('\n'));
     const components: Component[] = [];
     const netSet = new Set<string>();
     const errors: string[] = [];
     const warnings: string[] = [];
     let title: string | undefined;
     let analysis: AnalysisConfig | undefined;
+    // Round-trip carriers: .model/.subckt bodies become circuit.models; .options/.ic attach to the analysis.
+    const models: ModelDef[] = [];
+    const seenModelNames = new Set<string>();
+    let solverOptions: SolverOptions | undefined;
+    let initialConditions: Record<string, number> | undefined;
 
-    // First line is usually the title
-    if (lines.length > 0 && !lines[0]?.startsWith('.') && !lines[0]?.startsWith('*')) {
-        title = lines[0]?.trim();
+    // First logical line is usually the title (when it is neither a directive nor a comment).
+    if (logical.length > 0 && logical[0] && !logical[0].text.startsWith('.') && !logical[0].text.startsWith('*')) {
+        title = logical[0].text.trim();
     }
 
     let componentCounter: Record<string, number> = {};
 
-    for (let i = 0; i < lines.length; i++) {
-        const line = lines[i]?.trim() || '';
+    for (let i = 0; i < logical.length; i++) {
+        const entry = logical[i]!;
+        const line = entry.text.trim();
+        const lineNo = entry.lineNo;
 
         // Skip empty lines and comments
         if (line === '' || line.startsWith('*')) {
             continue;
         }
 
-        // Parse directives
+        const lower = line.toLowerCase();
+
+        // Directives — analysis, plus the round-trip-critical cards the parser used to silently drop.
         if (line.startsWith('.')) {
+            // .subckt NAME port... <body...> .ends  — capture the whole block as one ModelDef body, so a
+            // re-export emits an identical macromodel (without this the subckt body is lost and the
+            // re-exported deck references an undefined subcircuit and no longer simulates).
+            if (lower.startsWith('.subckt')) {
+                const header = line.split(/\s+/);
+                const name = header[1];
+                const bodyLines = [line];
+                let j = i + 1;
+                for (; j < logical.length; j++) {
+                    const inner = logical[j]!.text.trim();
+                    bodyLines.push(inner);
+                    if (inner.toLowerCase().startsWith('.ends')) break;
+                }
+                if (j >= logical.length) {
+                    warnings.push(`Line ${lineNo}: .subckt '${name ?? '?'}' has no matching .ends — captured to end of file`);
+                }
+                if (name && !seenModelNames.has(name.toLowerCase())) {
+                    seenModelNames.add(name.toLowerCase());
+                    // Ports are the node tokens after the name, excluding any params: / key=value tail.
+                    const portStart = header.slice(2);
+                    const ports: string[] = [];
+                    for (const tok of portStart) {
+                        if (tok.includes('=') || tok.toLowerCase() === 'params:') break;
+                        ports.push(tok);
+                    }
+                    models.push({ name, device: 'subckt', body: bodyLines.join('\n'), ...(ports.length ? { ports } : {}) });
+                }
+                i = j; // consume through .ends
+                continue;
+            }
+
+            // .model NAME TYPE(params...)  — a device model card (bjt/mosfet/jfet/diode/switch/digital).
+            if (lower.startsWith('.model')) {
+                const tok = line.split(/\s+/);
+                const name = tok[1];
+                const typeToken = tok[2];
+                if (name && typeToken && !seenModelNames.has(name.toLowerCase())) {
+                    seenModelNames.add(name.toLowerCase());
+                    models.push({ name, device: inferModelDevice(typeToken), body: line });
+                }
+                continue;
+            }
+
+            // .options ... — solver tuning; round-trips onto analysis.options. (savecurrents/flags that the
+            // generator re-derives from probes are intentionally not carried back.)
+            if (lower.startsWith('.options') || lower.startsWith('.option')) {
+                solverOptions = { ...solverOptions, ...parseOptionsLine(line) };
+                continue;
+            }
+
+            // .ic v(node)=val ... — transient initial conditions; round-trips onto a tran analysis.
+            if (lower.startsWith('.ic')) {
+                initialConditions = { ...initialConditions, ...parseIcLine(line) };
+                continue;
+            }
+
+            // .include / .lib / .param are not represented in CircuitJson yet — surface as a warning rather
+            // than a silent drop so a lossy import is visible to the caller.
+            if (lower.startsWith('.include') || lower.startsWith('.lib') || lower.startsWith('.param')) {
+                warnings.push(`Line ${lineNo}: directive not imported (not represented in CircuitJson): ${line}`);
+                continue;
+            }
+
             const parsedAnalysis = parseDirective(line);
             if (parsedAnalysis) {
                 analysis = parsedAnalysis;
@@ -78,7 +154,7 @@ export function parseNetlist(netlist: string): NetlistParseResult {
         // generated transformer round-trips as its raw windings; the coupling is export-only. Skip it
         // with an explicit note rather than a misleading "could not parse" error.
         if (/^k/i.test(line)) {
-            warnings.push(`Line ${i + 1}: mutual coupling not imported (export-only): ${line}`);
+            warnings.push(`Line ${lineNo}: mutual coupling not imported (export-only): ${line}`);
             continue;
         }
 
@@ -89,7 +165,17 @@ export function parseNetlist(netlist: string): NetlistParseResult {
             parsed.nets.forEach((n) => netSet.add(n));
             componentCounter = parsed.counter;
         } else {
-            warnings.push(`Line ${i + 1}: Could not parse: ${line}`);
+            warnings.push(`Line ${lineNo}: Could not parse: ${line}`);
+        }
+    }
+
+    // Attach the round-trip carriers to the analysis (the generator emits .options for any analysis and .ic
+    // only for tran). If solver options/ICs appeared without an analysis, keep them off (nothing to emit them
+    // onto) — that only happens for hand-written decks with no analysis card.
+    if (analysis) {
+        if (solverOptions && Object.keys(solverOptions).length > 0) analysis.options = solverOptions;
+        if (initialConditions && Object.keys(initialConditions).length > 0 && analysis.type === 'tran') {
+            (analysis as TranAnalysis).initialConditions = initialConditions;
         }
     }
 
@@ -123,6 +209,7 @@ export function parseNetlist(netlist: string): NetlistParseResult {
             version: '1.0',
             components,
             nets,
+            ...(models.length > 0 ? { models } : {}),
             metadata: {
                 name: title,
             },
@@ -132,6 +219,78 @@ export function parseNetlist(netlist: string): NetlistParseResult {
         errors,
         warnings,
     };
+}
+
+/**
+ * Fold SPICE line-continuations. A line whose first non-blank character is '+' continues the PREVIOUS
+ * logical line (the '+' is replaced by a single space). Blank lines and '*' comments never continue and
+ * never receive a continuation. Each returned entry keeps the 1-based source line number of its FIRST
+ * physical line (for accurate warnings). A leading '+' with no prior logical line is kept as-is (it will
+ * fail to parse and surface a warning, which is the honest outcome for a malformed deck).
+ */
+function foldContinuations(rawLines: string[]): { text: string; lineNo: number }[] {
+    const out: { text: string; lineNo: number }[] = [];
+    for (let i = 0; i < rawLines.length; i++) {
+        const raw = rawLines[i] ?? '';
+        const trimmed = raw.trim();
+        const isContinuation = trimmed.startsWith('+');
+        const prev = out[out.length - 1];
+        // Continue only onto a real prior statement (not a comment/blank/title we'd corrupt).
+        if (isContinuation && prev && prev.text.trim() !== '' && !prev.text.trim().startsWith('*')) {
+            prev.text += ' ' + trimmed.slice(1).trim();
+        } else {
+            out.push({ text: raw, lineNo: i + 1 });
+        }
+    }
+    return out;
+}
+
+/** Infer the ModelDef.device tag from a `.model NAME <TYPE>(...)` type token. `device` is informational
+ *  (the generator emits the body verbatim and dedups by name), so an unrecognized type falls back to
+ *  'diode' without affecting round-trip fidelity. */
+function inferModelDevice(typeToken: string): ModelDef['device'] {
+    const t = typeToken.replace(/\(.*$/, '').trim().toLowerCase(); // strip a trailing "(params..."
+    if (t === 'npn' || t === 'pnp') return 'bjt';
+    if (t === 'nmos' || t === 'pmos') return 'mosfet';
+    if (t === 'njf' || t === 'pjf') return 'jfet';
+    if (t === 'sw' || t === 'csw') return 'switch';
+    if (t.startsWith('d_') || t.endsWith('_bridge')) return 'digital'; // XSPICE code models + adc/dac bridges
+    return 'diode'; // 'd' and anything else
+}
+
+/** Parse a `.options k=v k=v flag` card into the SolverOptions we round-trip. Unknown keys/flags
+ *  (e.g. savecurrents, which the generator re-derives from probes) are ignored. */
+function parseOptionsLine(line: string): SolverOptions {
+    const opts: SolverOptions = {};
+    const body = line.replace(/^\s*\.options?\s*/i, '');
+    for (const tok of body.split(/\s+/)) {
+        const m = /^([a-z0-9]+)\s*=\s*(\S+)$/i.exec(tok);
+        if (!m) continue;
+        const key = m[1]!.toLowerCase();
+        const val = m[2]!;
+        switch (key) {
+            case 'reltol': opts.reltol = val; break;
+            case 'abstol': opts.abstol = val; break;
+            case 'vntol': opts.vntol = val; break;
+            case 'gmin': opts.gmin = val; break;
+            case 'method': if (val.toLowerCase() === 'trap' || val.toLowerCase() === 'gear') opts.method = val.toLowerCase() as 'trap' | 'gear'; break;
+            case 'itl4': { const n = parseInt(val, 10); if (Number.isFinite(n)) opts.itl4 = n; break; }
+        }
+    }
+    return opts;
+}
+
+/** Parse a `.ic v(node)=val v(node2)=val2` card into an initial-conditions map keyed by NODE id. */
+function parseIcLine(line: string): Record<string, number> {
+    const ic: Record<string, number> = {};
+    const re = /v\(\s*([^)=\s]+)\s*\)\s*=\s*([+-]?\d*\.?\d+(?:e[+-]?\d+)?)/gi;
+    let m: RegExpExecArray | null;
+    while ((m = re.exec(line)) !== null) {
+        const node = m[1]!;
+        const val = Number(m[2]);
+        if (Number.isFinite(val)) ic[node] = val;
+    }
+    return ic;
 }
 
 /**
