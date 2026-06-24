@@ -25,6 +25,7 @@ export enum ErcCode {
     MISSING_MODEL = 'ERC033',
     MODEL_REQUIRED = 'ERC034',
     UNRESOLVED_MODEL = 'ERC035',
+    NON_STANDARD_VALUE = 'ERC036', // a passive's value is not an IEC 60063 (E-series) preferred value — hard to source
 
     // Net issues
     UNCONNECTED_NET = 'ERC040',
