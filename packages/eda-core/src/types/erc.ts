@@ -26,6 +26,8 @@ export enum ErcCode {
     MODEL_REQUIRED = 'ERC034',
     UNRESOLVED_MODEL = 'ERC035',
     NON_STANDARD_VALUE = 'ERC036', // a passive's value is not an IEC 60063 (E-series) preferred value — hard to source
+    DUPLICATE_DESIGNATOR = 'ERC037', // two+ components share a designator (collision; ngspice names are case-insensitive)
+    WRONG_VALUE_UNIT = 'ERC038', // a passive's value carries a unit inconsistent with its type (e.g. "4.7uF" on a resistor)
 
     // Net issues
     UNCONNECTED_NET = 'ERC040',

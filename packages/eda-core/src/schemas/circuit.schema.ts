@@ -36,7 +36,9 @@ export const ComponentSourcingSchema = z.object({
 export const ComponentSchema = z.object({
     id: z.string().min(1).max(100),
     type: ComponentTypeSchema,
-    designator: z.string().regex(/^[A-Z][A-Z0-9]*[0-9]+$/i, 'Invalid designator format'),
+    // Letter prefix + number, with an OPTIONAL trailing section letter so multi-section refdes (op-amp
+    // sections "U1A"/"U1B", relay contacts "K1A") are accepted — previously they were wrongly rejected.
+    designator: z.string().regex(/^[A-Z][A-Z0-9]*[0-9]+[A-Z]?$/i, 'Invalid designator format'),
     value: z.string().max(100).optional(),
     model: z.string().max(100).optional(),
     /** Fractional manufacturing tolerance (e.g. 0.05 = ±5%) for Monte-Carlo yield analysis. */

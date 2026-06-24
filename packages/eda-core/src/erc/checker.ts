@@ -51,6 +51,7 @@ export function runErc(circuit: CircuitJson): ErcResult {
     issues.push(...checkGround(circuit));
     issues.push(...checkFloatingNodes(circuit));
     issues.push(...checkPinCounts(circuit));
+    issues.push(...checkDuplicateDesignators(circuit));
     issues.push(...checkComponentValues(circuit));
     issues.push(...checkModelResolution(circuit));
     issues.push(...checkVoltageSourceShorts(circuit));
@@ -423,6 +424,36 @@ function checkDigitalConnectivity(circuit: CircuitJson): ErcIssue[] {
 /**
  * Check component values
  */
+/**
+ * Every component's designator must be UNIQUE. ngspice device names are case-insensitive, so "R1" and "r1"
+ * collide; the netlist generator hard-throws on the resulting duplicate device name, so catching it here
+ * gives a clean, early error (naming all the colliding components) instead of an opaque generation failure.
+ */
+function checkDuplicateDesignators(circuit: CircuitJson): ErcIssue[] {
+    const issues: ErcIssue[] = [];
+    const byKey = new Map<string, string[]>();
+    for (const c of circuit.components) {
+        const d = c.designator?.trim();
+        if (!d) continue; // a missing designator is a separate concern (schema/MISSING checks)
+        const key = d.toLowerCase();
+        const ids = byKey.get(key) ?? [];
+        ids.push(c.id);
+        byKey.set(key, ids);
+    }
+    for (const [key, ids] of byKey) {
+        if (ids.length > 1) {
+            issues.push(
+                createIssue(
+                    ErcCode.DUPLICATE_DESIGNATOR,
+                    ids,
+                    `${ids.length} components share the designator "${key}" — designators must be unique (ngspice device names are case-insensitive)`,
+                ),
+            );
+        }
+    }
+    return issues;
+}
+
 function checkComponentValues(circuit: CircuitJson): ErcIssue[] {
     const issues: ErcIssue[] = [];
 
@@ -464,6 +495,20 @@ function checkComponentValues(circuit: CircuitJson): ErcIssue[] {
                         ErcCode.NON_STANDARD_VALUE,
                         [component.id],
                         `${component.designator || component.id}: ${component.value}${nearest ? ` — nearest standard (E24) is ${nearest}` : ''}`,
+                    ),
+                );
+            }
+            // Dimensional-unit sanity: ngspice reads only the NUMBER, so a resistor written "4.7uF" silently
+            // becomes 4.7 uΩ. A bare number or the matching unit is fine; a contradicting R/C/L unit is the bug.
+            const expectedUnit = ({ resistor: 'Ω', capacitor: 'F', inductor: 'H' } as Record<string, string>)[component.type];
+            const u = parsed.unit;
+            if (expectedUnit && u && u !== expectedUnit && (u === 'Ω' || u === 'F' || u === 'H')) {
+                const name: Record<string, string> = { 'Ω': 'ohms', F: 'farads', H: 'henries' };
+                issues.push(
+                    createIssue(
+                        ErcCode.WRONG_VALUE_UNIT,
+                        [component.id],
+                        `${component.designator || component.id}: value "${component.value}" is in ${name[u]}, but a ${component.type} is measured in ${name[expectedUnit]}`,
                     ),
                 );
             }
