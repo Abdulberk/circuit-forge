@@ -25,6 +25,8 @@ export const ERC_DESCRIPTIONS: Record<ErcCode, string> = {
     [ErcCode.UNRESOLVED_MODEL]:
         'Component references a model that is not defined in the circuit (must be supplied by an included model library)',
     [ErcCode.NON_STANDARD_VALUE]: 'Component value is not a standard E-series (IEC 60063) preferred value — hard to source',
+    [ErcCode.DUPLICATE_DESIGNATOR]: 'Two or more components share the same designator (must be unique)',
+    [ErcCode.WRONG_VALUE_UNIT]: 'Component value carries a unit inconsistent with its type (e.g. farads on a resistor)',
     [ErcCode.UNCONNECTED_NET]: 'Net defined but not connected to any components',
     [ErcCode.NET_HAS_SINGLE_PIN]: 'Net has only one pin connection (dead end)',
     [ErcCode.DIGITAL_PIN_SHAPE]: 'Digital component is missing a required pin (output and/or inputs)',
@@ -55,6 +57,8 @@ export const ERC_SEVERITIES: Record<ErcCode, ErcSeverity> = {
     // so this is a warning (observable), not a hard error.
     [ErcCode.UNRESOLVED_MODEL]: 'warning',
     [ErcCode.NON_STANDARD_VALUE]: 'info', // advisory: still simulates fine; just not a buyable preferred value
+    [ErcCode.DUPLICATE_DESIGNATOR]: 'error', // a real collision — generation would otherwise abort; surface it cleanly first
+    [ErcCode.WRONG_VALUE_UNIT]: 'warning', // ngspice uses only the NUMBER, so "4.7uF" on a resistor silently means 4.7uΩ
     [ErcCode.UNCONNECTED_NET]: 'info',
     [ErcCode.NET_HAS_SINGLE_PIN]: 'warning',
     [ErcCode.DIGITAL_PIN_SHAPE]: 'error', // can't emit a valid a-device without the right pins
