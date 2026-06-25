@@ -93,23 +93,32 @@ async function processDesignJob(job: Job<DesignJobPayload>): Promise<void> {
         parentCtx,
         async (span) => {
             try {
-                // A defensive guard: the worker only starts with an LLM key, but if a design job somehow
-                // reaches a keyless worker, fail it terminally with a clear message rather than crash-looping.
+                // CLAIM the job atomically: QUEUED → RUNNING. This is optimistic concurrency on the
+                // QUEUED→running transition — the worker's half of the guard against racing the API's enqueue
+                // path. `updateMany` with the `status: 'QUEUED'` predicate flips the row ONLY if it is still
+                // QUEUED; a count of 0 means the row is no longer claimable — it was canceled while queued
+                // (DesignJobService.requestCancel set status CANCELED), or the API's enqueue-failure path
+                // already marked it FAILED (queue.add's reply was lost AFTER Redis stored the job, so the API
+                // 503'd while THIS worker dequeued it). In every such case we must NOT run (no LLM/sim spend)
+                // and must NOT overwrite that terminal row. (This also subsumes the old QUEUED-cancel check.)
+                const claim = await prisma.designJob.updateMany({
+                    where: { id: jobId, status: 'QUEUED' },
+                    data: { status: 'RUNNING', startedAt: new Date() },
+                });
+                if (claim.count === 0) {
+                    logger.info({ jobId }, 'Design job not claimed (already canceled or marked terminal) — skipping');
+                    span.setAttribute('design.outcome', 'not-claimed');
+                    return;
+                }
+
+                // Defensive: the worker only starts with an LLM key (main.ts), but if a keyless worker somehow
+                // claimed a job, fail it terminally with a clear message. We own the (RUNNING) row now, so the
+                // write is safe from the API's QUEUED-gated failure-flip.
                 if (!config.LLM_API_KEY) {
                     await finish(jobId, { status: 'FAILED', errorMessage: 'AI circuit generation is not configured on the worker (LLM_API_KEY is not set).' });
                     span.setAttribute('design.outcome', 'misconfigured');
                     return;
                 }
-
-                // A cancel requested while still QUEUED (DesignJobService set abortRequested + status CANCELED)
-                // — don't spend anything: confirm the terminal CANCELED row and stop.
-                if (await isAbortRequested(jobId)) {
-                    await finish(jobId, { status: 'CANCELED' });
-                    span.setAttribute('design.outcome', 'canceled');
-                    return;
-                }
-
-                await prisma.designJob.update({ where: { id: jobId }, data: { status: 'RUNNING', startedAt: new Date() } });
 
                 const result = await runDesignLoop(
                     { prompt, constraints, maxRounds },
