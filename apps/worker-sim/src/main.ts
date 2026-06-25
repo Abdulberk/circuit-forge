@@ -4,13 +4,16 @@
 // MUST stay first: starts OpenTelemetry (when configured) before any instrumented module loads.
 import './observability/instrumentation';
 import { createSimulationWorker } from './simulation/processor';
+import { createDesignWorker } from './design/processor';
 import { prisma, disconnectPrisma } from './prisma/client';
 import { logger } from './logger';
 import { config } from './config';
 import { shutdownTelemetry } from './observability/telemetry';
 import { probeBwrap, isBwrapEnabled } from './simulation/sandbox';
+import type { Worker } from 'bullmq';
 
 let worker: ReturnType<typeof createSimulationWorker> | null = null;
+let designWorker: Worker | null = null;
 
 /**
  * Graceful shutdown handler
@@ -19,10 +22,15 @@ async function shutdown(signal: string): Promise<void> {
     logger.info({ signal }, 'Received shutdown signal');
 
     try {
-        // Close worker
+        // Close workers — let each in-flight job drain (BullMQ waits for the active handler). The design
+        // worker is closed too so a long design loop finishes its current round / lands its terminal row.
         if (worker) {
             await worker.close();
             logger.info('Worker closed');
+        }
+        if (designWorker) {
+            await designWorker.close();
+            logger.info('Design worker closed');
         }
 
         // Disconnect Prisma
@@ -75,8 +83,17 @@ async function main(): Promise<void> {
         logger.info('bubblewrap isolation disabled (SIM_BWRAP not set); ngspice runs under the rlimit + non-root hardening');
     }
 
-    // Create and start worker
+    // Create and start the simulation worker.
     worker = createSimulationWorker();
+
+    // Start the design worker ONLY when an LLM key is configured. A sim-only deployment (no LLM_API_KEY)
+    // deliberately does not consume the 'design' queue — it would only fail every design job. With a key,
+    // this worker is the durable home of the agentic design loop (replacing the API's detached runner).
+    if (config.LLM_API_KEY) {
+        designWorker = createDesignWorker();
+    } else {
+        logger.info('LLM_API_KEY not set — design worker NOT started (this worker processes simulations only)');
+    }
 
     // Setup shutdown handlers
     process.on('SIGTERM', () => shutdown('SIGTERM'));
