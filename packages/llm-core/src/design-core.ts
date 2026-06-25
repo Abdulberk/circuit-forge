@@ -1,0 +1,427 @@
+/**
+ * Framework-free agentic design loop: generate → simulate → (on miss) AI-fix → re-simulate, up to N rounds,
+ * then (on a verified design with toleranced parts) an informational Monte-Carlo yield pass.
+ *
+ * This is the SINGLE source of the design intelligence. It lives in llm-core (not the API) so BOTH the API
+ * (today, via DesignService) AND the worker (when the loop relocates onto the durable 'design' queue) run the
+ * IDENTICAL logic by injecting their own side-effecting deps. No NestJS here: the three host touchpoints
+ * — LLM config, simulation, catalog grounding — plus abort/progress are injected via `DesignDeps`. The core
+ * throws only `CircuitGenerationError` (already framework-free), `DesignAbortedError`, or a plain `Error`;
+ * each host maps those to its own surface (the API → HTTP exceptions).
+ */
+import {
+    generateNetlist,
+    summarizeSeries,
+    resolveGenericModels,
+    evaluateAssertions,
+    describeFailure,
+    uncoveredRequiredDimensions,
+    requiredDimensions,
+    criterionDimension,
+    isCurrentProbe,
+    currentKey,
+    type CircuitJson,
+    type AnalysisConfig,
+    type DataSeries,
+    type AcceptanceCriterion,
+    type AssertionResult,
+    type SpecDimension,
+} from '@circuit-forge/eda-core';
+import { generateCircuit, fixCircuit, type GenerateCircuitConfig } from './index';
+
+export interface RoundRecord {
+    round: number;
+    status: string;
+    pointsCount: number;
+    jobId?: string;
+    note?: string;
+}
+
+export interface DesignLoopInput {
+    prompt: string;
+    constraints?: string;
+    maxRounds?: number;
+}
+
+/** The design result (superset of the success / inconclusive / spec-miss shapes — the discriminators are
+ *  `ok` / `verified` / `inconclusive`). Typed so callers keep `.circuit` etc. without casting. */
+export interface DesignResult {
+    ok: boolean;
+    circuit: CircuitJson;
+    analysisConfig: AnalysisConfig;
+    explanation?: string;
+    rounds: number;
+    history: RoundRecord[];
+    simulation: { jobId?: string; status: string; metrics?: unknown; result?: unknown };
+    verified?: boolean;
+    inconclusive?: boolean;
+    acceptanceCriteria?: AcceptanceCriterion[];
+    assertions?: AssertionResult[];
+    warning?: string;
+    caveats?: string[];
+    yield?: Record<string, unknown>;
+    /** Index signature so a caller may still treat the result as a loose record (the API persists it as Json,
+     *  and the tests read fields dynamically). Named members above keep their precise types (e.g. circuit). */
+    [key: string]: unknown;
+}
+
+/** The simulation surface the loop needs. The API's SimulationService matches this signature exactly (zero
+ *  adapter); the worker supplies a LOCAL-ngspice impl that returns the same shapes synchronously. */
+export interface DesignRunSim {
+    createQuickSim(netlist: string, analysisConfig: Record<string, unknown> | undefined, userId: string): Promise<{ jobId: string }>;
+    getStatus(jobId: string, userId: string): Promise<{ status: string; metrics?: unknown }>;
+    getResult(jobId: string, userId: string): Promise<unknown>;
+    createMonteCarloJob(
+        circuit: CircuitJson,
+        analysisConfig: Record<string, unknown> | undefined,
+        criteria: AcceptanceCriterion[],
+        opts: { n?: number; seed?: number },
+        userId: string,
+    ): Promise<{ jobId: string }>;
+}
+
+/** Catalog grounding surface. The worker injects a no-op (grounding()→undefined) until a framework-free TME
+ *  executor is added; the loop already guards every grounding call on a truthy `grounding()`. */
+export interface DesignGround {
+    grounding(): unknown;
+    enrichSourcing(circuit: CircuitJson): Promise<void>;
+}
+
+export interface DesignDeps {
+    llmConfig: GenerateCircuitConfig;
+    runSim: DesignRunSim;
+    ground: DesignGround;
+    userId: string;
+    /** Server-side poll budget (ms) per round's simulation. */
+    pollTimeoutMs: number;
+    /** DESIGN_MC_ENABLED !== 'false'. */
+    mcEnabled: boolean;
+    /** DESIGN_MC_RUNS override (variants), or undefined for the worker default. */
+    mcRuns?: number;
+    /** Cooperative cancel checkpoint — polled at each round start + before each paid LLM call. The API's
+     *  synchronous path passes `() => false`; the queue worker reads the DesignJob.abortRequested flag. */
+    isAborted?: () => Promise<boolean>;
+    /** Progress sink (current round) — the worker writes it to the job; the API ignores it. */
+    progress?: (round: number) => void;
+    /** True for errors that carry intent and must propagate UNTRANSLATED rather than become "inconclusive"
+     *  (the API: `e instanceof HttpException`, so a 429 QUOTA_EXCEEDED survives; the worker: `() => false`). */
+    isIntentfulError?: (e: unknown) => boolean;
+}
+
+/** Thrown when a cooperative cancel was observed mid-loop; the host maps it to a CANCELED outcome. */
+export class DesignAbortedError extends Error {
+    constructor() {
+        super('design canceled');
+        this.name = 'DesignAbortedError';
+    }
+}
+
+function attachGenericModels(circuit: CircuitJson): void {
+    const extra = resolveGenericModels(circuit);
+    if (extra.length > 0) circuit.models = [...(circuit.models ?? []), ...extra];
+}
+
+const errMsg = (e: unknown): string => (e instanceof Error ? e.message : String(e));
+
+async function checkAbort(deps: DesignDeps): Promise<void> {
+    if (deps.isAborted && (await deps.isAborted())) throw new DesignAbortedError();
+}
+
+/**
+ * Run the agentic design loop. Returns the design result object (ok/verified/circuit/...). Throws
+ * CircuitGenerationError (LLM produced bad/unusable output), DesignAbortedError (canceled), an intentful
+ * error the host flagged (propagated), or a plain Error — the host translates.
+ */
+export async function runDesignLoop(input: DesignLoopInput, deps: DesignDeps): Promise<DesignResult> {
+    const { llmConfig, runSim, ground, userId } = deps;
+    const maxRounds = Math.min(Math.max(input.maxRounds ?? 2, 1), 4);
+    const groundingOpts = ground.grounding();
+
+    await checkAbort(deps);
+    const gen = await generateCircuit(
+        { prompt: input.prompt, constraints: input.constraints },
+        llmConfig,
+        groundingOpts as Parameters<typeof generateCircuit>[2],
+    );
+    let circuit: CircuitJson = gen.circuit;
+    attachGenericModels(circuit);
+    let analysis: AnalysisConfig = gen.analysisConfig;
+    let explanation = gen.explanation;
+    const history: RoundRecord[] = [];
+    let criteria = (gen.acceptanceCriteria ?? []) as AcceptanceCriterion[];
+    let lastAssertions: AssertionResult[] = [];
+    let currentProbes = criteria.filter((c) => isCurrentProbe(c.probe)).map((c) => c.probe);
+    const requiredDims = requiredDimensions(input.prompt);
+    const freqCaveat = requiredDims.has('frequency')
+        ? ['Frequency response is verified at the −3 dB corner (cutoff) only; passband flatness, stopband attenuation, and roll-off order are not separately asserted.']
+        : undefined;
+
+    for (let round = 1; round <= maxRounds; round++) {
+        deps.progress?.(round);
+        await checkAbort(deps);
+
+        let netlist: string;
+        try {
+            netlist = generateNetlist(circuit, analysis, currentProbes.length ? { extraProbes: currentProbes } : {});
+        } catch (e) {
+            history.push({ round, status: 'NETLIST_ERROR', pointsCount: 0, note: errMsg(e) });
+            if (round >= maxRounds) break;
+            ({ circuit, analysis, explanation } = await applyFix(deps, circuit, analysis, `Netlist generation failed: ${errMsg(e)}`));
+            continue;
+        }
+
+        let jobId: string;
+        let status: { status: string; metrics?: unknown };
+        let result: {
+            result?: { meta?: { pointsCount?: number }; series?: DataSeries[] };
+            metrics?: { pointsCount?: number };
+            error?: string;
+        };
+        try {
+            ({ jobId } = await runSim.createQuickSim(netlist, analysis as unknown as Record<string, unknown>, userId));
+            status = await pollJob(deps, jobId);
+            if (status.status === 'POLL_TIMEOUT' || status.status === 'CANCELED') {
+                history.push({ round, status: status.status, pointsCount: 0, jobId, note: 'simulation capacity unavailable' });
+                return inconclusive(deps, circuit, analysis, explanation, history, groundingOpts,
+                    'Simulation capacity was unavailable, so the design could not be verified — try again. The circuit was generated but its simulation checks did not run.');
+            }
+            result = (await runSim.getResult(jobId, userId)) as typeof result;
+        } catch (e) {
+            if (deps.isIntentfulError?.(e)) throw e; // 429 QUOTA_EXCEEDED etc. carry intent — keep them
+            history.push({ round, status: 'INFRA_ERROR', pointsCount: 0, note: errMsg(e) });
+            return inconclusive(deps, circuit, analysis, explanation, history, groundingOpts,
+                'Simulation could not be run (worker/queue unavailable), so the design could not be verified — try again.');
+        }
+
+        const failureClass = (status.metrics as { failureClass?: string } | undefined)?.failureClass;
+        if (status.status !== 'SUCCEEDED' && failureClass === 'infra') {
+            history.push({ round, status: status.status, pointsCount: 0, jobId, note: 'worker infrastructure error' });
+            return inconclusive(deps, circuit, analysis, explanation, history, groundingOpts,
+                'The worker could not run the simulation (infrastructure error), so the design could not be verified — try again.');
+        }
+
+        const statusMetrics = status.metrics as { pointsCount?: number } | undefined;
+        const pointsCount = statusMetrics?.pointsCount ?? result?.metrics?.pointsCount ?? result?.result?.meta?.pointsCount ?? 0;
+        const simHealthy = status.status === 'SUCCEEDED' && pointsCount > 0;
+
+        if (simHealthy && criteria.length > 0) {
+            const measurements = (result.result?.series ?? []).map((s) => summarizeSeries(s, analysis.type));
+            if (measurements.length === 0 && result?.error) {
+                history.push({ round, status: status.status, pointsCount, jobId, note: 'results unavailable to check specs' });
+                return inconclusive(deps, circuit, analysis, explanation, history, groundingOpts,
+                    'The simulation ran but its results were unavailable to check the design specifications — try again.');
+            }
+            lastAssertions = evaluateAssertions(measurements, criteria);
+        }
+        const specsMet = lastAssertions.every((a) => a.pass);
+        const uncovered = simHealthy && specsMet ? uncoveredRequiredDimensions(input.prompt, criteria) : [];
+        const covered = uncovered.length === 0;
+        const succeeded = simHealthy && specsMet && covered;
+        history.push({
+            round,
+            status: status.status,
+            pointsCount,
+            jobId,
+            note: !simHealthy
+                ? undefined
+                : criteria.length === 0
+                    ? 'no acceptance criteria'
+                    : !specsMet
+                        ? `${lastAssertions.filter((a) => !a.pass).length}/${lastAssertions.length} acceptance criteria unmet`
+                        : covered
+                            ? 'all acceptance criteria met'
+                            : `criteria met but none measures the required ${uncovered.join('/')} target`,
+        });
+
+        if (succeeded) {
+            if (groundingOpts) await ground.enrichSourcing(circuit);
+            const yieldReport = await runYieldAnalysis(deps, circuit, analysis, criteria);
+            return {
+                ok: true,
+                verified: criteria.length > 0,
+                circuit,
+                analysisConfig: analysis,
+                explanation,
+                acceptanceCriteria: criteria,
+                assertions: lastAssertions,
+                rounds: round,
+                history,
+                simulation: { jobId, status: status.status, metrics: status.metrics, result: result.result },
+                ...(yieldReport ? { yield: yieldReport } : {}),
+                ...(freqCaveat ? { caveats: freqCaveat } : {}),
+            };
+        }
+
+        if (round < maxRounds) {
+            let problem: string;
+            if (!simHealthy) {
+                problem =
+                    status.status !== 'SUCCEEDED'
+                        ? `Simulation ${status.status}. ${result?.error ?? ''}`.trim()
+                        : 'Simulation succeeded but produced no data points (pointsCount = 0) — likely a floating node or an analysis that does not excite the circuit.';
+                const conv = (status.metrics as { convergence?: { diagnosis?: string; triedRemedies?: string[] } } | undefined)?.convergence;
+                if (conv?.diagnosis) {
+                    problem += ` Solver diagnosis: ${conv.diagnosis}${conv.triedRemedies?.length ? ` (already tried: ${conv.triedRemedies.join('; ')})` : ''}`;
+                }
+            } else if (!specsMet) {
+                const failed = lastAssertions.filter((a) => !a.pass);
+                problem =
+                    'The circuit simulates cleanly but does NOT meet the required specification(s):\n' +
+                    failed.map((f) => `- ${describeFailure(f)}`).join('\n') +
+                    '\nRevise the design so these are satisfied; keep the parts that already pass.';
+            } else {
+                problem =
+                    `The circuit simulates and passes every acceptance criterion, but you specified a ${uncovered.join(' and ')} target and NONE of the acceptance criteria measure ${uncovered.join('/')} — a node-voltage proxy does NOT count. ` +
+                    `Add a criterion that probes the quantity DIRECTLY` +
+                    (uncovered.includes('current')
+                        ? `: for a current, probe a series resistor's branch current, e.g. {"probe":"i(R1)","metric":"final","op":"approx","value":<amps>,"tol":<amps>}`
+                        : '') +
+                    (uncovered.includes('frequency')
+                        ? `: for a cutoff/corner frequency, switch analysisConfig to an AC sweep {"type":"ac","variation":"dec","points":20,"startFreq":"<~fc/100>","stopFreq":"<~fc*100>"} driven by a source declared "AC 1", and add {"probe":"out","metric":"cutoff","op":"approx","value":<fc in Hz>,"tol":<Hz>}`
+                        : '') +
+                    `. KEEP every existing criterion unchanged (do not relax or remove any).`;
+            }
+            await checkAbort(deps); // don't spend another LLM call if a cancel arrived
+            const fixed = await applyFix(deps, circuit, analysis, problem);
+            circuit = fixed.circuit;
+            analysis = fixed.analysis;
+            explanation = fixed.explanation;
+            criteria = mergeCriteria(criteria, fixed.acceptanceCriteria, requiredDims);
+            currentProbes = criteria.filter((c) => isCurrentProbe(c.probe)).map((c) => c.probe);
+        }
+    }
+
+    if (groundingOpts) await ground.enrichSourcing(circuit);
+    const last = history[history.length - 1];
+    const lastRoundHealthy = last?.status === 'SUCCEEDED' && (last?.pointsCount ?? 0) > 0;
+    const specMiss = lastRoundHealthy && lastAssertions.length > 0 && lastAssertions.some((a) => !a.pass);
+    const lastUncovered = lastRoundHealthy ? uncoveredRequiredDimensions(input.prompt, criteria) : [];
+    const coverageMiss = lastRoundHealthy && !specMiss && lastUncovered.length > 0;
+    return {
+        ok: false,
+        verified: false,
+        circuit,
+        analysisConfig: analysis,
+        explanation,
+        acceptanceCriteria: criteria,
+        assertions: lastAssertions,
+        rounds: history.length,
+        history,
+        simulation: { status: last?.status ?? 'FAILED' },
+        warning: specMiss
+            ? 'The circuit simulates but did not meet all acceptance criteria within the round budget.'
+            : coverageMiss
+                ? `The circuit simulates and meets its stated criteria, but you specified a ${lastUncovered.join('/')} target that no acceptance criterion verifies — treat it as unverified for that quantity.`
+                : 'Could not produce a successful simulation within the round budget.',
+        ...(freqCaveat ? { caveats: freqCaveat } : {}),
+    };
+}
+
+async function applyFix(
+    deps: DesignDeps,
+    circuit: CircuitJson,
+    analysis: AnalysisConfig,
+    problem: string,
+): Promise<{ circuit: CircuitJson; analysis: AnalysisConfig; explanation?: string; acceptanceCriteria: AcceptanceCriterion[] }> {
+    const fixed = await fixCircuit({ circuit, analysisConfig: analysis, problem }, deps.llmConfig);
+    attachGenericModels(fixed.circuit);
+    return {
+        circuit: fixed.circuit,
+        analysis: fixed.analysisConfig,
+        explanation: fixed.explanation,
+        acceptanceCriteria: (fixed.acceptanceCriteria ?? []) as AcceptanceCriterion[],
+    };
+}
+
+async function inconclusive(
+    deps: DesignDeps,
+    circuit: CircuitJson,
+    analysis: AnalysisConfig,
+    explanation: string | undefined,
+    history: RoundRecord[],
+    grounding: unknown,
+    warning: string,
+): Promise<DesignResult> {
+    if (grounding) await deps.ground.enrichSourcing(circuit);
+    return {
+        ok: false,
+        inconclusive: true,
+        circuit,
+        analysisConfig: analysis,
+        explanation,
+        rounds: history.length,
+        history,
+        simulation: { status: history[history.length - 1]?.status ?? 'UNAVAILABLE' },
+        warning,
+    };
+}
+
+async function pollJob(deps: DesignDeps, jobId: string): Promise<{ status: string; metrics?: unknown }> {
+    const start = Date.now();
+    while (Date.now() - start < deps.pollTimeoutMs) {
+        const s = (await deps.runSim.getStatus(jobId, deps.userId)) as { status: string; metrics?: unknown };
+        if (s.status === 'SUCCEEDED' || s.status === 'FAILED' || s.status === 'TIMED_OUT' || s.status === 'CANCELED') return s;
+        await new Promise((r) => setTimeout(r, 1000));
+    }
+    return { status: 'POLL_TIMEOUT' };
+}
+
+async function runYieldAnalysis(
+    deps: DesignDeps,
+    circuit: CircuitJson,
+    analysis: AnalysisConfig,
+    criteria: AcceptanceCriterion[],
+): Promise<Record<string, unknown> | undefined> {
+    if (!deps.mcEnabled) return undefined;
+    if (criteria.length === 0) return undefined;
+    const hasTolerance = circuit.components.some(
+        (c) => typeof (c as { tolerance?: number }).tolerance === 'number' && ((c as { tolerance?: number }).tolerance ?? 0) > 0,
+    );
+    if (!hasTolerance) return undefined;
+
+    try {
+        const { jobId } = await deps.runSim.createMonteCarloJob(
+            circuit,
+            analysis as unknown as Record<string, unknown>,
+            criteria,
+            deps.mcRuns ? { n: deps.mcRuns } : {},
+            deps.userId,
+        );
+        const status = await pollJob(deps, jobId);
+        const mc = (status.metrics as { monteCarlo?: { evaluated?: number } } | undefined)?.monteCarlo;
+        if (status.status === 'SUCCEEDED' && mc && (mc.evaluated ?? 0) > 0) {
+            return {
+                ...mc,
+                assumptions:
+                    'Estimated manufacturing yield: each toleranced component value sampled (Gaussian, ±tolerance) and the acceptance criteria re-checked over the run. Models component-value spread ONLY (not temperature/aging/active-device spread); the 95% CI reflects the run count. NOT a certified production figure.',
+            };
+        }
+        return { available: false, reason: 'yield analysis could not be completed (capacity or no evaluable variants)' };
+    } catch {
+        return { available: false, reason: 'yield analysis unavailable (simulation capacity)' };
+    }
+}
+
+function mergeCriteria(
+    original: AcceptanceCriterion[],
+    fixReturned: AcceptanceCriterion[] | undefined,
+    required: Set<SpecDimension>,
+): AcceptanceCriterion[] {
+    if (!fixReturned?.length) return original;
+    const coveredDims = new Set(original.map((c) => criterionDimension(c)));
+    const wanted = [...required].filter((d) => !coveredDims.has(d));
+    if (wanted.length === 0) return original;
+    const key = (c: AcceptanceCriterion) => {
+        const p = isCurrentProbe(c.probe) ? `i:${currentKey(c.probe) ?? c.probe.toLowerCase()}` : c.probe;
+        return `${p}|${c.metric}|${c.op}|${c.value}`;
+    };
+    const seen = new Set(original.map(key));
+    const merged = [...original];
+    for (const c of fixReturned) {
+        if (!wanted.includes(criterionDimension(c))) continue;
+        if (seen.has(key(c))) continue;
+        seen.add(key(c));
+        merged.push(c);
+    }
+    return merged;
+}
