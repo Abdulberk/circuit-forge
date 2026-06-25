@@ -739,3 +739,16 @@ Workflow: BEFORE returning your final JSON, call simulate_circuit with your CURR
   the limitation explained in "explanation" rather than looping forever on the same topology.
 The simulator attaches generic model bodies for you — never author .model/.subckt bodies yourself.
 When satisfied, stop calling tools and return ONLY the JSON object specified above (no prose/fences).`;
+
+// Framework-free agentic design loop (shared by the API today + the design-queue worker later).
+// Placed at the end so generateCircuit/fixCircuit are defined before design-core (which imports them) loads.
+export {
+    runDesignLoop,
+    DesignAbortedError,
+    type DesignLoopInput,
+    type DesignResult,
+    type DesignDeps,
+    type DesignRunSim,
+    type DesignGround,
+    type RoundRecord,
+} from './design-core';
