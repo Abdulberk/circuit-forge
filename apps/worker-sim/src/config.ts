@@ -12,6 +12,16 @@ dotenv.config({ path: path.resolve(process.cwd(), '../../.env') });
 // Allow an optional per-package .env to override (does not clobber already-set values).
 dotenv.config();
 
+// Optional env string: a blank value ('') is coerced to undefined so it can't masquerade as a real setting
+// (e.g. an empty LLM_BASE_URL must NOT reach the SDK as ""). Mirrors the API's lenient ConfigService reads.
+const optStr = z.preprocess((v) => (v === '' ? undefined : v), z.string().optional());
+// Optional positive integer from env: blank / non-numeric / non-positive → undefined (so llm-core applies its
+// own default rather than receiving NaN). Mirrors apps/api DesignService's num() helper.
+const optPosInt = z.preprocess((v) => {
+    const n = v === undefined || v === '' ? NaN : Number(v);
+    return Number.isFinite(n) && n > 0 ? n : undefined;
+}, z.number().int().positive().optional());
+
 const ConfigSchema = z.object({
     // Database
     DATABASE_URL: z.string().url(),
@@ -66,6 +76,24 @@ const ConfigSchema = z.object({
     MC_N_DEFAULT: z.string().transform(Number).default('300'), // max variants (also the orchestrator cap)
     MC_CI_HALFWIDTH_STOP: z.string().transform(Number).default('0.03'), // adaptive-N: stop at ±3% Wilson CI
     MC_BATCH_BUDGET_MS: z.string().transform(Number).default('60000'), // per-batch wall-clock cap (honest partial on hit)
+
+    // --- AI design loop (the future 'design' queue worker; wired in stage iii). ALL optional so a sim-only
+    // worker still boots WITHOUT an LLM key — when LLM_API_KEY is unset the design processor fails an
+    // individual design JOB terminally (clear error) rather than refusing to start. These mirror the keys
+    // apps/api DesignService reads from ConfigService, so the API and the worker run the identical loop. ---
+    LLM_API_KEY: optStr,
+    LLM_BASE_URL: optStr,
+    LLM_MODEL: optStr,
+    LLM_USER_AGENT: optStr,
+    LLM_TIMEOUT_MS: optPosInt,
+    LLM_TOKEN_BUDGET: optPosInt,
+    DESIGN_MC_ENABLED: optStr, // 'false' disables the informational Monte-Carlo yield pass (default on)
+    DESIGN_MC_RUNS: optPosInt, // MC variant-count override; falls back to MC_N_DEFAULT
+    DESIGN_POLL_TIMEOUT_MS: optPosInt, // per-round sim poll budget (processor applies a default when unset)
+    // SEPARATE queue + concurrency pool from 'simulations' — a design job polls its own per-round sims, so
+    // sharing the sim pool would let design jobs hold every slot while waiting on sims = self-deadlock.
+    DESIGN_QUEUE_NAME: z.string().default('design'),
+    DESIGN_CONCURRENCY: z.string().transform(Number).default('2'),
 
     // Logging
     LOG_LEVEL: z.enum(['trace', 'debug', 'info', 'warn', 'error', 'fatal']).default('info'),
