@@ -144,6 +144,17 @@ services:
       SIM_TIMEOUT_MS: 10000
       SIM_MAX_OUTPUT_BYTES: 5242880
       NODE_ENV: development
+      # AI DESIGN LOOP: when an LLM key is present the worker ALSO hosts the agentic 'design' queue (it runs
+      # the same llm-core runDesignLoop the API does, with ngspice local — see apps/worker-sim/src/main.ts).
+      # Without a key the worker processes simulations ONLY (the design worker is not started). LLM_API_KEY is
+      # a SECRET: interpolated from the compose-project .env / shell, never hardcoded. ngspice is on PATH in the
+      # image, so NGSPICE_PATH is left at its 'ngspice' default (the ngspice_con.exe path is a Windows-dev-host
+      # concern only). If you run async /design-jobs without setting this, jobs sit QUEUED with no consumer.
+      LLM_API_KEY: ${LLM_API_KEY:-}
+      LLM_MODEL: ${LLM_MODEL:-claude-opus-4-8}
+      # Optional design admission-control quotas (unset = unlimited; mirror QUOTA_DESIGN_* on the API):
+      # QUOTA_DESIGN_CONCURRENT_PER_ORG: "3"
+      # QUOTA_DESIGN_JOBS_PER_MONTH: "200"
       # OPTIONAL bubblewrap isolation of the ngspice child (default OFF). On a host you control (e.g. a
       # self-managed EC2 / K8s node) you can give ngspice its own mount/PID + NETWORK namespace. To enable:
       #   1) set SIM_BWRAP: "1"

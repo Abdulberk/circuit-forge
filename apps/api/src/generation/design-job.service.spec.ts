@@ -13,24 +13,17 @@ function setup() {
         findAllForUser: jest.fn().mockResolvedValue([{ id: 'org-1' }]),
         checkMembership: jest.fn().mockResolvedValue(undefined),
     } as never;
-    const design = { design: jest.fn() } as never;
     // createDesignGuarded runs its callback against the (mock) prisma — mirrors the no-quota plain-insert path.
     const usage = { createDesignGuarded: jest.fn((_orgId: string, create: (db: unknown) => unknown) => create(prisma)) } as never;
     const designQueue = { add: jest.fn().mockResolvedValue(undefined) } as never;
-    const svc = new DesignJobService(prisma, orgs, design, usage, designQueue);
+    const svc = new DesignJobService(prisma, orgs, usage, designQueue);
     return {
         svc,
         designJob,
         orgs: orgs as unknown as { findAllForUser: jest.Mock; checkMembership: jest.Mock },
-        design: design as unknown as { design: jest.Mock },
         usage: usage as unknown as { createDesignGuarded: jest.Mock },
         designQueue: designQueue as unknown as { add: jest.Mock },
     };
-}
-
-/** statuses written via prisma.designJob.update, in order. */
-function updateStatuses(designJob: { update: jest.Mock }): string[] {
-    return designJob.update.mock.calls.map((c) => c[0].data.status).filter(Boolean);
 }
 
 describe('DesignJobService.create', () => {
@@ -135,56 +128,5 @@ describe('DesignJobService.requestCancel', () => {
         const { svc, designJob } = setup();
         designJob.findUnique.mockResolvedValue(null);
         await expect(svc.requestCancel('nope', 'u1')).rejects.toBeInstanceOf(NotFoundException);
-    });
-});
-
-describe('DesignJobService.runDetached', () => {
-    it('runs the loop and persists RUNNING → SUCCEEDED with the result', async () => {
-        const { svc, designJob, design } = setup();
-        designJob.findUnique.mockResolvedValue({ abortRequested: false });
-        design.design.mockResolvedValue({ ok: true, circuit: { components: [] } });
-
-        await svc.runDetached('j1', { prompt: 'p', maxRounds: 2 }, 'u1');
-
-        expect(design.design).toHaveBeenCalledWith({ prompt: 'p', constraints: undefined, maxRounds: 2 }, 'u1');
-        expect(updateStatuses(designJob)).toEqual(['RUNNING', 'SUCCEEDED']);
-        const last = designJob.update.mock.calls.at(-1)![0];
-        expect(last.data.result).toEqual({ ok: true, circuit: { components: [] } });
-    });
-
-    it('skips the loop and cancels when an abort was requested before it starts', async () => {
-        const { svc, designJob, design } = setup();
-        designJob.findUnique.mockResolvedValue({ abortRequested: true });
-
-        await svc.runDetached('j1', { prompt: 'p', maxRounds: 2 }, 'u1');
-
-        expect(design.design).not.toHaveBeenCalled();
-        expect(updateStatuses(designJob)).toEqual(['CANCELED']);
-    });
-
-    it('discards the result and cancels when an abort arrives mid-run', async () => {
-        const { svc, designJob, design } = setup();
-        let aborted = false;
-        designJob.findUnique.mockImplementation(() => Promise.resolve({ abortRequested: aborted }));
-        design.design.mockImplementation(async () => {
-            aborted = true; // a cancel landed while the loop was running
-            return { ok: true };
-        });
-
-        await svc.runDetached('j1', { prompt: 'p', maxRounds: 2 }, 'u1');
-
-        expect(updateStatuses(designJob)).toEqual(['RUNNING', 'CANCELED']);
-    });
-
-    it('captures a loop failure as FAILED + message (never throws)', async () => {
-        const { svc, designJob, design } = setup();
-        designJob.findUnique.mockResolvedValue({ abortRequested: false });
-        design.design.mockRejectedValue(new Error('LLM provider down'));
-
-        await expect(svc.runDetached('j1', { prompt: 'p', maxRounds: 2 }, 'u1')).resolves.toBeUndefined();
-
-        expect(updateStatuses(designJob)).toEqual(['RUNNING', 'FAILED']);
-        const last = designJob.update.mock.calls.at(-1)![0];
-        expect(last.data.errorMessage).toBe('LLM provider down');
     });
 });
