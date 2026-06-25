@@ -5,7 +5,7 @@
  * GET until a terminal status, then reads the full result. DELETE cancels. The synchronous /design-circuit
  * remains for back-compat, but this is the scalable contract (no multi-minute held HTTP connection).
  */
-import { Controller, Post, Get, Delete, Body, Param, HttpCode, UseGuards } from '@nestjs/common';
+import { Controller, Post, Get, Delete, Body, Param, ParseUUIDPipe, HttpCode, UseGuards } from '@nestjs/common';
 import { ApiTags, ApiOperation, ApiBearerAuth } from '@nestjs/swagger';
 import { Throttle } from '@nestjs/throttler';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
@@ -40,13 +40,13 @@ export class DesignJobsController {
 
     @Get(':id')
     @ApiOperation({ summary: 'Poll a design job: status + (when finished) the full design result.' })
-    async status(@Param('id') id: string, @CurrentUser() user: { id: string }) {
+    async status(@Param('id', ParseUUIDPipe) id: string, @CurrentUser() user: { id: string }) {
         return this.designJobs.getForUser(id, user.id);
     }
 
     @Delete(':id')
     @ApiOperation({ summary: 'Cancel a design job (QUEUED → canceled; RUNNING → cooperative abort).' })
-    async cancel(@Param('id') id: string, @CurrentUser() user: { id: string }) {
+    async cancel(@Param('id', ParseUUIDPipe) id: string, @CurrentUser() user: { id: string }) {
         return this.designJobs.requestCancel(id, user.id);
     }
 }

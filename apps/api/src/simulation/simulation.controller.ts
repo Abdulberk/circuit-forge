@@ -1,7 +1,7 @@
 /**
  * Simulation Controller
  */
-import { Controller, Get, Post, Body, Param, Query, UseGuards, BadRequestException } from '@nestjs/common';
+import { Controller, Get, Post, Body, Param, ParseUUIDPipe, Query, UseGuards, BadRequestException } from '@nestjs/common';
 import { ApiTags, ApiOperation, ApiBearerAuth, ApiQuery } from '@nestjs/swagger';
 import { Throttle } from '@nestjs/throttler';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
@@ -20,7 +20,7 @@ export class SimulationController {
     @Throttle({ default: { limit: 30, ttl: 60000 } })
     @ApiOperation({ summary: 'Create simulation from version' })
     async createFromVersion(
-        @Param('versionId') versionId: string,
+        @Param('versionId', ParseUUIDPipe) versionId: string,
         @Body() dto: CreateSimulationDto,
         @CurrentUser() user: { id: string },
     ) {
@@ -45,7 +45,7 @@ export class SimulationController {
 
     @Get('simulations/:jobId')
     @ApiOperation({ summary: 'Get simulation status' })
-    async getStatus(@Param('jobId') jobId: string, @CurrentUser() user: { id: string }) {
+    async getStatus(@Param('jobId', ParseUUIDPipe) jobId: string, @CurrentUser() user: { id: string }) {
         return this.simulationService.getStatus(jobId, user.id);
     }
 
@@ -53,7 +53,7 @@ export class SimulationController {
     @ApiOperation({ summary: 'Get simulation result (?maxPoints=N decimates each series for display, min-max bucketing)' })
     @ApiQuery({ name: 'maxPoints', required: false, description: 'Cap per-series points (10..100000); peaks survive (min-max). meta.downsampledFrom carries the original count.' })
     async getResult(
-        @Param('jobId') jobId: string,
+        @Param('jobId', ParseUUIDPipe) jobId: string,
         @CurrentUser() user: { id: string },
         @Query('maxPoints') maxPointsRaw?: string,
     ) {

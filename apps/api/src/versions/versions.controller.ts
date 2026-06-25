@@ -1,7 +1,7 @@
 /**
  * Versions Controller
  */
-import { Controller, Get, Post, Body, Param, Query, Res, UseGuards } from '@nestjs/common';
+import { Controller, Get, Post, Body, Param, ParseUUIDPipe, Query, Res, UseGuards } from '@nestjs/common';
 import type { Response } from 'express';
 import { ApiTags, ApiOperation, ApiBearerAuth, ApiQuery } from '@nestjs/swagger';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
@@ -23,14 +23,14 @@ export class VersionsController {
 
     @Get('projects/:projectId/versions')
     @ApiOperation({ summary: 'List project versions' })
-    async findAll(@Param('projectId') projectId: string, @CurrentUser() user: { id: string }) {
+    async findAll(@Param('projectId', ParseUUIDPipe) projectId: string, @CurrentUser() user: { id: string }) {
         return this.versionsService.findAllForProject(projectId, user.id);
     }
 
     @Post('projects/:projectId/versions')
     @ApiOperation({ summary: 'Create new version' })
     async create(
-        @Param('projectId') projectId: string,
+        @Param('projectId', ParseUUIDPipe) projectId: string,
         @Body() dto: CreateVersionDto,
         @CurrentUser() user: { id: string },
     ) {
@@ -39,7 +39,7 @@ export class VersionsController {
 
     @Get('versions/:versionId')
     @ApiOperation({ summary: 'Get version' })
-    async findOne(@Param('versionId') versionId: string, @CurrentUser() user: { id: string }) {
+    async findOne(@Param('versionId', ParseUUIDPipe) versionId: string, @CurrentUser() user: { id: string }) {
         return this.versionsService.findOne(versionId, user.id);
     }
 
@@ -47,7 +47,7 @@ export class VersionsController {
     @ApiOperation({ summary: 'Aggregated bill of materials for the version (JSON, or CSV via ?format=csv)' })
     @ApiQuery({ name: 'format', required: false, enum: ['json', 'csv'] })
     async bom(
-        @Param('versionId') versionId: string,
+        @Param('versionId', ParseUUIDPipe) versionId: string,
         @Query('format') format: string | undefined,
         @CurrentUser() user: { id: string },
         @Res({ passthrough: true }) res: Response,

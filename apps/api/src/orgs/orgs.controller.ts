@@ -1,7 +1,7 @@
 /**
  * Organizations Controller
  */
-import { Controller, Get, Post, Body, Param, UseGuards } from '@nestjs/common';
+import { Controller, Get, Post, Body, Param, ParseUUIDPipe, UseGuards } from '@nestjs/common';
 import { ApiTags, ApiOperation, ApiBearerAuth } from '@nestjs/swagger';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { CurrentUser } from '../auth/decorators/current-user.decorator';
@@ -29,7 +29,7 @@ export class OrgsController {
 
     @Get(':orgId')
     @ApiOperation({ summary: 'Get organization' })
-    async findOne(@Param('orgId') orgId: string, @CurrentUser() user: { id: string }) {
+    async findOne(@Param('orgId', ParseUUIDPipe) orgId: string, @CurrentUser() user: { id: string }) {
         return this.orgsService.findOne(orgId, user.id);
     }
 }
