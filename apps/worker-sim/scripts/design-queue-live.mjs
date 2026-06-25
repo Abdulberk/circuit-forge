@@ -38,7 +38,7 @@ async function runScenario(label, { orgId, userId, prompt, queue, expectYield })
         select: { id: true },
     });
     console.log(`\n── ${label} ──\n  designJob=${job.id}\n  prompt="${prompt.slice(0, 80)}..."`);
-    await queue.add('design', { jobId: job.id, userId, prompt, maxRounds: 2 });
+    await queue.add('design', { jobId: job.id, userId, prompt, maxRounds: 2 }, { jobId: job.id });
     const t0 = Date.now();
 
     let row;
@@ -119,7 +119,7 @@ async function runCancelScenario({ orgId, userId, queue }) {
         select: { id: true },
     });
     console.log(`  designJob=${job.id} (abortRequested preset)`);
-    await queue.add('design', { jobId: job.id, userId, prompt, maxRounds: 2 });
+    await queue.add('design', { jobId: job.id, userId, prompt, maxRounds: 2 }, { jobId: job.id });
     const t0 = Date.now();
     let row;
     while (Date.now() - t0 < 60_000) {
@@ -132,6 +132,34 @@ async function runCancelScenario({ orgId, userId, queue }) {
     ok(row?.status === 'CANCELED', `C: terminal status CANCELED (got ${row?.status})`);
     ok(row?.result == null, `C: no result persisted (cancel fired before generation; got ${row?.result == null ? 'null' : 'a result'})`);
     ok(row?.finishedAt != null, 'C: finishedAt stamped');
+}
+
+/** Prove the LIVE orphan reaper: a QUEUED row that was never enqueued (insert↔enqueue crash gap) is found
+ *  by a real sweep — queue.getJob(rowId) returns null → reconciled to FAILED. Real Prisma + real BullMQ. */
+async function runReaperScenario({ orgId, userId, queue }) {
+    console.log(`\n── D: live orphan reaper (QUEUED row never enqueued → swept to FAILED) ──`);
+    const { reapStaleDesignJobs } = await import('../dist/design/reaper.js');
+    const orphan = await prisma.designJob.create({
+        data: { orgId, userId, status: 'QUEUED', prompt: 'orphaned divider (never enqueued — must be reaped)', maxRounds: 2 },
+        select: { id: true },
+    });
+    console.log(`  orphan designJob=${orphan.id} (inserted, NOT enqueued)`);
+
+    const res = await reapStaleDesignJobs({
+        prisma,
+        queue, // the same 'design' queue — getJob(orphan.id) is null (it was never added)
+        nowMs: Date.now(),
+        graceMs: 0, // examine immediately
+        runningDeadlineMs: 1_800_000,
+        log: { info: () => {}, warn: () => {} },
+    });
+    console.log(`  sweep: examined=${res.examined} reaped=${res.reaped}`);
+
+    const row = await prisma.designJob.findUnique({ where: { id: orphan.id } });
+    ok(row?.status === 'FAILED', `D: the orphan was reaped to FAILED (got ${row?.status})`);
+    ok(/orphaned before/i.test(row?.errorMessage ?? ''), `D: failure reason explains the orphan ("${row?.errorMessage}")`);
+    ok(row?.finishedAt != null, 'D: finishedAt stamped by the reaper');
+    ok(res.reaped >= 1, `D: sweep reported ≥1 reaped (${res.reaped})`);
 }
 
 async function main() {
@@ -165,6 +193,11 @@ async function main() {
 
     // Scenario C — the live cooperative-cancel path: a job aborted while queued lands CANCELED, no LLM spend.
     await runCancelScenario({ orgId: org.id, userId, queue });
+
+    // Scenario D — the live ORPHAN REAPER: insert a QUEUED row WITHOUT enqueuing (exactly the insert↔enqueue
+    // crash gap), then run a real reaper sweep (real Prisma + real BullMQ getJob, which returns null for a
+    // never-enqueued id) and assert the orphan is reconciled to FAILED.
+    await runReaperScenario({ orgId: org.id, userId, queue });
 
     await worker.close();
     await queue.close();

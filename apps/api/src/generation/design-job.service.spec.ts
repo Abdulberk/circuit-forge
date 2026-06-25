@@ -41,8 +41,13 @@ describe('DesignJobService.create', () => {
                 data: expect.objectContaining({ orgId: 'org-1', userId: 'u1', status: 'QUEUED', prompt: 'an LED driver', maxRounds: 2 }),
             }),
         );
-        // The job is enqueued onto the durable 'design' queue for the worker to run.
-        expect(designQueue.add).toHaveBeenCalledWith('design', expect.objectContaining({ jobId: 'j1', userId: 'u1', prompt: 'an LED driver', maxRounds: 2 }));
+        // The job is enqueued onto the durable 'design' queue for the worker to run, with the BullMQ job id
+        // set to the DesignJob row id (reaper lookup + idempotency).
+        expect(designQueue.add).toHaveBeenCalledWith(
+            'design',
+            expect.objectContaining({ jobId: 'j1', userId: 'u1', prompt: 'an LED driver', maxRounds: 2 }),
+            { jobId: 'j1' },
+        );
         expect(r).toEqual({ id: 'j1', status: 'QUEUED' });
     });
 
