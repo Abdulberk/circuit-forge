@@ -5,6 +5,7 @@
 import './observability/instrumentation';
 import { createSimulationWorker } from './simulation/processor';
 import { createDesignWorker } from './design/processor';
+import { startDesignReaper } from './design/reaper';
 import { prisma, disconnectPrisma } from './prisma/client';
 import { logger } from './logger';
 import { config } from './config';
@@ -14,6 +15,7 @@ import type { Worker } from 'bullmq';
 
 let worker: ReturnType<typeof createSimulationWorker> | null = null;
 let designWorker: Worker | null = null;
+let designReaper: { stop: () => Promise<void> } | null = null;
 
 /**
  * Graceful shutdown handler
@@ -31,6 +33,10 @@ async function shutdown(signal: string): Promise<void> {
         if (designWorker) {
             await designWorker.close();
             logger.info('Design worker closed');
+        }
+        if (designReaper) {
+            await designReaper.stop();
+            logger.info('Design reaper stopped');
         }
 
         // Disconnect Prisma
@@ -91,8 +97,12 @@ async function main(): Promise<void> {
     // this worker is the durable home of the agentic design loop (replacing the API's detached runner).
     if (config.LLM_API_KEY) {
         designWorker = createDesignWorker();
+        // The reaper recovers design jobs orphaned by a worker death or the insert↔enqueue gap. It runs
+        // alongside the design worker (same process owns the 'design' queue); idempotent + conditional, so
+        // running it on every design-capable instance is safe.
+        designReaper = startDesignReaper();
     } else {
-        logger.info('LLM_API_KEY not set — design worker NOT started (this worker processes simulations only)');
+        logger.info('LLM_API_KEY not set — design worker + reaper NOT started (this worker processes simulations only)');
     }
 
     // Setup shutdown handlers

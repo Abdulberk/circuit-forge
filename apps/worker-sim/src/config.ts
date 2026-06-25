@@ -95,6 +95,19 @@ const ConfigSchema = z.object({
     DESIGN_QUEUE_NAME: z.string().default('design'),
     DESIGN_CONCURRENCY: z.string().transform(Number).default('2'),
 
+    // Orphan reaper — the recovery half of the durable queue. A worker can die mid-job (OOM, node
+    // recycle, spot reclaim) leaving a DesignJob row stuck RUNNING forever, and the insert↔enqueue gap can
+    // leave a row stuck QUEUED that no worker ever sees. The reaper periodically reconciles such rows
+    // against the queue's ground truth (queue.getJob state) and fails the genuinely-orphaned ones. Lease-
+    // correct (it trusts BullMQ's view: a 'waiting'/'active'-within-deadline job is never reaped), so it
+    // can't kill healthy work. Runs in the design worker (boot sweep + every REAPER_INTERVAL_MS).
+    REAPER_INTERVAL_MS: z.string().transform(Number).default('60000'),
+    // Don't examine a row younger than this — avoids racing a row whose enqueue hasn't settled yet.
+    DESIGN_REAP_GRACE_MS: z.string().transform(Number).default('60000'),
+    // Absolute cap for a job BullMQ still reports 'active': beyond this the worker is hung (the loop's own
+    // hard ceiling is ~8 min: 4 rounds × 90s poll + 60s MC), so 30 min is generous headroom.
+    DESIGN_REAP_RUNNING_DEADLINE_MS: z.string().transform(Number).default('1800000'),
+
     // Logging
     LOG_LEVEL: z.enum(['trace', 'debug', 'info', 'warn', 'error', 'fatal']).default('info'),
     NODE_ENV: z.enum(['development', 'production', 'test']).default('development'),

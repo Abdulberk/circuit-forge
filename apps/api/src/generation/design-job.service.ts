@@ -73,14 +73,21 @@ export class DesignJobService {
         );
 
         try {
-            await this.designQueue.add('design', {
-                jobId: job.id,
-                userId,
-                prompt: input.prompt,
-                constraints: input.constraints,
-                maxRounds: input.maxRounds,
-                otel: otelCarrier(),
-            });
+            await this.designQueue.add(
+                'design',
+                {
+                    jobId: job.id,
+                    userId,
+                    prompt: input.prompt,
+                    constraints: input.constraints,
+                    maxRounds: input.maxRounds,
+                    otel: otelCarrier(),
+                },
+                // Use the DesignJob row id AS the BullMQ job id. Two payoffs: (1) the orphan reaper can look the
+                // queue job up by row id (queue.getJob(row.id)) to tell a real orphan from a job still waiting;
+                // (2) idempotency — a duplicate enqueue of the same row can't create a second queue job.
+                { jobId: job.id },
+            );
         } catch (err) {
             this.logger.error(`design job ${job.id} could not be enqueued: ${err instanceof Error ? err.message : String(err)}`);
             // CONDITIONAL flip — only fail the row if it is STILL QUEUED. queue.add is a Redis write whose
