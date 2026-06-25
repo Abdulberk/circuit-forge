@@ -6,6 +6,7 @@ function setup() {
         create: jest.fn(),
         findUnique: jest.fn(),
         update: jest.fn().mockResolvedValue({}),
+        updateMany: jest.fn().mockResolvedValue({ count: 1 }),
     };
     const prisma = { designJob } as never;
     const orgs = {
@@ -64,8 +65,10 @@ describe('DesignJobService.create', () => {
         designQueue.add.mockRejectedValue(new Error('redis down'));
 
         await expect(svc.create('u1', { prompt: 'x', maxRounds: 1 })).rejects.toBeInstanceOf(ServiceUnavailableException);
-        expect(designJob.update).toHaveBeenCalledWith(
-            expect.objectContaining({ where: { id: 'j1' }, data: expect.objectContaining({ status: 'FAILED' }) }),
+        // CONDITIONAL flip: updateMany gated on status:'QUEUED' so it can't clobber a row the worker already
+        // claimed (RUNNING/SUCCEEDED) if queue.add's reply was lost after Redis stored the job.
+        expect(designJob.updateMany).toHaveBeenCalledWith(
+            expect.objectContaining({ where: { id: 'j1', status: 'QUEUED' }, data: expect.objectContaining({ status: 'FAILED' }) }),
         );
     });
 });

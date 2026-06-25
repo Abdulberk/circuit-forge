@@ -84,9 +84,15 @@ export class DesignJobService {
             });
         } catch (err) {
             this.logger.error(`design job ${job.id} could not be enqueued: ${err instanceof Error ? err.message : String(err)}`);
+            // CONDITIONAL flip — only fail the row if it is STILL QUEUED. queue.add is a Redis write whose
+            // reply can be lost AFTER the job was durably stored (connection reset / socket timeout), so the
+            // SEPARATE design worker may have already dequeued it and advanced it to RUNNING/SUCCEEDED. An
+            // unconditional update would clobber that real work with FAILED; `updateMany` gated on
+            // status:'QUEUED' touches 0 rows in that case, leaving the worker's outcome intact. (The worker
+            // mirrors this with an atomic QUEUED→RUNNING claim — see design/processor.ts.)
             await this.prisma.designJob
-                .update({
-                    where: { id: job.id },
+                .updateMany({
+                    where: { id: job.id, status: 'QUEUED' },
                     data: { status: 'FAILED', errorMessage: 'Could not queue the design job; please retry.', finishedAt: new Date() },
                 })
                 .catch(() => undefined);
