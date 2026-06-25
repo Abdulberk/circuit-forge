@@ -108,6 +108,32 @@ async function checkLocalMonteCarlo() {
     ok(mc && mc.ci95 && typeof mc.ci95.low === 'number' && typeof mc.ci95.high === 'number', `B: Wilson 95% CI present (${JSON.stringify(mc?.ci95)})`);
 }
 
+/** Prove the LIVE cooperative-cancel path through the real worker: a job whose abortRequested is set while
+ *  QUEUED is CLAIMED (QUEUED→RUNNING), then the loop's first checkAbort (before any LLM/sim call) throws
+ *  DesignAbortedError → the worker lands a terminal CANCELED row with NO result and NO LLM spend. */
+async function runCancelScenario({ orgId, userId, queue }) {
+    console.log(`\n── C: live cooperative cancel (abort before the first LLM call) ──`);
+    const prompt = 'an op-amp inverting amplifier with gain -10 (this design must be CANCELED before it runs)';
+    const job = await prisma.designJob.create({
+        data: { orgId, userId, status: 'QUEUED', prompt, maxRounds: 2, abortRequested: true },
+        select: { id: true },
+    });
+    console.log(`  designJob=${job.id} (abortRequested preset)`);
+    await queue.add('design', { jobId: job.id, userId, prompt, maxRounds: 2 });
+    const t0 = Date.now();
+    let row;
+    while (Date.now() - t0 < 60_000) {
+        row = await prisma.designJob.findUnique({ where: { id: job.id } });
+        if (row && ['SUCCEEDED', 'FAILED', 'CANCELED'].includes(row.status)) break;
+        await new Promise((r) => setTimeout(r, 1000));
+    }
+    const elapsed = ((Date.now() - t0) / 1000).toFixed(1);
+    console.log(`  final status: ${row?.status}  (${elapsed}s)`);
+    ok(row?.status === 'CANCELED', `C: terminal status CANCELED (got ${row?.status})`);
+    ok(row?.result == null, `C: no result persisted (cancel fired before generation; got ${row?.result == null ? 'null' : 'a result'})`);
+    ok(row?.finishedAt != null, 'C: finishedAt stamped');
+}
+
 async function main() {
     ok(!!process.env.LLM_API_KEY, 'LLM_API_KEY present (the worker can run the loop)');
     console.log(`  ngspice: ${process.env.NGSPICE_PATH}`);
@@ -136,6 +162,9 @@ async function main() {
     // tolerance field). This is exactly the call the loop makes when a verified design has toleranced parts:
     // deps.runSim.createMonteCarloJob → runMonteCarloBatch → N perturbed ngspice variants → status.metrics.
     await checkLocalMonteCarlo();
+
+    // Scenario C — the live cooperative-cancel path: a job aborted while queued lands CANCELED, no LLM spend.
+    await runCancelScenario({ orgId: org.id, userId, queue });
 
     await worker.close();
     await queue.close();
