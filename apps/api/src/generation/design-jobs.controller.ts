@@ -31,9 +31,10 @@ export class DesignJobsController {
             constraints: dto.constraints,
             maxRounds: Math.min(Math.max(dto.maxRounds ?? 2, 1), 4),
         };
+        // create() enqueues the job onto the durable 'design' queue; the design worker runs the agentic loop
+        // and persists the outcome onto the row. The client polls GET until a terminal status. (No more
+        // in-process detached execution — an API deploy/crash no longer abandons in-flight design work.)
         const job = await this.designJobs.create(user.id, input);
-        // Fire-and-forget: the loop runs detached and persists its outcome onto the row; the client polls GET.
-        void this.designJobs.runDetached(job.id, input, user.id);
         return { jobId: job.id, status: job.status };
     }
 

@@ -222,6 +222,9 @@ importers:
       '@circuit-forge/eda-core':
         specifier: workspace:*
         version: link:../../packages/eda-core
+      '@circuitforge/llm-core':
+        specifier: workspace:*
+        version: link:../../packages/llm-core
       '@opentelemetry/api':
         specifier: ^1.9.1
         version: 1.9.1

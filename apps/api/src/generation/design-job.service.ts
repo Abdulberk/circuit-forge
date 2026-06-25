@@ -7,16 +7,27 @@
  * 1); the contract (202 + poll + cancel) is identical to where it will run later (a dedicated design
  * queue + worker), so relocating execution needs no second contract change.
  */
-import { Injectable, NotFoundException, Logger } from '@nestjs/common';
+import { Injectable, NotFoundException, ServiceUnavailableException, Logger } from '@nestjs/common';
+import { InjectQueue } from '@nestjs/bullmq';
+import { Queue } from 'bullmq';
 import { Prisma, type DesignJobStatus } from '@prisma/client';
+import { propagation, context as otelContext } from '@opentelemetry/api';
 import { PrismaService } from '../prisma/prisma.service';
 import { OrgsService } from '../orgs/orgs.service';
+import { UsageService } from '../usage/usage.service';
 import { DesignService } from './design.service';
 
 export interface DesignJobInput {
     prompt: string;
     constraints?: string;
     maxRounds: number;
+}
+
+/** Capture the current trace context as a W3C carrier so the design worker's span links to this request. */
+function otelCarrier(): Record<string, string> {
+    const carrier: Record<string, string> = {};
+    propagation.inject(otelContext.active(), carrier);
+    return carrier;
 }
 
 @Injectable()
@@ -27,24 +38,61 @@ export class DesignJobService {
         private readonly prisma: PrismaService,
         private readonly orgs: OrgsService,
         private readonly design: DesignService,
+        private readonly usage: UsageService,
+        @InjectQueue('design') private readonly designQueue: Queue,
     ) {}
 
-    /** Create a QUEUED job under the user's (first) org — mirrors SimulationService.createQuickSim's scoping. */
+    /**
+     * Create a QUEUED design job under the user's (first) org and ENQUEUE it onto the durable 'design'
+     * queue, where a dedicated worker runs the agentic loop (replacing the old in-process detached runner).
+     *
+     * Admission control: the whole DESIGN JOB is the billable unit (gated once here), NOT the per-round sims
+     * — those now run locally in the worker and never touch the sim-quota counter. createDesignGuarded is a
+     * plain insert until a QUOTA_DESIGN_* limit is configured (then an advisory-locked re-check).
+     *
+     * The insert and the BullMQ add are two stores, so a crash strictly between them could orphan a QUEUED
+     * row (a boot-time reaper — deferred — sweeps that rare case). What we CAN close synchronously: if the
+     * add itself fails, flip the row to FAILED so the client polls a terminal status instead of hanging.
+     */
     async create(userId: string, input: DesignJobInput): Promise<{ id: string; status: DesignJobStatus }> {
         const orgList = await this.orgs.findAllForUser(userId);
         const orgId = orgList[0]?.id;
         if (!orgId) throw new NotFoundException('No organization found for user');
-        const job = await this.prisma.designJob.create({
-            data: {
-                orgId,
+
+        const job = await this.usage.createDesignGuarded(orgId, (tx) =>
+            tx.designJob.create({
+                data: {
+                    orgId,
+                    userId,
+                    status: 'QUEUED',
+                    prompt: input.prompt,
+                    constraints: input.constraints,
+                    maxRounds: input.maxRounds,
+                },
+                select: { id: true, status: true },
+            }),
+        );
+
+        try {
+            await this.designQueue.add('design', {
+                jobId: job.id,
                 userId,
-                status: 'QUEUED',
                 prompt: input.prompt,
                 constraints: input.constraints,
                 maxRounds: input.maxRounds,
-            },
-            select: { id: true, status: true },
-        });
+                otel: otelCarrier(),
+            });
+        } catch (err) {
+            this.logger.error(`design job ${job.id} could not be enqueued: ${err instanceof Error ? err.message : String(err)}`);
+            await this.prisma.designJob
+                .update({
+                    where: { id: job.id },
+                    data: { status: 'FAILED', errorMessage: 'Could not queue the design job; please retry.', finishedAt: new Date() },
+                })
+                .catch(() => undefined);
+            throw new ServiceUnavailableException('Could not start the design job; please retry.');
+        }
+
         return job;
     }
 

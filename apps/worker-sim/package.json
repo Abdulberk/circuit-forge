@@ -17,6 +17,7 @@
         "@aws-sdk/client-s3": "^3.500.0",
         "@aws-sdk/lib-storage": "^3.500.0",
         "@circuit-forge/eda-core": "workspace:*",
+        "@circuitforge/llm-core": "workspace:*",
         "@opentelemetry/api": "^1.9.1",
         "@opentelemetry/api-logs": "0.219.0",
         "@opentelemetry/auto-instrumentations-node": "^0.77.0",
