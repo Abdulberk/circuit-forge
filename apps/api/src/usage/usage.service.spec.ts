@@ -23,6 +23,7 @@ function prismaStub(over: Partial<Record<string, unknown>> = {}) {
         }),
         $executeRaw: jest.fn().mockResolvedValue(1),
         simulationJob: { count: jest.fn().mockResolvedValue(1) },
+        designJob: { count: jest.fn().mockResolvedValue(2) },
         asset: { aggregate: jest.fn().mockResolvedValue({ _sum: { sizeBytes: 5000 } }) },
         usageRecord: {
             findUnique: jest.fn().mockResolvedValue({ amount: 7 }),
@@ -41,6 +42,7 @@ const rec = (prisma: PrismaService) =>
         $executeRaw: jest.Mock;
         usageRecord: Record<'findUnique' | 'upsert', jest.Mock>;
         simulationJob: { count: jest.Mock };
+        designJob: { count: jest.Mock };
     };
 
 describe('UsageService', () => {
@@ -53,8 +55,14 @@ describe('UsageService', () => {
         expect(u.storage.resultBytes).toBe(200);
         expect(u.storage.totalBytes).toBe(5200);
         expect(u.parts.calls).toBe(7);
+        // design jobs aggregated drift-free from the design_jobs table (count mock = 2 for both this-month
+        // and in-flight).
+        expect(u.design.jobs).toBe(2);
+        expect(u.design.concurrent).toBe(2);
         // no env limits configured → everything unlimited (null)
         expect(u.sim.limits.jobsPerMonth).toBeNull();
+        expect(u.design.limits.jobsPerMonth).toBeNull();
+        expect(u.design.limits.concurrent).toBeNull();
         expect(u.storage.limits.bytes).toBeNull();
     });
 
@@ -151,6 +159,37 @@ describe('UsageService', () => {
         expect(rec(prisma).$transaction).toHaveBeenCalledTimes(1);
         const lockSql = (rec(prisma).$executeRaw.mock.calls[0][0] as TemplateStringsArray).join('?');
         expect(lockSql).toMatch(/pg_advisory_xact_lock/);
+    });
+
+    it('design quota: 429s on the concurrent (in-flight) cap — the primary abuse guard for the LLM+sim loop', async () => {
+        const count = jest.fn().mockResolvedValue(2);
+        const prisma = prismaStub({ designJob: { count } });
+        const svc = new UsageService(prisma, cfg({ QUOTA_DESIGN_CONCURRENT_PER_ORG: '2' }));
+        const err = await svc.assertDesignQuota('org1').catch((e) => e);
+        expect((err as HttpException).getStatus()).toBe(429);
+        expect((err as HttpException).getResponse()).toMatchObject({ code: 'QUOTA_EXCEEDED', metric: 'design_concurrent', used: 2, limit: 2 });
+        // stale (crashed-worker) rows age out, so a dead job can't lock the org out forever
+        expect(count.mock.calls[0][0].where.createdAt.gte).toBeInstanceOf(Date);
+    });
+
+    it('design quota: enforces the monthly job ceiling and passes under it', async () => {
+        const svc = new UsageService(prismaStub({ designJob: { count: jest.fn().mockResolvedValue(5) } }), cfg({ QUOTA_DESIGN_JOBS_PER_MONTH: '5' }));
+        await expect(svc.assertDesignQuota('org1')).rejects.toMatchObject({ response: { metric: 'design_jobs' } });
+        const svc2 = new UsageService(prismaStub({ designJob: { count: jest.fn().mockResolvedValue(2) } }), cfg({ QUOTA_DESIGN_JOBS_PER_MONTH: '10' }));
+        await expect(svc2.assertDesignQuota('org1')).resolves.toBeUndefined();
+    });
+
+    it('createDesignGuarded: zero overhead when no quota; advisory-locked re-check (domain "design") when set', async () => {
+        const noQuota = prismaStub();
+        const svc = new UsageService(noQuota, cfg({}));
+        await expect(svc.createDesignGuarded('org1', async () => ({ id: 'd1' }))).resolves.toEqual({ id: 'd1' });
+        expect(rec(noQuota).$transaction).not.toHaveBeenCalled();
+
+        const quota = prismaStub({ designJob: { count: jest.fn().mockResolvedValue(0) } });
+        const svc2 = new UsageService(quota, cfg({ QUOTA_DESIGN_CONCURRENT_PER_ORG: '5' }));
+        await expect(svc2.createDesignGuarded('org1', async () => ({ id: 'd2' }))).resolves.toEqual({ id: 'd2' });
+        expect(rec(quota).$transaction).toHaveBeenCalledTimes(1);
+        expect((rec(quota).$executeRaw.mock.calls[0][0] as TemplateStringsArray).join('?')).toMatch(/pg_advisory_xact_lock/);
     });
 
     it('createAssetGuarded: locked re-check rejects when the projected total exceeds the cap', async () => {

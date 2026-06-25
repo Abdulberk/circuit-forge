@@ -35,6 +35,11 @@ export interface OrgUsage {
         concurrent: number; // QUEUED + RUNNING right now (not period-scoped)
         limits: { jobsPerMonth: number | null; runtimeMsPerMonth: number | null; concurrent: number | null };
     };
+    design: {
+        jobs: number; // agentic design jobs created this month
+        concurrent: number; // QUEUED + RUNNING right now (not period-scoped)
+        limits: { jobsPerMonth: number | null; concurrent: number | null };
+    };
     storage: {
         assetBytes: number;
         resultBytes: number;
@@ -178,6 +183,72 @@ export class UsageService {
         });
     }
 
+    // ---------------------------------------------------------------- design jobs
+
+    /**
+     * One agentic DESIGN job is the billable/admission unit — NOT the per-round simulations it runs. Those
+     * sims execute locally inside the design-queue worker and never touch this counter, so metering at the
+     * job level (admission control at enqueue: gate once, before the work is queued) is both the natural
+     * model and far cheaper than the old per-round locking. Actual consumption (rounds, sims, MC variants)
+     * is recorded on the DesignJob.result for future credit-based settlement.
+     */
+    hasDesignQuota(): boolean {
+        return (
+            this.limit('QUOTA_DESIGN_CONCURRENT_PER_ORG') !== null ||
+            this.limit('QUOTA_DESIGN_JOBS_PER_MONTH') !== null
+        );
+    }
+
+    /** Design jobs the org created this month — drift-free COUNT from the source table (no counter row). */
+    private async designJobsThisMonth(orgId: string, db: Db = this.prisma): Promise<number> {
+        const { start, end } = this.monthRange();
+        return db.designJob.count({ where: { orgId, createdAt: { gte: start, lt: end } } });
+    }
+
+    /** The org's in-flight (QUEUED+RUNNING) design jobs right now — the noisy-neighbor / abuse guard that
+     *  matters most for an expensive LLM+simulation loop. Stale (crashed-worker) rows age out like sims. */
+    private async designConcurrent(orgId: string, db: Db = this.prisma): Promise<number> {
+        return db.designJob.count({
+            where: {
+                orgId,
+                status: { in: ['QUEUED', 'RUNNING'] },
+                createdAt: { gte: new Date(Date.now() - CONCURRENT_STALENESS_MS) },
+            },
+        });
+    }
+
+    /**
+     * Gate a new design-job enqueue (each check skipped when its limit is unset):
+     *  - QUOTA_DESIGN_CONCURRENT_PER_ORG — in-flight (QUEUED+RUNNING) cap; the primary abuse guard.
+     *  - QUOTA_DESIGN_JOBS_PER_MONTH    — design jobs created this month.
+     * Pass a tx client to run inside the advisory-locked tx (see createDesignGuarded).
+     */
+    async assertDesignQuota(orgId: string, db: Db = this.prisma): Promise<void> {
+        const concurrentLimit = this.limit('QUOTA_DESIGN_CONCURRENT_PER_ORG');
+        const jobsLimit = this.limit('QUOTA_DESIGN_JOBS_PER_MONTH');
+        const [inFlight, monthly] = await Promise.all([
+            concurrentLimit !== null ? this.designConcurrent(orgId, db) : null,
+            jobsLimit !== null ? this.designJobsThisMonth(orgId, db) : null,
+        ]);
+        if (inFlight !== null) this.enforce('design_concurrent', inFlight, concurrentLimit);
+        if (monthly !== null) this.enforce('design_jobs', monthly, jobsLimit);
+    }
+
+    /**
+     * Authoritative design-enqueue path. Mirrors createSimGuarded: when a QUOTA_DESIGN_* limit is set,
+     * runs `create` under a per-org advisory lock with the quota RE-CHECKED inside the lock (concurrent
+     * same-org enqueues serialized, can't race past the cap). When unset, a plain create with ZERO added
+     * cost — so merging changes nothing until a design quota is configured. Keep `create(tx)` to the
+     * DesignJob insert only (the BullMQ add happens AFTER the lock releases — never hold a lock over Redis).
+     */
+    async createDesignGuarded<T>(orgId: string, create: (tx: Db) => Promise<T>): Promise<T> {
+        if (!this.hasDesignQuota()) return create(this.prisma);
+        return this.withOrgLock('design', orgId, async (tx) => {
+            await this.assertDesignQuota(orgId, tx);
+            return create(tx);
+        });
+    }
+
     // ---------------------------------------------------------------- storage
 
     /** Uploaded model assets + spilled result payloads (job metrics.outputSizeBytes), org-wide. */
@@ -288,9 +359,11 @@ export class UsageService {
     /** The usage snapshot for an org (+ the requesting user's parts calls). Membership checked by the caller. */
     async getOrgUsage(orgId: string, userId: string): Promise<OrgUsage> {
         const period = this.period();
-        const [sim, concurrent, storage, partsRow] = await Promise.all([
+        const [sim, concurrent, designJobs, designConcurrent, storage, partsRow] = await Promise.all([
             this.simUsageThisMonth(orgId),
             this.simConcurrent(orgId),
+            this.designJobsThisMonth(orgId),
+            this.designConcurrent(orgId),
             this.storageBytes(orgId),
             this.prisma.usageRecord.findUnique({
                 where: { scope_scopeId_metric_period: this.partsKey(userId, period) },
@@ -306,6 +379,14 @@ export class UsageService {
                     jobsPerMonth: this.limit('QUOTA_SIM_JOBS_PER_MONTH'),
                     runtimeMsPerMonth: this.limit('QUOTA_SIM_RUNTIME_MS_PER_MONTH'),
                     concurrent: this.limit('QUOTA_SIM_CONCURRENT_PER_ORG'),
+                },
+            },
+            design: {
+                jobs: designJobs,
+                concurrent: designConcurrent,
+                limits: {
+                    jobsPerMonth: this.limit('QUOTA_DESIGN_JOBS_PER_MONTH'),
+                    concurrent: this.limit('QUOTA_DESIGN_CONCURRENT_PER_ORG'),
                 },
             },
             storage: {

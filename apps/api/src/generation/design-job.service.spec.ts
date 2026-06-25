@@ -1,4 +1,4 @@
-import { NotFoundException } from '@nestjs/common';
+import { NotFoundException, ServiceUnavailableException } from '@nestjs/common';
 import { DesignJobService } from './design-job.service';
 
 function setup() {
@@ -13,8 +13,18 @@ function setup() {
         checkMembership: jest.fn().mockResolvedValue(undefined),
     } as never;
     const design = { design: jest.fn() } as never;
-    const svc = new DesignJobService(prisma, orgs, design);
-    return { svc, designJob, orgs: orgs as unknown as { findAllForUser: jest.Mock; checkMembership: jest.Mock }, design: design as unknown as { design: jest.Mock } };
+    // createDesignGuarded runs its callback against the (mock) prisma — mirrors the no-quota plain-insert path.
+    const usage = { createDesignGuarded: jest.fn((_orgId: string, create: (db: unknown) => unknown) => create(prisma)) } as never;
+    const designQueue = { add: jest.fn().mockResolvedValue(undefined) } as never;
+    const svc = new DesignJobService(prisma, orgs, design, usage, designQueue);
+    return {
+        svc,
+        designJob,
+        orgs: orgs as unknown as { findAllForUser: jest.Mock; checkMembership: jest.Mock },
+        design: design as unknown as { design: jest.Mock },
+        usage: usage as unknown as { createDesignGuarded: jest.Mock },
+        designQueue: designQueue as unknown as { add: jest.Mock },
+    };
 }
 
 /** statuses written via prisma.designJob.update, in order. */
@@ -23,18 +33,22 @@ function updateStatuses(designJob: { update: jest.Mock }): string[] {
 }
 
 describe('DesignJobService.create', () => {
-    it('creates a QUEUED job under the user’s first org', async () => {
-        const { svc, designJob, orgs } = setup();
+    it('creates a QUEUED job (under the design-quota guard) and enqueues it onto the design queue', async () => {
+        const { svc, designJob, orgs, usage, designQueue } = setup();
         designJob.create.mockResolvedValue({ id: 'j1', status: 'QUEUED' });
 
         const r = await svc.create('u1', { prompt: 'an LED driver', maxRounds: 2 });
 
         expect(orgs.findAllForUser).toHaveBeenCalledWith('u1');
+        // The insert goes through the admission-control guard (1 design job = 1 unit).
+        expect(usage.createDesignGuarded).toHaveBeenCalledWith('org-1', expect.any(Function));
         expect(designJob.create).toHaveBeenCalledWith(
             expect.objectContaining({
                 data: expect.objectContaining({ orgId: 'org-1', userId: 'u1', status: 'QUEUED', prompt: 'an LED driver', maxRounds: 2 }),
             }),
         );
+        // The job is enqueued onto the durable 'design' queue for the worker to run.
+        expect(designQueue.add).toHaveBeenCalledWith('design', expect.objectContaining({ jobId: 'j1', userId: 'u1', prompt: 'an LED driver', maxRounds: 2 }));
         expect(r).toEqual({ id: 'j1', status: 'QUEUED' });
     });
 
@@ -42,6 +56,17 @@ describe('DesignJobService.create', () => {
         const { svc, orgs } = setup();
         orgs.findAllForUser.mockResolvedValue([]);
         await expect(svc.create('u1', { prompt: 'x', maxRounds: 1 })).rejects.toBeInstanceOf(NotFoundException);
+    });
+
+    it('marks the row FAILED (not a silent QUEUED orphan) and throws 503 when enqueue fails', async () => {
+        const { svc, designJob, designQueue } = setup();
+        designJob.create.mockResolvedValue({ id: 'j1', status: 'QUEUED' });
+        designQueue.add.mockRejectedValue(new Error('redis down'));
+
+        await expect(svc.create('u1', { prompt: 'x', maxRounds: 1 })).rejects.toBeInstanceOf(ServiceUnavailableException);
+        expect(designJob.update).toHaveBeenCalledWith(
+            expect.objectContaining({ where: { id: 'j1' }, data: expect.objectContaining({ status: 'FAILED' }) }),
+        );
     });
 });
 
