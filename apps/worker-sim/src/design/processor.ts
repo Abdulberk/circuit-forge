@@ -46,6 +46,11 @@ function buildLlmConfig() {
         userAgent: config.LLM_USER_AGENT,
         timeoutMs: config.LLM_TIMEOUT_MS,
         tokenBudget: config.LLM_TOKEN_BUDGET,
+        // Count every BILLED provider request (incl. the transient retry). The worker uses noopGround
+        // (tool-LESS), so this is the CONTROL case: exactly one request per generate/fix (attempt=1,
+        // tools=false) — the baseline to compare the grounded api:* paths against. Tagged 'worker'.
+        onLlmRequest: (info: { iter: number; attempt: number; toolsOffered: boolean }) =>
+            logger.info({ path: 'worker', iter: info.iter, attempt: info.attempt, toolsOffered: info.toolsOffered }, 'llm.request'),
     };
 }
 

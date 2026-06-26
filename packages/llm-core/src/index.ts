@@ -105,6 +105,23 @@ export interface GenerateCircuitConfig {
      *  Opus 4.8) REJECT this param with a 400 ("temperature is deprecated for this model") — leave it unset
      *  for those. The multi-candidate orchestrator therefore drives diversity via PROMPT directives, not this. */
     temperature?: number;
+    /** Optional sink invoked once per BILLED model HTTP call (`messages.create`), INCLUDING the single
+     *  transient retry. The cost model is REQUEST-billed, so this lets a host count real provider requests —
+     *  e.g. confirm whether a multi-tool-round grounded generation bills as N requests or 1, and surface the
+     *  retry that the token accounting (tokensUsed) silently misses. The HOST tags by path (the grounded SYNC
+     *  path offers tools; the worker path is tool-less). Side-effect only — it must not throw (calls are
+     *  wrapped defensively) and must not block. */
+    onLlmRequest?: (info: LlmRequestInfo) => void;
+}
+
+/** One BILLED model HTTP call (`messages.create`), reported to GenerateCircuitConfig.onLlmRequest. */
+export interface LlmRequestInfo {
+    /** Tool-loop iteration (0-based); each iteration is one model round-trip. */
+    iter: number;
+    /** 1 = first send; 2 = the single transient-retry resend (a SEPARATE billed HTTP call). */
+    attempt: 1 | 2;
+    /** Whether tools were offered on this call (a grounded round vs a plain/tool-less call). */
+    toolsOffered: boolean;
 }
 
 /**
@@ -197,6 +214,7 @@ interface Resolved {
     maxToolIters: number;
     tokenBudget: number;
     temperature?: number;
+    onLlmRequest?: (info: LlmRequestInfo) => void;
 }
 
 function setup(config: GenerateCircuitConfig): Resolved {
@@ -222,6 +240,7 @@ function setup(config: GenerateCircuitConfig): Resolved {
         maxToolIters: config.maxToolIters ?? MAX_TOOL_ITERS,
         tokenBudget: config.tokenBudget ?? DEFAULT_TOKEN_BUDGET,
         temperature: config.temperature,
+        onLlmRequest: config.onLlmRequest,
     };
 }
 
@@ -358,12 +377,24 @@ async function callModel(
     // the single source of retry truth.
     const createWithRetry = async (
         params: Anthropic.MessageCreateParamsNonStreaming,
+        meta: { iter: number; toolsOffered: boolean },
     ): Promise<Anthropic.Message> => {
+        // Report EVERY billed HTTP call (attempt 1, and the retry as attempt 2) so a host can count real
+        // provider requests against its invoice. Defensive: a telemetry sink must never break generation.
+        const fire = (attempt: 1 | 2) => {
+            try {
+                r.onLlmRequest?.({ iter: meta.iter, attempt, toolsOffered: meta.toolsOffered });
+            } catch {
+                /* a throwing telemetry sink must not abort the model call */
+            }
+        };
+        fire(1);
         try {
             return await r.client.messages.create(params);
         } catch (e) {
             if (!isRetryableModelError(e)) throw e;
             await new Promise((resolve) => setTimeout(resolve, 1500));
+            fire(2); // the retry is a SEPARATE billed HTTP call — the token accounting misses it
             return await r.client.messages.create(params); // second failure propagates
         }
     };
@@ -381,7 +412,7 @@ async function callModel(
                 system: [{ type: 'text', text: system, cache_control: { type: 'ephemeral' } }],
                 messages: convo,
                 ...(allowTools ? { tools: opts!.tools } : {}),
-            });
+            }, { iter, toolsOffered: allowTools });
             totalTokens += tokensUsed(response.usage);
 
             const toolUses = allowTools

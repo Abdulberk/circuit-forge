@@ -226,3 +226,28 @@ teams, the fixed baseline dominates and per-user infra is cents — **the cost s
 5. **Aggressive parts-API caching** before adding any paid Nexar tier.
 6. **Single small worker + co-located Redis** until multi-subscription scale; don't over-provision compute —
    it is not the bottleneck.
+
+## 12. Request-billing validation (the one unverified assumption)
+
+Every number above rests on **one assumption that code cannot confirm**: that the zentio gateway bills per
+**completed generation**, not per **`messages.create` HTTP call**. A grounded design that takes, say, 4 tool
+round-trips makes ~5 HTTP calls; if the gateway bills per call, the real request consumption is **~5× our
+estimate** and the quota math (107k req/mo) is off by that factor. The worker (multi-candidate) path is
+**exempt** — it uses `noopGround`, so it is tool-LESS (exactly 1 HTTP call per generate/fix). The exposure is
+the **grounded SYNC path** (API `generate`/`design`).
+
+**Instrumentation (shipped):** `GenerateCircuitConfig.onLlmRequest` fires once per BILLED HTTP call —
+**including the single transient retry**, which the token accounting (`tokensUsed`) silently misses. Each host
+tags by path: `api:generate` / `api:design` (grounded sync) and `worker` (tool-less control). Grep the logs
+for `llm.request`.
+
+**One-time experiment to settle it:**
+1. Run ONE controlled grounded generation that forces a **known** number of tool calls (e.g. a prompt that
+   needs ~4 catalog lookups). Count the `llm.request path=api:generate` log lines → that is the HTTP-call
+   count `H` (e.g. 5 = 4 tool rounds + 1 final; +1 more if a retry fired).
+2. Read the zentio dashboard/invoice request counter **before and after** that single run → delta `D`.
+3. If **D ≈ 1** → billing is per-completion; the cost model stands. If **D ≈ H** → billing is per-HTTP-call;
+   multiply the grounded-path request estimates by the average tool-rounds-per-design and re-derive the quota
+   headroom in §§ above.
+4. Leave the `onLlmRequest` logging on as permanent telemetry (a request-rate metric is the leading indicator
+   for the binding constraint — the request cap, not compute).
