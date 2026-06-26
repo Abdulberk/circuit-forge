@@ -556,13 +556,55 @@ function topologyKey(c: CircuitJson): string {
     return `${c.components.map((x) => x.type).sort().join(',')}|${c.nets.length}`;
 }
 
+/** Worst-case op-aware ROBUSTNESS margin of a spec-met candidate: the MINIMUM normalized slack across its
+ *  criteria (a design is only as robust as its tightest spec). Higher = more headroom before any spec fails
+ *  under component tolerance. Used ONLY to order spec-met candidates, because specCloseness is BACKWARDS for
+ *  them — it scores |actual−target|, so an inequality spec satisfied with a WIDE margin (the safer design)
+ *  looks "far from spec" and would lose, sending winner-only Monte-Carlo to the most MARGINAL passer. Empty /
+ *  uncomputable criteria contribute 0 (neutral). Pure — reuses the same denom as specCloseness. */
+function robustnessSlack(assertions: AssertionResult[]): number {
+    let min = Number.POSITIVE_INFINITY;
+    for (const a of assertions) {
+        if (a.distance === null) { min = Math.min(min, 0); continue; }
+        const denom = Math.abs(a.target) > 1e-12 ? Math.abs(a.target) : a.tol && a.tol > 1e-12 ? a.tol : 1;
+        let slack: number;
+        switch (a.op) {
+            case 'gt':
+            case 'gte':
+                slack = a.distance / denom; // actual − target ≥ 0 for a passer; bigger = further above the floor
+                break;
+            case 'lt':
+            case 'lte':
+                slack = -a.distance / denom; // actual − target ≤ 0 for a passer; bigger = further below the ceiling
+                break;
+            case 'approx': {
+                const tol = a.tol && a.tol > 1e-12 ? a.tol : Math.max(Math.abs(a.target) * 0.05, 1e-9);
+                slack = (tol - Math.abs(a.distance)) / denom; // distance from the NEAREST band edge; bigger = more centered
+                break;
+            }
+            default:
+                slack = 0;
+        }
+        min = Math.min(min, slack);
+    }
+    return Number.isFinite(min) ? min : 0; // no criteria → neutral
+}
+
 /** Ranking comparator: better candidate sorts FIRST. simulating beats non-simulating (a clean-but-off-spec
- *  candidate is worth a finalist slot over one that won't simulate); then spec-met; then closer to spec;
- *  then fewer parts (cost). Returns <0 if a is better. */
+ *  candidate is worth a finalist slot over one that won't simulate); then spec-met; then — among spec-met
+ *  candidates — MORE ROBUST first (specCloseness is backwards for passers, see robustnessSlack); else closer
+ *  to spec (closeness is correct for the not-both-met case: lower |distance| = closer to passing); then fewer
+ *  parts (cost). NOTE: robustness is deliberately ranked ABOVE part count for passers — we'd rather ship a
+ *  slightly larger design with real tolerance headroom than a marginal one. Returns <0 if a is better. */
 function compareCandidates(a: ScreenResult, b: ScreenResult): number {
     if (a.simHealthy !== b.simHealthy) return a.simHealthy ? -1 : 1;
     if (a.specsMet !== b.specsMet) return a.specsMet ? -1 : 1;
-    if (a.closeness !== b.closeness) return a.closeness - b.closeness;
+    if (a.specsMet && b.specsMet) {
+        const bySlack = robustnessSlack(b.assertions) - robustnessSlack(a.assertions);
+        if (bySlack !== 0) return bySlack; // higher slack (more robust) sorts first
+    } else if (a.closeness !== b.closeness) {
+        return a.closeness - b.closeness;
+    }
     return partCount(a.circuit) - partCount(b.circuit);
 }
 
