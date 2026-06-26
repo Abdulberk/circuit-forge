@@ -63,6 +63,32 @@ describe('NetlistGenerator', () => {
             expect(netlist).toContain('.end');
         });
 
+        it('emits a polarized source by pinId (+,-), NOT authored pin order — audit #2, no sign flip', () => {
+            const mk = (pins: Array<{ pinId: string; netId: string }>): CircuitJson => ({
+                version: '1.0',
+                components: [
+                    createComponent('V1', 'voltage_source', 'V1', 'DC 5', pins),
+                    createComponent('R1', 'resistor', 'R1', '1k', [
+                        { pinId: '1', netId: 'vp' },
+                        { pinId: '2', netId: '0' },
+                    ]),
+                ],
+                nets: [createNet('vp', 'vp'), createNet('0', '0', true)],
+            });
+            const forward = mk([{ pinId: '+', netId: 'vp' }, { pinId: '-', netId: '0' }]);
+            const reversed = mk([{ pinId: '-', netId: '0' }, { pinId: '+', netId: 'vp' }]);
+            const lineOf = (c: CircuitJson) =>
+                generateNetlist(c, { type: 'op' } as OpAnalysis)
+                    .split('\n')
+                    .find((l) => l.startsWith('V1'))!;
+            // Authored pin ORDER must not change the emitted card — both bind +→vp, -→0 (canonical).
+            expect(lineOf(forward)).toBe(lineOf(reversed));
+            // The '+' node precedes the '-' node: ground 0 (the '-' pin) is emitted SECOND, not first.
+            const [, nplus, nminus] = lineOf(forward).split(/\s+/);
+            expect(nminus).toBe('0');
+            expect(nplus).not.toBe('0');
+        });
+
         it('should include title in netlist', () => {
             const circuit: CircuitJson = {
                 version: '1.0',
