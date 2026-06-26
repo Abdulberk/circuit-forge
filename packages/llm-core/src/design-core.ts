@@ -41,6 +41,15 @@ export interface DesignLoopInput {
     prompt: string;
     constraints?: string;
     maxRounds?: number;
+    /** SEED a pre-generated circuit so the loop SKIPS its initial generateCircuit and re-enters at the
+     *  simulate/fix stage. The multi-candidate orchestrator passes a screened candidate here so finalists
+     *  don't burn a second generate request (they were already generated in the screen). When omitted, the
+     *  loop generates as before — byte-identical to today. seedCriteria/seedAnalysisConfig/seedExplanation
+     *  carry the rest of that candidate's generation output. */
+    seedCircuit?: CircuitJson;
+    seedAnalysisConfig?: AnalysisConfig;
+    seedCriteria?: AcceptanceCriterion[];
+    seedExplanation?: string;
 }
 
 /** The design result (superset of the success / inconclusive / spec-miss shapes — the discriminators are
@@ -138,17 +147,30 @@ export async function runDesignLoop(input: DesignLoopInput, deps: DesignDeps): P
     const groundingOpts = ground.grounding();
 
     await checkAbort(deps);
-    const gen = await generateCircuit(
-        { prompt: input.prompt, constraints: input.constraints },
-        llmConfig,
-        groundingOpts as Parameters<typeof generateCircuit>[2],
-    );
-    let circuit: CircuitJson = gen.circuit;
+    // SEED path: when the orchestrator supplies an already-generated candidate, skip generateCircuit entirely
+    // (no second paid request) and enter the loop at the simulate/fix stage. Otherwise generate as before.
+    let circuit: CircuitJson;
+    let analysis: AnalysisConfig;
+    let explanation: string | undefined;
+    let criteria: AcceptanceCriterion[];
+    if (input.seedCircuit) {
+        circuit = input.seedCircuit;
+        analysis = input.seedAnalysisConfig ?? ({ type: 'op' } as AnalysisConfig);
+        explanation = input.seedExplanation;
+        criteria = input.seedCriteria ?? [];
+    } else {
+        const gen = await generateCircuit(
+            { prompt: input.prompt, constraints: input.constraints },
+            llmConfig,
+            groundingOpts as Parameters<typeof generateCircuit>[2],
+        );
+        circuit = gen.circuit;
+        analysis = gen.analysisConfig;
+        explanation = gen.explanation;
+        criteria = (gen.acceptanceCriteria ?? []) as AcceptanceCriterion[];
+    }
     attachGenericModels(circuit);
-    let analysis: AnalysisConfig = gen.analysisConfig;
-    let explanation = gen.explanation;
     const history: RoundRecord[] = [];
-    let criteria = (gen.acceptanceCriteria ?? []) as AcceptanceCriterion[];
     let lastAssertions: AssertionResult[] = [];
     let currentProbes = criteria.filter((c) => isCurrentProbe(c.probe)).map((c) => c.probe);
     const requiredDims = requiredDimensions(input.prompt);
@@ -520,4 +542,41 @@ export async function screenCandidate(input: DesignLoopInput, deps: DesignDeps):
         closeness: simHealthy ? specCloseness(assertions) : Number.POSITIVE_INFINITY,
         simStatus,
     };
+}
+
+/** "Real" part count (a cheap cost proxy) — excludes ground symbols. */
+function partCount(c: CircuitJson): number {
+    return c.components.filter((x) => x.type !== 'ground').length;
+}
+
+/** A coarse topology signature for dedup: the sorted component-type multiset + net count. Two screened
+ *  candidates with the same signature are treated as the same topology (values may differ). Not a true
+ *  graph isomorphism — a pragmatic "don't spend a finalist slot on a near-duplicate" guard. */
+function topologyKey(c: CircuitJson): string {
+    return `${c.components.map((x) => x.type).sort().join(',')}|${c.nets.length}`;
+}
+
+/** Ranking comparator: better candidate sorts FIRST. simulating beats non-simulating (a clean-but-off-spec
+ *  candidate is worth a finalist slot over one that won't simulate); then spec-met; then closer to spec;
+ *  then fewer parts (cost). Returns <0 if a is better. */
+function compareCandidates(a: ScreenResult, b: ScreenResult): number {
+    if (a.simHealthy !== b.simHealthy) return a.simHealthy ? -1 : 1;
+    if (a.specsMet !== b.specsMet) return a.specsMet ? -1 : 1;
+    if (a.closeness !== b.closeness) return a.closeness - b.closeness;
+    return partCount(a.circuit) - partCount(b.circuit);
+}
+
+/**
+ * Pick the best K screened candidates for the full fix-loop. Dedups identical topologies first (keeping the
+ * better-scoring of each), then ranks by compareCandidates and takes the top K (≥1). Pure — no I/O; the
+ * Stage-2 orchestrator runs the full runDesignLoop on exactly these, then Monte-Carlo on the single winner.
+ */
+export function selectFinalists(screened: ScreenResult[], k: number): ScreenResult[] {
+    const best = new Map<string, ScreenResult>();
+    for (const cand of screened) {
+        const key = topologyKey(cand.circuit);
+        const prev = best.get(key);
+        if (!prev || compareCandidates(cand, prev) < 0) best.set(key, cand);
+    }
+    return [...best.values()].sort(compareCandidates).slice(0, Math.max(1, k));
 }
