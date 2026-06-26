@@ -1,7 +1,7 @@
 /**
  * Org usage snapshot — "this month you used X of Y" for the frontend's usage page.
  */
-import { Controller, Get, Param, UseGuards } from '@nestjs/common';
+import { Controller, Get, Param, ParseUUIDPipe, UseGuards } from '@nestjs/common';
 import { ApiBearerAuth, ApiOperation, ApiTags } from '@nestjs/swagger';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { CurrentUser } from '../auth/decorators/current-user.decorator';
@@ -20,7 +20,7 @@ export class UsageController {
 
     @Get('orgs/:orgId/usage')
     @ApiOperation({ summary: 'Current-month usage (sim jobs/runtime/in-flight, storage, parts calls) + configured limits (null = unlimited)' })
-    async getUsage(@Param('orgId') orgId: string, @CurrentUser() user: { id: string }) {
+    async getUsage(@Param('orgId', ParseUUIDPipe) orgId: string, @CurrentUser() user: { id: string }) {
         await this.orgs.checkMembership(orgId, user.id);
         return this.usage.getOrgUsage(orgId, user.id);
     }

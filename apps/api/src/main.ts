@@ -10,6 +10,7 @@ import { NestExpressApplication } from '@nestjs/platform-express';
 import { SwaggerModule, DocumentBuilder } from '@nestjs/swagger';
 import helmet from 'helmet';
 import { AppModule } from './app.module';
+import { AllExceptionsFilter } from './common/filters/all-exceptions.filter';
 
 async function bootstrap() {
     const app = await NestFactory.create<NestExpressApplication>(AppModule, {
@@ -46,6 +47,11 @@ async function bootstrap() {
             forbidNonWhitelisted: true,
         }),
     );
+
+    // Global exception filter: one consistent error envelope for every response + no internal leak on an
+    // unexpected 500 (the real error is logged server-side only). Registered after the pipe so validation
+    // 400s flow through it too.
+    app.useGlobalFilters(new AllExceptionsFilter());
 
     // CORS: allow only configured origins. CORS_ORIGINS is a comma-separated allowlist; with none set
     // we fall back to localhost dev origins (never a wildcard, which would defeat the point).
