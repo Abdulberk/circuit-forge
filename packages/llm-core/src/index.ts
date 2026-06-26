@@ -757,9 +757,10 @@ export {
     type DesignRunSim,
     type DesignGround,
     type RoundRecord,
-    // Multi-candidate building blocks (stage 1) — used by the worker's stage-2 orchestrator.
+    // Multi-candidate building blocks (stages 1–2) — used by the worker's orchestrator.
     runYieldAnalysis,
     screenCandidate,
     specCloseness,
+    selectFinalists,
     type ScreenResult,
 } from './design-core';
