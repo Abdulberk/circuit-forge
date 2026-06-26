@@ -13,11 +13,11 @@ import {
     UseGuards,
     ParseUUIDPipe,
 } from '@nestjs/common';
-import { ApiTags, ApiOperation, ApiBearerAuth, ApiParam, ApiQuery } from '@nestjs/swagger';
+import { ApiTags, ApiOperation, ApiBearerAuth, ApiParam } from '@nestjs/swagger';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { CurrentUser } from '../auth/decorators/current-user.decorator';
 import { AssetsService } from './assets.service';
-import { PresignUploadDto, CommitAssetDto } from './dto';
+import { PresignUploadDto, CommitAssetDto, AssetListQueryDto } from './dto';
 
 @ApiTags('assets')
 @Controller()
@@ -58,15 +58,14 @@ export class AssetsController {
      * List organization assets
      */
     @Get('orgs/:orgId/assets/models')
-    @ApiOperation({ summary: 'List organization model assets' })
+    @ApiOperation({ summary: 'List organization model assets (paginated: ?limit&offset[&type])' })
     @ApiParam({ name: 'orgId', description: 'Organization ID' })
-    @ApiQuery({ name: 'type', required: false, description: 'Filter by asset type' })
     async listAssets(
         @CurrentUser() user: { id: string },
         @Param('orgId', ParseUUIDPipe) orgId: string,
-        @Query('type') type?: string,
+        @Query() query: AssetListQueryDto,
     ) {
-        return this.assetsService.listAssets(orgId, user.id, type);
+        return this.assetsService.listAssets(orgId, user.id, { limit: query.limit, offset: query.offset }, query.type);
     }
 
     /**

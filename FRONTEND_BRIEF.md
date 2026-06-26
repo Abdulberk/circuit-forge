@@ -159,12 +159,12 @@ This section enumerates every screen the v1 frontend must ship, with its purpose
 | GET | `/orgs` | JWT | Dashboard, Settings | Org switcher source |
 | POST | `/orgs` | JWT | Settings | Creator becomes `OWNER` |
 | GET | `/orgs/:orgId` | JWT | Settings | Org + caller `role` |
-| GET | `/orgs/:orgId/projects` | JWT | Dashboard | List projects in org |
+| GET | `/orgs/:orgId/projects` | JWT | Dashboard | List projects in org — **paginated**: `?limit` (1..100, default 50) `&offset` (default 0) → `{ items, total, limit, offset, hasMore }`. Page rather than assume the full set. |
 | POST | `/orgs/:orgId/projects` | JWT | Dashboard | Create project |
 | GET | `/projects/:projectId` | JWT | Project | Project + nested `org` |
 | PATCH | `/projects/:projectId` | JWT | Project | Update name/description |
 | DELETE | `/projects/:projectId` | JWT | Project | Returns `{ success: true }`; RBAC-gated |
-| GET | `/projects/:projectId/versions` | JWT | Project | Version summaries (no circuit JSON) |
+| GET | `/projects/:projectId/versions` | JWT | Project | Version summaries (no circuit JSON) — **paginated**: `?limit&offset` → `{ items, total, limit, offset, hasMore }` |
 | POST | `/projects/:projectId/versions` | JWT | Editor | Body `{ circuitJson, uiJson }` → new immutable version |
 | GET | `/versions/:versionId` | JWT | Editor | Full version + nested `project` |
 | POST | `/versions/:versionId/simulations` | JWT | Sim Panel | Body `{ analysisConfig, probes? }` → `{ jobId }` |
@@ -181,7 +181,7 @@ This section enumerates every screen the v1 frontend must ship, with its purpose
 | DELETE | `/templates/:templateId` | JWT | Templates | RBAC-gated; public templates cannot be deleted |
 | POST | `/orgs/:orgId/assets/models/presign` | JWT | Assets | → `{ uploadUrl, s3Key, ... }` |
 | POST | `/orgs/:orgId/assets/models/commit` | JWT | Assets | Persists the `Asset` row |
-| GET | `/orgs/:orgId/assets/models` | JWT | Assets | List; optional `?type=` filter |
+| GET | `/orgs/:orgId/assets/models` | JWT | Assets | **Paginated** list (`?limit&offset` → `{ items, total, limit, offset, hasMore }`); optional `?type=` filter |
 | GET | `/assets/:assetId` | JWT | Assets | Asset detail |
 | GET | `/assets/:assetId/download` | JWT | Assets | → presigned `{ downloadUrl }` |
 | DELETE | `/assets/:assetId` | JWT | Assets | RBAC-gated |
@@ -248,7 +248,7 @@ The response type is `TokensResponse` (`apps/api/src/auth/auth.service.ts:15`): 
 | Endpoint | Purpose |
 |---|---|
 | `GET /orgs` | Populate the switcher: `[{ id, name, role, createdAt, updatedAt }]` |
-| `GET /orgs/:orgId/projects` | List projects for the active org |
+| `GET /orgs/:orgId/projects` | List projects for the active org — paginated `{ items, total, limit, offset, hasMore }` (`?limit&offset`) |
 | `POST /orgs/:orgId/projects` | Create a project (`{ name, description? }`) |
 | `DELETE /projects/:projectId` | Delete (RBAC-gated; returns `{ success: true }`) |
 
@@ -264,7 +264,7 @@ The response type is `TokensResponse` (`apps/api/src/auth/auth.service.ts:15`): 
 
 **Key elements:**
 - Project header (name, description) with inline edit via `PATCH /projects/:projectId`.
-- Version list: `versionNumber`, `createdAt`, `createdByUserId`. The list endpoint returns **summaries only — no circuit JSON** (keep it lightweight).
+- Version list: `versionNumber`, `createdAt`, `createdByUserId`. The list endpoint returns **summaries only — no circuit JSON** (keep it lightweight), and is **paginated** — read `items` from the `{ items, total, limit, offset, hasMore }` envelope and page through long histories.
 - "Open in editor" per version (routes to `/editor/:versionId`).
 - Per-version "Simulate" entry point (deep-links into the Simulation Control Panel for that version).
 - Role-gated project delete.
@@ -275,7 +275,7 @@ The response type is `TokensResponse` (`apps/api/src/auth/auth.service.ts:15`): 
 |---|---|
 | `GET /projects/:projectId` | Project detail + nested `org` |
 | `PATCH /projects/:projectId` | Update `{ name?, description? }` |
-| `GET /projects/:projectId/versions` | Version summaries (`{ id, versionNumber, createdAt, createdByUserId }`) — no `circuitJson` |
+| `GET /projects/:projectId/versions` | Paginated version summaries: `{ items: { id, versionNumber, createdAt, createdByUserId }[], total, limit, offset, hasMore }` (`?limit&offset`) — no `circuitJson` |
 | `GET /versions/:versionId` | Full version (`circuitJson` + `uiJson`) + nested `project` — fetched lazily on open |
 | `POST /projects/:projectId/versions` | Create a new version (`{ circuitJson, uiJson }`); `versionNumber` is auto-incremented server-side |
 
@@ -542,7 +542,7 @@ Response `DesignEvidence` (always `200` for a valid circuit — a failed verific
 | 1. Presign | `POST /orgs/:orgId/assets/models/presign` | `{ name, contentType, sizeBytes (1..10MB), sha256 }` | `{ uploadUrl, s3Key, ... }` |
 | 2. Upload | (the returned `uploadUrl`) | raw bytes via `PUT` | S3 200 |
 | 3. Commit | `POST /orgs/:orgId/assets/models/commit` | `{ s3Key, name, contentType, sizeBytes, sha256 }` | the persisted `Asset` |
-| List | `GET /orgs/:orgId/assets/models?type=` | — | asset list |
+| List | `GET /orgs/:orgId/assets/models?type=&limit=&offset=` | — | paginated `{ items, total, limit, offset, hasMore }` |
 | Detail | `GET /assets/:assetId` | — | asset detail |
 | Download | `GET /assets/:assetId/download` | — | `{ downloadUrl }` (presigned) |
 | Delete | `DELETE /assets/:assetId` | — | RBAC-gated |
@@ -1046,7 +1046,7 @@ Use `/health/ready` for a non-blocking "backend up?" indicator. Do not gate the 
 
 | Method | Path | Auth | Role | Request | Response |
 |---|---|---|---|---|---|
-| GET | `/orgs/:orgId/projects` | JWT | membership | — | `200 Project[]` (ordered `updatedAt desc`) |
+| GET | `/orgs/:orgId/projects` | JWT | membership | `?limit` (1..100, default 50) `&offset` | `200 { items: Project[], total, limit, offset, hasMore }` (ordered `updatedAt desc, id desc`) |
 | POST | `/orgs/:orgId/projects` | JWT | membership | `CreateProjectDto` `{ name: 1–100, description?: <=2000 }` | `201 Project` |
 | GET | `/projects/:projectId` | JWT | membership (of project's org) | — | `200 Project & { org: { id, name, createdAt, updatedAt } }` |
 | PATCH | `/projects/:projectId` | JWT | membership | `UpdateProjectDto` `{ name?, description? }` | `200 Project` (updated) |

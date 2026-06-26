@@ -5,6 +5,7 @@ import { Injectable, NotFoundException } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { ProjectsService } from '../projects/projects.service';
+import { paginated, type Paginated } from '../common/dto/pagination.dto';
 
 @Injectable()
 export class VersionsService {
@@ -13,18 +14,20 @@ export class VersionsService {
         private projectsService: ProjectsService,
     ) { }
 
-    async findAllForProject(projectId: string, userId: string) {
+    async findAllForProject(projectId: string, userId: string, page: { limit: number; offset: number }): Promise<Paginated<unknown>> {
         await this.projectsService.findOne(projectId, userId);
-        return this.prisma.projectVersion.findMany({
-            where: { projectId },
-            orderBy: { versionNumber: 'desc' },
-            select: {
-                id: true,
-                versionNumber: true,
-                createdAt: true,
-                createdByUserId: true,
-            },
-        });
+        const where = { projectId };
+        const [items, total] = await Promise.all([
+            this.prisma.projectVersion.findMany({
+                where,
+                orderBy: { versionNumber: 'desc' },
+                select: { id: true, versionNumber: true, createdAt: true, createdByUserId: true },
+                skip: page.offset,
+                take: page.limit,
+            }),
+            this.prisma.projectVersion.count({ where }),
+        ]);
+        return paginated(items, total, page.limit, page.offset);
     }
 
     async findOne(versionId: string, userId: string) {

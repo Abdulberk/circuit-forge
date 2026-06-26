@@ -4,6 +4,7 @@
 import { Injectable, NotFoundException } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import { OrgsService } from '../orgs/orgs.service';
+import { paginated, type Paginated } from '../common/dto/pagination.dto';
 
 @Injectable()
 export class ProjectsService {
@@ -12,12 +13,16 @@ export class ProjectsService {
         private orgsService: OrgsService,
     ) { }
 
-    async findAllForOrg(orgId: string, userId: string) {
+    async findAllForOrg(orgId: string, userId: string, page: { limit: number; offset: number }): Promise<Paginated<unknown>> {
         await this.orgsService.checkMembership(orgId, userId);
-        return this.prisma.project.findMany({
-            where: { orgId },
-            orderBy: { updatedAt: 'desc' },
-        });
+        const where = { orgId };
+        const [items, total] = await Promise.all([
+            // id is the unique tie-breaker → a TOTAL order, so offset/limit paging can't skip/duplicate rows
+            // when several projects share an updatedAt (batch touch / same-ms collision).
+            this.prisma.project.findMany({ where, orderBy: [{ updatedAt: 'desc' }, { id: 'desc' }], skip: page.offset, take: page.limit }),
+            this.prisma.project.count({ where }),
+        ]);
+        return paginated(items, total, page.limit, page.offset);
     }
 
     async findOne(projectId: string, userId: string) {
