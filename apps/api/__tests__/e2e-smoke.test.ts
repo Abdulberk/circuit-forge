@@ -207,11 +207,13 @@ describe('E2E Smoke Test - Full Simulation Workflow', () => {
                 .set('Authorization', `Bearer ${accessToken}`)
                 .expect(200);
 
-            expect(Array.isArray(response.body)).toBe(true);
-            expect(response.body.length).toBeGreaterThanOrEqual(1);
-            expect(response.body[0]).toHaveProperty('versionNumber', 1);
+            // List endpoints now return a pagination envelope { items, total, limit, offset, hasMore }.
+            expect(Array.isArray(response.body.items)).toBe(true);
+            expect(response.body.total).toBeGreaterThanOrEqual(1);
+            expect(response.body.items[0]).toHaveProperty('versionNumber', 1);
+            expect(response.body).toMatchObject({ limit: expect.any(Number), offset: 0, hasMore: false });
 
-            console.log('✓ Versions listed:', response.body.length, 'version(s)');
+            console.log('✓ Versions listed:', response.body.items.length, 'of', response.body.total);
         });
     });
 

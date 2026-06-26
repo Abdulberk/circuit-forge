@@ -1,8 +1,18 @@
 /**
  * Assets DTOs
  */
-import { IsString, IsInt, Min, Max, IsHash } from 'class-validator';
-import { ApiProperty } from '@nestjs/swagger';
+import { IsString, IsInt, Min, Max, IsHash, IsOptional } from 'class-validator';
+import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
+import { PaginationQueryDto } from '../../common/dto/pagination.dto';
+
+/** List query: pagination (limit/offset) + an optional type filter. Extends the shared pagination DTO so all
+ *  three params are whitelisted together (the global forbidNonWhitelisted pipe would 400 a stray query). */
+export class AssetListQueryDto extends PaginationQueryDto {
+    @ApiPropertyOptional({ description: 'Filter by asset type (e.g. SPICE_MODEL)' })
+    @IsString()
+    @IsOptional()
+    type?: string;
+}
 
 export class PresignUploadDto {
     @ApiProperty({ description: 'File name', example: 'mydiode.lib' })

@@ -1,12 +1,13 @@
 /**
  * Projects Controller
  */
-import { Controller, Get, Post, Patch, Delete, Body, Param, ParseUUIDPipe, UseGuards } from '@nestjs/common';
+import { Controller, Get, Post, Patch, Delete, Body, Param, ParseUUIDPipe, Query, UseGuards } from '@nestjs/common';
 import { ApiTags, ApiOperation, ApiBearerAuth } from '@nestjs/swagger';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { CurrentUser } from '../auth/decorators/current-user.decorator';
 import { ProjectsService } from './projects.service';
 import { CreateProjectDto, UpdateProjectDto } from './dto';
+import { PaginationQueryDto } from '../common/dto/pagination.dto';
 
 @ApiTags('projects')
 @ApiBearerAuth()
@@ -16,9 +17,13 @@ export class ProjectsController {
     constructor(private readonly projectsService: ProjectsService) { }
 
     @Get('orgs/:orgId/projects')
-    @ApiOperation({ summary: 'List projects in organization' })
-    async findAll(@Param('orgId', ParseUUIDPipe) orgId: string, @CurrentUser() user: { id: string }) {
-        return this.projectsService.findAllForOrg(orgId, user.id);
+    @ApiOperation({ summary: 'List projects in organization (paginated: ?limit&offset)' })
+    async findAll(
+        @Param('orgId', ParseUUIDPipe) orgId: string,
+        @Query() pagination: PaginationQueryDto,
+        @CurrentUser() user: { id: string },
+    ) {
+        return this.projectsService.findAllForOrg(orgId, user.id, pagination);
     }
 
     @Post('orgs/:orgId/projects')

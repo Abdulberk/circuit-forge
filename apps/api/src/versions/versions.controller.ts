@@ -9,6 +9,7 @@ import { CurrentUser } from '../auth/decorators/current-user.decorator';
 import { VersionsService } from './versions.service';
 import { BomService } from './bom.service';
 import { CreateVersionDto } from './dto';
+import { PaginationQueryDto } from '../common/dto/pagination.dto';
 import type { CircuitJson } from '@circuit-forge/eda-core';
 
 @ApiTags('versions')
@@ -22,9 +23,13 @@ export class VersionsController {
     ) { }
 
     @Get('projects/:projectId/versions')
-    @ApiOperation({ summary: 'List project versions' })
-    async findAll(@Param('projectId', ParseUUIDPipe) projectId: string, @CurrentUser() user: { id: string }) {
-        return this.versionsService.findAllForProject(projectId, user.id);
+    @ApiOperation({ summary: 'List project versions (paginated: ?limit&offset)' })
+    async findAll(
+        @Param('projectId', ParseUUIDPipe) projectId: string,
+        @Query() pagination: PaginationQueryDto,
+        @CurrentUser() user: { id: string },
+    ) {
+        return this.versionsService.findAllForProject(projectId, user.id, pagination);
     }
 
     @Post('projects/:projectId/versions')

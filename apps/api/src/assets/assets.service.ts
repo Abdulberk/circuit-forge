@@ -13,6 +13,7 @@ import { getSignedUrl } from '@aws-sdk/s3-request-presigner';
 import { PrismaService } from '../prisma/prisma.service';
 import { OrgsService } from '../orgs/orgs.service';
 import { UsageService } from '../usage/usage.service';
+import { paginated } from '../common/dto/pagination.dto';
 import { PresignUploadDto, CommitAssetDto } from './dto';
 import { randomUUID } from 'crypto';
 
@@ -115,7 +116,7 @@ export class AssetsService {
     /**
      * List assets for an organization
      */
-    async listAssets(orgId: string, userId: string, type?: string) {
+    async listAssets(orgId: string, userId: string, page: { limit: number; offset: number }, type?: string) {
         await this.orgsService.requireMembership(orgId, userId);
 
         const where: any = { orgId };
@@ -123,10 +124,11 @@ export class AssetsService {
             where.type = type;
         }
 
-        return this.prisma.asset.findMany({
-            where,
-            orderBy: { createdAt: 'desc' },
-        });
+        const [items, total] = await Promise.all([
+            this.prisma.asset.findMany({ where, orderBy: { createdAt: 'desc' }, skip: page.offset, take: page.limit }),
+            this.prisma.asset.count({ where }),
+        ]);
+        return paginated(items, total, page.limit, page.offset);
     }
 
     /**
