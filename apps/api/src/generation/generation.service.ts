@@ -6,6 +6,7 @@
  */
 import {
     Injectable,
+    Logger,
     BadGatewayException,
     BadRequestException,
     ServiceUnavailableException,
@@ -27,6 +28,8 @@ import { GenerateCircuitDto, EditCircuitDto, ExplainCircuitDto } from './dto';
 
 @Injectable()
 export class GenerationService {
+    private readonly logger = new Logger(GenerationService.name);
+
     constructor(
         private readonly config: ConfigService,
         private readonly grounding: CatalogGroundingService,
@@ -109,6 +112,13 @@ export class GenerationService {
             // Optional operator overrides; llm-core applies sane defaults (90s / 300k) when unset.
             timeoutMs: this.positiveIntEnv('LLM_TIMEOUT_MS'),
             tokenBudget: this.positiveIntEnv('LLM_TOKEN_BUDGET'),
+            // Count every BILLED provider request (incl. the transient retry) on the grounded SYNC path. The
+            // cost model is request-billed, so this lets us reconcile a controlled run against the invoice
+            // (does a multi-tool-round generation bill as N requests or 1?). Tagged 'api:generate'.
+            onLlmRequest: (info) =>
+                this.logger.log(
+                    `llm.request path=api:generate iter=${info.iter} attempt=${info.attempt} tools=${info.toolsOffered}`,
+                ),
         };
     }
 

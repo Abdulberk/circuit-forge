@@ -8,6 +8,7 @@
  */
 import {
     Injectable,
+    Logger,
     BadGatewayException,
     HttpException,
     ServiceUnavailableException,
@@ -21,6 +22,7 @@ import { DesignCircuitDto } from './dto';
 
 @Injectable()
 export class DesignService {
+    private readonly logger = new Logger(DesignService.name);
     /** Server-side poll budget (ms) per design round's simulation. Env-tunable (ops). */
     private readonly pollTimeoutMs = Number(process.env.DESIGN_POLL_TIMEOUT_MS) || 90_000;
 
@@ -48,6 +50,12 @@ export class DesignService {
             userAgent: this.config.get<string>('LLM_USER_AGENT'),
             timeoutMs: num('LLM_TIMEOUT_MS'),
             tokenBudget: num('LLM_TOKEN_BUDGET'),
+            // Count every BILLED provider request (incl. the transient retry) on the grounded SYNC design
+            // loop, so a controlled run can be reconciled against the request-billed invoice. Tagged 'api:design'.
+            onLlmRequest: (info: { iter: number; attempt: number; toolsOffered: boolean }) =>
+                this.logger.log(
+                    `llm.request path=api:design iter=${info.iter} attempt=${info.attempt} tools=${info.toolsOffered}`,
+                ),
         };
 
         try {
