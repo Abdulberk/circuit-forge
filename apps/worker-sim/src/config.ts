@@ -108,6 +108,17 @@ const ConfigSchema = z.object({
     // hard ceiling is ~8 min: 4 rounds × 90s poll + 60s MC), so 30 min is generous headroom.
     DESIGN_REAP_RUNNING_DEADLINE_MS: z.string().transform(Number).default('1800000'),
 
+    // Multi-candidate design generation (staged in; ALL default to today's behavior so this ships DARK).
+    // DESIGN_CANDIDATES_N=1 → the orchestrator degenerates to a single runDesignLoop = the current code path.
+    DESIGN_CANDIDATES_N: optPosInt,   // default 1 (resolved in code); recommended 4, hard-capped at 5
+    DESIGN_FINALISTS_K: optPosInt,    // default 2; the K finalists that get the full fix-loop + (winner) MC
+    DESIGN_JOB_LLM_BUDGET: optPosInt, // default 12; hard ceiling on paid LLM requests per design request
+    // PROCESS-GLOBAL concurrency caps (NOT per-job) — the load-bearing perf lever once a job runs candidates
+    // concurrently: peak concurrent ngspice = NGSPICE_GLOBAL_CONCURRENCY regardless of N. Unset → computed
+    // from the box: max(1, floor(cores*0.75) - CONCURRENCY), reserving headroom for the 'simulations' queue.
+    NGSPICE_GLOBAL_CONCURRENCY: optPosInt,
+    GLOBAL_LLM_CONCURRENCY: optPosInt, // default 6 — caps in-flight LLM requests process-wide (provider RPM/TPM)
+
     // Logging
     LOG_LEVEL: z.enum(['trace', 'debug', 'info', 'warn', 'error', 'fatal']).default('info'),
     NODE_ENV: z.enum(['development', 'production', 'test']).default('development'),
