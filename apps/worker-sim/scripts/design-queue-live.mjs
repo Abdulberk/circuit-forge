@@ -26,6 +26,53 @@ const REDIS_URL = process.env.REDIS_URL || 'redis://localhost:6379';
 const QUEUE = process.env.DESIGN_QUEUE_NAME || 'design';
 const POLL_DEADLINE_MS = 300_000;
 
+// SMOKE mode (DESIGN_SMOKE=1): the CHEAP first-credit wiring check — N=2/K=1, scenario A only (skip the
+// heavier B/C/D and the full N=4). Spend the first real credit confirming the multi-candidate fan-out is
+// wired, BEFORE the full N=4 run. Must set the env BEFORE the worker dist is imported (config.ts reads it at
+// module load), so it lives here at top level — the dynamic import in main() runs afterwards.
+const SMOKE = process.env.DESIGN_SMOKE === '1' || process.env.DESIGN_SMOKE === 'true';
+if (SMOKE) {
+    process.env.DESIGN_CANDIDATES_N = process.env.DESIGN_CANDIDATES_N || '2';
+    process.env.DESIGN_FINALISTS_K = process.env.DESIGN_FINALISTS_K || '1';
+}
+const CANDIDATES_N = Number(process.env.DESIGN_CANDIDATES_N) || 1;
+
+/** Preflight the LLM provider with ONE trivial max_tokens=1 call so a down/misconfigured provider fails FAST
+ *  with a precise reason — instead of burning the wait on a job that 300s-times-out after its first real LLM
+ *  call. Spends exactly one tiny request (negligible) as liveness insurance. Aborts the whole run on failure. */
+async function preflightLlm() {
+    const base = (process.env.LLM_BASE_URL || 'https://api.zentio.dev').replace(/\/$/, '');
+    const model = process.env.LLM_MODEL || 'claude-sonnet-4-6';
+    const url = `${base}/v1/messages`;
+    console.log(`\n  preflight: POST ${url}  (model=${model}, max_tokens=1) …`);
+    let r;
+    try {
+        r = await fetch(url, {
+            method: 'POST',
+            headers: {
+                'content-type': 'application/json',
+                'x-api-key': process.env.LLM_API_KEY || '',
+                'anthropic-version': '2023-06-01',
+                'User-Agent': process.env.LLM_USER_AGENT || 'circuit-forge/1.0',
+            },
+            body: JSON.stringify({ model, max_tokens: 1, messages: [{ role: 'user', content: 'hi' }] }),
+        });
+    } catch (e) {
+        console.error(`\n  ✗ provider UNREACHABLE (${e.message}). Aborting BEFORE spending the design run.\n`);
+        process.exit(2);
+    }
+    if (!r.ok) {
+        const body = await r.text().catch(() => '');
+        console.error(
+            `\n  ✗ provider NOT live: HTTP ${r.status}. ${body.slice(0, 300)}\n` +
+            `    (401/403 = key/subscription; 400 'credit' = out of balance; 404 = model not on this plan)\n` +
+            `    Fix the provider/key/model and re-run — NOT spending the design run.\n`,
+        );
+        process.exit(2);
+    }
+    console.log(`  ✓ provider live (HTTP 200) — proceeding\n`);
+}
+
 const prisma = new PrismaClient();
 let failures = 0;
 const ok = (cond, msg) => { console.log(`${cond ? '  ✓' : '  ✗ FAIL:'} ${msg}`); if (!cond) failures++; };
@@ -72,6 +119,19 @@ async function runScenario(label, { orgId, userId, prompt, queue, expectYield })
                 `${label}: live Monte-Carlo yield ran (evaluated=${y?.evaluated}, yield=${y?.yield}, ci95=${JSON.stringify(y?.ci95)})`);
         } else if (res.yield) {
             console.log(`  [info] yield (unexpected but fine): ${JSON.stringify(res.yield).slice(0, 140)}`);
+        }
+        // Multi-candidate fan-out proof (the headline feature): when N>1, the result MUST carry the
+        // candidates envelope + series-free alternatives — otherwise N silently fell back to 1 (e.g. all
+        // screens failed) and we'd be "passing" without ever exercising the fan-out. Hard-assert it here
+        // rather than eyeballing the "multi-candidate design complete" log line.
+        if (CANDIDATES_N > 1) {
+            const c = res.candidates;
+            ok(c && c.generated >= 2, `${label}: multi-candidate fan-out ran (screened=${c?.generated}, want ≥2 — NOT a silent N=1 fallback)`);
+            ok(c && c.finalists >= 1, `${label}: ≥1 finalist ran the full seeded loop (finalists=${c?.finalists})`);
+            ok(Array.isArray(res.alternatives), `${label}: alternatives[] present as series-free summaries (len=${res.alternatives?.length})`);
+            console.log(`  [info] multi-candidate: generated=${c?.generated} finalists=${c?.finalists} llmCalls=${c?.llmCalls}`);
+        } else {
+            console.log(`  [info] N=1 (dark default) — single design loop; set DESIGN_CANDIDATES_N>1 to exercise the fan-out`);
         }
     }
     return row;
@@ -167,6 +227,10 @@ async function main() {
     console.log(`  ngspice: ${process.env.NGSPICE_PATH}`);
     console.log(`  model:   ${process.env.LLM_MODEL}`);
     console.log(`  queue:   ${QUEUE}`);
+    console.log(`  mode:    ${SMOKE ? 'SMOKE (scenario A only)' : 'FULL (A–D)'}  N=${process.env.DESIGN_CANDIDATES_N ?? 1} K=${process.env.DESIGN_FINALISTS_K ?? 2}`);
+
+    // Fail FAST on a down/misconfigured provider so the first real credit isn't burned on a 300s job timeout.
+    await preflightLlm();
 
     // A valid org (DesignJob.orgId is a FK to Organization) + any userId (no FK).
     let org = await prisma.organization.findFirst({ select: { id: true } });
@@ -179,11 +243,23 @@ async function main() {
     const worker = createDesignWorker();
     const queue = new Queue(QUEUE, { connection: { url: REDIS_URL } });
 
-    // Scenario A — the full QUEUE path: a DC divider enqueued → worker → verified in one round.
+    // Scenario A — the full QUEUE path: a DC divider enqueued → worker → verified. With DESIGN_CANDIDATES_N>1
+    // this also exercises (and now HARD-ASSERTS) the multi-candidate fan-out: screen N → selectFinalists →
+    // seeded full-loop → winner-only MC, with the candidates envelope + alternatives[] on the result.
     await runScenario('A: DC divider (full queue path → verify)', {
         orgId: org.id, userId, queue,
         prompt: 'a voltage divider that outputs 5V from a 10V DC source using two equal resistors; the output node is named "out"',
     });
+
+    // SMOKE: stop after scenario A — the cheap first-credit wiring check is done. Run the full suite (and the
+    // full N=4) once the smoke run is green.
+    if (SMOKE) {
+        await worker.close();
+        await queue.close();
+        await prisma.$disconnect();
+        console.log(`\n${failures === 0 ? 'SMOKE PASSED — multi-candidate wiring is live; now run FULL (drop DESIGN_SMOKE, set N=4)' : `${failures} SMOKE CHECK(S) FAILED`}`);
+        process.exit(failures === 0 ? 0 : 1);
+    }
 
     // Scenario B — the worker-local Monte-Carlo YIELD surface, the OTHER half of makeLocalSim, exercised
     // DETERMINISTICALLY with real ngspice (a hand-built toleranced divider, not an LLM that may omit the
