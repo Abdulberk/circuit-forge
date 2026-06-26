@@ -241,13 +241,29 @@ the **grounded SYNC path** (API `generate`/`design`).
 tags by path: `api:generate` / `api:design` (grounded sync) and `worker` (tool-less control). Grep the logs
 for `llm.request`.
 
-**One-time experiment to settle it:**
-1. Run ONE controlled grounded generation that forces a **known** number of tool calls (e.g. a prompt that
-   needs ~4 catalog lookups). Count the `llm.request path=api:generate` log lines → that is the HTTP-call
-   count `H` (e.g. 5 = 4 tool rounds + 1 final; +1 more if a retry fired).
-2. Read the zentio dashboard/invoice request counter **before and after** that single run → delta `D`.
-3. If **D ≈ 1** → billing is per-completion; the cost model stands. If **D ≈ H** → billing is per-HTTP-call;
-   multiply the grounded-path request estimates by the average tool-rounds-per-design and re-derive the quota
-   headroom in §§ above.
-4. Leave the `onLlmRequest` logging on as permanent telemetry (a request-rate metric is the leading indicator
-   for the binding constraint — the request cap, not compute).
+**One-time experiment to settle it** (self-contained — needs nothing outside this section):
+
+Pre-req: an **isolated zentio key window** — no other traffic on the key during the run, or background calls
+pollute the invoice delta `D` (this is where the experiment most often goes wrong).
+
+1. Hit the API grounded `POST /generate-circuit` **once** with a part-heavy prompt (one that triggers several
+   catalog lookups — e.g. *"a 5 V 1 A linear regulator from a 12 V input; pick real parts for the pass
+   transistor and the reference"*), with catalog grounding configured (`TME_TOKEN`/`TME_SECRET` set).
+2. **`H` = the count of `llm.request path=api:generate` log lines emitted BY THAT RUN** — read it from the
+   ACTUAL logs, NOT from a theoretical tool-call count. (Each line is one billed `messages.create`; a transient
+   retry shows as `attempt:2` and is counted, so it lands in `H` — and, being a real billed call, in `D` too,
+   keeping the comparison apples-to-apples.)
+3. Read the zentio dashboard/invoice request counter **immediately before and after** the run → delta `D`.
+4. **Repeat 2–3×** and confirm `H` is stable run-to-run before trusting the `H` vs `D` comparison.
+
+Interpretation:
+
+| Observation | Billing model | Action |
+|---|---|---|
+| **D ≈ 1** (per run, any `H`) | per-COMPLETION | Cost model in §§ above stands — no change. |
+| **D ≈ H** | per-HTTP-call | Multiply the grounded-path request estimates by the avg tool-rounds-per-design (`H̄`) and **re-derive the 107k-req/mo quota headroom** in §§ above; revisit pricing/launch. |
+
+Leave the `onLlmRequest` logging on as **permanent telemetry** afterwards: a request-rate metric is the leading
+indicator for the binding constraint (the request cap, not compute). The `worker` path (tool-less, `noopGround`)
+is the control — it should show exactly **1** `llm.request` per generate/fix, the baseline `H=1` to read the
+grounded paths against.
