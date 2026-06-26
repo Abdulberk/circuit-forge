@@ -152,6 +152,12 @@ services:
       # concern only). If you run async /design-jobs without setting this, jobs sit QUEUED with no consumer.
       LLM_API_KEY: ${LLM_API_KEY:-}
       LLM_MODEL: ${LLM_MODEL:-claude-opus-4-8}
+      # CRITICAL: LLM_BASE_URL must match the API key's provider. llm-core defaults to a GATEWAY base URL when
+      # this is unset, so a direct-Anthropic key with no LLM_BASE_URL is silently sent to the gateway and 401s
+      # (the exact silent-failure the worker container smoke test caught). Passed through from the project .env;
+      # set it to match your key. LLM_USER_AGENT is optional (llm-core sends a neutral UA by default).
+      LLM_BASE_URL: ${LLM_BASE_URL:-}
+      LLM_USER_AGENT: ${LLM_USER_AGENT:-}
       # Optional design admission-control quotas (unset = unlimited; mirror QUOTA_DESIGN_* on the API):
       # QUOTA_DESIGN_CONCURRENT_PER_ORG: "3"
       # QUOTA_DESIGN_JOBS_PER_MONTH: "200"
