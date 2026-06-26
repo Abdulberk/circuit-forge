@@ -26,6 +26,7 @@ import type { DesignRunSim } from '@circuitforge/llm-core';
 import { config } from '../config';
 import { runSimulation } from '../simulation/runner';
 import { runMonteCarloBatch } from '../simulation/montecarlo-runner';
+import { ngspiceSem } from './pools';
 
 /** A finished local run, shaped to answer the loop's getStatus + getResult from memory. */
 interface StoredOutcome {
@@ -48,7 +49,8 @@ export function makeLocalSim(): DesignRunSim {
             // Mirror the API's enqueue default ('tran' when the analysis carries no type).
             const analysisType = (analysisConfig as { type?: string } | undefined)?.type || 'tran';
             // probeNames=[] → runner derives them from the netlist (identical to the API's createQuickSim).
-            const r = await runSimulation({ jobId, netlist, probeNames: [], analysisType });
+            // Acquire one process-global ngspice permit so concurrent candidates/jobs can't oversubscribe CPU.
+            const r = await ngspiceSem.run(() => runSimulation({ jobId, netlist, probeNames: [], analysisType }));
 
             if (r.success && r.result) {
                 const pointsCount = r.result.meta.pointsCount;
@@ -98,14 +100,16 @@ export function makeLocalSim(): DesignRunSim {
             try {
                 // runMonteCarloBatch regenerates a netlist per variant from `circuit` and never throws on a
                 // sim fault (a dead corner is counted errored). The catch below is a defensive net only.
-                const s = await runMonteCarloBatch({
+                // One ngspice permit for the whole batch — it spawns variants SERIALLY, so it uses ≤1 ngspice
+                // at a time; holding one permit for the batch correctly reflects that against the global cap.
+                const s = await ngspiceSem.run(() => runMonteCarloBatch({
                     jobId,
                     circuit,
                     analysis: (analysisConfig ?? {}) as unknown as AnalysisConfig,
                     criteria,
                     ...(opts.n ? { n: opts.n } : {}),
                     ...(opts.seed ? { seed: opts.seed } : {}),
-                });
+                }));
                 store.set(jobId, {
                     status: 'SUCCEEDED',
                     statusMetrics: {

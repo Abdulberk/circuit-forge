@@ -8,8 +8,10 @@
 import type { SimulationJobResult } from '../simulation/runner';
 import type { MonteCarloBatchResult } from '../simulation/montecarlo-runner';
 
-// config loads dotenv + validates env at import → stub it to just the field local-sim reads.
-jest.mock('../config', () => ({ config: { WORKER_MAX_POINTS: 20000 } }));
+// config loads dotenv + validates env at import → stub the fields local-sim + the global pools read.
+jest.mock('../config', () => ({ config: { WORKER_MAX_POINTS: 20000, CONCURRENCY: 2 } }));
+// local-sim now transitively imports ./pools (global semaphores), which logs at init → stub the logger.
+jest.mock('../logger', () => ({ logger: { info: jest.fn(), warn: jest.fn(), error: jest.fn() } }));
 
 const runSimulation = jest.fn<Promise<SimulationJobResult>, [unknown]>();
 const runMonteCarloBatch = jest.fn<Promise<MonteCarloBatchResult>, [unknown]>();
