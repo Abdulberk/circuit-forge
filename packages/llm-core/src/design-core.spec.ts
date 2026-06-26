@@ -4,8 +4,8 @@
  * design-spec-satisfaction suite (mocked SDK + sim); here we only lock the NEW abort hook, which fires at the
  * first checkpoint BEFORE any LLM/sim call — so it needs no Anthropic SDK mock.
  */
-import { runDesignLoop, DesignAbortedError, specCloseness, selectFinalists, type DesignDeps, type ScreenResult } from './design-core';
-import type { AssertionResult, CircuitJson } from '@circuit-forge/eda-core';
+import { runDesignLoop, DesignAbortedError, specCloseness, selectFinalists, screenSpecsMet, type DesignDeps, type ScreenResult } from './design-core';
+import type { AssertionResult, AcceptanceCriterion, CircuitJson } from '@circuit-forge/eda-core';
 
 const A = (over: Partial<AssertionResult>): AssertionResult => ({
     label: 'x', probe: 'out', metric: 'final', op: 'approx', target: 5, tol: 0.5, actual: 5, pass: true, distance: 0, detail: '', ...over,
@@ -36,6 +36,31 @@ describe('specCloseness (candidate screen scoring)', () => {
         const near = specCloseness([A({ target: 5, distance: 0.1 })]);
         const far = specCloseness([A({ target: 5, distance: 2 })]);
         expect(near).toBeLessThan(far);
+    });
+});
+
+describe('screenSpecsMet (S1 screen coverage gate)', () => {
+    const crit = (probe: string): AcceptanceCriterion => ({ probe, metric: 'max', op: 'approx', value: 1 });
+    const passA = (probe: string): AssertionResult => ({ label: '', probe, metric: 'max', op: 'approx', target: 1, actual: 1, pass: true, distance: 0, detail: '' });
+
+    it('a prompt-required CURRENT dimension left uncovered → NOT spec-met even if assertions pass', () => {
+        // The candidate self-graded on a voltage-only rubric while the prompt demanded "10mA" — a lowball.
+        expect(screenSpecsMet([passA('v(out)')], 'deliver 10mA to the load', [crit('v(out)')])).toBe(false);
+    });
+
+    it('the same prompt WITH a current criterion that passes → spec-met', () => {
+        expect(
+            screenSpecsMet([passA('v(out)'), passA('i(R1)')], 'deliver 10mA to the load', [crit('v(out)'), crit('i(R1)')]),
+        ).toBe(true);
+    });
+
+    it('no prompt-required enforceable dimension → spec-met when all assertions pass (unchanged behaviour)', () => {
+        expect(screenSpecsMet([passA('v(out)')], 'a 5V voltage divider', [crit('v(out)')])).toBe(true);
+    });
+
+    it('a failing assertion or no assertions → not spec-met', () => {
+        expect(screenSpecsMet([{ ...passA('v(out)'), pass: false }], 'a divider', [crit('v(out)')])).toBe(false);
+        expect(screenSpecsMet([], 'anything', [])).toBe(false);
     });
 });
 
