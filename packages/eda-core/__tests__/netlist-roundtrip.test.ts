@@ -64,7 +64,35 @@ describe('SPICE round-trip — .model / .subckt survive (Faz A #1)', () => {
         expect(sub!.body).toMatch(/^\.subckt OPAMP1 out inp inn/i);
         expect(sub!.body).toContain('E1 out 0 inp inn 100k');
         expect(sub!.body).toMatch(/\.ends/i);
-        expect(sub!.ports).toEqual(['out', 'inp', 'inn']); // ports recovered from the header for binding
+        // ports are deliberately NOT recovered (audit #4): the instance is reconstructed with POSITIONAL
+        // pinIds, so recovering named ports would make the generator demand named pins → 'missing pin' on
+        // re-export. Undefined ports keeps the positional binding, which re-exports cleanly.
+        expect(sub!.ports).toBeUndefined();
+        // the macromodel + its instance re-export WITHOUT throwing (the bug the fix addresses) + still wires X1.
+        expect(() => generateNetlist(parsed.circuit, { type: 'op' } as OpAnalysis)).not.toThrow();
+        expect(generateNetlist(parsed.circuit, { type: 'op' } as OpAnalysis)).toMatch(/^X1\s+\S+\s+\S+\s+\S+\s+OPAMP1/im);
+    });
+});
+
+describe('SPICE round-trip — .control output block is NOT parsed as components (audit #1)', () => {
+    it('consumes a .control … .endc block instead of injecting phantom devices', () => {
+        const deck = [
+            '* My amp', 'V1 in 0 DC 5', 'R1 in out 1k', 'R2 out 0 2k',
+            '.control', '  set filetype=ascii', '  tran 1u 1m', '  dc V1 0 5 0.1',
+            '  let ratio = v(out)/v(in)', '  wrdata output.csv v(out)', '.endc', '.end',
+        ].join('\n');
+        const parsed = parseNetlist(deck);
+        // ONLY the real devices — no phantom tline/diode/inductor from tran/dc/let in the control body.
+        expect(parsed.circuit.components.map((c) => c.designator).sort()).toEqual(['GND1', 'R1', 'R2', 'V1']);
+        const types = parsed.circuit.components.map((c) => c.type);
+        expect(types).not.toContain('tline');
+        expect(types).not.toContain('diode');
+        expect(types).not.toContain('inductor');
+        // no phantom nets (the control body's tokens must not enter the net list)
+        const netIds = parsed.circuit.nets.map((n) => n.id);
+        for (const phantom of ['1u', '1m', 'ratio', '=']) expect(netIds).not.toContain(phantom);
+        // an analysis stated INSIDE the control block is recovered (not lost)
+        expect(parsed.analysis).toBeTruthy();
     });
 });
 
