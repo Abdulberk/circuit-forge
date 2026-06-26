@@ -154,11 +154,12 @@ export const GENERIC_MODELS: Record<string, ModelDef> = {
     },
     // Generic IGBT — a gate-threshold (~4.5 V) MOSFET input stage with a series offset diode that
     // approximates the collector-emitter saturation offset. Switches the collector-emitter path on/off
-    // with the gate voltage. KP=5 sizes the saturation-current ceiling for power-switch currents
-    // (Id_max = (KP/2)(Vge-VTO)^2 ⇒ ~15 A at the recommended Vge=10 V drive); at light loads the
-    // on-state Vce is a soft saturation (~0.7–1.2 V), not a fixed Vce(sat). Rge is a high-value (100 MΩ)
-    // gate-emitter reference so an undriven/floating gate net is not a singular node (mirrors SCRGEN's
-    // gate reference); it is electrically negligible for a real driven gate. 'generic' fidelity
+    // with the gate voltage. KP sizes the saturation-current ceiling for a LEVEL=1 device (W/L defaults to
+    // 1): Id_max = (KP/2)(Vge−VTO)^2, so KP=0.99 ⇒ (0.99/2)(10−4.5)^2 ≈ 15 A at the recommended Vge=10 V
+    // drive. (KP was 5, which actually delivered ~75 A — 5× the documented ceiling; audit #9.) At light
+    // loads the on-state Vce is a soft saturation (~0.7–1.2 V), not a fixed Vce(sat). Rge is a high-value
+    // (100 MΩ) gate-emitter reference so an undriven/floating gate net is not a singular node (mirrors
+    // SCRGEN's gate reference); it is electrically negligible for a real driven gate. 'generic' fidelity
     // (no tail current / dynamic model / reverse-blocking). Ports: c, g, e.
     igbt: {
         name: 'IGBTGEN',
@@ -170,7 +171,7 @@ export const GENERIC_MODELS: Record<string, ModelDef> = {
             'M1 cm g e e MGIG',
             'D1 c cm DIG',
             'Rge g e 100meg',
-            '.model MGIG NMOS(LEVEL=1 VTO=4.5 KP=5)',
+            '.model MGIG NMOS(LEVEL=1 VTO=4.5 KP=0.99)',
             '.model DIG D(IS=1e-12 N=1)',
             '.ends',
         ].join('\n'),

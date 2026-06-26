@@ -17,6 +17,11 @@ export interface SimMeasurement {
      *  `.ac` magnitude series — `null` when the sweep doesn't bracket exactly one −3 dB crossing (flat,
      *  out-of-band, or band-pass/resonant ambiguity). Undefined for tran/dc/op and for phase series. */
     cutoff?: number | null;
+    /** FULL-PRECISION min/max/final/pp for the assertion evaluator. The fields above are rounded to 4 sig
+     *  figs for display/AI reasoning, but that rounding can flip a marginal approx/relational check (audit
+     *  #8), so the verdict math reads these instead. Optional so an older serialized measurement degrades
+     *  gracefully to the rounded fields. */
+    raw?: { min: number; max: number; final: number; pp: number };
 }
 
 /** Distil one series to {min,max,final,pp} (+ the −3 dB cutoff for an AC magnitude series). Empty series
@@ -42,15 +47,19 @@ export function summarizeSeries(s: DataSeries, analysisType?: string): SimMeasur
     // time/DC stats. Result is `null` when not determinable.
     const ac = analysisType === 'ac' && isAcMagnitudeSeries(s.name);
     if (count === 0) {
-        return { node: s.name, min: 0, max: 0, final: 0, pp: 0, ...(ac ? { cutoff: null } : {}) };
+        return { node: s.name, min: 0, max: 0, final: 0, pp: 0, raw: { min: 0, max: 0, final: 0, pp: 0 }, ...(ac ? { cutoff: null } : {}) };
     }
     const round = (n: number) => Number(n.toPrecision(4));
+    const rawPp = max - min;
     return {
         node: s.name,
+        // Rounded for display / AI reasoning…
         min: round(min),
         max: round(max),
         final: round(final),
-        pp: round(max - min),
+        pp: round(rawPp),
+        // …full precision for the verdict (audit #8 — rounding here can flip a marginal check).
+        raw: { min, max, final, pp: rawPp },
         ...(ac ? { cutoff: cutoffFrequency(s.points) } : {}),
     };
 }

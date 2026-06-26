@@ -898,5 +898,15 @@ describe('active devices', () => {
             });
             expect(extra.map((m) => m.name)).toContain('IGBTGEN');
         });
+
+        it('sizes KP so the model delivers its documented ~15 A ceiling, not 5× that (audit #9)', () => {
+            const body = GENERIC_MODELS.igbt!.body;
+            const kp = Number(/KP=([0-9.]+)/.exec(body)![1]);
+            const vto = Number(/VTO=([0-9.]+)/.exec(body)![1]);
+            // LEVEL=1 saturation, W/L defaults to 1: Id_max = (KP/2)(Vge−VTO)^2 at the recommended Vge=10 V.
+            const idMax = (kp / 2) * (10 - vto) ** 2;
+            expect(idMax).toBeGreaterThan(12);
+            expect(idMax).toBeLessThan(18); // KP=5 → ~75 A would blow past this
+        });
     });
 });

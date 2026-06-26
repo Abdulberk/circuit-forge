@@ -310,6 +310,143 @@ describe('ErcChecker', () => {
 
             expect(result.issues.some(i => i.code === ErcCode.PARALLEL_VOLTAGE_SOURCES)).toBe(false);
         });
+
+        it('flags a source shorted across two DIFFERENT ground nets (audit #6)', () => {
+            // gnd1 and gnd2 are both ground → electrically ONE node, so V1 is shorted. The old check compared
+            // raw netIds (gnd1 !== gnd2) and missed it.
+            const circuit: CircuitJson = {
+                version: '1.0',
+                components: [
+                    createComponent('V1', 'voltage_source', 'V1', 'DC 5', [
+                        { pinId: '+', netId: 'gnd1' },
+                        { pinId: '-', netId: 'gnd2' },
+                    ]),
+                ],
+                nets: [createNet('gnd1', 'gnd1', true), createNet('gnd2', 'gnd2', true)],
+            };
+            const result = runErc(circuit);
+            expect(result.issues.some(i => i.code === ErcCode.VOLTAGE_SOURCE_SHORT)).toBe(true);
+        });
+
+        it('flags parallel sources across DIFFERENT ground nets with conflicting values (audit #7)', () => {
+            // sig↔gnd1=5 and sig↔gnd2=10 are in parallel once the two grounds collapse to one node. The old
+            // raw-netId key ('sig:gnd1' vs 'sig:gnd2') put them in separate buckets and missed the conflict.
+            const circuit: CircuitJson = {
+                version: '1.0',
+                components: [
+                    createComponent('V1', 'voltage_source', 'V1', 'DC 5', [
+                        { pinId: '+', netId: 'sig' },
+                        { pinId: '-', netId: 'gnd1' },
+                    ]),
+                    createComponent('V2', 'voltage_source', 'V2', 'DC 10', [
+                        { pinId: '+', netId: 'sig' },
+                        { pinId: '-', netId: 'gnd2' },
+                    ]),
+                ],
+                nets: [createNet('sig', 'sig'), createNet('gnd1', 'gnd1', true), createNet('gnd2', 'gnd2', true)],
+            };
+            const result = runErc(circuit);
+            expect(result.issues.some(i => i.code === ErcCode.PARALLEL_VOLTAGE_SOURCES)).toBe(true);
+        });
+
+        it('flags an ANTI-PARALLEL equal-magnitude pair (+5 vs −5 across a↔0) — audit #7 polarity', () => {
+            // V1 forces V(a)−V(0)=+5; V2 (terminals reversed) forces V(0)−V(a)=+5, i.e. V(a)−V(0)=−5. Two
+            // contradictory forced voltages = over-determination. The old string compare saw "5" == "5".
+            const circuit: CircuitJson = {
+                version: '1.0',
+                components: [
+                    createComponent('V1', 'voltage_source', 'V1', 'DC 5', [
+                        { pinId: '+', netId: 'a' },
+                        { pinId: '-', netId: '0' },
+                    ]),
+                    createComponent('V2', 'voltage_source', 'V2', 'DC 5', [
+                        { pinId: '+', netId: '0' },
+                        { pinId: '-', netId: 'a' },
+                    ]),
+                ],
+                nets: [createNet('a', 'a'), createNet('0', '0', true)],
+            };
+            const result = runErc(circuit);
+            expect(result.issues.some(i => i.code === ErcCode.PARALLEL_VOLTAGE_SOURCES)).toBe(true);
+        });
+
+        it('does NOT flag two genuinely identical parallel sources (redundancy, not conflict)', () => {
+            // Same orientation, same value → a redundancy we deliberately leave alone (no false positive).
+            const circuit: CircuitJson = {
+                version: '1.0',
+                components: [
+                    createComponent('V1', 'voltage_source', 'V1', 'DC 5', [
+                        { pinId: '+', netId: 'a' },
+                        { pinId: '-', netId: '0' },
+                    ]),
+                    createComponent('V2', 'voltage_source', 'V2', 'DC 5', [
+                        { pinId: '+', netId: 'a' },
+                        { pinId: '-', netId: '0' },
+                    ]),
+                ],
+                nets: [createNet('a', 'a'), createNet('0', '0', true)],
+            };
+            const result = runErc(circuit);
+            expect(result.issues.some(i => i.code === ErcCode.PARALLEL_VOLTAGE_SOURCES)).toBe(false);
+        });
+    });
+
+    describe('Ground Reachability (isolated sub-circuit, audit #3)', () => {
+        it('flags an analog island with no path back to ground', () => {
+            // A grounded main circuit (V1/R1 on vcc↔0) plus a DISCONNECTED V2/R2 loop on a↔b. The island
+            // simulates as a float yet passes every per-net check — this is what ERC must catch.
+            const circuit: CircuitJson = {
+                version: '1.0',
+                components: [
+                    createComponent('V1', 'voltage_source', 'V1', 'DC 5', [
+                        { pinId: '+', netId: 'vcc' },
+                        { pinId: '-', netId: '0' },
+                    ]),
+                    createComponent('R1', 'resistor', 'R1', '1k', [
+                        { pinId: '1', netId: 'vcc' },
+                        { pinId: '2', netId: '0' },
+                    ]),
+                    createComponent('V2', 'voltage_source', 'V2', 'DC 3', [
+                        { pinId: '+', netId: 'a' },
+                        { pinId: '-', netId: 'b' },
+                    ]),
+                    createComponent('R2', 'resistor', 'R2', '2k', [
+                        { pinId: '1', netId: 'a' },
+                        { pinId: '2', netId: 'b' },
+                    ]),
+                ],
+                nets: [createNet('vcc', 'vcc'), createNet('0', '0', true), createNet('a', 'a'), createNet('b', 'b')],
+            };
+            const result = runErc(circuit);
+            const island = result.issues.find(i => i.code === ErcCode.ISOLATED_SUBCIRCUIT);
+            expect(island).toBeDefined();
+            expect(island!.relatedIds).toEqual(expect.arrayContaining(['a', 'b']));
+            // the grounded nets are NOT named as islands
+            expect(island!.relatedIds).not.toContain('vcc');
+        });
+
+        it('does NOT flag a fully-grounded circuit', () => {
+            const circuit: CircuitJson = {
+                version: '1.0',
+                components: [
+                    createComponent('V1', 'voltage_source', 'V1', 'DC 5', [
+                        { pinId: '+', netId: 'vcc' },
+                        { pinId: '-', netId: '0' },
+                    ]),
+                    createComponent('R1', 'resistor', 'R1', '1k', [
+                        { pinId: '1', netId: 'vcc' },
+                        { pinId: '2', netId: 'out' },
+                    ]),
+                    createComponent('R2', 'resistor', 'R2', '2k', [
+                        { pinId: '1', netId: 'out' },
+                        { pinId: '2', netId: '0' },
+                    ]),
+                ],
+                nets: [createNet('vcc', 'vcc'), createNet('out', 'out'), createNet('0', '0', true)],
+            };
+            const result = runErc(circuit);
+            expect(result.issues.some(i => i.code === ErcCode.ISOLATED_SUBCIRCUIT)).toBe(false);
+        });
     });
 
     describe('Pin Count Validation', () => {

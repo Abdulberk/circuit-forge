@@ -669,9 +669,13 @@ function componentToSpice(
             return `${spiceInstanceName(designator, prefix)} ${nodes.join(' ')} ${v}`;
         }
 
+        // A source is POLARIZED: SPICE reads `V<name> n+ n- <value>`, and reversing n+/n- sign-flips the
+        // supply/stimulus (the deck still simulates, but the verdict is computed against an inverted source).
+        // Bind by pinId in canonical (+,-) order — like every other polarized device (diode/bjt/mosfet) —
+        // NOT the authored pin-array order, so a source authored [-,+] is not silently reverse-connected.
         case 'voltage_source':
         case 'current_source':
-            return `${spiceInstanceName(designator, prefix)} ${nodes.join(' ')} ${value || 'DC 0'}`;
+            return `${spiceInstanceName(designator, prefix)} ${orderedNodes(component, nodeMap).join(' ')} ${value || 'DC 0'}`;
 
         // Linear voltage-controlled sources. Nodes are bound by pinId in canonical order
         // (out+ out- ctrl+ ctrl-) so authored order is irrelevant; `value` is the gain (E, V/V) or the

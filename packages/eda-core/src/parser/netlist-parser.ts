@@ -119,6 +119,31 @@ export function parseNetlist(netlist: string): NetlistParseResult {
 
         // Directives — analysis, plus the round-trip-critical cards the parser used to silently drop.
         if (line.startsWith('.')) {
+            // .control ... .endc — an ngspice OUTPUT/SWEEP control block, NOT circuit topology. Its body is
+            // dotless commands (set/run/wrdata/let/alter/print/plot, and sometimes the analysis itself like
+            // `tran 1u 1m`). Without consuming the block, every dotless body line falls through to
+            // parseComponentLine and is misread as a component by its first letter (T→tline, D→diode,
+            // L→inductor, …), injecting PHANTOM devices + phantom nets that then re-export + simulate to a
+            // wrong answer. Consume the whole block like .subckt/.ends; recover an analysis command if one is
+            // stated inside it (equivalent to the `.tran`/`.ac`/`.dc`/`.op` dot-card).
+            if (lower.startsWith('.control')) {
+                let j = i + 1;
+                for (; j < logical.length; j++) {
+                    const body = logical[j]!.text.trim();
+                    if (body.toLowerCase().startsWith('.endc')) break;
+                    const head = body.split(/\s+/)[0]?.toLowerCase();
+                    if (head === 'tran' || head === 'ac' || head === 'dc' || head === 'op') {
+                        const a = parseDirective('.' + body);
+                        if (a) analysis = a;
+                    }
+                }
+                if (j >= logical.length) {
+                    warnings.push(`Line ${lineNo}: .control block has no matching .endc — skipped to end of file`);
+                }
+                i = j; // consume through .endc
+                continue;
+            }
+
             // .subckt NAME port... <body...> .ends  — capture the whole block as one ModelDef body, so a
             // re-export emits an identical macromodel (without this the subckt body is lost and the
             // re-exported deck references an undefined subcircuit and no longer simulates).
@@ -137,14 +162,12 @@ export function parseNetlist(netlist: string): NetlistParseResult {
                 }
                 if (name && !seenModelNames.has(name.toLowerCase())) {
                     seenModelNames.add(name.toLowerCase());
-                    // Ports are the node tokens after the name, excluding any params: / key=value tail.
-                    const portStart = header.slice(2);
-                    const ports: string[] = [];
-                    for (const tok of portStart) {
-                        if (tok.includes('=') || tok.toLowerCase() === 'params:') break;
-                        ports.push(tok);
-                    }
-                    models.push({ name, device: 'subckt', body: bodyLines.join('\n'), ...(ports.length ? { ports } : {}) });
+                    // Do NOT populate ModelDef.ports for a PARSED subckt. The instance that references it was
+                    // reconstructed with POSITIONAL pinIds ('1'..'N') in port order; if we also set ModelDef.ports
+                    // to the recovered names, the generator's pin-resolution expects those NAMES on the instance
+                    // and throws 'missing pin' on re-export. Leaving ports undefined keeps the positional binding
+                    // (which is already correct), so the macromodel round-trips + re-simulates.
+                    models.push({ name, device: 'subckt', body: bodyLines.join('\n') });
                 }
                 i = j; // consume through .ends
                 continue;

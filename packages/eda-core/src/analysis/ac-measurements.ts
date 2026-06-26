@@ -37,6 +37,18 @@ export function cutoffFrequency(points: ReadonlyArray<FreqMagPoint>): number | n
     for (const p of pts) if (p.y > peak) peak = p.y;
     if (!(peak > 0)) return null; // all-zero response (e.g. no AC source magnitude) — nothing to locate
 
+    // Trust the in-window peak as the PASSBAND reference only if the sweep actually captured a flat passband
+    // around it (audit #10). If the swept window sits entirely in the roll-off, the maximum is a lone edge
+    // sample — anchoring the −3 dB threshold (peak/√2) to it certifies a corner that is simply WRONG. A real
+    // passband shows a PLATEAU: several samples within ~0.5 dB of the peak. Fewer than that → "not
+    // determinable" (null), never a guessed corner. (A mid-band plateau flanked by roll-off on BOTH sides is
+    // a band-pass — already null via the >1-crossing rule below.)
+    const FLAT_RATIO = 0.944; // 10^(−0.5/20): within ~0.5 dB of the peak
+    const MIN_PLATEAU_POINTS = 3;
+    let plateauPoints = 0;
+    for (const p of pts) if (p.y >= peak * FLAT_RATIO) plateauPoints++;
+    if (plateauPoints < MIN_PLATEAU_POINTS) return null;
+
     const threshold = peak / Math.SQRT2;
     const crossings: number[] = [];
     for (let i = 0; i < pts.length - 1; i++) {

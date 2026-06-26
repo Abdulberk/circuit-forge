@@ -29,6 +29,7 @@ export const ERC_DESCRIPTIONS: Record<ErcCode, string> = {
     [ErcCode.WRONG_VALUE_UNIT]: 'Component value carries a unit inconsistent with its type (e.g. farads on a resistor)',
     [ErcCode.UNCONNECTED_NET]: 'Net defined but not connected to any components',
     [ErcCode.NET_HAS_SINGLE_PIN]: 'Net has only one pin connection (dead end)',
+    [ErcCode.ISOLATED_SUBCIRCUIT]: 'Node has no connection back to ground (an isolated sub-circuit that floats)',
     [ErcCode.DIGITAL_PIN_SHAPE]: 'Digital component is missing a required pin (output and/or inputs)',
     [ErcCode.FLOATING_DIGITAL_INPUT]: 'Digital input is not driven by any source (would be an unknown state)',
     [ErcCode.DIGITAL_BUS_CONTENTION]: 'Multiple digital outputs drive the same net',
@@ -61,6 +62,10 @@ export const ERC_SEVERITIES: Record<ErcCode, ErcSeverity> = {
     [ErcCode.WRONG_VALUE_UNIT]: 'warning', // ngspice uses only the NUMBER, so "4.7uF" on a resistor silently means 4.7uΩ
     [ErcCode.UNCONNECTED_NET]: 'info',
     [ErcCode.NET_HAS_SINGLE_PIN]: 'warning',
+    // A truly disconnected analog block is electrically meaningless — but the detector is deliberately
+    // conservative (only ≥2-analog-pin nodes with NO component path to ground, and only when a ground exists),
+    // so flagging it as an error is safe and stops a "verified" island slipping through.
+    [ErcCode.ISOLATED_SUBCIRCUIT]: 'error',
     [ErcCode.DIGITAL_PIN_SHAPE]: 'error', // can't emit a valid a-device without the right pins
     [ErcCode.FLOATING_DIGITAL_INPUT]: 'error', // an undriven digital input is unknown ('U') — a real bug
     [ErcCode.DIGITAL_BUS_CONTENTION]: 'error', // two pushing outputs on one net — needs a tristate/bus
