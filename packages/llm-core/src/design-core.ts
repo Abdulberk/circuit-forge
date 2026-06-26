@@ -366,7 +366,9 @@ async function pollJob(deps: DesignDeps, jobId: string): Promise<{ status: strin
     return { status: 'POLL_TIMEOUT' };
 }
 
-async function runYieldAnalysis(
+// Exported so the multi-candidate orchestrator (stage 2) can run the Monte-Carlo yield pass on the WINNER
+// ONLY — the single most important cost lever (1 MC batch/request, never N×300).
+export async function runYieldAnalysis(
     deps: DesignDeps,
     circuit: CircuitJson,
     analysis: AnalysisConfig,
@@ -424,4 +426,98 @@ function mergeCriteria(
         merged.push(c);
     }
     return merged;
+}
+
+// ---------------------------------------------------------------------------------------------------------
+// Multi-candidate building blocks (stage 1). UNUSED by runDesignLoop — they exist for the stage-2 orchestrator,
+// so this stage ships DARK (runDesignLoop is byte-identical). They reuse the SAME eda-core path
+// (generateNetlist → summarizeSeries → evaluateAssertions) so the cheap screen sees identical evidence.
+// ---------------------------------------------------------------------------------------------------------
+
+/** A spec-closeness score for ranking screened candidates: the summed, target-normalized absolute miss across
+ *  the acceptance criteria (LOWER = closer to spec; 0 = dead-on). An unmeasured criterion costs a full unit;
+ *  no criteria → Infinity (can't rank). Pure — no I/O; unit-tested. */
+export function specCloseness(assertions: AssertionResult[]): number {
+    if (assertions.length === 0) return Number.POSITIVE_INFINITY;
+    let sum = 0;
+    for (const a of assertions) {
+        const denom = Math.abs(a.target) > 1e-12 ? Math.abs(a.target) : a.tol && a.tol > 1e-12 ? a.tol : 1;
+        sum += a.distance === null ? 1 : Math.abs(a.distance) / denom;
+    }
+    return sum;
+}
+
+/** The result of screening ONE candidate: generated + simulated ONCE (no fix loop, no Monte-Carlo). */
+export interface ScreenResult {
+    circuit: CircuitJson;
+    analysisConfig: AnalysisConfig;
+    explanation?: string;
+    acceptanceCriteria: AcceptanceCriterion[];
+    assertions: AssertionResult[];
+    /** SUCCEEDED with >0 points — the sim produced usable evidence. */
+    simHealthy: boolean;
+    pointsCount: number;
+    /** Every acceptance criterion passed on the FIRST shot (rare; most need a fix round). */
+    specsMet: boolean;
+    /** specCloseness over the assertions; Infinity when the sim wasn't healthy (can't score). */
+    closeness: number;
+    simStatus: string;
+}
+
+/**
+ * Generate ONE candidate and simulate it ONCE — no AI-fix loop, no Monte-Carlo. The cheap Stage-1 screen of
+ * the multi-candidate plan: cost ≈ one LLM request + one nominal sim. `deps.llmConfig.temperature` (set by the
+ * orchestrator per candidate) drives topology diversity. Never throws — a generation/sim failure returns a
+ * not-simHealthy result with closeness = Infinity (it sorts last). Mirrors runDesignLoop's round-1 evidence
+ * path exactly, minus the fix/MC stages.
+ */
+export async function screenCandidate(input: DesignLoopInput, deps: DesignDeps): Promise<ScreenResult> {
+    const groundingOpts = deps.ground.grounding();
+    const gen = await generateCircuit(
+        { prompt: input.prompt, constraints: input.constraints },
+        deps.llmConfig,
+        groundingOpts as Parameters<typeof generateCircuit>[2],
+    );
+    const circuit: CircuitJson = gen.circuit;
+    attachGenericModels(circuit);
+    const analysis: AnalysisConfig = gen.analysisConfig;
+    const criteria = (gen.acceptanceCriteria ?? []) as AcceptanceCriterion[];
+    const currentProbes = criteria.filter((c) => isCurrentProbe(c.probe)).map((c) => c.probe);
+
+    let assertions: AssertionResult[] = [];
+    let simHealthy = false;
+    let pointsCount = 0;
+    let simStatus = 'UNKNOWN';
+    try {
+        const netlist = generateNetlist(circuit, analysis, currentProbes.length ? { extraProbes: currentProbes } : {});
+        const { jobId } = await deps.runSim.createQuickSim(netlist, analysis as unknown as Record<string, unknown>, deps.userId);
+        const status = await pollJob(deps, jobId);
+        simStatus = status.status;
+        const result = (await deps.runSim.getResult(jobId, deps.userId)) as {
+            result?: { meta?: { pointsCount?: number }; series?: DataSeries[] };
+            metrics?: { pointsCount?: number };
+        };
+        const statusMetrics = status.metrics as { pointsCount?: number } | undefined;
+        pointsCount = statusMetrics?.pointsCount ?? result?.metrics?.pointsCount ?? result?.result?.meta?.pointsCount ?? 0;
+        simHealthy = status.status === 'SUCCEEDED' && pointsCount > 0;
+        if (simHealthy && criteria.length > 0) {
+            const measurements = (result.result?.series ?? []).map((s) => summarizeSeries(s, analysis.type));
+            assertions = evaluateAssertions(measurements, criteria);
+        }
+    } catch {
+        // a screen sim/infra failure → not healthy; closeness Infinity → this candidate sorts last.
+    }
+
+    return {
+        circuit,
+        analysisConfig: analysis,
+        explanation: gen.explanation,
+        acceptanceCriteria: criteria,
+        assertions,
+        simHealthy,
+        pointsCount,
+        specsMet: assertions.length > 0 && assertions.every((a) => a.pass),
+        closeness: simHealthy ? specCloseness(assertions) : Number.POSITIVE_INFINITY,
+        simStatus,
+    };
 }
