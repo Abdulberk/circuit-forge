@@ -137,7 +137,7 @@ export function evaluateAssertions(
                 detail: simOk ? `probe "${a.probe}" not found in simulation output` : 'simulation did not produce results',
             };
         }
-        let actual: number;
+        let measured: number;
         if (a.metric === 'cutoff') {
             // The −3 dB corner is derived ONLY for an AC magnitude series; it is `null` when the sweep didn't
             // bracket exactly one crossing (flat / out-of-band / band-pass) and absent for a non-AC run.
@@ -152,15 +152,29 @@ export function evaluateAssertions(
                     detail: `cutoff(${a.probe}) not determinable — use an AC analysis ("type":"ac") on a source declared "AC 1" and widen the sweep so |H| crosses −3 dB exactly once around the corner`,
                 };
             }
-            actual = fc;
+            measured = fc;
         } else {
-            // Current is SIGNED by device pin order in ngspice (a correctly-wired resistor's @r1[i] can read
-            // negative); a current spec is a magnitude ("~10mA through R1"), so compare |current|. Node
-            // voltages are unaffected; pp is already ≥ 0. Without this, a sound design fails its own current
-            // criterion forever (the fix loop can never satisfy a positive target against a negative reading).
-            actual = isCurrentProbe(a.probe) ? Math.abs(m[a.metric]) : m[a.metric];
+            // Read FULL-PRECISION values (the rounded display fields can flip a marginal check — audit #8).
+            const src = m.raw ?? { min: m.min, max: m.max, final: m.final, pp: m.pp };
+            if (isCurrentProbe(a.probe)) {
+                // Current is SIGNED by device pin order in ngspice (a correctly-wired resistor's @r1[i] can
+                // read negative); a current spec is a MAGNITUDE ("~10mA through R1"). For a PEAK query
+                // (min/max) the worst case is the largest |excursion| in EITHER direction — |max| alone
+                // misses a large NEGATIVE swing (audit #5). final is one signed instant; pp is already ≥ 0.
+                // Taking the magnitude here is also why a sound design can satisfy a positive current target
+                // (the fix loop can't chase a positive spec against a negative reading otherwise).
+                measured =
+                    a.metric === 'max' || a.metric === 'min'
+                        ? Math.max(Math.abs(src.min), Math.abs(src.max))
+                        : Math.abs(src[a.metric]);
+            } else {
+                measured = src[a.metric];
+            }
         }
-        const pass = compareAssertion(actual, a.op, a.value, a.tol);
+        // Verdict on the full-precision `measured`; round ONLY for display (audit #8). A cutoff is a frequency
+        // already reported at full precision, so it is shown as-is (matches prior behaviour).
+        const pass = compareAssertion(measured, a.op, a.value, a.tol);
+        const actual = a.metric === 'cutoff' ? measured : Number(measured.toPrecision(4));
         return {
             ...base,
             actual,

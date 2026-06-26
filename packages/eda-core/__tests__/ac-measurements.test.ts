@@ -47,6 +47,16 @@ describe('cutoffFrequency', () => {
     it('returns null when the sweep does NOT reach the corner', () => {
         expect(cutoffFrequency(logSweep(10, 500).map(lowPass(1000)))).toBeNull();
     });
+    it('returns null when the sweep sits entirely in the ROLL-OFF (no flat passband captured — audit #10)', () => {
+        // A 1 kHz low-pass swept 2 kHz–1 MHz: every sample is already attenuated, so the in-window maximum
+        // is a lone edge sample. The old code anchored −3 dB to it and certified a bogus ~3 kHz corner;
+        // without a captured passband plateau the honest answer is null.
+        const pts = logSweep(2000, 1_000_000).map(lowPass(1000));
+        const peak = Math.max(...pts.map((p) => p.y));
+        // there IS a peak/√2 crossing in-window, so the OLD code would have returned a (wrong) number
+        expect(pts.some((p) => p.y < peak / Math.SQRT2)).toBe(true);
+        expect(cutoffFrequency(pts)).toBeNull();
+    });
     it('returns null for a BAND-PASS (two −3 dB edges — ambiguous)', () => {
         const pts = logSweep(100, 100_000).map(bandPass(3000, 3));
         const peak = Math.max(...pts.map((p) => p.y));
