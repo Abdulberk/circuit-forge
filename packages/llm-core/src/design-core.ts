@@ -469,6 +469,20 @@ export function specCloseness(assertions: AssertionResult[]): number {
     return sum;
 }
 
+/** Screen-stage "spec-met" gate (audit S1). Each screened candidate is graded against its OWN self-written
+ *  acceptanceCriteria, so a candidate that LOWBALLS its rubric (omits a current/frequency criterion the
+ *  prompt demanded) would otherwise show specsMet=true and crowd a thorough candidate out of a finalist slot.
+ *  Apply the SAME coverage gate the finalist loop already enforces: a candidate is spec-met only if every
+ *  assertion passes AND no prompt-required, enforceable dimension is left unmeasured. Derives required
+ *  dimensions from the ORIGINAL prompt (never the per-candidate directive-augmented constraints, which could
+ *  distort detection). Deterministic — no extra LLM/sim call. The finalist-stage gate (uncovered → not
+ *  verified) remains the backstop; this only fixes the screen RANKING, and composes under S2's robustness
+ *  ordering (which runs only among coverage-complete passers). */
+export function screenSpecsMet(assertions: AssertionResult[], prompt: string, criteria: AcceptanceCriterion[]): boolean {
+    if (assertions.length === 0 || !assertions.every((a) => a.pass)) return false;
+    return uncoveredRequiredDimensions(prompt, criteria).length === 0;
+}
+
 /** The result of screening ONE candidate: generated + simulated ONCE (no fix loop, no Monte-Carlo). */
 export interface ScreenResult {
     circuit: CircuitJson;
@@ -538,7 +552,7 @@ export async function screenCandidate(input: DesignLoopInput, deps: DesignDeps):
         assertions,
         simHealthy,
         pointsCount,
-        specsMet: assertions.length > 0 && assertions.every((a) => a.pass),
+        specsMet: screenSpecsMet(assertions, input.prompt, criteria),
         closeness: simHealthy ? specCloseness(assertions) : Number.POSITIVE_INFINITY,
         simStatus,
     };
