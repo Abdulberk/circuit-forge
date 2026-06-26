@@ -101,6 +101,9 @@ export interface GenerateCircuitConfig {
      *  (default 300000). When spent, the loop stops offering tools and forces a final answer rather than
      *  burning another round — a safety ceiling on a pathological tool loop's cost. */
     tokenBudget?: number;
+    /** Sampling temperature (0..1). Omitted → the provider default. Multi-candidate generation varies this
+     *  across candidates to get DIVERSE topologies from one prompt; single-shot generate/fix leaves it unset. */
+    temperature?: number;
 }
 
 /**
@@ -192,6 +195,7 @@ interface Resolved {
     maxTokens: number;
     maxToolIters: number;
     tokenBudget: number;
+    temperature?: number;
 }
 
 function setup(config: GenerateCircuitConfig): Resolved {
@@ -216,6 +220,7 @@ function setup(config: GenerateCircuitConfig): Resolved {
         maxTokens: config.maxTokens || DEFAULT_MAX_TOKENS,
         maxToolIters: config.maxToolIters ?? MAX_TOOL_ITERS,
         tokenBudget: config.tokenBudget ?? DEFAULT_TOKEN_BUDGET,
+        temperature: config.temperature,
     };
 }
 
@@ -371,6 +376,7 @@ async function callModel(
             const response = await createWithRetry({
                 model: r.model,
                 max_tokens: r.maxTokens,
+                ...(r.temperature !== undefined ? { temperature: r.temperature } : {}),
                 system: [{ type: 'text', text: system, cache_control: { type: 'ephemeral' } }],
                 messages: convo,
                 ...(allowTools ? { tools: opts!.tools } : {}),
@@ -751,4 +757,9 @@ export {
     type DesignRunSim,
     type DesignGround,
     type RoundRecord,
+    // Multi-candidate building blocks (stage 1) — used by the worker's stage-2 orchestrator.
+    runYieldAnalysis,
+    screenCandidate,
+    specCloseness,
+    type ScreenResult,
 } from './design-core';
