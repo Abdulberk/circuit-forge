@@ -125,7 +125,8 @@ export class AssetsService {
         }
 
         const [items, total] = await Promise.all([
-            this.prisma.asset.findMany({ where, orderBy: { createdAt: 'desc' }, skip: page.offset, take: page.limit }),
+            // id tie-breaker → TOTAL order so paging can't skip/duplicate equal-createdAt assets at a page edge.
+            this.prisma.asset.findMany({ where, orderBy: [{ createdAt: 'desc' }, { id: 'desc' }], skip: page.offset, take: page.limit }),
             this.prisma.asset.count({ where }),
         ]);
         return paginated(items, total, page.limit, page.offset);

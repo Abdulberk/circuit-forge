@@ -17,7 +17,9 @@ export class ProjectsService {
         await this.orgsService.checkMembership(orgId, userId);
         const where = { orgId };
         const [items, total] = await Promise.all([
-            this.prisma.project.findMany({ where, orderBy: { updatedAt: 'desc' }, skip: page.offset, take: page.limit }),
+            // id is the unique tie-breaker → a TOTAL order, so offset/limit paging can't skip/duplicate rows
+            // when several projects share an updatedAt (batch touch / same-ms collision).
+            this.prisma.project.findMany({ where, orderBy: [{ updatedAt: 'desc' }, { id: 'desc' }], skip: page.offset, take: page.limit }),
             this.prisma.project.count({ where }),
         ]);
         return paginated(items, total, page.limit, page.offset);
