@@ -101,8 +101,9 @@ export interface GenerateCircuitConfig {
      *  (default 300000). When spent, the loop stops offering tools and forces a final answer rather than
      *  burning another round — a safety ceiling on a pathological tool loop's cost. */
     tokenBudget?: number;
-    /** Sampling temperature (0..1). Omitted → the provider default. Multi-candidate generation varies this
-     *  across candidates to get DIVERSE topologies from one prompt; single-shot generate/fix leaves it unset. */
+    /** Sampling temperature (0..1). Omitted → the provider default. ⚠️ Model-dependent: some models (incl.
+     *  Opus 4.8) REJECT this param with a 400 ("temperature is deprecated for this model") — leave it unset
+     *  for those. The multi-candidate orchestrator therefore drives diversity via PROMPT directives, not this. */
     temperature?: number;
 }
 

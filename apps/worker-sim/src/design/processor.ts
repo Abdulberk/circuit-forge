@@ -17,7 +17,8 @@
 import { Job, Worker } from 'bullmq';
 import Redis from 'ioredis';
 import { Prisma } from '@prisma/client';
-import { runDesignLoop, DesignAbortedError, CircuitGenerationError } from '@circuitforge/llm-core';
+import { DesignAbortedError, CircuitGenerationError } from '@circuitforge/llm-core';
+import { runMultiCandidateDesign } from './multi-candidate';
 import { propagation, context as otelContext, trace, SpanStatusCode } from '@opentelemetry/api';
 import { prisma } from '../prisma/client';
 import { config } from '../config';
@@ -120,7 +121,9 @@ async function processDesignJob(job: Job<DesignJobPayload>): Promise<void> {
                     return;
                 }
 
-                const result = await runDesignLoop(
+                // runMultiCandidateDesign degenerates to a single runDesignLoop when DESIGN_CANDIDATES_N=1
+                // (the default) — so this is byte-identical to the pre-multi-candidate path until N is raised.
+                const result = await runMultiCandidateDesign(
                     { prompt, constraints, maxRounds },
                     {
                         llmConfig: buildLlmConfig(),
@@ -135,6 +138,11 @@ async function processDesignJob(job: Job<DesignJobPayload>): Promise<void> {
                         // The worker has no HTTP layer; every error becomes a terminal FAILED / inconclusive
                         // result naturally, so nothing needs to propagate "untranslated".
                         isIntentfulError: () => false,
+                    },
+                    {
+                        n: config.DESIGN_CANDIDATES_N ?? 1,
+                        k: config.DESIGN_FINALISTS_K ?? 2,
+                        llmBudget: config.DESIGN_JOB_LLM_BUDGET ?? 12,
                     },
                 );
 
