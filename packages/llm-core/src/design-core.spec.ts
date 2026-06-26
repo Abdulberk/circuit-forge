@@ -145,4 +145,18 @@ describe('selectFinalists', () => {
         expect(selectFinalists(cands, 2)).toHaveLength(2);
         expect(selectFinalists(cands, 0).length).toBe(1); // k floored to ≥1
     });
+
+    it('among spec-met candidates, ranks the MORE ROBUST (wider inequality margin) first — not the thinnest (audit S2)', () => {
+        // Both pass `gte 10`, but `robust` clears it by 40 (actual 50) and `marginal` by only 0.5 (actual 10.5).
+        // specCloseness would put `marginal` (tiny |distance|) first — the THINNEST, least tolerance-robust
+        // design — sending winner-only Monte-Carlo to it. Robustness ranking must put `robust` first instead.
+        const crit = (over: Partial<AssertionResult>): AssertionResult => ({
+            label: 'g', probe: 'i(R1)', metric: 'max', op: 'gte', target: 10, actual: 0, pass: true, distance: 0, detail: '', ...over,
+        });
+        const robust = mk(['resistor', 'voltage_source'], { specsMet: true, closeness: 4, assertions: [crit({ actual: 50, distance: 40 })] });
+        const marginal = mk(['resistor', 'diode'], { specsMet: true, closeness: 0.05, assertions: [crit({ actual: 10.5, distance: 0.5 })] });
+        const picked = selectFinalists([marginal, robust], 2);
+        expect(picked[0]).toBe(robust); // wider margin wins despite the WORSE closeness
+        expect(picked[1]).toBe(marginal);
+    });
 });
