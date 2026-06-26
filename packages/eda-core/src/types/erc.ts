@@ -32,6 +32,7 @@ export enum ErcCode {
     // Net issues
     UNCONNECTED_NET = 'ERC040',
     NET_HAS_SINGLE_PIN = 'ERC041',
+    ISOLATED_SUBCIRCUIT = 'ERC042', // a node has no connection back to ground (a floating island that still "verifies")
 
     // Digital / mixed-signal
     DIGITAL_PIN_SHAPE = 'ERC060', // a gate/flip-flop is missing a required pin (e.g. no output / too few inputs)

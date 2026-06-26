@@ -55,6 +55,7 @@ export function runErc(circuit: CircuitJson): ErcResult {
     issues.push(...checkComponentValues(circuit));
     issues.push(...checkModelResolution(circuit));
     issues.push(...checkVoltageSourceShorts(circuit));
+    issues.push(...checkGroundReachability(circuit));
     issues.push(...checkNetConnections(circuit));
     issues.push(...checkActiveSources(circuit));
     issues.push(...checkDigitalConnectivity(circuit));
@@ -662,6 +663,36 @@ function checkModelResolution(circuit: CircuitJson): ErcIssue[] {
 }
 
 /**
+ * Collect every netId that is electrically GROUND. SPICE treats node 0 and any net flagged isGround / wired
+ * to a ground component as the SAME reference node, so for short/parallel reasoning they must all collapse
+ * to one id — otherwise a source spanning two DIFFERENT ground nets, or two sources spanning sig↔gnd_a and
+ * sig↔gnd_b, are invisible (audit #6/#7).
+ */
+function collectGroundNetIds(circuit: CircuitJson): Set<string> {
+    const groundNetIds = new Set<string>(['0']);
+    for (const net of circuit.nets) {
+        if (net.isGround || net.id === '0' || net.name === '0') groundNetIds.add(net.id);
+    }
+    for (const gnd of circuit.components.filter((c) => c.type === 'ground')) {
+        const pin = gnd.pins[0];
+        if (pin?.netId) groundNetIds.add(pin.netId);
+    }
+    return groundNetIds;
+}
+
+/**
+ * The DC magnitude a source forces, for over-determination comparison. Strips a leading DC/AC keyword and
+ * parses the first token's SI value; returns null for a non-numeric value (SIN/PULSE/expression) so the
+ * caller falls back to a polarity-tagged string compare instead of inventing a number.
+ */
+function sourceDcMagnitude(value: string): number | null {
+    const stripped = value.trim().replace(/^(dc|ac)\s+/i, '');
+    const token = stripped.split(/\s+/)[0] ?? '';
+    const parsed = parseSpiceValue(token);
+    return parsed.isValid ? parsed.value : null;
+}
+
+/**
  * Check for voltage source shorts
  */
 function checkVoltageSourceShorts(circuit: CircuitJson): ErcIssue[] {
@@ -679,79 +710,170 @@ function checkVoltageSourceShorts(circuit: CircuitJson): ErcIssue[] {
             (c.type === 'bsource' && typeof c.value === 'string' && /^\s*v\s*=/i.test(c.value)),
     );
 
-    // Find ground net ids
-    const groundNetIds = new Set<string>();
-    groundNetIds.add('0');
-    for (const net of circuit.nets) {
-        if (net.isGround) {
-            groundNetIds.add(net.id);
-        }
-    }
-    for (const gnd of circuit.components.filter((c) => c.type === 'ground')) {
-        const pin = gnd.pins[0];
-        if (pin?.netId) {
-            groundNetIds.add(pin.netId);
-        }
-    }
+    // Collapse all ground netIds to one canonical node ('0'), so two DIFFERENT ground nets read as identical.
+    const groundNetIds = collectGroundNetIds(circuit);
+    const canon = (netId?: string): string | undefined =>
+        netId == null ? undefined : groundNetIds.has(netId) ? '0' : netId;
 
+    // --- Shorts: + and - resolve to the SAME node, incl. two different ground nets (#6) ---
     for (const vs of voltageSources) {
-        const posPin = vs.pins.find((p) => p.pinId === '+');
-        const negPin = vs.pins.find((p) => p.pinId === '-');
-
-        // Check for short (both pins on same net)
-        if (posPin?.netId && posPin.netId === negPin?.netId) {
+        const p = canon(vs.pins.find((pin) => pin.pinId === '+')?.netId);
+        const n = canon(vs.pins.find((pin) => pin.pinId === '-')?.netId);
+        if (p && n && p === n) {
             issues.push(
                 createIssue(
                     ErcCode.VOLTAGE_SOURCE_SHORT,
                     [vs.id],
-                    `${vs.designator || vs.id} has both terminals on same net`,
+                    `${vs.designator || vs.id} has both terminals on the same node`,
                 ),
             );
         }
     }
 
-    // Check for parallel voltage sources with different values
-    const netVoltages = new Map<string, { source: Component; value: string }[]>();
-
+    // --- Parallel over-determination: 2+ voltage-forcing devices across the same NODE pair (#7) ---
+    // Group by an UNORDERED canonical key; for each driver track its polarity vs that orientation and its
+    // SIGNED DC magnitude, so an anti-parallel pair of EQUAL magnitude (+5 vs −5) is correctly a conflict —
+    // the old raw-string compare saw "5" == "5" and missed it.
+    interface Driver {
+        source: Component;
+        signed: number | null; // SIGNED forced voltage in the canonical orientation; null if non-numeric
+        tag: string; // polarity-tagged string fallback for non-numeric values
+    }
+    const groups = new Map<string, Driver[]>();
     for (const vs of voltageSources) {
-        const posPin = vs.pins.find((p) => p.pinId === '+');
-        const negPin = vs.pins.find((p) => p.pinId === '-');
-
-        // Only check DC sources
-        if (vs.value && posPin?.netId && negPin?.netId) {
-            const key = `${posPin.netId}:${negPin.netId}`;
-            const reverseKey = `${negPin.netId}:${posPin.netId}`;
-
-            const existing = netVoltages.get(key) || netVoltages.get(reverseKey) || [];
-            existing.push({ source: vs, value: vs.value });
-            netVoltages.set(key, existing);
-        }
+        const p = canon(vs.pins.find((pin) => pin.pinId === '+')?.netId);
+        const n = canon(vs.pins.find((pin) => pin.pinId === '-')?.netId);
+        if (!p || !n || p === n || vs.value == null) continue; // shorts handled above; need both nodes + a value
+        const [a, b] = p < n ? [p, n] : [n, p]; // canonical orientation (a < b)
+        const reversed = p !== a; // the '+' terminal sits on the lexically-larger node
+        const mag = sourceDcMagnitude(vs.value);
+        const driver: Driver = {
+            source: vs,
+            signed: mag == null ? null : reversed ? -mag : mag,
+            tag: `${reversed ? '-' : '+'}${vs.value}`,
+        };
+        const key = `${a}|${b}`;
+        const arr = groups.get(key) ?? [];
+        arr.push(driver);
+        groups.set(key, arr);
     }
 
-    for (const [, sources] of netVoltages) {
-        if (sources.length > 1) {
-            const values = sources.map((s) => s.value);
-            const uniqueValues = new Set(values);
-            // Two identical INDEPENDENT voltage sources are a redundancy we leave alone; but differing values
-            // — or a MIX of driver types (e.g. a V source paralleled with a vcvs output) — is a genuine
-            // over-determination. Flag it so the caller fixes it before ngspice fails with an opaque error.
-            const allPlainSources = sources.every((s) => s.source.type === 'voltage_source');
-            if (!allPlainSources || uniqueValues.size > 1) {
-                const labels = sources.map((s) => s.source.designator || s.source.id).join(', ');
-                issues.push(
-                    createIssue(
-                        ErcCode.PARALLEL_VOLTAGE_SOURCES,
-                        sources.map((s) => s.source.id),
-                        allPlainSources
-                            ? `Conflicting values: ${values.join(', ')}`
-                            : `Multiple voltage drivers (${labels}) across the same net pair — they over-determine the node`,
-                    ),
-                );
+    for (const [, drivers] of groups) {
+        if (drivers.length < 2) continue;
+        // Two identical INDEPENDENT voltage sources are a harmless redundancy; differing FORCED voltages — or
+        // a MIX of driver types (a V source paralleled with a vcvs output) — is a genuine over-determination.
+        const allPlain = drivers.every((d) => d.source.type === 'voltage_source');
+        const allNumeric = drivers.every((d) => d.signed != null);
+        let conflict: boolean;
+        if (allNumeric) {
+            const distinct: number[] = [];
+            for (const d of drivers) {
+                if (!distinct.some((v) => Math.abs(v - d.signed!) <= 1e-9 * Math.max(1, Math.abs(v)))) {
+                    distinct.push(d.signed!);
+                }
             }
+            conflict = !allPlain || distinct.length > 1;
+        } else {
+            conflict = !allPlain || new Set(drivers.map((d) => d.tag)).size > 1;
+        }
+        if (conflict) {
+            const labels = drivers.map((d) => d.source.designator || d.source.id).join(', ');
+            issues.push(
+                createIssue(
+                    ErcCode.PARALLEL_VOLTAGE_SOURCES,
+                    drivers.map((d) => d.source.id),
+                    allPlain
+                        ? `Voltage sources (${labels}) force the same node pair to different voltages`
+                        : `Multiple voltage drivers (${labels}) across the same node pair — they over-determine the node`,
+                ),
+            );
         }
     }
 
     return issues;
+}
+
+/**
+ * #3 — global connectivity: every ANALOG node must have a path (through components) back to a ground node.
+ * A whole sub-circuit island disconnected from ground simulates as a floating block (or makes the .op
+ * singular), yet passes every per-net check — so it can be "verified" while being electrically meaningless.
+ * Build a net graph (two nets are adjacent if a component bridges them), flood-fill from the ground nets,
+ * and flag any analog node the fill never reaches.
+ *
+ * Conservative by design — near-zero false positives:
+ *   - ANY component edge (incl. a capacitor) keeps a block attached, so only a TRULY disconnected block is
+ *     flagged; a capacitively-coupled-but-DC-floating block is the separate FLOATING_NODE check, not this one;
+ *   - only nets with ≥2 NON-digital pins are required to reach ground (a 1-pin net is NET_HAS_SINGLE_PIN; a
+ *     purely-digital net gets its ground reference from the mixed-signal bridge added at generation time);
+ *   - skipped entirely when the circuit has no ground anchor (NO_GROUND already covers that case).
+ */
+function checkGroundReachability(circuit: CircuitJson): ErcIssue[] {
+    const groundNetIds = new Set<string>();
+    for (const net of circuit.nets) {
+        if (net.isGround || net.id === '0' || net.name === '0') groundNetIds.add(net.id);
+    }
+    for (const gnd of circuit.components.filter((c) => c.type === 'ground')) {
+        const pin = gnd.pins[0];
+        if (pin?.netId) groundNetIds.add(pin.netId);
+    }
+    if (groundNetIds.size === 0) return []; // no anchor → NO_GROUND owns this; reachability would be all-noise
+
+    // Adjacency over ALL components: each component ties together every net its pins touch (a clique).
+    const adj = new Map<string, Set<string>>();
+    const link = (x: string, y: string) => {
+        if (x === y) return;
+        if (!adj.has(x)) adj.set(x, new Set());
+        if (!adj.has(y)) adj.set(y, new Set());
+        adj.get(x)!.add(y);
+        adj.get(y)!.add(x);
+    };
+    for (const c of circuit.components) {
+        const nets = c.pins.map((p) => p.netId).filter((id): id is string => !!id);
+        for (let i = 0; i < nets.length; i++) {
+            for (let j = i + 1; j < nets.length; j++) link(nets[i]!, nets[j]!);
+        }
+    }
+
+    // Flood-fill the net graph from every ground net.
+    const reachable = new Set<string>(groundNetIds);
+    const stack = [...groundNetIds];
+    while (stack.length) {
+        const cur = stack.pop()!;
+        for (const nb of adj.get(cur) ?? []) {
+            if (!reachable.has(nb)) {
+                reachable.add(nb);
+                stack.push(nb);
+            }
+        }
+    }
+
+    // Only genuine ANALOG nodes (≥2 pins from non-digital, non-ground components) must reach ground.
+    const analogPinCount = new Map<string, number>();
+    for (const c of circuit.components) {
+        if (isDigitalType(c.type) || c.type === 'ground') continue;
+        for (const p of c.pins) {
+            if (p.netId) analogPinCount.set(p.netId, (analogPinCount.get(p.netId) ?? 0) + 1);
+        }
+    }
+
+    const islandNets = circuit.nets.filter(
+        (net) => !reachable.has(net.id) && (analogPinCount.get(net.id) ?? 0) >= 2,
+    );
+    if (islandNets.length === 0) return [];
+
+    const islandIds = new Set(islandNets.map((n) => n.id));
+    const compIds = new Set<string>();
+    for (const c of circuit.components) {
+        if (c.pins.some((p) => p.netId && islandIds.has(p.netId))) compIds.add(c.id);
+    }
+    const names = islandNets.map((n) => n.name || n.id).join(', ');
+    return [
+        createIssue(
+            ErcCode.ISOLATED_SUBCIRCUIT,
+            [...islandNets.map((n) => n.id), ...compIds],
+            `Net(s) ${names} have no connection back to ground — an isolated sub-circuit that floats (or makes the operating point singular)`,
+        ),
+    ];
 }
 
 /**
