@@ -62,6 +62,21 @@ describe('perturbCircuit', () => {
         expect(c1.value).toBe('100n'); // no tolerance → untouched
         expect(v1.value).toBe('SIN(0 5 1k)'); // toleranced but non-numeric value → untouched (can't perturb)
     });
+
+    it('perturbs a SCIENTIFIC-NOTATION toleranced value (regression: was skipped → MC yield inflated)', () => {
+        const sci: CircuitJson = {
+            version: '1.0',
+            components: [
+                { id: 'r1', type: 'resistor', designator: 'R1', value: '1e3', tolerance: 0.05, pins: [{ pinId: '1', netId: 'in' }, { pinId: '2', netId: 'out' }] },
+            ],
+            nets: [{ id: 'in', name: 'in' }, { id: 'out', name: 'out' }],
+        };
+        const r = perturbCircuit(sci, mulberry32(5)).components[0]!;
+        const ohms = parseSpiceValue(r.value!).value;
+        expect(ohms).toBeGreaterThanOrEqual(950 - 1e-6);
+        expect(ohms).toBeLessThanOrEqual(1050 + 1e-6);
+        expect(ohms).not.toBe(1000); // BEFORE the fix: parseSpiceValue('1e3') was invalid → value left at exactly 1e3
+    });
 });
 
 describe('monteCarloVariants', () => {

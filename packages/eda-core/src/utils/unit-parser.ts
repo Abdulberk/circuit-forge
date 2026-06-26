@@ -74,9 +74,14 @@ export function parseSpiceValue(input: string): ParsedValue {
         return { value: 0, original, isValid: false, error: 'Empty value' };
     }
 
-    // Handle pure numbers
+    // Handle pure numbers INCLUDING scientific notation (1e3, 1.5e-6, 2E4). Without the [eE][+-]?\d+ group
+    // these fell through to the suffix branch, which can't match an "e3"-style exponent (it contains a
+    // digit) → isValid:false, value:0. That silently broke any value written in sci notation — and, worse,
+    // perturbCircuit skips an unparseable value, so a TOLERANCED part in sci notation was treated as
+    // zero-tolerance and inflated the reported Monte-Carlo yield. (The types/analysis.ts parser already had
+    // the exponent group; this aligns the two.)
     const pureNumber = parseFloat(original);
-    if (!isNaN(pureNumber) && /^-?\d*\.?\d+$/.test(original)) {
+    if (!isNaN(pureNumber) && /^-?\d*\.?\d+(?:[eE][+-]?\d+)?$/.test(original)) {
         return { value: pureNumber, original, isValid: true };
     }
 
