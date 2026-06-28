@@ -26,7 +26,7 @@ const dividerRunner = (variant: CircuitJson): Promise<SimMeasurement[] | null> =
     const r1 = parseSpiceValue(variant.components.find((c) => c.id === 'r1')!.value!).value;
     const r2 = parseSpiceValue(variant.components.find((c) => c.id === 'r2')!.value!).value;
     const vout = 10 * (r2 / (r1 + r2));
-    return Promise.resolve([{ node: 'nmid', min: vout, max: vout, final: vout, pp: 0 }]);
+    return Promise.resolve([{ node: 'nmid', min: vout, max: vout, final: vout, pp: 0, avg: vout, rms: vout }]);
 };
 
 describe('runMonteCarlo', () => {

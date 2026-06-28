@@ -304,7 +304,7 @@ describe('GenerationService grounding (tool-use + sourcing enrichment)', () => {
         const simulate = jest
             .fn()
             .mockResolvedValueOnce({ simStatus: 'failed', ercErrors: [{ code: 'ERC001', message: 'No ground node', relatedIds: [] }], ercWarnings: [], measurements: [], nodeCount: 0 })
-            .mockResolvedValueOnce({ simStatus: 'ok', ercErrors: [], ercWarnings: [], measurements: [{ node: 'x_out', min: 0, max: 5, final: 2.5, pp: 5 }], nodeCount: 2 });
+            .mockResolvedValueOnce({ simStatus: 'ok', ercErrors: [], ercWarnings: [], measurements: [{ node: 'x_out', min: 0, max: 5, final: 2.5, pp: 5, avg: 2.5, rms: 2.9 }], nodeCount: 2 });
         mockCreate
             .mockResolvedValueOnce(toolUseResponse('s1', 'simulate_circuit', { circuit: VALID_CIRCUIT })) // 1st verify → ERC error
             .mockResolvedValueOnce(toolUseResponse('s2', 'simulate_circuit', { circuit: VALID_CIRCUIT })) // re-verify after fix → ok

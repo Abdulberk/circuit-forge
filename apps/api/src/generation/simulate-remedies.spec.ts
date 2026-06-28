@@ -20,7 +20,7 @@ const ok = (): SimSummary => ({
     simStatus: 'ok',
     ercErrors: [],
     ercWarnings: [],
-    measurements: [{ node: 'v(nout)', min: 0, max: 5, final: 5, pp: 5 }],
+    measurements: [{ node: 'v(nout)', min: 0, max: 5, final: 5, pp: 5, avg: 5, rms: 5 }],
     nodeCount: 1,
     analysisType: 'op',
 });

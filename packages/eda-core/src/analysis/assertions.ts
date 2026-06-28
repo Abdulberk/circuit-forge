@@ -16,9 +16,10 @@ import type { SimMeasurement } from './measurements';
 export interface AcceptanceCriterion {
     /** Probe/node to measure, e.g. "out" / "v(out)" / "i(R1)". */
     probe: string;
-    /** Which measured quantity. min/max/final/pp are over the time/DC run; "cutoff" is the −3 dB corner (Hz)
-     *  of the node's AC magnitude response (requires an "ac" analysis). */
-    metric: 'min' | 'max' | 'final' | 'pp' | 'cutoff';
+    /** Which measured quantity. min/max/final/pp/avg/rms are over the time/DC run (avg+rms are TIME-WEIGHTED —
+     *  trapezoidal over the adaptive timesteps — so "RMS output" / "average ripple" specs are exact); "cutoff"
+     *  is the −3 dB corner (Hz) of the node's AC magnitude response (requires an "ac" analysis). */
+    metric: 'min' | 'max' | 'final' | 'pp' | 'avg' | 'rms' | 'cutoff';
     op: 'lt' | 'lte' | 'gt' | 'gte' | 'approx';
     /** Target value in SI base units (volts, amps, seconds; Hz for "cutoff"). */
     value: number;
@@ -155,7 +156,7 @@ export function evaluateAssertions(
             measured = fc;
         } else {
             // Read FULL-PRECISION values (the rounded display fields can flip a marginal check — audit #8).
-            const src = m.raw ?? { min: m.min, max: m.max, final: m.final, pp: m.pp };
+            const src = m.raw ?? { min: m.min, max: m.max, final: m.final, pp: m.pp, avg: m.avg, rms: m.rms };
             if (isCurrentProbe(a.probe)) {
                 // Current is SIGNED by device pin order in ngspice (a correctly-wired resistor's @r1[i] can
                 // read negative); a current spec is a MAGNITUDE ("~10mA through R1"). For a PEAK query

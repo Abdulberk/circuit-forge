@@ -9,6 +9,8 @@ const v = (netId: string, final: number): SimMeasurement => ({
     max: final,
     final,
     pp: 0,
+    avg: final,
+    rms: Math.abs(final),
 });
 
 /** 10V across R1(in→out) and R2(out→gnd); divider sets out=5V. P_R = ΔV²/R = 25/1000 = 0.025 W each. */
