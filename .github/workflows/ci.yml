@@ -8,8 +8,9 @@
 #   • test     — install, build all workspaces, typecheck, and run every unit suite
 #                (eda-core 220+, llm-core, api 118+ — all run env-less; live/AI suites are
 #                gated behind env flags and auto-skip here).
-#   • matrix   — the ngspice coverage matrix (73 translation-layer cells) against a REAL
-#                ngspice installed from apt. Catches CircuitJson→SPICE regressions that
+#   • matrix   — the ngspice coverage matrix (83 translation-layer cells) + the edge-case
+#                battery (numeric/convergence/safety/analysis/physics, analytic answers)
+#                against a REAL apt ngspice. Catches CircuitJson→SPICE regressions that
 #                unit tests can't (they don't execute ngspice).
 name: CI
 
@@ -113,7 +114,12 @@ jobs:
       - name: Build eda-core
         run: pnpm --filter @circuit-forge/eda-core build
 
-      - name: Coverage matrix (73 cells, real ngspice)
+      - name: Coverage matrix (real ngspice)
         env:
           NGSPICE_PATH: ngspice # the Linux apt build is the console binary
         run: node scripts/coverage-matrix.mjs
+
+      - name: Edge-case battery (real ngspice — numeric/convergence/safety/analysis/physics)
+        env:
+          NGSPICE_PATH: ngspice
+        run: node scripts/edge-cases.mjs
