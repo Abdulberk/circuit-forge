@@ -37,7 +37,10 @@ describe('summarizeSeries', () => {
     });
 
     it('degrades to zeros for an all-empty / all-non-finite series', () => {
-        expect(summarizeSeries({ name: 'v(x)', points: [] } as DataSeries)).toEqual({ node: 'v(x)', min: 0, max: 0, final: 0, pp: 0 });
-        expect(summarizeSeries({ name: 'v(x)', points: [{ x: 0, y: NaN }] } as DataSeries)).toEqual({ node: 'v(x)', min: 0, max: 0, final: 0, pp: 0 });
+        // `raw` (full-precision values the verdict reads) is part of the shape since the audit's #8 fix —
+        // for an empty series it mirrors the rounded zeros. Assert the COMPLETE shape so a future drift is caught.
+        const zeros = { node: 'v(x)', min: 0, max: 0, final: 0, pp: 0, raw: { min: 0, max: 0, final: 0, pp: 0 } };
+        expect(summarizeSeries({ name: 'v(x)', points: [] } as DataSeries)).toEqual(zeros);
+        expect(summarizeSeries({ name: 'v(x)', points: [{ x: 0, y: NaN }] } as DataSeries)).toEqual(zeros);
     });
 });
