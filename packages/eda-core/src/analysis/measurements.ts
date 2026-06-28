@@ -13,15 +13,23 @@ export interface SimMeasurement {
     max: number;
     final: number;
     pp: number; // peak-to-peak (max - min)
+    /** TIME-WEIGHTED average (mean) over the run: ∫y·dt / T via trapezoidal integration on the (x,y) points.
+     *  Time-weighted — NOT a sample mean — because ngspice uses ADAPTIVE timesteps, so samples cluster where
+     *  the signal moves fast; a naive sample mean is biased. Falls back to the sample mean when the x-axis is
+     *  unusable (non-monotonic / zero span / single point → avg = the value). Most meaningful for `tran`. */
+    avg: number;
+    /** TIME-WEIGHTED RMS over the run: sqrt(∫y²·dt / T) (trapezoidal). Same adaptive-timestep reasoning as
+     *  `avg`; always ≥ 0. Single point → |value|. The canonical "RMS output / ripple" measurement. */
+    rms: number;
     /** −3 dB cutoff frequency (Hz) of this node's AC magnitude response. Present (number or null) ONLY for an
      *  `.ac` magnitude series — `null` when the sweep doesn't bracket exactly one −3 dB crossing (flat,
      *  out-of-band, or band-pass/resonant ambiguity). Undefined for tran/dc/op and for phase series. */
     cutoff?: number | null;
-    /** FULL-PRECISION min/max/final/pp for the assertion evaluator. The fields above are rounded to 4 sig
-     *  figs for display/AI reasoning, but that rounding can flip a marginal approx/relational check (audit
+    /** FULL-PRECISION min/max/final/pp/avg/rms for the assertion evaluator. The fields above are rounded to 4
+     *  sig figs for display/AI reasoning, but that rounding can flip a marginal approx/relational check (audit
      *  #8), so the verdict math reads these instead. Optional so an older serialized measurement degrades
      *  gracefully to the rounded fields. */
-    raw?: { min: number; max: number; final: number; pp: number };
+    raw?: { min: number; max: number; final: number; pp: number; avg: number; rms: number };
 }
 
 /** Distil one series to {min,max,final,pp} (+ the −3 dB cutoff for an AC magnitude series). Empty series
@@ -35,11 +43,42 @@ export function summarizeSeries(s: DataSeries, analysisType?: string): SimMeasur
     let max = -Infinity;
     let final = 0;
     let count = 0;
+    // Sample-based fallback accumulators (used when the x-axis can't time-weight).
+    let sum = 0;
+    let sumSq = 0;
+    // Time-weighted (trapezoidal) accumulators: ∫y·dx and ∫y²·dx across consecutive finite samples.
+    let area = 0;
+    let areaSq = 0;
+    let firstX = NaN;
+    let lastX = NaN;
+    let prevX = NaN;
+    let prevY = NaN;
+    let xUsable = true; // cleared if any x is non-finite or the x-axis goes non-monotonic
     for (const p of s.points) {
         if (!Number.isFinite(p.y)) continue;
         if (p.y < min) min = p.y;
         if (p.y > max) max = p.y;
         final = p.y; // last finite sample
+        sum += p.y;
+        sumSq += p.y * p.y;
+        const x = p.x;
+        if (Number.isFinite(x)) {
+            if (count === 0) firstX = x;
+            else if (Number.isFinite(prevX)) {
+                const dx = x - prevX;
+                if (dx > 0) {
+                    area += 0.5 * (prevY + p.y) * dx;
+                    areaSq += 0.5 * (prevY * prevY + p.y * p.y) * dx;
+                } else if (dx < 0) {
+                    xUsable = false; // non-monotonic time/freq axis → trapezoid is meaningless
+                }
+            }
+            prevX = x;
+            lastX = x;
+        } else {
+            xUsable = false;
+        }
+        prevY = p.y;
         count++;
     }
     // Locate the −3 dB corner only for an AC MAGNITUDE series (not the appended phase(...) series). The
@@ -47,10 +86,15 @@ export function summarizeSeries(s: DataSeries, analysisType?: string): SimMeasur
     // time/DC stats. Result is `null` when not determinable.
     const ac = analysisType === 'ac' && isAcMagnitudeSeries(s.name);
     if (count === 0) {
-        return { node: s.name, min: 0, max: 0, final: 0, pp: 0, raw: { min: 0, max: 0, final: 0, pp: 0 }, ...(ac ? { cutoff: null } : {}) };
+        return { node: s.name, min: 0, max: 0, final: 0, pp: 0, avg: 0, rms: 0, raw: { min: 0, max: 0, final: 0, pp: 0, avg: 0, rms: 0 }, ...(ac ? { cutoff: null } : {}) };
     }
     const round = (n: number) => Number(n.toPrecision(4));
     const rawPp = max - min;
+    // Prefer the TIME-WEIGHTED integral; fall back to the sample mean when the x-axis is unusable (single
+    // point, non-monotonic, or non-finite x — e.g. an op point or a degenerate sweep).
+    const span = xUsable && Number.isFinite(firstX) && Number.isFinite(lastX) ? lastX - firstX : 0;
+    const avg = span > 0 ? area / span : sum / count;
+    const rms = Math.sqrt(Math.max(0, span > 0 ? areaSq / span : sumSq / count));
     return {
         node: s.name,
         // Rounded for display / AI reasoning…
@@ -58,8 +102,10 @@ export function summarizeSeries(s: DataSeries, analysisType?: string): SimMeasur
         max: round(max),
         final: round(final),
         pp: round(rawPp),
+        avg: round(avg),
+        rms: round(rms),
         // …full precision for the verdict (audit #8 — rounding here can flip a marginal check).
-        raw: { min, max, final, pp: rawPp },
+        raw: { min, max, final, pp: rawPp, avg, rms },
         ...(ac ? { cutoff: cutoffFrequency(s.points) } : {}),
     };
 }

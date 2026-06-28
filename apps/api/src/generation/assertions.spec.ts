@@ -18,7 +18,7 @@ import type { AssertionDto } from './dto';
 import { sanitizeNodeName } from '@circuit-forge/eda-core';
 
 const OUT = `v(${sanitizeNodeName('out')})`; // the SPICE node a probe "out" resolves to
-const meas = (node: string, over: Partial<SimMeasurement>): SimMeasurement => ({ node, min: 0, max: 0, final: 0, pp: 0, ...over });
+const meas = (node: string, over: Partial<SimMeasurement>): SimMeasurement => ({ node, min: 0, max: 0, final: 0, pp: 0, avg: 0, rms: 0, ...over });
 
 describe('evaluateAssertions', () => {
     it('passes a met criterion and reports zero distance', () => {

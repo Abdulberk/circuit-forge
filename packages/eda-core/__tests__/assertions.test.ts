@@ -16,8 +16,8 @@ describe('evaluateAssertions — current ceiling uses peak magnitude (audit #5)'
         // ngspice reports a signed branch current; here R1 swings to −5 A while its most-positive sample is
         // only +0.1 A. The old |max| read 0.1 A and passed "< 1 A"; the peak magnitude is 5 A → must FAIL.
         const m: SimMeasurement = {
-            node: '@r1[i]', min: -5, max: 0.1, final: 0.1, pp: 5.1,
-            raw: { min: -5, max: 0.1, final: 0.1, pp: 5.1 },
+            node: '@r1[i]', min: -5, max: 0.1, final: 0.1, pp: 5.1, avg: -2, rms: 3.5,
+            raw: { min: -5, max: 0.1, final: 0.1, pp: 5.1, avg: -2, rms: 3.5 },
         };
         const [r] = evaluateAssertions([m], [crit({ probe: 'i(R1)', metric: 'max', op: 'lt', value: 1 })]);
         expect(r!.pass).toBe(false);
@@ -26,8 +26,8 @@ describe('evaluateAssertions — current ceiling uses peak magnitude (audit #5)'
 
     it('passes when every excursion is within the ceiling', () => {
         const m: SimMeasurement = {
-            node: '@r1[i]', min: 0.05, max: 0.1, final: 0.1, pp: 0.05,
-            raw: { min: 0.05, max: 0.1, final: 0.1, pp: 0.05 },
+            node: '@r1[i]', min: 0.05, max: 0.1, final: 0.1, pp: 0.05, avg: 0.08, rms: 0.08,
+            raw: { min: 0.05, max: 0.1, final: 0.1, pp: 0.05, avg: 0.08, rms: 0.08 },
         };
         const [r] = evaluateAssertions([m], [crit({ probe: 'i(R1)', metric: 'max', op: 'lt', value: 1 })]);
         expect(r!.pass).toBe(true);
@@ -40,8 +40,8 @@ describe('evaluateAssertions — verdict on full precision, rounding is display-
         // raw.max = 5.0004 (> 5). The rounded display field is 5.000 — comparing THAT to 5 would pass. The
         // verdict must read raw and FAIL, while `actual` is still shown rounded.
         const m: SimMeasurement = {
-            node: 'out', min: 0, max: 5.0, final: 5.0, pp: 5.0,
-            raw: { min: 0, max: 5.0004, final: 5.0004, pp: 5.0004 },
+            node: 'out', min: 0, max: 5.0, final: 5.0, pp: 5.0, avg: 2.5, rms: 3,
+            raw: { min: 0, max: 5.0004, final: 5.0004, pp: 5.0004, avg: 2.5, rms: 3 },
         };
         const [r] = evaluateAssertions([m], [crit({ probe: 'out', metric: 'max', op: 'lte', value: 5 })]);
         expect(r!.pass).toBe(false); // full-precision 5.0004 > 5
@@ -62,5 +62,61 @@ describe('summarizeSeries — carries full-precision raw alongside the rounded d
         expect(sm.raw!.max).toBeCloseTo(2.3456789, 9);
         expect(sm.raw!.min).toBeCloseTo(1.23456789, 9);
         expect(sm.max).toBe(Number((2.3456789).toPrecision(4))); // 2.346
+        expect(sm.raw!.avg).toBeCloseTo(1.79012, 4); // (1.2346+2.3457)/2 over a unit span (trapezoid of a line)
+        expect(sm.raw!.rms).toBeCloseTo(Math.sqrt((1.23456789 ** 2 + 2.3456789 ** 2) / 2), 4);
+    });
+});
+
+describe('summarizeSeries — time-weighted avg / rms', () => {
+    it('constant series → avg = rms = the value', () => {
+        const sm = summarizeSeries({ name: 'out', points: [{ x: 0, y: 5 }, { x: 1, y: 5 }, { x: 2, y: 5 }] });
+        expect(sm.avg).toBeCloseTo(5, 6);
+        expect(sm.rms).toBeCloseTo(5, 6);
+    });
+
+    it('finely-sampled ramp 0→10 over [0,1] → avg=5, rms=10/√3 (the time integral, not a sample mean)', () => {
+        const points = Array.from({ length: 201 }, (_, i) => ({ x: i / 200, y: 10 * (i / 200) }));
+        const sm = summarizeSeries({ name: 'out', points });
+        expect(sm.avg).toBeCloseTo(5, 2); // ∫10x dx / 1 = 5
+        expect(sm.rms).toBeCloseTo(10 / Math.sqrt(3), 2); // sqrt(∫(10x)² dx) = 10/√3 ≈ 5.774
+    });
+
+    it('finely-sampled sine (amp 4) → avg≈0, rms≈4/√2 = 2.828', () => {
+        const points = Array.from({ length: 1001 }, (_, i) => { const t = i / 1000; return { x: t, y: 4 * Math.sin(2 * Math.PI * t) }; });
+        const sm = summarizeSeries({ name: 'out', points });
+        expect(Math.abs(sm.avg)).toBeLessThan(0.02);
+        expect(sm.rms).toBeCloseTo(4 / Math.SQRT2, 2);
+    });
+
+    it('TIME-weights, not sample-counts: a long-quiet signal densely sampled only during a late spike', () => {
+        // 0 V held over [0,0.9] (2 samples), then a 0→10→0 triangle over [0.9,1.0] with 100 dense samples.
+        // A naive SAMPLE mean is dominated by the ~100 spike samples (biased high); the time-weighted average
+        // is the triangle area (½·0.1·10 = 0.5) over the 1 s window = 0.5.
+        const points: { x: number; y: number }[] = [{ x: 0, y: 0 }, { x: 0.9, y: 0 }];
+        for (let i = 1; i <= 100; i++) { const t = 0.9 + 0.1 * (i / 100); const u = (t - 0.9) / 0.1; points.push({ x: t, y: u < 0.5 ? 20 * u : 20 * (1 - u) }); }
+        const sm = summarizeSeries({ name: 'out', points });
+        const sampleMean = points.reduce((s, p) => s + p.y, 0) / points.length;
+        expect(sampleMean).toBeGreaterThan(2); // the biased number a sample-mean would report
+        expect(sm.avg).toBeCloseTo(0.5, 1); // the correct time-weighted average
+    });
+
+    it('single point → avg = value, rms = |value|', () => {
+        const sm = summarizeSeries({ name: 'out', points: [{ x: 0, y: -3 }] });
+        expect(sm.avg).toBeCloseTo(-3, 6);
+        expect(sm.rms).toBeCloseTo(3, 6);
+        expect(sm.raw!.rms).toBeCloseTo(3, 9);
+    });
+});
+
+describe('evaluateAssertions — avg / rms metrics', () => {
+    it('verifies an rms spec and a (signed) avg spec from the measurement', () => {
+        const m: SimMeasurement = { node: 'out', min: -4, max: 4, final: 0, pp: 8, avg: 0, rms: 2.828, raw: { min: -4, max: 4, final: 0, pp: 8, avg: 0, rms: 2.828 } };
+        expect(evaluateAssertions([m], [crit({ probe: 'out', metric: 'rms', op: 'approx', value: 2.83, tol: 0.05 })])[0]!.pass).toBe(true);
+        expect(evaluateAssertions([m], [crit({ probe: 'out', metric: 'avg', op: 'lt', value: 0.1 })])[0]!.pass).toBe(true);
+    });
+
+    it('a current rms spec compares magnitude (sign-agnostic)', () => {
+        const m: SimMeasurement = { node: '@r1[i]', min: -0.01, max: 0.01, final: 0, pp: 0.02, avg: 0, rms: 0.00707, raw: { min: -0.01, max: 0.01, final: 0, pp: 0.02, avg: 0, rms: 0.00707 } };
+        expect(evaluateAssertions([m], [crit({ probe: 'i(R1)', metric: 'rms', op: 'approx', value: 0.00707, tol: 1e-4 })])[0]!.pass).toBe(true);
     });
 });

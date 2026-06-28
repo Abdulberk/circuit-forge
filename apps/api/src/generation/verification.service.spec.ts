@@ -13,8 +13,8 @@ const okSim = (over: Partial<SimSummary> = {}): SimSummary => ({
     ercErrors: [],
     ercWarnings: [],
     measurements: [
-        { node: 'v(out)', min: 0, max: 5.02, final: 4.98, pp: 5.02 },
-        { node: 'v(ripple)', min: 4.9, max: 4.96, final: 4.93, pp: 0.06 },
+        { node: 'v(out)', min: 0, max: 5.02, final: 4.98, pp: 5.02, avg: 4.98, rms: 4.98 },
+        { node: 'v(ripple)', min: 4.9, max: 4.96, final: 4.93, pp: 0.06, avg: 4.93, rms: 4.93 },
     ],
     nodeCount: 2,
     analysisType: 'tran',
