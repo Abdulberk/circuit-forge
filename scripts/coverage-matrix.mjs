@@ -160,6 +160,12 @@ for (const [type, des] of [['logic_not', 'XNOT'], ['logic_buffer', 'XBUF']]) {
         analysis: TRANu, probes: ['v(y)'],
     }), (r) => baseOk(r, { swing: 1 }));
 }
+// Logic-FUNCTION discrimination (not just "it swings"): a forced-LOW input must pin an AND output LOW, and a
+// forced-HIGH input must pin an OR output HIGH — so a mis-wired gate or wrong model that still TOGGLES is
+// caught (the swing-only checks above pass for AND, OR, XOR alike). Verified vs ngspice: AND(0,pulse)→flat 0;
+// OR(1,pulse)→flat 5.
+add('digital', 'AND forces LOW when one input is LOW (logic function, not just swing)', () => ({ circuit: circuit([V('vdd', 'VDD', 'DC 5', 'vdd', '0'), V('va', 'VA', 'DC 0', 'a', '0'), V('vb', 'VB', 'PULSE(0 5 0 10n 10n 0.5u 1u)', 'b', '0'), { id: 'g1', type: 'logic_and', designator: 'XAND2', pins: [{ pinId: 'in1', netId: 'a' }, { pinId: 'in2', netId: 'b' }, { pinId: 'out', netId: 'y' }] }], N('vdd', 'a', 'b', 'y')), analysis: TRANu, probes: ['v(y)'] }), (r) => baseOk(r).pass && r.series[0].max < 0.5 ? ok() : fail(`AND(0,pulse) v(y) max=${r.series[0]?.max?.toFixed(2)} want ~0 (a LOW input MUST force AND LOW; OR/mis-wire → swings to 5)`));
+add('digital', 'OR forces HIGH when one input is HIGH (logic function, not just swing)', () => ({ circuit: circuit([V('vdd', 'VDD', 'DC 5', 'vdd', '0'), V('va', 'VA', 'DC 5', 'a', '0'), V('vb', 'VB', 'PULSE(0 5 0 10n 10n 0.5u 1u)', 'b', '0'), { id: 'g1', type: 'logic_or', designator: 'XOR2', pins: [{ pinId: 'in1', netId: 'a' }, { pinId: 'in2', netId: 'b' }, { pinId: 'out', netId: 'y' }] }], N('vdd', 'a', 'b', 'y')), analysis: TRANu, probes: ['v(y)'] }), (r) => baseOk(r).pass && r.series[0].min > 4.5 ? ok() : fail(`OR(1,pulse) v(y) min=${r.series[0]?.min?.toFixed(2)} want ~5 (a HIGH input MUST force OR HIGH; AND/mis-wire → swings to 0)`));
 add('digital', 'dff /2 divider (tran)', () => ({ circuit: circuit([V('vdd', 'VDD', 'DC 5', 'vdd', '0'), V('vclk', 'VCLK', 'PULSE(0 5 0 10n 10n 0.5u 1u)', 'clk', '0'), { id: 'ff', type: 'dff', designator: 'U1', pins: [{ pinId: 'd', netId: 'qb' }, { pinId: 'clk', netId: 'clk' }, { pinId: 'q', netId: 'q' }, { pinId: 'qb', netId: 'qb' }] }], N('vdd', 'clk', 'q', 'qb')), analysis: TRANu, probes: ['v(q)'] }), (r) => baseOk(r, { swing: 1 }));
 // PR2 sequential/bus primitives (functional edge-count proofs live in the unit suite + were verified live;
 // these cells lock the full-pipeline emission + convergence + liveness).
