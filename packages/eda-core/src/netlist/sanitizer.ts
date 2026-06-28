@@ -112,35 +112,67 @@ export function validateIncludePath(includePath: string, _jobDir: string): void 
 }
 
 /**
- * Sanitize netlist content for dangerous patterns
+ * ngspice commands that can execute code or escape the job sandbox. CRUCIALLY these run INSIDE a
+ * `.control … .endc` block (which ngspice DOES execute in `-b` batch mode, and which our own generated decks
+ * use for `set`/`run`/`wrdata`/`quit`) WITHOUT a leading dot — so blocking only `.shell`/`.system` at the top
+ * level missed the real attack surface (`shell rm -rf /`, `system curl … | sh`, `source /etc/passwd`,
+ * `osdi evil.so`). Matched as the line's FIRST token (dot-prefix stripped), so a device named `Cd1`/`Lload2`
+ * is unaffected — only the bare command word is rejected.
+ */
+const DANGEROUS_COMMANDS = new Set([
+    'shell', // run a shell command
+    'system', // run a system command
+    'source', // read + execute another SPICE file
+    'exec', // execute
+    'cd', // change working directory (relative-path escape)
+    'load', // load an external rawfile (arbitrary file read)
+    'osdi', // load an OSDI shared library → native code execution
+    'codemodel', // load an XSPICE .cm shared library → native code execution
+    'pre_osdi', // pre-run OSDI load
+]);
+
+/** Commands whose FIRST argument is a destination/​source FILE that must stay inside the job dir (validated
+ *  like `.include`). Our generated decks use `wrdata output.csv …` (a safe relative path); a crafted
+ *  `wrdata /etc/cron.d/x …` would otherwise write outside the sandbox. */
+const FILE_PATH_COMMANDS = new Set(['wrdata', 'write', 'wrs', 'sconvert', 'rawfile']);
+
+/**
+ * Sanitize netlist content for dangerous patterns. Defence-in-depth before ngspice runs the deck: blocks
+ * code-execution / sandbox-escape commands (top-level OR inside a `.control` block) and validates every
+ * file path (`.include`, `wrdata`, …) stays within the job directory. Throws SecurityError on the first
+ * violation; returns the netlist unchanged when clean.
  */
 export function sanitizeNetlist(netlist: string, jobDir: string): string {
     const lines = netlist.split('\n');
-    const sanitized: string[] = [];
 
     for (const line of lines) {
-        const trimmed = line.trim().toLowerCase();
+        const trimmed = line.trim();
+        if (!trimmed || trimmed.startsWith('*')) continue; // blank / comment
+        const tokens = trimmed.split(/\s+/);
+        const firstTok = (tokens[0] ?? '').toLowerCase();
+        const cmd = firstTok.replace(/^\./, ''); // `.shell` and `shell` are the same threat
 
-        // Validate .include statements
-        if (trimmed.startsWith('.include')) {
-            const match = line.match(/\.include\s+["']?([^"'\s]+)["']?/i);
-            if (match && match[1]) {
-                validateIncludePath(match[1], jobDir);
-            }
-        }
-
-        // Block potentially dangerous directives
-        if (trimmed.startsWith('.shell') || trimmed.startsWith('.system')) {
+        // Code-execution / sandbox-escape commands — blocked everywhere (incl. inside .control, no dot needed).
+        if (DANGEROUS_COMMANDS.has(cmd)) {
             throw new SecurityError(
-                'Shell commands not allowed in netlist',
-                'SHELL_COMMAND',
+                `Disallowed ngspice command "${firstTok}" (shell/system/source/exec/cd/load/osdi are blocked, including inside a .control block)`,
+                'DANGEROUS_COMMAND',
             );
         }
 
-        sanitized.push(line);
+        // .include <path> — must be a relative path inside the job dir.
+        if (cmd === 'include') {
+            const match = line.match(/\.include\s+["']?([^"'\s]+)["']?/i);
+            if (match && match[1]) validateIncludePath(match[1], jobDir);
+        }
+
+        // File-writing/reading commands — validate the destination/source path stays in the job dir.
+        if (FILE_PATH_COMMANDS.has(cmd) && tokens[1]) {
+            validateIncludePath(tokens[1].replace(/^["']|["']$/g, ''), jobDir);
+        }
     }
 
-    return sanitized.join('\n');
+    return netlist;
 }
 
 /**

