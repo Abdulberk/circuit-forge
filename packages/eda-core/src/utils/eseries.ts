@@ -6,6 +6,7 @@
  * nearest preferred value yields a manufacturable design. Pure: numbers in, numbers/strings out.
  */
 import { parseSpiceValue, formatSpiceValue } from './unit-parser';
+import type { CircuitJson } from '../types/circuit';
 
 export type ESeries = 'E12' | 'E24' | 'E96';
 
@@ -72,4 +73,57 @@ export function snapValueString(spiceValue: string, series: ESeries = 'E24'): st
     const parsed = parseSpiceValue(spiceValue);
     if (!parsed.isValid || !(parsed.value > 0)) return null;
     return formatSpiceValue(nearestESeries(parsed.value, series), parsed.unit);
+}
+
+/** One component whose value was snapped to a preferred value. `deltaPct` is the signed shift from the
+ *  original ((to−from)/from·100) — small for a near-miss (3.27k→3.3k ≈ +0.9%), so a caller can warn if a
+ *  snap moves a value enough to matter to the design. */
+export interface ESeriesSnapChange {
+    id: string;
+    designator: string;
+    type: string;
+    from: string;
+    to: string;
+    deltaPct: number;
+}
+
+export interface ESeriesSnapResult {
+    /** A NEW circuit (the input is not mutated) with snapped passive values. */
+    circuit: CircuitJson;
+    /** Every value that actually moved — empty when the design was already fully sourceable. */
+    changes: ESeriesSnapChange[];
+}
+
+/** Passive types whose value is a single E-series magnitude (Ω/F/H). Sources (`DC 5`, `SIN(...)`), models,
+ *  and multi-token values are intentionally left alone. */
+const SNAPPABLE_TYPES = new Set(['resistor', 'capacitor', 'inductor']);
+
+/**
+ * Snap every passive (R/C/L) value in a circuit to the nearest E-series preferred value, returning a NEW
+ * circuit + a per-change report — the "make this design sourceable" transform. A value that is already a
+ * preferred value (isESeriesValue) or not a parseable single magnitude is left untouched. PURE: the input
+ * circuit is not mutated. Deliberately a STANDALONE transform (not auto-applied in the design loop): snapping
+ * shifts values slightly, so the caller decides when to apply it (e.g. after a verified design, then re-verify
+ * at the preferred values) rather than silently changing what was simulated.
+ */
+export function snapCircuitToESeries(circuit: CircuitJson, series: ESeries = 'E24'): ESeriesSnapResult {
+    const changes: ESeriesSnapChange[] = [];
+    const components = circuit.components.map((c) => {
+        if (!SNAPPABLE_TYPES.has(c.type) || typeof c.value !== 'string') return c;
+        const parsed = parseSpiceValue(c.value);
+        if (!parsed.isValid || !(parsed.value > 0) || isESeriesValue(parsed.value, series)) return c;
+        const to = snapValueString(c.value, series);
+        if (!to || to === c.value) return c;
+        const toVal = parseSpiceValue(to).value;
+        changes.push({
+            id: c.id,
+            designator: c.designator,
+            type: c.type,
+            from: c.value,
+            to,
+            deltaPct: ((toVal - parsed.value) / parsed.value) * 100,
+        });
+        return { ...c, value: to };
+    });
+    return { circuit: { ...circuit, components }, changes };
 }

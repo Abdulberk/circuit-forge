@@ -212,3 +212,14 @@ export {
     parseFrequencyValue,
     type ParsedValue,
 } from './utils';
+
+// E-series (IEC 60063) preferred-value snapping — make AI/formula-derived values sourceable.
+export {
+    nearestESeries,
+    isESeriesValue,
+    snapValueString,
+    snapCircuitToESeries,
+    type ESeries,
+    type ESeriesSnapChange,
+    type ESeriesSnapResult,
+} from './utils/eseries';
