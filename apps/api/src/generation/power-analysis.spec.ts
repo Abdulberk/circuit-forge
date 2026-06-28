@@ -72,6 +72,27 @@ describe('computeResistorPower', () => {
         expect(computeResistorPower(DIVIDER, DIVIDER_MEAS, 'ac')!.basis).toBe('last-timestep');
     });
 
+    it('uses TRUE average heating (Vrms²/R) for a grounded resistor in a transient, not the last-timestep snapshot', () => {
+        // R2 (out→gnd) carries 5 Vrms, but the run's LAST sample landed at a zero crossing (final=0). The
+        // snapshot power would read 0 W (wrong); the rms basis reports the real 5²/1k = 25 mW.
+        const meas: SimMeasurement[] = [
+            { node: 'v(in)', min: -10, max: 10, final: 0, pp: 20, avg: 0, rms: 7.07 },
+            { node: 'v(out)', min: -5, max: 5, final: 0, pp: 10, avg: 0, rms: 5 },
+        ];
+        const rep = computeResistorPower(DIVIDER, meas, 'tran')!;
+        const r2 = rep.components.find((c) => c.designator === 'R2')!;
+        expect(r2.basis).toBe('rms');
+        expect(r2.dissipationW).toBeCloseTo(0.025, 4); // 5²/1000 — NOT 0, which the final=0 snapshot would give
+        // R1 (in→out) floats — differential Vrms isn't recoverable from per-node RMS → honest snapshot fallback.
+        const r1 = rep.components.find((c) => c.designator === 'R1')!;
+        expect(r1.basis).toBe('last-timestep');
+    });
+
+    it('op/dc keeps the operating-point basis (rms not applied to a steady operating point)', () => {
+        const rep = computeResistorPower(DIVIDER, DIVIDER_MEAS, 'op')!;
+        expect(rep.components.every((c) => c.basis === 'operating-point')).toBe(true);
+    });
+
     it('returns undefined when the circuit has no resistors', () => {
         const noR: CircuitJson = {
             version: '1.0',
