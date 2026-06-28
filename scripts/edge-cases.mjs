@@ -12,7 +12,7 @@
 //   E PHYSICS   tight known-answer checks (RC settle, -3 dB corner, exact op-amp gain, loaded divider, …)
 //
 // Requires real ngspice (NGSPICE_PATH or the choco console build) + the eda-core dist build.
-import { generateNetlist, parseSimulationOutput, resolveGenericModels, extractProbes, runErc, cutoffFrequency, isAcMagnitudeSeries } from '../packages/eda-core/dist/index.js';
+import { generateNetlist, parseSimulationOutput, resolveGenericModels, extractProbes, runErc, cutoffFrequency, isAcMagnitudeSeries, summarizeSeries } from '../packages/eda-core/dist/index.js';
 import { spawnSync } from 'node:child_process';
 import { mkdtempSync, writeFileSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -48,7 +48,10 @@ function runCell(circuit, analysis, probes) {
             const ys = s.points.map((p) => p.y).filter(Number.isFinite);
             const min = ys.length ? Math.min(...ys) : NaN, max = ys.length ? Math.max(...ys) : NaN;
             const cutoff = analysis.type === 'ac' && isAcMagnitudeSeries(s.name) ? cutoffFrequency(s.points) : undefined;
-            return { name: s.name, n: s.points.length, min, max, pp: max - min, final: ys[ys.length - 1], cutoff };
+            // avg/rms come from eda-core's summarizeSeries (time-weighted, the SAME code the verdict uses), so
+            // an avg/rms cell exercises the real metric path against ngspice, not a re-implementation.
+            const sm = summarizeSeries(s, analysis.type);
+            return { name: s.name, n: s.points.length, min, max, pp: max - min, final: ys[ys.length - 1], cutoff, avg: sm.raw?.avg, rms: sm.raw?.rms };
         });
         return { netlist, exit: r.status, rows: res.meta.pointsCount, series, errors: errs, erc };
     } finally { rmSync(dir, { recursive: true, force: true }); }
@@ -142,6 +145,7 @@ add('E-physics', 'RC step at t=τ reaches 63.2% (10·(1−e⁻¹)=6.32V)', () =>
 add('E-physics', 'HIGH-pass −3dB corner ≈ 1/(2πRC) ≈ 995 Hz (passband at top)', () => ({ circuit: circuit([AC1('v1', 'V1', 'in', '0'), C('c1', 'C1', '100n', 'in', 'out'), R('r1', 'R1', '1.6k', 'out', '0')], N('in', 'out')), analysis: { type: 'ac', variation: 'dec', points: 50, startFreq: '1', stopFreq: '1meg' }, probes: ['v(out)'] }), (r) => { const fc = r.series[0]?.cutoff; return near(fc, 994.7, 60) ? ok() : fail(`high-pass fc=${fc == null ? 'null' : fc.toFixed(0)} want ~995 (cutoff metric with the passband ABOVE the corner)`); });
 add('E-physics', 'NON-inverting op-amp gain = 1+Rf/Rg (0.5·10 = 5V)', () => ({ circuit: circuit([...rails(), V('vin', 'VIN', 'DC 0.5', 'sig', '0'), R('rg', 'RG', '1k', 'inv', '0'), R('rf', 'RF', '9k', 'out', 'inv'), opamp('u1', 'out', 'sig', 'inv')], N('vcc', 'vee', 'sig', 'inv', 'out')), analysis: OP, probes: ['v(out)'] }), (r) => near(r.series[0]?.final, 5, 0.1) ? ok() : fail(`non-inv v(out)=${r.series[0]?.final?.toFixed(3)} want 5 (1+9k/1k)·0.5; guards in+/in- binding the other way vs the inverting cell`));
 add('E-physics', 'NEGATIVE supply node stays signed: −8·R2/(R1+R2) = −6V (no spurious abs)', () => ({ circuit: circuit([V('v1', 'V1', 'DC -8', 'sup', '0'), R('r1', 'R1', '1k', 'sup', 'mid'), R('r2', 'R2', '3k', 'mid', '0')], N('sup', 'mid')), analysis: OP, probes: ['v(mid)'] }), (r) => near(r.series[0]?.final, -6, 0.05) ? ok() : fail(`v(mid)=${r.series[0]?.final?.toFixed(3)} want −6 (negative source round-trip; a voltage must NOT be magnitude'd)`));
+add('E-physics', 'sine RMS = amplitude/√2 and avg ≈ 0 (time-weighted metric, real ngspice)', () => ({ circuit: circuit([V('v1', 'V1', 'SIN(0 5 1k)', 'in', '0'), R('r1', 'R1', '1k', 'in', '0')], N('in')), analysis: { type: 'tran', stopTime: '5m', stepTime: '5u' }, probes: ['v(in)'] }), (r) => baseOk(r).pass && near(r.series[0].rms, 5 / Math.SQRT2, 0.12) && Math.abs(r.series[0].avg) < 0.12 ? ok() : fail(`sine rms=${r.series[0]?.rms?.toFixed(3)} avg=${r.series[0]?.avg?.toFixed(3)} want rms≈${(5 / Math.SQRT2).toFixed(3)} (5/√2), avg≈0`));
 
 // ========================= F. DEVICE-physics known-answer (emission + pinId binding + sign) =========================
 add('F-device', 'VCCS Iout = gm·Vin into a load, sign-correct → +10V', () => ({ circuit: circuit([V('v1', 'V1', 'DC 2', 'in', '0'), { id: 'g1', type: 'vccs', designator: 'G1', value: '5m', pins: [{ pinId: '+', netId: '0' }, { pinId: '-', netId: 'out' }, { pinId: 'c+', netId: 'in' }, { pinId: 'c-', netId: '0' }] }, R('rl', 'RL', '1k', 'out', '0')], N('in', 'out')), analysis: OP, probes: ['v(out)'] }), (r) => near(r.series[0]?.final, 10, 0.1) ? ok() : fail(`vccs v(out)=${r.series[0]?.final?.toFixed(3)} want +10 (gm·Vin·RL = 5m·2·1k); sign + canonical out/ctrl pin binding`));
