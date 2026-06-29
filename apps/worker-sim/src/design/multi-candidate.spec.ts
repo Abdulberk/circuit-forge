@@ -7,7 +7,15 @@ const runDesignLoop = jest.fn();
 const screenCandidate = jest.fn();
 const selectFinalists = jest.fn();
 const runYieldAnalysis = jest.fn();
-jest.mock('@circuitforge/llm-core', () => ({ runDesignLoop, screenCandidate, selectFinalists, runYieldAnalysis }));
+// classifyRobustness is a PURE classifier (yield report → robustness tier) that the orchestrator only ATTACHES
+// to the winner result — so a representative stub keeps this flow test fast/deterministic. (Its real behaviour
+// is unit-tested in llm-core's design-core.spec.) Omitting it here is what made the worker `test` job go red.
+jest.mock('@circuitforge/llm-core', () => ({
+    runDesignLoop, screenCandidate, selectFinalists, runYieldAnalysis,
+    classifyRobustness: (y?: { yield?: number; evaluated?: number }) => ({
+        tier: 'robust', profile: 'consumer', yield: y?.yield ?? null, yieldLowerBound: 0.92, evaluated: y?.evaluated ?? null, note: 'stub',
+    }),
+}));
 jest.mock('./pools', () => ({ llmSem: { run: (fn: () => unknown) => fn() }, ngspiceSem: { run: (fn: () => unknown) => fn() } }));
 jest.mock('../logger', () => ({ logger: { info: jest.fn(), warn: jest.fn(), error: jest.fn() } }));
 
