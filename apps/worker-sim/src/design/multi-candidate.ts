@@ -18,6 +18,7 @@ import {
     screenCandidate,
     selectFinalists,
     runYieldAnalysis,
+    classifyRobustness,
     type DesignDeps,
     type DesignLoopInput,
     type DesignResult,
@@ -160,9 +161,11 @@ export async function runMultiCandidateDesign(
     );
 
     // Winner keeps its full result (incl. waveform series); alternatives are series-free summaries (#6 row-bound).
+    // Re-classify robustness from the winner-only MC just run (the per-finalist loops ran MC-off → 'unknown').
     return {
         ...winner,
         ...(yieldReport ? { yield: yieldReport } : {}),
+        robustness: classifyRobustness(yieldReport, deps.robustnessProfile),
         candidates: { generated: screened.length, finalists: finalized.length, llmCalls },
         alternatives: finalized.filter((r) => r !== winner).map(summarizeAlternative),
     };

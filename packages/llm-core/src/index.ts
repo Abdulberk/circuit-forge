@@ -795,4 +795,9 @@ export {
     specCloseness,
     selectFinalists,
     type ScreenResult,
+    // Tolerance-aware robustness tier (layered on top of the nominal verdict).
+    classifyRobustness,
+    ROBUSTNESS_PROFILES,
+    type RobustnessVerdict,
+    type RobustnessTier,
 } from './design-core';

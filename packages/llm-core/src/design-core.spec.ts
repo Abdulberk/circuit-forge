@@ -4,7 +4,7 @@
  * design-spec-satisfaction suite (mocked SDK + sim); here we only lock the NEW abort hook, which fires at the
  * first checkpoint BEFORE any LLM/sim call — so it needs no Anthropic SDK mock.
  */
-import { runDesignLoop, DesignAbortedError, specCloseness, selectFinalists, screenSpecsMet, type DesignDeps, type ScreenResult } from './design-core';
+import { runDesignLoop, DesignAbortedError, specCloseness, selectFinalists, screenSpecsMet, classifyRobustness, type DesignDeps, type ScreenResult } from './design-core';
 import type { AssertionResult, AcceptanceCriterion, CircuitJson } from '@circuit-forge/eda-core';
 
 const A = (over: Partial<AssertionResult>): AssertionResult => ({
@@ -61,6 +61,38 @@ describe('screenSpecsMet (S1 screen coverage gate)', () => {
     it('a failing assertion or no assertions → not spec-met', () => {
         expect(screenSpecsMet([{ ...passA('v(out)'), pass: false }], 'a divider', [crit('v(out)')])).toBe(false);
         expect(screenSpecsMet([], 'anything', [])).toBe(false);
+    });
+});
+
+describe('classifyRobustness (tolerance-aware tier layered on top of nominal verified)', () => {
+    const rep = (yld: number, low: number, high: number, evaluated = 200) => ({ yield: yld, evaluated, ci95: { low, high } });
+
+    it('robust when the Wilson LOWER bound clears the consumer bar (≥99%)', () => {
+        const r = classifyRobustness(rep(0.998, 0.992, 1.0));
+        expect(r.tier).toBe('robust');
+        expect(r.yieldLowerBound).toBeCloseTo(0.992, 6);
+        expect(r.profile).toBe('consumer');
+    });
+
+    it('grades on the LOWER bound, not the point estimate (99.9% point but ~95% lower bound → marginal)', () => {
+        expect(classifyRobustness(rep(0.999, 0.95, 1.0)).tier).toBe('marginal');
+    });
+
+    it('at-risk when the lower bound is below the marginal floor (<90%)', () => {
+        expect(classifyRobustness(rep(0.85, 0.8, 0.9)).tier).toBe('at-risk');
+    });
+
+    it("unknown (= 'verified at nominal only') when no Monte-Carlo ran or yield is unavailable", () => {
+        const r = classifyRobustness(undefined);
+        expect(r.tier).toBe('unknown');
+        expect(r.yieldLowerBound).toBeNull();
+        expect(r.note).toMatch(/nominal/i);
+        expect(classifyRobustness({ available: false, reason: 'capacity' }).tier).toBe('unknown');
+    });
+
+    it('the automotive profile applies a stricter bar (≈Cpk 1.67) than consumer on the SAME data', () => {
+        expect(classifyRobustness(rep(0.997, 0.995, 0.999), 'automotive').tier).toBe('marginal'); // 0.995 < 0.999
+        expect(classifyRobustness(rep(0.997, 0.995, 0.999), 'consumer').tier).toBe('robust'); // 0.995 ≥ 0.99
     });
 });
 

@@ -69,6 +69,8 @@ export interface DesignResult {
     warning?: string;
     caveats?: string[];
     yield?: Record<string, unknown>;
+    /** Tolerance-aware robustness tier (layered on top of nominal `verified`; never false-fails). */
+    robustness?: RobustnessVerdict;
     /** Index signature so a caller may still treat the result as a loose record (the API persists it as Json,
      *  and the tests read fields dynamically). Named members above keep their precise types (e.g. circuit). */
     [key: string]: unknown;
@@ -112,6 +114,9 @@ export interface DesignDeps {
     isAborted?: () => Promise<boolean>;
     /** Progress sink (current round) — the worker writes it to the job; the API ignores it. */
     progress?: (round: number) => void;
+    /** Domain profile for the robustness-yield bars (ROBUSTNESS_PROFILES key: consumer | automotive | medical).
+     *  Default 'consumer' (≈ Cpk 1.33). Configurable so customer/contract requirements override the default. */
+    robustnessProfile?: string;
     /** True for errors that carry intent and must propagate UNTRANSLATED rather than become "inconclusive"
      *  (the API: `e instanceof HttpException`, so a 429 QUOTA_EXCEEDED survives; the worker: `() => false`). */
     isIntentfulError?: (e: unknown) => boolean;
@@ -258,6 +263,10 @@ export async function runDesignLoop(input: DesignLoopInput, deps: DesignDeps): P
         if (succeeded) {
             if (groundingOpts) await ground.enrichSourcing(circuit);
             const yieldReport = await runYieldAnalysis(deps, circuit, analysis, criteria);
+            // Tolerance-aware robustness tier on top of the nominal pass — never gates `ok`/`verified` (a
+            // correct design is never false-failed); it just labels real-world robustness honestly. 'unknown'
+            // when no MC ran (no toleranced parts), which means "verified at nominal values only".
+            const robustness = classifyRobustness(yieldReport, deps.robustnessProfile);
             return {
                 ok: true,
                 verified: criteria.length > 0,
@@ -270,6 +279,7 @@ export async function runDesignLoop(input: DesignLoopInput, deps: DesignDeps): P
                 history,
                 simulation: { jobId, status: status.status, metrics: status.metrics, result: result.result },
                 ...(yieldReport ? { yield: yieldReport } : {}),
+                robustness,
                 ...(freqCaveat ? { caveats: freqCaveat } : {}),
             };
         }
@@ -424,6 +434,76 @@ export async function runYieldAnalysis(
     } catch {
         return { available: false, reason: 'yield analysis unavailable (simulation capacity)' };
     }
+}
+
+/**
+ * Manufacturing-robustness tier, layered ON TOP of the nominal verdict — the nominal pass stays the gate, so
+ * this NEVER false-fails a correct design; it just labels how robust it is to REAL component tolerances.
+ *
+ * Graded on the Wilson-95% LOWER bound of the Monte-Carlo yield (honest about how few runs back it — a small
+ * MC can't claim 99.99%) against industry capability bars: consumer ≈ Cpk 1.33 (the "capable process" bar,
+ * ~99%); automotive/medical ≈ Cpk 1.67 (AIAG PPAP / IATF 16949). The yield models COMPONENT-VALUE spread only
+ * (short-term) — it is NOT a long-term-drift-adjusted production figure, and the note says so. Thresholds are
+ * DEFAULTS per domain profile and must stay configurable (customer/contract requirements override). Pure.
+ */
+export type RobustnessTier = 'robust' | 'marginal' | 'at-risk' | 'unknown';
+
+interface RobustnessBars {
+    /** Wilson-lower-bound yield at/above which the design is "robust" (production-ready). */
+    robustMin: number;
+    /** Wilson-lower-bound yield at/above which it is "marginal" (works but below the production bar). */
+    marginalMin: number;
+}
+
+/** Yield bars per domain — DEFAULTS, configurable; customer/contract requirements override (Cpk 1.33 vs 1.67). */
+export const ROBUSTNESS_PROFILES: Record<string, RobustnessBars> = {
+    consumer: { robustMin: 0.99, marginalMin: 0.9 }, // general electronics "capable" bar (≈ Cpk 1.33 / 4σ)
+    automotive: { robustMin: 0.999, marginalMin: 0.99 }, // safety/critical (≈ Cpk 1.67 / 5σ, AIAG PPAP / IATF 16949)
+    medical: { robustMin: 0.999, marginalMin: 0.99 },
+};
+
+export interface RobustnessVerdict {
+    tier: RobustnessTier;
+    /** Which domain profile's bars were applied. */
+    profile: string;
+    /** Point-estimate yield in [0,1], or null when no Monte-Carlo ran. */
+    yield: number | null;
+    /** Wilson-95% LOWER bound — the value the tier is graded on (honest re: sample count). */
+    yieldLowerBound: number | null;
+    /** Monte-Carlo variants actually evaluated. */
+    evaluated: number | null;
+    /** Plain-language, honest one-liner for the user / AI loop. */
+    note: string;
+}
+
+/** Classify a yield report (from runYieldAnalysis) into a robustness tier. Pure; no I/O. `unknown` when no MC
+ *  ran (no toleranced parts / capacity) — which honestly means "verified at NOMINAL values only". */
+export function classifyRobustness(
+    yieldReport: Record<string, unknown> | undefined,
+    profileName = 'consumer',
+): RobustnessVerdict {
+    const bars = ROBUSTNESS_PROFILES[profileName] ?? ROBUSTNESS_PROFILES.consumer!;
+    const yld = typeof yieldReport?.yield === 'number' ? (yieldReport.yield as number) : null;
+    const ci = yieldReport?.ci95 as { low?: number; high?: number } | undefined;
+    const lo = typeof ci?.low === 'number' ? ci.low : null;
+    const evaluated = typeof yieldReport?.evaluated === 'number' ? (yieldReport.evaluated as number) : null;
+    const pct = (x: number) => `${(x * 100).toFixed(1)}%`;
+
+    if (lo === null) {
+        return {
+            tier: 'unknown', profile: profileName, yield: yld, yieldLowerBound: null, evaluated,
+            note: 'Robustness not assessed (no toleranced parts or no Monte-Carlo) — verified at NOMINAL component values only.',
+        };
+    }
+    const tier: RobustnessTier = lo >= bars.robustMin ? 'robust' : lo >= bars.marginalMin ? 'marginal' : 'at-risk';
+    const tail = `(component-tolerance Monte-Carlo, ${evaluated ?? '?'} runs; ~${pct(lo)} is the 95% lower bound; short-term, not long-term-drift-adjusted)`;
+    const note =
+        tier === 'robust'
+            ? `Robust — at least ${pct(bars.robustMin)} of units expected to meet spec under component tolerances ${tail}.`
+            : tier === 'marginal'
+                ? `Marginal — ~${pct(lo)} expected yield, below the ${pct(bars.robustMin)} production bar. Tighten component tolerances (e.g. ±1% parts) or re-center values ${tail}.`
+                : `At risk — only ~${pct(lo)} expected yield; passes at nominal but is NOT production-robust ${tail}.`;
+    return { tier, profile: profileName, yield: yld, yieldLowerBound: lo, evaluated, note };
 }
 
 function mergeCriteria(
