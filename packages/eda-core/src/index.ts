@@ -42,6 +42,7 @@ export type {
     AcAnalysis,
     DcAnalysis,
     OpAnalysis,
+    NoiseAnalysis,
     MeasureSpec,
 } from './types/analysis';
 
@@ -54,6 +55,7 @@ export type {
     FourierHarmonic,
     MeasurementResult,
     TransferFunctionResult,
+    NoiseResult,
 } from './types/simulation';
 
 export type {
@@ -184,6 +186,7 @@ export { cutoffFrequency, isAcMagnitudeSeries, type FreqMagPoint } from './analy
 export { parseFourierLog } from './analysis/fourier';
 export { parseMeasurements } from './analysis/measure';
 export { parseTransferFunction } from './analysis/tf';
+export { parseNoise, parseNoiseTotals } from './analysis/noise';
 export {
     nodeKey,
     isCurrentProbe,

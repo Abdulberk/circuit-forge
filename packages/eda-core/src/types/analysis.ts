@@ -5,7 +5,7 @@
 /**
  * Union type for all analysis configurations
  */
-export type AnalysisConfig = TranAnalysis | AcAnalysis | DcAnalysis | OpAnalysis;
+export type AnalysisConfig = TranAnalysis | AcAnalysis | DcAnalysis | OpAnalysis | NoiseAnalysis;
 
 /**
  * Optional ngspice solver tuning (`.options` card) — the convergence/accuracy levers a power-electronics
@@ -139,6 +139,26 @@ export interface OpAnalysis {
 }
 
 /**
+ * Noise analysis — small-signal noise vs frequency. Produces the output/input-referred noise SPECTRUM (voltage
+ * density per √Hz, surfaced as series onoise_spectrum/inoise_spectrum) + the integrated TOTALS (surfaced in
+ * SimulationResult.noise). REPORT-ONLY. NOTE: the input source MUST carry an AC magnitude (e.g. value
+ * "DC 0 AC 1") or the noise is meaningless/zero — the caller is responsible for that on the source.
+ */
+export interface NoiseAnalysis {
+    type: 'noise';
+    /** Output node to evaluate noise at, e.g. "v(out)". */
+    output: string;
+    /** Input source the noise is referred back to, e.g. "V1". */
+    inputSource: string;
+    variation: 'dec' | 'oct' | 'lin';
+    points: number;
+    startFreq: string;
+    stopFreq: string;
+    /** Optional ngspice solver tuning — see SolverOptions. */
+    options?: SolverOptions;
+}
+
+/**
  * Get the analysis type string
  */
 export function getAnalysisType(config: AnalysisConfig): string {
@@ -215,6 +235,12 @@ export function analysisToSpice(config: AnalysisConfig): string {
         }
         case 'op':
             return '.op';
+        case 'noise': {
+            // `.noise <output> <src> <variation> <pts> <fstart> <fstop>`. The generator pre-rewrites `output` to
+            // the SPICE node before calling this. Points bounded like the ac sweep.
+            const points = Math.min(config.points, MAX_SIM_POINTS);
+            return `.noise ${config.output} ${config.inputSource} ${config.variation} ${points} ${config.startFreq} ${config.stopFreq}`;
+        }
         default:
             throw new Error(`Unknown analysis type: ${(config as AnalysisConfig).type}`);
     }

@@ -104,6 +104,20 @@ export const OpAnalysisSchema = z.object({
 });
 
 /**
+ * Noise analysis schema — small-signal noise vs frequency (output/input-referred density + integrated totals).
+ */
+export const NoiseAnalysisSchema = z.object({
+    type: z.literal('noise'),
+    output: ProbeSchema,
+    inputSource: z.string().regex(/^[A-Z][A-Z0-9]*[0-9]+$/i, 'Invalid source designator'),
+    variation: z.enum(['dec', 'oct', 'lin']),
+    points: z.number().int().positive().max(10000),
+    startFreq: SpiceValueSchema,
+    stopFreq: SpiceValueSchema,
+    options: SolverOptionsSchema.optional(),
+});
+
+/**
  * Combined analysis config schema
  */
 export const AnalysisConfigSchema = z.discriminatedUnion('type', [
@@ -111,6 +125,7 @@ export const AnalysisConfigSchema = z.discriminatedUnion('type', [
     AcAnalysisSchema,
     DcAnalysisSchema,
     OpAnalysisSchema,
+    NoiseAnalysisSchema,
 ]);
 
 /**
