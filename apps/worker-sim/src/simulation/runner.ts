@@ -13,6 +13,7 @@ import {
     parseMeasurements,
     parseTransferFunction,
     parseNoise,
+    parseSensitivity,
     sanitizeNetlist,
     extractProbes,
     parseSpiceValue,
@@ -221,6 +222,24 @@ async function runOneAttempt(
             error: spawnError
                 ? `ngspice could not be launched (check NGSPICE_PATH / sandbox): ${stderr.trim() || 'spawn error'}`
                 : `ngspice exited with code ${exitCode}`,
+        };
+    }
+
+    // No-series analyses (e.g. `.sens`) print a scalar table to the listing and write NO output.csv — so the
+    // "no output file = fail" guard below would wrongly fail a clean run. Handle them here from the listing.
+    if (input.analysisType === 'sens') {
+        const listing = `${stdout}\n${await fs.readFile(path.join(jobDir, 'stdout.log'), 'utf-8').catch(() => '')}`;
+        return {
+            success: true,
+            result: {
+                meta: { analysisType: 'sens', xLabel: '', pointsCount: 0 },
+                series: [],
+                sensitivity: parseSensitivity(listing),
+            },
+            stdout,
+            stderr,
+            runtimeMs: Date.now() - startTime,
+            outputSizeBytes: 0,
         };
     }
 

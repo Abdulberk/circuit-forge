@@ -118,6 +118,15 @@ export const NoiseAnalysisSchema = z.object({
 });
 
 /**
+ * DC sensitivity analysis schema — d(output)/d(component) table.
+ */
+export const SensAnalysisSchema = z.object({
+    type: z.literal('sens'),
+    output: ProbeSchema,
+    options: SolverOptionsSchema.optional(),
+});
+
+/**
  * Combined analysis config schema
  */
 export const AnalysisConfigSchema = z.discriminatedUnion('type', [
@@ -126,6 +135,7 @@ export const AnalysisConfigSchema = z.discriminatedUnion('type', [
     DcAnalysisSchema,
     OpAnalysisSchema,
     NoiseAnalysisSchema,
+    SensAnalysisSchema,
 ]);
 
 /**

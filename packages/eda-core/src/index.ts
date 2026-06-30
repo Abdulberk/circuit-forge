@@ -43,6 +43,7 @@ export type {
     DcAnalysis,
     OpAnalysis,
     NoiseAnalysis,
+    SensAnalysis,
     MeasureSpec,
 } from './types/analysis';
 
@@ -56,6 +57,8 @@ export type {
     MeasurementResult,
     TransferFunctionResult,
     NoiseResult,
+    SensitivityResult,
+    SensitivityEntry,
 } from './types/simulation';
 
 export type {
@@ -187,6 +190,7 @@ export { parseFourierLog } from './analysis/fourier';
 export { parseMeasurements } from './analysis/measure';
 export { parseTransferFunction } from './analysis/tf';
 export { parseNoise, parseNoiseTotals } from './analysis/noise';
+export { parseSensitivity } from './analysis/sens';
 export {
     nodeKey,
     isCurrentProbe,
