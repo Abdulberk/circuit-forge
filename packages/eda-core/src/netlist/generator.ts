@@ -478,7 +478,11 @@ export function generateNetlist(
     if (effectiveAnalysis.type === 'op' && effectiveAnalysis.tf) {
         const out = rewriteProbeNodeRefs(rewriteProbeDeviceRefs(effectiveAnalysis.tf.output, designatorToInstance), netRefToNode).trim();
         const src = effectiveAnalysis.tf.inputSource;
-        if (out && /^[A-Za-z][A-Za-z0-9]*[0-9]+$/.test(src)) {
+        // Only emit `tf` when the input source ACTUALLY EXISTS in the circuit — a `tf` against a missing source
+        // makes ngspice error and fails the whole run, even though the op-point + series are valid. Skipping it
+        // keeps the run clean (transferFunction is simply absent). REPORT-ONLY: never worth failing the sim.
+        const srcExists = circuit.components.some((c) => c.designator && c.designator.toUpperCase() === src.toUpperCase());
+        if (out && srcExists && /^[A-Za-z][A-Za-z0-9]*[0-9]+$/.test(src)) {
             tfCmds.push(`  tf ${out} ${src}`);
             tfCmds.push(`  print transfer_function output_impedance_at_${out} ${src.toLowerCase()}#input_impedance`);
         }
