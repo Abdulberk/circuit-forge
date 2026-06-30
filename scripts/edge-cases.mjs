@@ -12,7 +12,7 @@
 //   E PHYSICS   tight known-answer checks (RC settle, -3 dB corner, exact op-amp gain, loaded divider, …)
 //
 // Requires real ngspice (NGSPICE_PATH or the choco console build) + the eda-core dist build.
-import { generateNetlist, parseSimulationOutput, resolveGenericModels, extractProbes, runErc, cutoffFrequency, isAcMagnitudeSeries, summarizeSeries, parseFourierLog } from '../packages/eda-core/dist/index.js';
+import { generateNetlist, parseSimulationOutput, resolveGenericModels, extractProbes, runErc, cutoffFrequency, isAcMagnitudeSeries, summarizeSeries, parseFourierLog, parseMeasurements } from '../packages/eda-core/dist/index.js';
 import { spawnSync } from 'node:child_process';
 import { mkdtempSync, writeFileSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -56,7 +56,10 @@ function runCell(circuit, analysis, probes) {
         // `.four`/fourier output lands in the listing (log.txt or the stdout pipe), not the wrdata CSV — parse
         // BOTH combined so a fourier cell can assert on THD against real ngspice.
         const fourier = parseFourierLog((r.stdout || '') + '\n' + log);
-        return { netlist, exit: r.status, rows: res.meta.pointsCount, series, errors: errs, erc, fourier };
+        // `.meas` results also land in the listing — scope the parse to the names the deck requested.
+        const measureNames = [...netlist.matchAll(/^\s*\.meas\s+\w+\s+(\w+)\b/gim)].map((m) => m[1]);
+        const measurements = measureNames.length ? parseMeasurements((r.stdout || '') + '\n' + log, measureNames) : undefined;
+        return { netlist, exit: r.status, rows: res.meta.pointsCount, series, errors: errs, erc, fourier, measurements };
     } finally { rmSync(dir, { recursive: true, force: true }); }
 }
 
@@ -160,6 +163,10 @@ add('E-physics', 'sine RMS = amplitude/√2 and avg ≈ 0 (time-weighted metric,
 // verified IDENTICAL on ngspice-41 (host) and ngspice-42 (CI apt): clean sine ≈ 0.27%, square ≈ 42.92%.
 add('E-physics', 'Fourier THD of a clean 1kHz sine ≈ 0% (fourier cmd, real ngspice)', () => ({ circuit: circuit([V('v1', 'V1', 'SIN(0 1 1k)', 'in', '0'), R('r1', 'R1', '1k', 'in', 'out'), C('c1', 'C1', '1u', 'out', '0')], N('in', 'out')), analysis: { type: 'tran', stopTime: '5m', stepTime: '5u', fourier: { fundamentalFreq: '1k', probes: ['v(out)'] } }, probes: ['v(out)'] }), (r) => { const f = (r.fourier || [])[0]; return f && Number.isFinite(f.thd) && f.thd >= 0 && f.thd < 1 ? ok() : fail(`clean-sine THD: want a parsed block with THD<1%, got ${JSON.stringify(r.fourier)}`); });
 add('E-physics', 'Fourier THD of a 1kHz square ≈ 43% (10-harmonic truncation, real ngspice)', () => ({ circuit: circuit([V('v1', 'V1', 'PULSE(-1 1 0 1n 1n 0.5m 1m)', 'out', '0'), R('r1', 'R1', '1k', 'out', '0')], N('out')), analysis: { type: 'tran', stopTime: '10m', stepTime: '2u', fourier: { fundamentalFreq: '1k', probes: ['v(out)'] } }, probes: ['v(out)'] }), (r) => { const f = (r.fourier || [])[0]; return f && f.thd > 38 && f.thd < 47 ? ok() : fail(`square THD: want 38-47% (≈42.9), got ${JSON.stringify(r.fourier)}`); });
+// .meas (measurement engine) — extrema/RMS + threshold-crossing time, with ANALYTIC answers, on real ngspice.
+// Rides on the .tran run (no extra sim, output.csv unaffected); results parsed from the listing by parseMeasurements.
+add('E-physics', '.meas extrema/RMS of a 5V 1kHz sine (vpk≈5, vpp≈10, vrms≈3.54 — real ngspice)', () => ({ circuit: circuit([V('v1', 'V1', 'SIN(0 5 1k)', 'in', '0'), R('r1', 'R1', '1k', 'in', '0')], N('in')), analysis: { type: 'tran', stopTime: '5m', stepTime: '5u', measurements: [{ name: 'vpk', type: 'max', probe: 'v(in)' }, { name: 'vp2p', type: 'pp', probe: 'v(in)' }, { name: 'vr', type: 'rms', probe: 'v(in)' }] }, probes: ['v(in)'] }), (r) => { const m = Object.fromEntries((r.measurements || []).map((x) => [x.name, x.value])); return near(m.vpk, 5, 0.25) && near(m.vp2p, 10, 0.5) && near(m.vr, 5 / Math.SQRT2, 0.2) ? ok() : fail(`.meas sine: vpk=${m.vpk} vp2p=${m.vp2p} vr=${m.vr} want ≈5/10/${(5 / Math.SQRT2).toFixed(2)} — got ${JSON.stringify(r.measurements)}`); });
+add('E-physics', '.meas WHEN: rising 1kHz sine crosses 0.5 at t≈83.3µs = asin(0.5)/(2πf) (real ngspice)', () => ({ circuit: circuit([V('v1', 'V1', 'SIN(0 1 1k)', 'in', '0'), R('r1', 'R1', '1k', 'in', '0')], N('in')), analysis: { type: 'tran', stopTime: '5m', stepTime: '2u', measurements: [{ name: 'tc', type: 'when', probe: 'v(in)', value: 0.5, edge: 'rise' }] }, probes: ['v(in)'] }), (r) => { const tc = (r.measurements || []).find((x) => x.name === 'tc')?.value; return near(tc, 8.333e-5, 1.5e-5) ? ok() : fail(`.meas WHEN tc=${tc} want ≈8.33e-5 (asin(0.5)/(2π·1k)) — got ${JSON.stringify(r.measurements)}`); });
 
 // ========================= F. DEVICE-physics known-answer (emission + pinId binding + sign) =========================
 add('F-device', 'VCCS Iout = gm·Vin into a load, sign-correct → +10V', () => ({ circuit: circuit([V('v1', 'V1', 'DC 2', 'in', '0'), { id: 'g1', type: 'vccs', designator: 'G1', value: '5m', pins: [{ pinId: '+', netId: '0' }, { pinId: '-', netId: 'out' }, { pinId: 'c+', netId: 'in' }, { pinId: 'c-', netId: '0' }] }, R('rl', 'RL', '1k', 'out', '0')], N('in', 'out')), analysis: OP, probes: ['v(out)'] }), (r) => near(r.series[0]?.final, 10, 0.1) ? ok() : fail(`vccs v(out)=${r.series[0]?.final?.toFixed(3)} want +10 (gm·Vin·RL = 5m·2·1k); sign + canonical out/ctrl pin binding`));
