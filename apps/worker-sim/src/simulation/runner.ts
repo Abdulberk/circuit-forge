@@ -12,6 +12,7 @@ import {
     parseFourierLog,
     parseMeasurements,
     parseTransferFunction,
+    parseNoise,
     sanitizeNetlist,
     extractProbes,
     parseSpiceValue,
@@ -253,20 +254,33 @@ async function runOneAttempt(
         };
     }
 
-    // Parse the output. If the caller didn't pass probe names (e.g. version-based sims
-    // that rely on eda-core's default probes), derive them from the netlist's `wrdata`
-    // line so the CSV columns can be mapped to named series instead of an empty result.
-    const emittedProbes = extractProbes(netlistText);
-    let probeNames = input.probeNames.length > 0 ? input.probeNames : emittedProbes;
-    // The generator can DROP a probe it can't emit (e.g. a current probe on a diode/transistor or a
-    // digital a-device). When that happens the caller's explicit list is LONGER than the emitted wrdata
-    // columns, and the positional CSV mapping would shift every series. The emitted `wrdata` tokens are
-    // the column ground truth, so fall back to them on a count mismatch (a same-count rewrite like
-    // i(R1)->@r1[i] keeps the caller's nicer labels, since position still maps correctly).
-    if (input.probeNames.length > 0 && emittedProbes.length !== input.probeNames.length) {
-        probeNames = emittedProbes;
+    // Parse the output. Noise is special: its CSV is the per-frequency SPECTRUM (onoise/inoise density) and the
+    // integrated TOTALS print to the listing — NOT v()/i() node series — so it gets a dedicated parser that
+    // reads the CSV + the (stdout + -o) listing together. Other analyses go through the generic CSV parser.
+    let result: SimulationResult;
+    if (input.analysisType === 'noise') {
+        const listing = `${stdout}\n${await fs.readFile(path.join(jobDir, 'stdout.log'), 'utf-8').catch(() => '')}`;
+        const { series, totals } = parseNoise(outputContent, listing);
+        result = {
+            meta: { analysisType: 'noise', xLabel: 'Frequency', xUnit: 'Hz', pointsCount: series[0]?.points.length ?? 0 },
+            series,
+            noise: totals,
+        };
+    } else {
+        // If the caller didn't pass probe names (e.g. version-based sims that rely on eda-core's default probes),
+        // derive them from the netlist's `wrdata` line so the CSV columns map to named series, not an empty result.
+        const emittedProbes = extractProbes(netlistText);
+        let probeNames = input.probeNames.length > 0 ? input.probeNames : emittedProbes;
+        // The generator can DROP a probe it can't emit (e.g. a current probe on a diode/transistor or a digital
+        // a-device). When that happens the caller's explicit list is LONGER than the emitted wrdata columns, and
+        // the positional CSV mapping would shift every series. The emitted `wrdata` tokens are the column ground
+        // truth, so fall back to them on a count mismatch (a same-count rewrite like i(R1)->@r1[i] keeps the
+        // caller's nicer labels, since position still maps correctly).
+        if (input.probeNames.length > 0 && emittedProbes.length !== input.probeNames.length) {
+            probeNames = emittedProbes;
+        }
+        result = parseSimulationOutput(outputContent, probeNames, input.analysisType);
     }
-    const result = parseSimulationOutput(outputContent, probeNames, input.analysisType);
 
     // Detect a SILENTLY TRUNCATED transient: ngspice can exit 0 yet stop far before the requested
     // stopTime when the adaptive timestep collapses (floating node / hard switching). Fail the attempt

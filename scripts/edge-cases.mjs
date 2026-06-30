@@ -12,7 +12,7 @@
 //   E PHYSICS   tight known-answer checks (RC settle, -3 dB corner, exact op-amp gain, loaded divider, …)
 //
 // Requires real ngspice (NGSPICE_PATH or the choco console build) + the eda-core dist build.
-import { generateNetlist, parseSimulationOutput, resolveGenericModels, extractProbes, runErc, cutoffFrequency, isAcMagnitudeSeries, summarizeSeries, parseFourierLog, parseMeasurements, parseTransferFunction } from '../packages/eda-core/dist/index.js';
+import { generateNetlist, parseSimulationOutput, resolveGenericModels, extractProbes, runErc, cutoffFrequency, isAcMagnitudeSeries, summarizeSeries, parseFourierLog, parseMeasurements, parseTransferFunction, parseNoise } from '../packages/eda-core/dist/index.js';
 import { spawnSync } from 'node:child_process';
 import { mkdtempSync, writeFileSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -43,7 +43,17 @@ function runCell(circuit, analysis, probes) {
         let csv = '';
         try { csv = readFileSync(join(dir, 'output.csv'), 'utf-8'); } catch { /* none */ }
         const names = extractProbes(netlist);
-        const res = csv.trim() ? parseSimulationOutput(csv, names.length ? names : (probes || ['v(out)']), analysis.type) : { series: [], meta: { pointsCount: 0 } };
+        // Noise has a dedicated parser (spectrum CSV + totals from the listing) — extractProbes can't see its
+        // bare onoise/inoise vector names, so route it like the worker runner does.
+        let res, noise, noiseSpectrum;
+        if (analysis.type === 'noise') {
+            const pn = parseNoise(csv, (r.stdout || '') + '\n' + log);
+            noise = pn.totals;
+            noiseSpectrum = pn.series;
+            res = { series: pn.series, meta: { pointsCount: pn.series[0]?.points.length ?? 0 } };
+        } else {
+            res = csv.trim() ? parseSimulationOutput(csv, names.length ? names : (probes || ['v(out)']), analysis.type) : { series: [], meta: { pointsCount: 0 } };
+        }
         const series = res.series.map((s) => {
             const ys = s.points.map((p) => p.y).filter(Number.isFinite);
             const min = ys.length ? Math.min(...ys) : NaN, max = ys.length ? Math.max(...ys) : NaN;
@@ -60,7 +70,7 @@ function runCell(circuit, analysis, probes) {
         const measureNames = [...netlist.matchAll(/^\s*\.meas\s+\w+\s+(\w+)\b/gim)].map((m) => m[1]);
         const measurements = measureNames.length ? parseMeasurements((r.stdout || '') + '\n' + log, measureNames) : undefined;
         const transferFunction = /^\s*tf\s/im.test(netlist) ? parseTransferFunction((r.stdout || '') + '\n' + log) : undefined;
-        return { netlist, exit: r.status, rows: res.meta.pointsCount, series, errors: errs, erc, fourier, measurements, transferFunction };
+        return { netlist, exit: r.status, rows: res.meta.pointsCount, series, errors: errs, erc, fourier, measurements, transferFunction, noise, noiseSpectrum };
     } finally { rmSync(dir, { recursive: true, force: true }); }
 }
 
@@ -170,6 +180,9 @@ add('E-physics', '.meas extrema/RMS of a 5V 1kHz sine (vpk≈5, vpp≈10, vrms�
 add('E-physics', '.meas WHEN: rising 1kHz sine crosses 0.5 at t≈83.3µs = asin(0.5)/(2πf) (real ngspice)', () => ({ circuit: circuit([V('v1', 'V1', 'SIN(0 1 1k)', 'in', '0'), R('r1', 'R1', '1k', 'in', '0')], N('in')), analysis: { type: 'tran', stopTime: '5m', stepTime: '2u', measurements: [{ name: 'tc', type: 'when', probe: 'v(in)', value: 0.5, edge: 'rise' }] }, probes: ['v(in)'] }), (r) => { const tc = (r.measurements || []).find((x) => x.name === 'tc')?.value; return near(tc, 8.333e-5, 1.5e-5) ? ok() : fail(`.meas WHEN tc=${tc} want ≈8.33e-5 (asin(0.5)/(2π·1k)) — got ${JSON.stringify(r.measurements)}`); });
 // .tf DC transfer function (op add-on) — gain + Zin + Zout of a resistive divider, all analytically exact.
 add('E-physics', '.tf DC transfer of a 1k/2k divider: gain≈0.667, Zin≈3k, Zout≈667Ω (real ngspice)', () => ({ circuit: circuit([V('v1', 'V1', 'DC 5', 'in', '0'), R('r1', 'R1', '1k', 'in', 'out'), R('r2', 'R2', '2k', 'out', '0')], N('in', 'out')), analysis: { type: 'op', tf: { output: 'v(out)', inputSource: 'V1' } }, probes: ['v(out)'] }), (r) => { const t = r.transferFunction; return t && near(t.gain, 2 / 3, 0.02) && near(t.inputImpedanceOhms, 3000, 100) && near(t.outputImpedanceOhms, 2000 / 3, 30) ? ok() : fail(`.tf divider: got ${JSON.stringify(r.transferFunction)} want gain≈0.667 Zin≈3k Zout≈667`); });
+// .noise — output-referred noise SPECTRUM + integrated totals. A 1k resistor's Johnson-noise floor is √(4kTR)
+// ≈ 4.07 nV/√Hz at 300K (the analytic oracle for the low-frequency onoise density of this RC low-pass).
+add('E-physics', '.noise: 1k Johnson floor √(4kTR)≈4.07nV/√Hz + finite integrated totals (real ngspice)', () => ({ circuit: circuit([V('v1', 'V1', 'DC 0 AC 1', 'in', '0'), R('r1', 'R1', '1k', 'in', 'out'), C('c1', 'C1', '159n', 'out', '0')], N('in', 'out')), analysis: { type: 'noise', output: 'v(out)', inputSource: 'V1', variation: 'dec', points: 10, startFreq: '1', stopFreq: '100k' }, probes: ['v(out)'] }), (r) => { const on = (r.noiseSpectrum || []).find((s) => s.name === 'onoise_spectrum'); const lowf = on?.points?.[0]?.y; return near(lowf, 4.07e-9, 0.3e-9) && Number.isFinite(r.noise?.onoiseTotalV) && r.noise.onoiseTotalV > 0 && Number.isFinite(r.noise?.inoiseTotalV) ? ok() : fail(`.noise: onoise@1Hz=${lowf} want ≈4.07e-9, totals=${JSON.stringify(r.noise)}`); });
 
 // ========================= F. DEVICE-physics known-answer (emission + pinId binding + sign) =========================
 add('F-device', 'VCCS Iout = gm·Vin into a load, sign-correct → +10V', () => ({ circuit: circuit([V('v1', 'V1', 'DC 2', 'in', '0'), { id: 'g1', type: 'vccs', designator: 'G1', value: '5m', pins: [{ pinId: '+', netId: '0' }, { pinId: '-', netId: 'out' }, { pinId: 'c+', netId: 'in' }, { pinId: 'c-', netId: '0' }] }, R('rl', 'RL', '1k', 'out', '0')], N('in', 'out')), analysis: OP, probes: ['v(out)'] }), (r) => near(r.series[0]?.final, 10, 0.1) ? ok() : fail(`vccs v(out)=${r.series[0]?.final?.toFixed(3)} want +10 (gm·Vin·RL = 5m·2·1k); sign + canonical out/ctrl pin binding`));

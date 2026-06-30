@@ -17,6 +17,17 @@ export interface SimulationResult {
     /** `.tf` DC small-signal transfer function (gain + input/output impedance), present only when an `op`
      *  analysis requested `tf`. REPORT-ONLY: surfaced for the user/analysis, NOT wired into the verdict. */
     transferFunction?: TransferFunctionResult;
+    /** `.noise` integrated totals, present only for a `noise` analysis (the per-frequency spectrum is carried in
+     *  `series` as onoise_spectrum/inoise_spectrum). REPORT-ONLY: NOT wired into the verdict. */
+    noise?: NoiseResult;
+}
+
+/** ngspice `.noise` integrated totals (the spectrum lives in SimulationResult.series). */
+export interface NoiseResult {
+    /** Integrated OUTPUT-referred noise over the swept band, in volts RMS (null if unparseable). */
+    onoiseTotalV: number | null;
+    /** Integrated INPUT-referred noise over the swept band, in volts RMS (null if unparseable). */
+    inoiseTotalV: number | null;
 }
 
 /** ngspice `.tf` result: the DC small-signal transfer ratio + the impedances it reports. */

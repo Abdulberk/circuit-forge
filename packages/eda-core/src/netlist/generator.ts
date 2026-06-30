@@ -416,7 +416,15 @@ export function generateNetlist(
     }
 
     lines.push('* Analysis');
-    lines.push(analysisToSpice(effectiveAnalysis));
+    // For `.noise`, the analysis card embeds the output PROBE, which must be node-remapped like a wrdata probe —
+    // analysisToSpice has no circuit context, so rewrite it here and pass a cloned config. (The noise input
+    // source must carry an AC magnitude for a meaningful result — that is the caller's responsibility.)
+    if (effectiveAnalysis.type === 'noise') {
+        const out = rewriteProbeNodeRefs(rewriteProbeDeviceRefs(effectiveAnalysis.output, designatorToInstance), netRefToNode).trim();
+        lines.push(analysisToSpice({ ...effectiveAnalysis, output: out || effectiveAnalysis.output }));
+    } else {
+        lines.push(analysisToSpice(effectiveAnalysis));
+    }
 
     // `.meas` measurement cards (extrema/timing/integral) — placed BEFORE .control. UNLIKE `.four`, these CARDS
     // survive the control block's `quit` (they run as part of `run`). Output lands in the listing (parsed by
@@ -481,14 +489,23 @@ export function generateNetlist(
     lines.push('  set filetype=ascii');
     lines.push('  run');
 
-    if (probes.length > 0) {
-        const probeList = probes.join(' ');
-        lines.push(`  wrdata output.csv ${probeList}`);
+    if (effectiveAnalysis.type === 'noise') {
+        // Noise output is NOT node voltages: write the per-frequency SPECTRUM (in the noise1 plot) to the CSV,
+        // then PRINT the integrated TOTALS (in the noise2 plot). The default v(probe) wrdata would FAIL here
+        // ("no such vector") because the current plot holds no node-voltage vectors.
+        lines.push('  setplot noise1');
+        lines.push('  wrdata output.csv onoise_spectrum inoise_spectrum');
+        lines.push('  setplot noise2');
+        lines.push('  print onoise_total inoise_total');
+    } else {
+        if (probes.length > 0) {
+            const probeList = probes.join(' ');
+            lines.push(`  wrdata output.csv ${probeList}`);
+        }
+        // Fourier/tf AFTER run (the vectors must exist) and BEFORE quit (else they never execute).
+        for (const fc of fourierCmds) lines.push(fc);
+        for (const tc of tfCmds) lines.push(tc);
     }
-
-    // Fourier/tf AFTER run (the vectors must exist) and BEFORE quit (else they never execute).
-    for (const fc of fourierCmds) lines.push(fc);
-    for (const tc of tfCmds) lines.push(tc);
 
     lines.push('  quit');
     lines.push('.endc');
