@@ -65,6 +65,30 @@ export interface TranAnalysis {
         /** Voltage/current probes to analyze, e.g. ["v(out)"]. Each is node-remapped like a wrdata probe. */
         probes: string[];
     };
+    /**
+     * Request ngspice `.meas` measurements on this transient — timing/extrema/integral metrics computed by the
+     * simulator (e.g. peak value + when it occurs, threshold-crossing time, signal integral). REPORT-ONLY:
+     * surfaced in SimulationResult.measurements; does NOT gate the verdict. `.meas` rides on the existing run
+     * (no extra simulation). Each spec is emitted as a validated `.meas tran <name> …` card — no raw passthrough.
+     */
+    measurements?: MeasureSpec[];
+}
+
+/** A single `.meas` measurement spec. The generator builds the `.meas` card from these VALIDATED fields (never
+ *  a raw statement). max/min/pp/avg/rms/integ measure the probe over the run; `when` finds the time the probe
+ *  crosses `value` (on the given edge). */
+export interface MeasureSpec {
+    /** Result label (letters/digits/underscore), e.g. "vpeak" or "t_settle". */
+    name: string;
+    /** Measurement kind. max/min = extremum (+ time); pp = peak-to-peak; avg/rms = mean/RMS over the run;
+     *  integ = time integral; when = the time the probe crosses `value`. */
+    type: 'max' | 'min' | 'pp' | 'avg' | 'rms' | 'integ' | 'when';
+    /** Probe to measure, e.g. "v(out)" — node-remapped like a wrdata probe. */
+    probe: string;
+    /** For type "when": the threshold the probe must reach (SI base units). Ignored otherwise. */
+    value?: number;
+    /** For type "when": which crossing direction to time. Default "cross" (either direction). */
+    edge?: 'rise' | 'fall' | 'cross';
 }
 
 /**

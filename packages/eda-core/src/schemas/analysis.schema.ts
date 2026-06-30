@@ -20,6 +20,18 @@ export const ProbeSchema = z.string().regex(
 );
 
 /**
+ * `.meas` measurement spec — built into a validated `.meas` card by the generator (never raw passthrough).
+ * name is restricted to a SPICE-safe identifier; value/edge apply only to type "when".
+ */
+export const MeasureSpecSchema = z.object({
+    name: z.string().regex(/^[A-Za-z][A-Za-z0-9_]*$/, 'Invalid measure name (letters/digits/underscore)').max(40),
+    type: z.enum(['max', 'min', 'pp', 'avg', 'rms', 'integ', 'when']),
+    probe: ProbeSchema,
+    value: z.number().finite().optional(),
+    edge: z.enum(['rise', 'fall', 'cross']).optional(),
+});
+
+/**
  * Solver tuning (`.options`) schema — every numeric field must be a clean SPICE value (anchored
  * regex, no expressions: these tokens go straight onto a netlist line).
  */
@@ -50,6 +62,7 @@ export const TranAnalysisSchema = z.object({
             probes: z.array(ProbeSchema).min(1).max(20),
         })
         .optional(),
+    measurements: z.array(MeasureSpecSchema).min(1).max(20).optional(),
 });
 
 /**

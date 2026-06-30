@@ -11,6 +11,24 @@ export interface SimulationResult {
     /** Fourier/THD results (one per `.four` probe), present only when a transient requested `fourier`.
      *  REPORT-ONLY: surfaced for the user/analysis, NOT wired into the pass/fail verdict. */
     fourier?: FourierResult[];
+    /** `.meas` results (one per requested measurement), present only when the analysis requested `measurements`.
+     *  REPORT-ONLY: surfaced for the user/analysis, NOT wired into the pass/fail verdict. */
+    measurements?: MeasurementResult[];
+}
+
+/** One ngspice `.meas` measurement result. A FAILED measure (e.g. a WHEN threshold never reached) is surfaced
+ *  with value=null + failed=true — it never fails the simulation. */
+export interface MeasurementResult {
+    /** The measurement label the caller requested, e.g. "vmax" or "settle". */
+    name: string;
+    /** Primary scalar result in SI base units (V/A/s), or null when the measure failed. */
+    value: number | null;
+    /** Trailing qualifiers ngspice prints alongside the value (at=, from=, to=, targ=, trig=), in SI units. */
+    qualifiers?: Record<string, number>;
+    /** True when ngspice reported the measure failed (its value is null). */
+    failed?: boolean;
+    /** The raw ngspice line explaining the failure, when failed. */
+    failureReason?: string;
 }
 
 /** One ngspice `.four` block: the harmonic decomposition + THD of a node's transient waveform. */

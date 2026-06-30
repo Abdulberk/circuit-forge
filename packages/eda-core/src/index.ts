@@ -42,6 +42,7 @@ export type {
     AcAnalysis,
     DcAnalysis,
     OpAnalysis,
+    MeasureSpec,
 } from './types/analysis';
 
 export type {
@@ -51,6 +52,7 @@ export type {
     ResultMeta,
     FourierResult,
     FourierHarmonic,
+    MeasurementResult,
 } from './types/simulation';
 
 export type {
@@ -179,6 +181,7 @@ export { mulberry32 } from './utils/prng';
 export { summarizeSeries, type SimMeasurement } from './analysis/measurements';
 export { cutoffFrequency, isAcMagnitudeSeries, type FreqMagPoint } from './analysis/ac-measurements';
 export { parseFourierLog } from './analysis/fourier';
+export { parseMeasurements } from './analysis/measure';
 export {
     nodeKey,
     isCurrentProbe,

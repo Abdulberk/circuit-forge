@@ -10,6 +10,7 @@ import { logger } from '../logger';
 import {
     parseSimulationOutput,
     parseFourierLog,
+    parseMeasurements,
     sanitizeNetlist,
     extractProbes,
     parseSpiceValue,
@@ -293,16 +294,25 @@ async function runOneAttempt(
         }
     }
 
-    // Fourier/THD output (from the `fourier` control command) goes to ngspice's listing, NOT the wrdata CSV —
-    // and depending on the build it lands on the stdout pipe or the `-o` log, so parse BOTH combined. Gated on
-    // the deck actually requesting it. Best-effort + REPORT-ONLY: a parse miss never fails the run.
-    if (/^\s*fourier\s/im.test(netlistText)) {
+    // Listing-derived REPORT-ONLY results (Fourier/THD from the `fourier` command; `.meas` measurements) land in
+    // ngspice's listing — the stdout pipe and/or the `-o` log, build-dependent — NOT the wrdata CSV. Parse BOTH
+    // combined, gated on the deck actually requesting them. Best-effort: a parse miss never fails the run (they
+    // don't gate the verdict). `.meas` names are read back from the deck to scope the parse to real measures.
+    const wantsFourier = /^\s*fourier\s/im.test(netlistText);
+    const measureNames = [...netlistText.matchAll(/^\s*\.meas\s+\w+\s+(\w+)\b/gim)].map((m) => m[1]!);
+    if (wantsFourier || measureNames.length > 0) {
         try {
-            const listing = await fs.readFile(path.join(jobDir, 'stdout.log'), 'utf-8').catch(() => '');
-            const fourier = parseFourierLog(`${stdout}\n${listing}`);
-            if (fourier.length > 0) result.fourier = fourier;
+            const listing = `${stdout}\n${await fs.readFile(path.join(jobDir, 'stdout.log'), 'utf-8').catch(() => '')}`;
+            if (wantsFourier) {
+                const fourier = parseFourierLog(listing);
+                if (fourier.length > 0) result.fourier = fourier;
+            }
+            if (measureNames.length > 0) {
+                const measurements = parseMeasurements(listing, measureNames);
+                if (measurements.length > 0) result.measurements = measurements;
+            }
         } catch {
-            /* no listing / parse issue — Fourier is report-only, so don't fail the run */
+            /* no listing / parse issue — report-only, so don't fail the run */
         }
     }
 

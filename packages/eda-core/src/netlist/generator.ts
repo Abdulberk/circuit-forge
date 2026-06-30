@@ -417,6 +417,25 @@ export function generateNetlist(
 
     lines.push('* Analysis');
     lines.push(analysisToSpice(effectiveAnalysis));
+
+    // `.meas` measurement cards (extrema/timing/integral) — placed BEFORE .control. UNLIKE `.four`, these CARDS
+    // survive the control block's `quit` (they run as part of `run`). Output lands in the listing (parsed by
+    // parseMeasurements), not the wrdata CSV — and .meas rides on the existing run, so output.csv is unaffected.
+    // Probes are node-remapped EXACTLY like wrdata probes; the card is built from VALIDATED fields (no raw
+    // statement passthrough). REPORT-ONLY: never gates the verdict.
+    if (effectiveAnalysis.type === 'tran' && effectiveAnalysis.measurements) {
+        for (const ms of effectiveAnalysis.measurements) {
+            const probe = rewriteProbeNodeRefs(rewriteProbeDeviceRefs(ms.probe, designatorToInstance), netRefToNode).trim();
+            if (!probe) continue;
+            if (ms.type === 'when') {
+                if (typeof ms.value !== 'number' || !Number.isFinite(ms.value)) continue;
+                const edge = (ms.edge ?? 'cross').toUpperCase();
+                lines.push(`.meas tran ${ms.name} WHEN ${probe}=${ms.value} ${edge}=1`);
+            } else {
+                lines.push(`.meas tran ${ms.name} ${ms.type.toUpperCase()} ${probe}`);
+            }
+        }
+    }
     lines.push('');
 
     // Fourier is emitted as the `fourier` COMMAND inside the .control block (below), NOT as a top-level `.four`
