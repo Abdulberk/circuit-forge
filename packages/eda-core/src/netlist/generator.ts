@@ -419,7 +419,7 @@ export function generateNetlist(
     // For `.noise`, the analysis card embeds the output PROBE, which must be node-remapped like a wrdata probe —
     // analysisToSpice has no circuit context, so rewrite it here and pass a cloned config. (The noise input
     // source must carry an AC magnitude for a meaningful result — that is the caller's responsibility.)
-    if (effectiveAnalysis.type === 'noise') {
+    if (effectiveAnalysis.type === 'noise' || effectiveAnalysis.type === 'sens') {
         const out = rewriteProbeNodeRefs(rewriteProbeDeviceRefs(effectiveAnalysis.output, designatorToInstance), netRefToNode).trim();
         lines.push(analysisToSpice({ ...effectiveAnalysis, output: out || effectiveAnalysis.output }));
     } else {
@@ -497,6 +497,10 @@ export function generateNetlist(
         lines.push('  wrdata output.csv onoise_spectrum inoise_spectrum');
         lines.push('  setplot noise2');
         lines.push('  print onoise_total inoise_total');
+    } else if (effectiveAnalysis.type === 'sens') {
+        // Sensitivity has no series to wrdata — the `.sens` run populates a scalar table that only reaches the
+        // listing via an explicit `print all`. (The runner treats sens as a no-series analysis: no output.csv.)
+        lines.push('  print all');
     } else {
         if (probes.length > 0) {
             const probeList = probes.join(' ');

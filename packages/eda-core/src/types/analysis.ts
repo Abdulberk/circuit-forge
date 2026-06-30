@@ -5,7 +5,7 @@
 /**
  * Union type for all analysis configurations
  */
-export type AnalysisConfig = TranAnalysis | AcAnalysis | DcAnalysis | OpAnalysis | NoiseAnalysis;
+export type AnalysisConfig = TranAnalysis | AcAnalysis | DcAnalysis | OpAnalysis | NoiseAnalysis | SensAnalysis;
 
 /**
  * Optional ngspice solver tuning (`.options` card) — the convergence/accuracy levers a power-electronics
@@ -159,6 +159,18 @@ export interface NoiseAnalysis {
 }
 
 /**
+ * DC sensitivity analysis — d(output)/d(each component value/parameter) at the operating point. Produces a
+ * SCALAR TABLE (no series), surfaced in SimulationResult.sensitivity. REPORT-ONLY.
+ */
+export interface SensAnalysis {
+    type: 'sens';
+    /** Output node whose sensitivity to each element is computed, e.g. "v(out)". */
+    output: string;
+    /** Optional ngspice solver tuning — see SolverOptions. */
+    options?: SolverOptions;
+}
+
+/**
  * Get the analysis type string
  */
 export function getAnalysisType(config: AnalysisConfig): string {
@@ -241,6 +253,9 @@ export function analysisToSpice(config: AnalysisConfig): string {
             const points = Math.min(config.points, MAX_SIM_POINTS);
             return `.noise ${config.output} ${config.inputSource} ${config.variation} ${points} ${config.startFreq} ${config.stopFreq}`;
         }
+        case 'sens':
+            // `.sens <output>` — DC sensitivity. The generator pre-rewrites `output` to the SPICE node.
+            return `.sens ${config.output}`;
         default:
             throw new Error(`Unknown analysis type: ${(config as AnalysisConfig).type}`);
     }

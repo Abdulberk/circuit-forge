@@ -20,6 +20,22 @@ export interface SimulationResult {
     /** `.noise` integrated totals, present only for a `noise` analysis (the per-frequency spectrum is carried in
      *  `series` as onoise_spectrum/inoise_spectrum). REPORT-ONLY: NOT wired into the verdict. */
     noise?: NoiseResult;
+    /** `.sens` DC sensitivity table (d(output)/d(component)), present only for a `sens` analysis. REPORT-ONLY. */
+    sensitivity?: SensitivityResult;
+}
+
+/** ngspice `.sens` result: the output's DC sensitivity to each circuit element/parameter. */
+export interface SensitivityResult {
+    /** Non-zero sensitivity entries: each is d(output)/d(value) for an element/source/parameter, in
+     *  output-units per the element's base unit (e.g. V/Ω for a resistor, V/V for a source). */
+    entries: SensitivityEntry[];
+}
+
+export interface SensitivityEntry {
+    /** The element/source/parameter name as ngspice reports it (e.g. "r1", "v1", "r1_scale"). */
+    name: string;
+    /** d(output)/d(this parameter). */
+    value: number;
 }
 
 /** ngspice `.noise` integrated totals (the spectrum lives in SimulationResult.series). */

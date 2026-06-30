@@ -12,7 +12,7 @@
 //   E PHYSICS   tight known-answer checks (RC settle, -3 dB corner, exact op-amp gain, loaded divider, …)
 //
 // Requires real ngspice (NGSPICE_PATH or the choco console build) + the eda-core dist build.
-import { generateNetlist, parseSimulationOutput, resolveGenericModels, extractProbes, runErc, cutoffFrequency, isAcMagnitudeSeries, summarizeSeries, parseFourierLog, parseMeasurements, parseTransferFunction, parseNoise } from '../packages/eda-core/dist/index.js';
+import { generateNetlist, parseSimulationOutput, resolveGenericModels, extractProbes, runErc, cutoffFrequency, isAcMagnitudeSeries, summarizeSeries, parseFourierLog, parseMeasurements, parseTransferFunction, parseNoise, parseSensitivity } from '../packages/eda-core/dist/index.js';
 import { spawnSync } from 'node:child_process';
 import { mkdtempSync, writeFileSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -70,7 +70,8 @@ function runCell(circuit, analysis, probes) {
         const measureNames = [...netlist.matchAll(/^\s*\.meas\s+\w+\s+(\w+)\b/gim)].map((m) => m[1]);
         const measurements = measureNames.length ? parseMeasurements((r.stdout || '') + '\n' + log, measureNames) : undefined;
         const transferFunction = /^\s*tf\s/im.test(netlist) ? parseTransferFunction((r.stdout || '') + '\n' + log) : undefined;
-        return { netlist, exit: r.status, rows: res.meta.pointsCount, series, errors: errs, erc, fourier, measurements, transferFunction, noise, noiseSpectrum };
+        const sensitivity = analysis.type === 'sens' ? parseSensitivity((r.stdout || '') + '\n' + log) : undefined;
+        return { netlist, exit: r.status, rows: res.meta.pointsCount, series, errors: errs, erc, fourier, measurements, transferFunction, noise, noiseSpectrum, sensitivity };
     } finally { rmSync(dir, { recursive: true, force: true }); }
 }
 
@@ -183,6 +184,9 @@ add('E-physics', '.tf DC transfer of a 1k/2k divider: gain≈0.667, Zin≈3k, Zo
 // .noise — output-referred noise SPECTRUM + integrated totals. A 1k resistor's Johnson-noise floor is √(4kTR)
 // ≈ 4.07 nV/√Hz at 300K (the analytic oracle for the low-frequency onoise density of this RC low-pass).
 add('E-physics', '.noise: 1k Johnson floor √(4kTR)≈4.07nV/√Hz + finite integrated totals (real ngspice)', () => ({ circuit: circuit([V('v1', 'V1', 'DC 0 AC 1', 'in', '0'), R('r1', 'R1', '1k', 'in', 'out'), C('c1', 'C1', '159n', 'out', '0')], N('in', 'out')), analysis: { type: 'noise', output: 'v(out)', inputSource: 'V1', variation: 'dec', points: 10, startFreq: '1', stopFreq: '100k' }, probes: ['v(out)'] }), (r) => { const on = (r.noiseSpectrum || []).find((s) => s.name === 'onoise_spectrum'); const lowf = on?.points?.[0]?.y; return near(lowf, 4.07e-9, 0.3e-9) && Number.isFinite(r.noise?.onoiseTotalV) && r.noise.onoiseTotalV > 0 && Number.isFinite(r.noise?.inoiseTotalV) ? ok() : fail(`.noise: onoise@1Hz=${lowf} want ≈4.07e-9, totals=${JSON.stringify(r.noise)}`); });
+// .sens DC sensitivity (no-series analysis) — d(v(mid))/d(param) of a 5V→1k/2k divider, all analytically exact:
+// d/dV1=R2/(R1+R2)=0.667, d/dR1=-V·R2/(R1+R2)²=-1.111e-3, d/dR2=+V·R1/(R1+R2)²=5.556e-4.
+add('E-physics', '.sens DC sensitivities of a 5V 1k/2k divider: d/dV1≈0.667, d/dR1≈-1.11m, d/dR2≈0.556m (real ngspice)', () => ({ circuit: circuit([V('v1', 'V1', 'DC 5', 'in', '0'), R('r1', 'R1', '1k', 'in', 'mid'), R('r2', 'R2', '2k', 'mid', '0')], N('in', 'mid')), analysis: { type: 'sens', output: 'v(mid)' }, probes: ['v(mid)'] }), (r) => { const s = Object.fromEntries((r.sensitivity?.entries || []).map((e) => [e.name, e.value])); return near(s.v1, 2 / 3, 0.02) && near(s.r1, -1.111e-3, 1e-4) && near(s.r2, 5.556e-4, 1e-4) ? ok() : fail(`.sens divider: got ${JSON.stringify(r.sensitivity)} want v1≈0.667 r1≈-1.11e-3 r2≈5.56e-4`); });
 
 // ========================= F. DEVICE-physics known-answer (emission + pinId binding + sign) =========================
 add('F-device', 'VCCS Iout = gm·Vin into a load, sign-correct → +10V', () => ({ circuit: circuit([V('v1', 'V1', 'DC 2', 'in', '0'), { id: 'g1', type: 'vccs', designator: 'G1', value: '5m', pins: [{ pinId: '+', netId: '0' }, { pinId: '-', netId: 'out' }, { pinId: 'c+', netId: 'in' }, { pinId: 'c-', netId: '0' }] }, R('rl', 'RL', '1k', 'out', '0')], N('in', 'out')), analysis: OP, probes: ['v(out)'] }), (r) => near(r.series[0]?.final, 10, 0.1) ? ok() : fail(`vccs v(out)=${r.series[0]?.final?.toFixed(3)} want +10 (gm·Vin·RL = 5m·2·1k); sign + canonical out/ctrl pin binding`));
