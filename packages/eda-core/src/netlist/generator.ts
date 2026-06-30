@@ -419,6 +419,29 @@ export function generateNetlist(
     lines.push(analysisToSpice(effectiveAnalysis));
     lines.push('');
 
+    // Fourier is emitted as the `fourier` COMMAND inside the .control block (below), NOT as a top-level `.four`
+    // card: the control block ends with `quit`, which exits ngspice BEFORE it would process a `.four` card's
+    // end-of-run output (so the card prints nothing). The `fourier` command runs inside the block, before quit.
+    // Probes are node-remapped EXACTLY like wrdata probes, restricted to voltage probes (fourier on a rewritten
+    // `@dev[i]` current vector is unreliable), and de-duped. The fundamental is re-validated against a SPICE-value
+    // pattern (it lands raw on a command line). REPORT-ONLY: parsed from the listing, never gates the verdict.
+    const fourierCmds: string[] = [];
+    if (
+        effectiveAnalysis.type === 'tran' &&
+        effectiveAnalysis.fourier &&
+        /^[+-]?\d*\.?\d+(?:[eE][+-]?\d+)?\s*[a-zA-Z]*$/.test(effectiveAnalysis.fourier.fundamentalFreq)
+    ) {
+        const freq = effectiveAnalysis.fourier.fundamentalFreq;
+        const fProbes = [
+            ...new Set(
+                effectiveAnalysis.fourier.probes
+                    .map((p) => rewriteProbeNodeRefs(rewriteProbeDeviceRefs(p, designatorToInstance), netRefToNode).trim())
+                    .filter((p) => /^v\(/i.test(p)),
+            ),
+        ];
+        for (const p of fProbes) fourierCmds.push(`  fourier ${freq} ${p}`);
+    }
+
     lines.push('* Control block');
     lines.push('.control');
     lines.push('  set filetype=ascii');
@@ -428,6 +451,9 @@ export function generateNetlist(
         const probeList = probes.join(' ');
         lines.push(`  wrdata output.csv ${probeList}`);
     }
+
+    // Fourier AFTER run (the vectors must exist) and BEFORE quit (else it never executes).
+    for (const fc of fourierCmds) lines.push(fc);
 
     lines.push('  quit');
     lines.push('.endc');

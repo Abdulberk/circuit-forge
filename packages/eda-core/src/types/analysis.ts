@@ -53,6 +53,18 @@ export interface TranAnalysis {
     initialConditions?: Record<string, number>;
     /** Optional ngspice solver tuning — see SolverOptions. */
     options?: SolverOptions;
+    /**
+     * Request ngspice `.four` Fourier analysis on this transient: the THD + harmonic breakdown of each listed
+     * probe at `fundamentalFreq`. REPORT-ONLY — surfaced in the result (SimulationResult.fourier); it does NOT
+     * gate the pass/fail verdict. For a meaningful THD the fundamental must match the dominant excitation
+     * frequency, and the run should cover several full periods at a fine enough step.
+     */
+    fourier?: {
+        /** Fundamental frequency as a SPICE value, e.g. "1k" — typically the source frequency. */
+        fundamentalFreq: string;
+        /** Voltage/current probes to analyze, e.g. ["v(out)"]. Each is node-remapped like a wrdata probe. */
+        probes: string[];
+    };
 }
 
 /**
