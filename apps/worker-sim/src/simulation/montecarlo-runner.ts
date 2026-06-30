@@ -23,6 +23,8 @@ import {
     parseSimulationOutput,
     parseFourierLog,
     attachFourierThd,
+    parseTransferFunction,
+    attachTransferFunction,
     summarizeSeries,
     runMonteCarlo,
     type CircuitJson,
@@ -103,12 +105,15 @@ export async function runMonteCarloBatch(
         const result = parseSimulationOutput(csv, probes, input.analysis.type);
         // OOM-GUARD: collapse to scalar measurements now; `result.series` is dropped when this returns.
         const measurements = result.series.map((s) => summarizeSeries(s, input.analysis.type));
-        // ROBUST-THD: fold each variant's THD (from a fourier request) onto its measurements so a `thd` criterion
-        // is evaluated PER VARIANT — without this the THD-gate would pass at nominal but the robustness tier would
-        // stay 'unknown' on the THD dimension. The fourier output is in the listing (logPath), not the CSV.
-        if (input.analysis.type === 'tran' && input.analysis.fourier) {
+        // ROBUST scalar metrics (THD from fourier, gain from tf) live in the LISTING, not the CSV — fold them onto
+        // each variant's measurements so a `thd`/`gain` criterion is evaluated PER VARIANT. Without this the gate
+        // would pass at nominal but the robustness tier would stay 'unknown' on that dimension. Read the listing
+        // once when either is requested.
+        const needsListing = (input.analysis.type === 'tran' && input.analysis.fourier) || (input.analysis.type === 'op' && input.analysis.tf);
+        if (needsListing) {
             const listing = await fs.readFile(logPath, 'utf-8').catch(() => '');
-            attachFourierThd(measurements, parseFourierLog(listing));
+            if (input.analysis.type === 'tran') attachFourierThd(measurements, parseFourierLog(listing));
+            if (input.analysis.type === 'op') attachTransferFunction(measurements, parseTransferFunction(listing));
         }
         return measurements;
     };
