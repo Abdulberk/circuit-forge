@@ -29,11 +29,11 @@ export class AssertionDto {
 
     @ApiProperty({
         description:
-            'Which measured quantity. min/max/final/pp/avg/rms are over the time/DC run (avg+rms are TIME-WEIGHTED — trapezoidal over the adaptive timesteps — so "RMS output"/"average ripple" specs are exact); "cutoff" is the −3 dB corner frequency (Hz) of the node\'s AC magnitude response and requires an "ac" analysis; "thd" is the Total Harmonic Distortion (PERCENT) and requires a "tran" analysis with a "fourier" request on the probe.',
-        enum: ['min', 'max', 'final', 'pp', 'avg', 'rms', 'cutoff', 'thd'],
+            'Which measured quantity. min/max/final/pp/avg/rms are over the time/DC run (avg+rms are TIME-WEIGHTED — trapezoidal over the adaptive timesteps — so "RMS output"/"average ripple" specs are exact); "cutoff" is the −3 dB corner frequency (Hz) of the node\'s AC magnitude response and requires an "ac" analysis; "thd" is the Total Harmonic Distortion (PERCENT) and requires a "tran" analysis with a "fourier" request on the probe; "gain" is the small-signal DC gain (Vout/Vin) and requires an "op" analysis with a "tf" request to the probe.',
+        enum: ['min', 'max', 'final', 'pp', 'avg', 'rms', 'cutoff', 'thd', 'gain'],
     })
-    @IsIn(['min', 'max', 'final', 'pp', 'avg', 'rms', 'cutoff', 'thd'])
-    metric!: 'min' | 'max' | 'final' | 'pp' | 'avg' | 'rms' | 'cutoff' | 'thd';
+    @IsIn(['min', 'max', 'final', 'pp', 'avg', 'rms', 'cutoff', 'thd', 'gain'])
+    metric!: 'min' | 'max' | 'final' | 'pp' | 'avg' | 'rms' | 'cutoff' | 'thd' | 'gain';
 
     @ApiProperty({ description: 'Comparison operator', enum: ['lt', 'lte', 'gt', 'gte', 'approx'] })
     @IsIn(['lt', 'lte', 'gt', 'gte', 'approx'])

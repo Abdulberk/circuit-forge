@@ -15,6 +15,7 @@ import {
     resolveGenericModels,
     evaluateAssertions,
     attachFourierThd,
+    attachTransferFunction,
     describeFailure,
     uncoveredRequiredDimensions,
     requiredDimensions,
@@ -28,6 +29,7 @@ import {
     type AssertionResult,
     type SpecDimension,
     type FourierResult,
+    type TransferFunctionResult,
 } from '@circuit-forge/eda-core';
 import { generateCircuit, fixCircuit, type GenerateCircuitConfig } from './index';
 
@@ -202,7 +204,7 @@ export async function runDesignLoop(input: DesignLoopInput, deps: DesignDeps): P
         let jobId: string;
         let status: { status: string; metrics?: unknown };
         let result: {
-            result?: { meta?: { pointsCount?: number }; series?: DataSeries[]; fourier?: FourierResult[] };
+            result?: { meta?: { pointsCount?: number }; series?: DataSeries[]; fourier?: FourierResult[]; transferFunction?: TransferFunctionResult };
             metrics?: { pointsCount?: number };
             error?: string;
         };
@@ -242,6 +244,7 @@ export async function runDesignLoop(input: DesignLoopInput, deps: DesignDeps): P
             }
             // Fold THD (from a fourier request) onto the measurements so a `thd` criterion gates like any other.
             attachFourierThd(measurements, result.result?.fourier);
+            attachTransferFunction(measurements, result.result?.transferFunction);
             lastAssertions = evaluateAssertions(measurements, criteria);
         }
         const specsMet = lastAssertions.every((a) => a.pass);
@@ -614,7 +617,7 @@ export async function screenCandidate(input: DesignLoopInput, deps: DesignDeps):
         const status = await pollJob(deps, jobId);
         simStatus = status.status;
         const result = (await deps.runSim.getResult(jobId, deps.userId)) as {
-            result?: { meta?: { pointsCount?: number }; series?: DataSeries[]; fourier?: FourierResult[] };
+            result?: { meta?: { pointsCount?: number }; series?: DataSeries[]; fourier?: FourierResult[]; transferFunction?: TransferFunctionResult };
             metrics?: { pointsCount?: number };
         };
         const statusMetrics = status.metrics as { pointsCount?: number } | undefined;
@@ -623,6 +626,7 @@ export async function screenCandidate(input: DesignLoopInput, deps: DesignDeps):
         if (simHealthy && criteria.length > 0) {
             const measurements = (result.result?.series ?? []).map((s) => summarizeSeries(s, analysis.type));
             attachFourierThd(measurements, result.result?.fourier);
+            attachTransferFunction(measurements, result.result?.transferFunction);
             assertions = evaluateAssertions(measurements, criteria);
         }
     } catch {

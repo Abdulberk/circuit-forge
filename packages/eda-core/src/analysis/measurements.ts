@@ -29,6 +29,10 @@ export interface SimMeasurement {
      *  transient. NOT derivable from the series — folded in from SimulationResult.fourier by attachFourierThd.
      *  Undefined unless fourier ran for this probe. Lets a `thd` criterion gate the verdict like any other metric. */
     thd?: number;
+    /** Small-signal DC gain (Vout/Vin, dimensionless) at this node, from a `.tf` request on an `op` analysis.
+     *  NOT derivable from the series — folded in from SimulationResult.transferFunction by attachTransferFunction.
+     *  Undefined unless tf ran to this probe. Lets a `gain` criterion gate the verdict like any other metric. */
+    gain?: number;
     /** FULL-PRECISION min/max/final/pp/avg/rms for the assertion evaluator. The fields above are rounded to 4
      *  sig figs for display/AI reasoning, but that rounding can flip a marginal approx/relational check (audit
      *  #8), so the verdict math reads these instead. Optional so an older serialized measurement degrades

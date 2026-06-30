@@ -8,7 +8,7 @@
  */
 import { sanitizeNodeName } from '../netlist/sanitizer';
 import type { SimMeasurement } from './measurements';
-import type { FourierResult } from '../types/simulation';
+import type { FourierResult, TransferFunctionResult } from '../types/simulation';
 
 /**
  * A measurable pass/fail check derived from the user's stated numeric intent (the plain shape; the API's
@@ -20,8 +20,9 @@ export interface AcceptanceCriterion {
     /** Which measured quantity. min/max/final/pp/avg/rms are over the time/DC run (avg+rms are TIME-WEIGHTED —
      *  trapezoidal over the adaptive timesteps — so "RMS output" / "average ripple" specs are exact); "cutoff"
      *  is the −3 dB corner (Hz) of the node's AC magnitude response (requires an "ac" analysis); "thd" is the
-     *  Total Harmonic Distortion in PERCENT (requires a "tran" analysis with a "fourier" request on the probe). */
-    metric: 'min' | 'max' | 'final' | 'pp' | 'avg' | 'rms' | 'cutoff' | 'thd';
+     *  Total Harmonic Distortion in PERCENT (requires a "tran" analysis with a "fourier" request on the probe);
+     *  "gain" is the small-signal DC gain Vout/Vin (requires an "op" analysis with a "tf" request to the probe). */
+    metric: 'min' | 'max' | 'final' | 'pp' | 'avg' | 'rms' | 'cutoff' | 'thd' | 'gain';
     op: 'lt' | 'lte' | 'gt' | 'gte' | 'approx';
     /** Target value in SI base units (volts, amps, seconds; Hz for "cutoff"; PERCENT for "thd"). */
     value: number;
@@ -170,6 +171,20 @@ export function evaluateAssertions(
                 };
             }
             measured = m.thd;
+        } else if (a.metric === 'gain') {
+            // Small-signal DC gain (Vout/Vin) is folded onto the measurement from a `.tf` request
+            // (attachTransferFunction) — NOT derivable from the series. Absent ⇒ no tf to this probe ⇒ not
+            // measured ⇒ not verified (never a silent pass), mirroring cutoff/thd.
+            if (m.gain === undefined || !Number.isFinite(m.gain)) {
+                return {
+                    ...base,
+                    actual: null,
+                    distance: null,
+                    pass: false,
+                    detail: `gain(${a.probe}) not determinable — needs an "op" analysis with a "tf" request to this probe`,
+                };
+            }
+            measured = m.gain;
         } else {
             // Read FULL-PRECISION values (the rounded display fields can flip a marginal check — audit #8).
             const src = m.raw ?? { min: m.min, max: m.max, final: m.final, pp: m.pp, avg: m.avg, rms: m.rms };
@@ -215,6 +230,17 @@ export function attachFourierThd(measurements: SimMeasurement[], fourier: Fourie
         const f = fourier.find((fr) => nodeKey(fr.probe) === nodeKey(m.node));
         if (f && Number.isFinite(f.thd)) m.thd = f.thd;
     }
+}
+
+/**
+ * Fold a `.tf` small-signal DC gain onto the measurement of its output node, so a `gain` criterion is evaluated
+ * through the SAME measurement path as every other metric (same posture as attachFourierThd). A single tf result
+ * (one output node) → at most one measurement updated, matched by node key. Mutates; no-op without a finite gain.
+ */
+export function attachTransferFunction(measurements: SimMeasurement[], tf: TransferFunctionResult | undefined): void {
+    if (!tf || !Number.isFinite(tf.gain)) return;
+    const m = measurements.find((mm) => nodeKey(mm.node) === nodeKey(tf.outputNode));
+    if (m) m.gain = tf.gain;
 }
 
 /** A one-line, human/AI-readable description of a failed criterion incl. how far off it is — fed to the

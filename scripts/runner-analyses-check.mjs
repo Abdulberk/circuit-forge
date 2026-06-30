@@ -19,7 +19,7 @@ process.env.SIM_TEMP_DIR ||= mkdtempSync(join(tmpdir(), 'cf-runner-'));
 process.env.NGSPICE_PATH ||= 'C:/ProgramData/chocolatey/lib/ngspice/tools/Spice64/bin/ngspice_con.exe';
 
 const eda = await import(new URL('../packages/eda-core/dist/index.js', import.meta.url));
-const { generateNetlist, resolveGenericModels, summarizeSeries, evaluateAssertions, attachFourierThd } = eda;
+const { generateNetlist, resolveGenericModels, summarizeSeries, evaluateAssertions, attachFourierThd, attachTransferFunction } = eda;
 const { runSimulation } = await import(new URL('../apps/worker-sim/dist/simulation/runner.js', import.meta.url));
 const { runMonteCarloBatch } = await import(new URL('../apps/worker-sim/dist/simulation/montecarlo-runner.js', import.meta.url));
 
@@ -95,5 +95,36 @@ async function mcThd(name, crit, wantHighYield) {
 await mcThd('loose-thd<1%', thd1, true);                  // ~0.27% < 1% across variants → yield high
 await mcThd('tight-thd<0.1%', { ...thd1, value: 0.1 }, false); // ~0.27% > 0.1% → THD gated per variant → yield low
 
-console.log(fail === 0 ? '\nRESULT: real runner path + THD verdict-gating (nominal + robust-MC) GREEN' : `\nRESULT: ${fail} FAILED`);
+// ===== GAIN VERDICT-GATING: a non-inverting op-amp (gain = 1+Rf/Rg = 2), nominal + robust-gain MC =====
+const opAna = { type: 'op', tf: { output: 'v(out)', inputSource: 'V1' } };
+const opamp = (tol) => CJ([
+    V('vin', 'V1', 'DC 0.1', 'in', 'gnd'), V('vcc', 'VCC', 'DC 15', 'vcc', 'gnd'), V('vee', 'VEE', 'DC -15', 'vee', 'gnd'),
+    R('rf', 'RF', '10k', 'out', 'fb', tol), R('rg', 'RG', '10k', 'fb', 'gnd', tol),
+    { id: 'u1', type: 'subckt', designator: 'U1', model: 'OPAMPGEN', pins: [{ pinId: 'out', netId: 'out' }, { pinId: 'in+', netId: 'in' }, { pinId: 'in-', netId: 'fb' }, { pinId: 'vcc', netId: 'vcc' }, { pinId: 'vee', netId: 'vee' }] },
+], [{ id: 'in' }, { id: 'vcc' }, { id: 'vee' }, { id: 'out' }, { id: 'fb' }, gnd]);
+
+async function gainGate(name, crit, wantPass) {
+    const c = JSON.parse(JSON.stringify(opamp())); const ex = resolveGenericModels(c); if (ex.length) c.models = [...(c.models ?? []), ...ex];
+    const r = await runSimulation({ jobId: `gaingate-${name.replace(/\W+/g, '-')}-${process.pid}`, netlist: generateNetlist(c, opAna), probeNames: [], analysisType: 'op' });
+    const ms = (r.result?.series ?? []).map((s) => summarizeSeries(s, 'op'));
+    attachTransferFunction(ms, r.result?.transferFunction);
+    const res = evaluateAssertions(ms, [crit])[0];
+    const ok = r.success && res && res.pass === wantPass;
+    if (!ok) fail++;
+    console.log(`${ok ? '✅' : '❌'}  nominal gain-gate [${name}]: pass=${res?.pass} (want ${wantPass}), actual=${res?.actual}`);
+}
+await gainGate('gain>=1.5-PASS', { probe: 'v(out)', metric: 'gain', op: 'gte', value: 1.5 }, true); // ~2 ≥ 1.5
+await gainGate('gain>=10-FAIL', { probe: 'v(out)', metric: 'gain', op: 'gte', value: 10 }, false);   // ~2 < 10
+
+async function mcGain(name, crit, wantHigh) {
+    const c = JSON.parse(JSON.stringify(opamp(0.05))); const ex = resolveGenericModels(c); if (ex.length) c.models = [...(c.models ?? []), ...ex];
+    const mc = await runMonteCarloBatch({ jobId: `mcgain-${name.replace(/\W+/g, '-')}-${process.pid}`, circuit: c, analysis: opAna, criteria: [crit], n: 15, seed: 1 });
+    const ok = mc.evaluated > 0 && (wantHigh ? mc.yield >= 0.9 : mc.yield <= 0.1);
+    if (!ok) fail++;
+    console.log(`${ok ? '✅' : '❌'}  robust-gain MC [${name}]: yield=${mc.yield}, evaluated=${mc.evaluated} (want ${wantHigh ? 'high' : 'low'})`);
+}
+await mcGain('loose-gain>=1.5', { probe: 'v(out)', metric: 'gain', op: 'gte', value: 1.5 }, true);  // ~2 across variants → high
+await mcGain('tight-gain>=10', { probe: 'v(out)', metric: 'gain', op: 'gte', value: 10 }, false);    // ~2 < 10 → gated per variant → low
+
+console.log(fail === 0 ? '\nRESULT: real runner path + THD & GAIN verdict-gating (nominal + robust-MC) GREEN' : `\nRESULT: ${fail} FAILED`);
 process.exit(fail === 0 ? 0 : 1);
