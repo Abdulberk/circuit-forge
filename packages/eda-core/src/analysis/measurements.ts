@@ -25,6 +25,10 @@ export interface SimMeasurement {
      *  `.ac` magnitude series — `null` when the sweep doesn't bracket exactly one −3 dB crossing (flat,
      *  out-of-band, or band-pass/resonant ambiguity). Undefined for tran/dc/op and for phase series. */
     cutoff?: number | null;
+    /** Total Harmonic Distortion (PERCENT, e.g. 0.27 = 0.27%) of this node, from a `.four`/fourier request on a
+     *  transient. NOT derivable from the series — folded in from SimulationResult.fourier by attachFourierThd.
+     *  Undefined unless fourier ran for this probe. Lets a `thd` criterion gate the verdict like any other metric. */
+    thd?: number;
     /** FULL-PRECISION min/max/final/pp/avg/rms for the assertion evaluator. The fields above are rounded to 4
      *  sig figs for display/AI reasoning, but that rounding can flip a marginal approx/relational check (audit
      *  #8), so the verdict math reads these instead. Optional so an older serialized measurement degrades

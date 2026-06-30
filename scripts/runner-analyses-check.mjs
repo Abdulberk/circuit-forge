@@ -19,14 +19,15 @@ process.env.SIM_TEMP_DIR ||= mkdtempSync(join(tmpdir(), 'cf-runner-'));
 process.env.NGSPICE_PATH ||= 'C:/ProgramData/chocolatey/lib/ngspice/tools/Spice64/bin/ngspice_con.exe';
 
 const eda = await import(new URL('../packages/eda-core/dist/index.js', import.meta.url));
-const { generateNetlist, resolveGenericModels } = eda;
+const { generateNetlist, resolveGenericModels, summarizeSeries, evaluateAssertions, attachFourierThd } = eda;
 const { runSimulation } = await import(new URL('../apps/worker-sim/dist/simulation/runner.js', import.meta.url));
+const { runMonteCarloBatch } = await import(new URL('../apps/worker-sim/dist/simulation/montecarlo-runner.js', import.meta.url));
 
 const gnd = { id: 'gnd', name: 'GND', isGround: true };
 const CJ = (comps, nets) => ({ version: '1.0', components: comps, nets });
 const V = (id, des, val, a, b) => ({ id, type: 'voltage_source', designator: des, value: val, pins: [{ pinId: '+', netId: a }, { pinId: '-', netId: b }] });
-const R = (id, des, val, a, b) => ({ id, type: 'resistor', designator: des, value: val, pins: [{ pinId: '1', netId: a }, { pinId: '2', netId: b }] });
-const Cap = (id, des, val, a, b) => ({ id, type: 'capacitor', designator: des, value: val, pins: [{ pinId: '1', netId: a }, { pinId: '2', netId: b }] });
+const R = (id, des, val, a, b, tol) => ({ id, type: 'resistor', designator: des, value: val, ...(tol ? { tolerance: tol } : {}), pins: [{ pinId: '1', netId: a }, { pinId: '2', netId: b }] });
+const Cap = (id, des, val, a, b, tol) => ({ id, type: 'capacitor', designator: des, value: val, ...(tol ? { tolerance: tol } : {}), pins: [{ pinId: '1', netId: a }, { pinId: '2', netId: b }] });
 
 const rc = CJ([V('v1', 'V1', 'SIN(0 1 1k)', 'in', 'gnd'), R('r1', 'R1', '1k', 'in', 'out'), Cap('c1', 'C1', '1u', 'out', 'gnd')], [{ id: 'in' }, { id: 'out' }, gnd]);
 const divider = CJ([V('v1', 'V1', 'DC 5', 'in', 'gnd'), R('r1', 'R1', '1k', 'in', 'out'), R('r2', 'R2', '2k', 'out', 'gnd')], [{ id: 'in' }, { id: 'out' }, gnd]);
@@ -62,5 +63,37 @@ for (const tc of cases) {
         : `vpk=${r.result?.measurements?.find((m) => m.name === 'vpk')?.value}`;
     console.log(`${pass ? '✅' : '❌'}  ${tc.name}: success=${r.success}, ${detail}${r.error ? ', err=' + r.error : ''}`);
 }
-console.log(fail === 0 ? '\nRESULT: real runner.ts path GREEN for all 5 analyses' : `\nRESULT: ${fail} FAILED through the real runner`);
+// ===== THD VERDICT-GATING: the real verify path (nominal) + robustness MC (robust-THD) =====
+const thd1 = { probe: 'v(out)', metric: 'thd', op: 'lt', value: 1 }; // THD < 1%
+const fourTran = (stop, step) => ({ type: 'tran', stopTime: stop, stepTime: step, fourier: { fundamentalFreq: '1k', probes: ['v(out)'] } });
+const square = CJ([V('v1', 'V1', 'PULSE(-1 1 0 1n 1n 0.5m 1m)', 'out', 'gnd'), R('r1', 'R1', '1k', 'out', 'gnd')], [{ id: 'out' }, gnd]);
+
+// (a) NOMINAL gate — run the REAL sim, fold THD onto measurements, evaluate the criterion (the full verdict path).
+async function nominalGate(name, circuit, ana, crit, wantPass) {
+    const c = JSON.parse(JSON.stringify(circuit)); const ex = resolveGenericModels(c); if (ex.length) c.models = [...(c.models ?? []), ...ex];
+    const r = await runSimulation({ jobId: `thdgate-${name.replace(/\W+/g, '-')}-${process.pid}`, netlist: generateNetlist(c, ana), probeNames: [], analysisType: 'tran' });
+    const ms = (r.result?.series ?? []).map((s) => summarizeSeries(s, 'tran'));
+    attachFourierThd(ms, r.result?.fourier);
+    const res = evaluateAssertions(ms, [crit])[0];
+    const ok = r.success && res && res.pass === wantPass;
+    if (!ok) fail++;
+    console.log(`${ok ? '✅' : '❌'}  nominal THD-gate [${name}]: pass=${res?.pass} (want ${wantPass}), actual=${res?.actual}%`);
+}
+await nominalGate('square-FAILS-thd<1%', square, fourTran('10m', '2u'), thd1, false); // THD≈42.9% → FAIL
+await nominalGate('sine-PASSES-thd<1%', rc, fourTran('5m', '5u'), thd1, true);        // THD≈0.27% → PASS
+
+// (b) ROBUST-THD — the Monte-Carlo per-variant gate. A loose spec yields high; a tight spec the SAME THD misses
+//     yields low — proving THD is evaluated PER VARIANT (the composition), not just at nominal.
+const tolRc = CJ([V('v1', 'V1', 'SIN(0 1 1k)', 'in', 'gnd'), R('r1', 'R1', '1k', 'in', 'out', 0.05), Cap('c1', 'C1', '1u', 'out', 'gnd', 0.05)], [{ id: 'in' }, { id: 'out' }, gnd]);
+async function mcThd(name, crit, wantHighYield) {
+    const c = JSON.parse(JSON.stringify(tolRc)); const ex = resolveGenericModels(c); if (ex.length) c.models = [...(c.models ?? []), ...ex];
+    const mc = await runMonteCarloBatch({ jobId: `mcthd-${name.replace(/\W+/g, '-')}-${process.pid}`, circuit: c, analysis: fourTran('5m', '5u'), criteria: [crit], n: 15, seed: 1 });
+    const ok = mc.evaluated > 0 && (wantHighYield ? mc.yield >= 0.9 : mc.yield <= 0.1);
+    if (!ok) fail++;
+    console.log(`${ok ? '✅' : '❌'}  robust-THD MC [${name}]: yield=${mc.yield}, evaluated=${mc.evaluated} (want ${wantHighYield ? 'high' : 'low'})`);
+}
+await mcThd('loose-thd<1%', thd1, true);                  // ~0.27% < 1% across variants → yield high
+await mcThd('tight-thd<0.1%', { ...thd1, value: 0.1 }, false); // ~0.27% > 0.1% → THD gated per variant → yield low
+
+console.log(fail === 0 ? '\nRESULT: real runner path + THD verdict-gating (nominal + robust-MC) GREEN' : `\nRESULT: ${fail} FAILED`);
 process.exit(fail === 0 ? 0 : 1);

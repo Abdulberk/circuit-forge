@@ -21,6 +21,8 @@ import {
     sanitizeNetlist,
     extractProbes,
     parseSimulationOutput,
+    parseFourierLog,
+    attachFourierThd,
     summarizeSeries,
     runMonteCarlo,
     type CircuitJson,
@@ -100,7 +102,15 @@ export async function runMonteCarloBatch(
         const probes = extractProbes(netlist);
         const result = parseSimulationOutput(csv, probes, input.analysis.type);
         // OOM-GUARD: collapse to scalar measurements now; `result.series` is dropped when this returns.
-        return result.series.map((s) => summarizeSeries(s, input.analysis.type));
+        const measurements = result.series.map((s) => summarizeSeries(s, input.analysis.type));
+        // ROBUST-THD: fold each variant's THD (from a fourier request) onto its measurements so a `thd` criterion
+        // is evaluated PER VARIANT — without this the THD-gate would pass at nominal but the robustness tier would
+        // stay 'unknown' on the THD dimension. The fourier output is in the listing (logPath), not the CSV.
+        if (input.analysis.type === 'tran' && input.analysis.fourier) {
+            const listing = await fs.readFile(logPath, 'utf-8').catch(() => '');
+            attachFourierThd(measurements, parseFourierLog(listing));
+        }
+        return measurements;
     };
 
     try {

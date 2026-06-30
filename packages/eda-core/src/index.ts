@@ -198,6 +198,7 @@ export {
     isObservableCurrentProbe,
     compareAssertion,
     evaluateAssertions,
+    attachFourierThd,
     describeFailure,
     criterionDimension,
     requiredDimensions,

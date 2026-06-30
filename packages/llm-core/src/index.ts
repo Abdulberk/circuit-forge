@@ -56,7 +56,7 @@ export interface AcceptanceCriterion {
     probe: string;
     /** Which measured quantity. min/max/final/pp are over the time/DC run; "cutoff" is the −3 dB corner
      *  frequency (Hz) of the node's AC magnitude response (requires an "ac" analysis). */
-    metric: 'min' | 'max' | 'final' | 'pp' | 'cutoff';
+    metric: 'min' | 'max' | 'final' | 'pp' | 'cutoff' | 'thd';
     /** Comparison operator. */
     op: 'lt' | 'lte' | 'gt' | 'gte' | 'approx';
     /** Target value in SI base units (volts, amps, seconds). */
@@ -463,7 +463,7 @@ async function callModel(
 type ParseOk = { circuit: CircuitJson; analysisConfig: AnalysisConfig; explanation?: string; acceptanceCriteria?: AcceptanceCriterion[] };
 type ParseResult = { ok: true; value: ParseOk } | { ok: false; error: string };
 
-const ACCEPTANCE_METRICS = new Set(['min', 'max', 'final', 'pp', 'cutoff']);
+const ACCEPTANCE_METRICS = new Set(['min', 'max', 'final', 'pp', 'cutoff', 'thd']);
 const ACCEPTANCE_OPS = new Set(['lt', 'lte', 'gt', 'gte', 'approx']);
 
 /** Best-effort, lenient parse of model-emitted acceptance criteria — like analysisConfig, a malformed
