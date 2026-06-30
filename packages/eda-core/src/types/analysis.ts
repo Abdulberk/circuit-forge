@@ -124,6 +124,18 @@ export interface OpAnalysis {
     type: 'op';
     /** Optional ngspice solver tuning — see SolverOptions. */
     options?: SolverOptions;
+    /**
+     * Request ngspice `.tf` DC small-signal transfer function on top of this operating point: the gain
+     * Vout/Vin plus the input/output impedances. REPORT-ONLY — surfaced in SimulationResult.transferFunction;
+     * does NOT gate the verdict. Rides on the op run (the op already writes the wrdata series, so no extra
+     * handling). Emitted as the validated `tf <output> <inputSource>` control command + an explicit print.
+     */
+    tf?: {
+        /** Output probe to measure, e.g. "v(out)" — node-remapped like a wrdata probe. */
+        output: string;
+        /** Input source designator the transfer is referenced to, e.g. "V1". */
+        inputSource: string;
+    };
 }
 
 /**

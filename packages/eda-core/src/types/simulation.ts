@@ -14,6 +14,23 @@ export interface SimulationResult {
     /** `.meas` results (one per requested measurement), present only when the analysis requested `measurements`.
      *  REPORT-ONLY: surfaced for the user/analysis, NOT wired into the pass/fail verdict. */
     measurements?: MeasurementResult[];
+    /** `.tf` DC small-signal transfer function (gain + input/output impedance), present only when an `op`
+     *  analysis requested `tf`. REPORT-ONLY: surfaced for the user/analysis, NOT wired into the verdict. */
+    transferFunction?: TransferFunctionResult;
+}
+
+/** ngspice `.tf` result: the DC small-signal transfer ratio + the impedances it reports. */
+export interface TransferFunctionResult {
+    /** Small-signal Vout/Vin (dimensionless), NaN if unparseable. */
+    gain: number;
+    /** The probed output node, e.g. "v(out)" (parsed from output_impedance_at_<node>). */
+    outputNode: string;
+    /** Output impedance at the probed node, in ohms (null if unparseable). */
+    outputImpedanceOhms: number | null;
+    /** The input source, e.g. "v1" (parsed from <src>#input_impedance). */
+    inputSource: string;
+    /** Input impedance seen by the source, in ohms (null if unparseable). */
+    inputImpedanceOhms: number | null;
 }
 
 /** One ngspice `.meas` measurement result. A FAILED measure (e.g. a WHEN threshold never reached) is surfaced

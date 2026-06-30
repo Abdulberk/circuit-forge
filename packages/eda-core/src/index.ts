@@ -53,6 +53,7 @@ export type {
     FourierResult,
     FourierHarmonic,
     MeasurementResult,
+    TransferFunctionResult,
 } from './types/simulation';
 
 export type {
@@ -182,6 +183,7 @@ export { summarizeSeries, type SimMeasurement } from './analysis/measurements';
 export { cutoffFrequency, isAcMagnitudeSeries, type FreqMagPoint } from './analysis/ac-measurements';
 export { parseFourierLog } from './analysis/fourier';
 export { parseMeasurements } from './analysis/measure';
+export { parseTransferFunction } from './analysis/tf';
 export {
     nodeKey,
     isCurrentProbe,

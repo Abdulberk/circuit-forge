@@ -11,6 +11,7 @@ import {
     parseSimulationOutput,
     parseFourierLog,
     parseMeasurements,
+    parseTransferFunction,
     sanitizeNetlist,
     extractProbes,
     parseSpiceValue,
@@ -299,8 +300,9 @@ async function runOneAttempt(
     // combined, gated on the deck actually requesting them. Best-effort: a parse miss never fails the run (they
     // don't gate the verdict). `.meas` names are read back from the deck to scope the parse to real measures.
     const wantsFourier = /^\s*fourier\s/im.test(netlistText);
+    const wantsTf = /^\s*tf\s/im.test(netlistText);
     const measureNames = [...netlistText.matchAll(/^\s*\.meas\s+\w+\s+(\w+)\b/gim)].map((m) => m[1]!);
-    if (wantsFourier || measureNames.length > 0) {
+    if (wantsFourier || wantsTf || measureNames.length > 0) {
         try {
             const listing = `${stdout}\n${await fs.readFile(path.join(jobDir, 'stdout.log'), 'utf-8').catch(() => '')}`;
             if (wantsFourier) {
@@ -310,6 +312,10 @@ async function runOneAttempt(
             if (measureNames.length > 0) {
                 const measurements = parseMeasurements(listing, measureNames);
                 if (measurements.length > 0) result.measurements = measurements;
+            }
+            if (wantsTf) {
+                const tf = parseTransferFunction(listing);
+                if (tf) result.transferFunction = tf;
             }
         } catch {
             /* no listing / parse issue — report-only, so don't fail the run */
