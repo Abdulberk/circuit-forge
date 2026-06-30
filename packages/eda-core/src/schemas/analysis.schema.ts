@@ -95,6 +95,12 @@ export const DcAnalysisSchema = z.object({
 export const OpAnalysisSchema = z.object({
     type: z.literal('op'),
     options: SolverOptionsSchema.optional(),
+    tf: z
+        .object({
+            output: ProbeSchema,
+            inputSource: z.string().regex(/^[A-Z][A-Z0-9]*[0-9]+$/i, 'Invalid source designator'),
+        })
+        .optional(),
 });
 
 /**

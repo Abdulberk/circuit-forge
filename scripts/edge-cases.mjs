@@ -12,7 +12,7 @@
 //   E PHYSICS   tight known-answer checks (RC settle, -3 dB corner, exact op-amp gain, loaded divider, …)
 //
 // Requires real ngspice (NGSPICE_PATH or the choco console build) + the eda-core dist build.
-import { generateNetlist, parseSimulationOutput, resolveGenericModels, extractProbes, runErc, cutoffFrequency, isAcMagnitudeSeries, summarizeSeries, parseFourierLog, parseMeasurements } from '../packages/eda-core/dist/index.js';
+import { generateNetlist, parseSimulationOutput, resolveGenericModels, extractProbes, runErc, cutoffFrequency, isAcMagnitudeSeries, summarizeSeries, parseFourierLog, parseMeasurements, parseTransferFunction } from '../packages/eda-core/dist/index.js';
 import { spawnSync } from 'node:child_process';
 import { mkdtempSync, writeFileSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -59,7 +59,8 @@ function runCell(circuit, analysis, probes) {
         // `.meas` results also land in the listing — scope the parse to the names the deck requested.
         const measureNames = [...netlist.matchAll(/^\s*\.meas\s+\w+\s+(\w+)\b/gim)].map((m) => m[1]);
         const measurements = measureNames.length ? parseMeasurements((r.stdout || '') + '\n' + log, measureNames) : undefined;
-        return { netlist, exit: r.status, rows: res.meta.pointsCount, series, errors: errs, erc, fourier, measurements };
+        const transferFunction = /^\s*tf\s/im.test(netlist) ? parseTransferFunction((r.stdout || '') + '\n' + log) : undefined;
+        return { netlist, exit: r.status, rows: res.meta.pointsCount, series, errors: errs, erc, fourier, measurements, transferFunction };
     } finally { rmSync(dir, { recursive: true, force: true }); }
 }
 
@@ -167,6 +168,8 @@ add('E-physics', 'Fourier THD of a 1kHz square ≈ 43% (10-harmonic truncation, 
 // Rides on the .tran run (no extra sim, output.csv unaffected); results parsed from the listing by parseMeasurements.
 add('E-physics', '.meas extrema/RMS of a 5V 1kHz sine (vpk≈5, vpp≈10, vrms≈3.54 — real ngspice)', () => ({ circuit: circuit([V('v1', 'V1', 'SIN(0 5 1k)', 'in', '0'), R('r1', 'R1', '1k', 'in', '0')], N('in')), analysis: { type: 'tran', stopTime: '5m', stepTime: '5u', measurements: [{ name: 'vpk', type: 'max', probe: 'v(in)' }, { name: 'vp2p', type: 'pp', probe: 'v(in)' }, { name: 'vr', type: 'rms', probe: 'v(in)' }] }, probes: ['v(in)'] }), (r) => { const m = Object.fromEntries((r.measurements || []).map((x) => [x.name, x.value])); return near(m.vpk, 5, 0.25) && near(m.vp2p, 10, 0.5) && near(m.vr, 5 / Math.SQRT2, 0.2) ? ok() : fail(`.meas sine: vpk=${m.vpk} vp2p=${m.vp2p} vr=${m.vr} want ≈5/10/${(5 / Math.SQRT2).toFixed(2)} — got ${JSON.stringify(r.measurements)}`); });
 add('E-physics', '.meas WHEN: rising 1kHz sine crosses 0.5 at t≈83.3µs = asin(0.5)/(2πf) (real ngspice)', () => ({ circuit: circuit([V('v1', 'V1', 'SIN(0 1 1k)', 'in', '0'), R('r1', 'R1', '1k', 'in', '0')], N('in')), analysis: { type: 'tran', stopTime: '5m', stepTime: '2u', measurements: [{ name: 'tc', type: 'when', probe: 'v(in)', value: 0.5, edge: 'rise' }] }, probes: ['v(in)'] }), (r) => { const tc = (r.measurements || []).find((x) => x.name === 'tc')?.value; return near(tc, 8.333e-5, 1.5e-5) ? ok() : fail(`.meas WHEN tc=${tc} want ≈8.33e-5 (asin(0.5)/(2π·1k)) — got ${JSON.stringify(r.measurements)}`); });
+// .tf DC transfer function (op add-on) — gain + Zin + Zout of a resistive divider, all analytically exact.
+add('E-physics', '.tf DC transfer of a 1k/2k divider: gain≈0.667, Zin≈3k, Zout≈667Ω (real ngspice)', () => ({ circuit: circuit([V('v1', 'V1', 'DC 5', 'in', '0'), R('r1', 'R1', '1k', 'in', 'out'), R('r2', 'R2', '2k', 'out', '0')], N('in', 'out')), analysis: { type: 'op', tf: { output: 'v(out)', inputSource: 'V1' } }, probes: ['v(out)'] }), (r) => { const t = r.transferFunction; return t && near(t.gain, 2 / 3, 0.02) && near(t.inputImpedanceOhms, 3000, 100) && near(t.outputImpedanceOhms, 2000 / 3, 30) ? ok() : fail(`.tf divider: got ${JSON.stringify(r.transferFunction)} want gain≈0.667 Zin≈3k Zout≈667`); });
 
 // ========================= F. DEVICE-physics known-answer (emission + pinId binding + sign) =========================
 add('F-device', 'VCCS Iout = gm·Vin into a load, sign-correct → +10V', () => ({ circuit: circuit([V('v1', 'V1', 'DC 2', 'in', '0'), { id: 'g1', type: 'vccs', designator: 'G1', value: '5m', pins: [{ pinId: '+', netId: '0' }, { pinId: '-', netId: 'out' }, { pinId: 'c+', netId: 'in' }, { pinId: 'c-', netId: '0' }] }, R('rl', 'RL', '1k', 'out', '0')], N('in', 'out')), analysis: OP, probes: ['v(out)'] }), (r) => near(r.series[0]?.final, 10, 0.1) ? ok() : fail(`vccs v(out)=${r.series[0]?.final?.toFixed(3)} want +10 (gm·Vin·RL = 5m·2·1k); sign + canonical out/ctrl pin binding`));

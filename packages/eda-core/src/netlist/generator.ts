@@ -461,6 +461,21 @@ export function generateNetlist(
         for (const p of fProbes) fourierCmds.push(`  fourier ${freq} ${p}`);
     }
 
+    // `.tf` DC small-signal transfer function — emitted as the `tf` CONTROL COMMAND + an EXPLICIT print of its
+    // three result vectors (the auto-echo is unreliable after `run`). Rides on the `op` run (which already writes
+    // the wrdata series), so NO runner change. Output probe is node-remapped like a wrdata probe; the source is a
+    // validated designator. The print's vector names embed the probe (`output_impedance_at_<probe>`) and the
+    // lowercased source (`<src>#input_impedance`), matching how ngspice names them. REPORT-ONLY.
+    const tfCmds: string[] = [];
+    if (effectiveAnalysis.type === 'op' && effectiveAnalysis.tf) {
+        const out = rewriteProbeNodeRefs(rewriteProbeDeviceRefs(effectiveAnalysis.tf.output, designatorToInstance), netRefToNode).trim();
+        const src = effectiveAnalysis.tf.inputSource;
+        if (out && /^[A-Za-z][A-Za-z0-9]*[0-9]+$/.test(src)) {
+            tfCmds.push(`  tf ${out} ${src}`);
+            tfCmds.push(`  print transfer_function output_impedance_at_${out} ${src.toLowerCase()}#input_impedance`);
+        }
+    }
+
     lines.push('* Control block');
     lines.push('.control');
     lines.push('  set filetype=ascii');
@@ -471,8 +486,9 @@ export function generateNetlist(
         lines.push(`  wrdata output.csv ${probeList}`);
     }
 
-    // Fourier AFTER run (the vectors must exist) and BEFORE quit (else it never executes).
+    // Fourier/tf AFTER run (the vectors must exist) and BEFORE quit (else they never execute).
     for (const fc of fourierCmds) lines.push(fc);
+    for (const tc of tfCmds) lines.push(tc);
 
     lines.push('  quit');
     lines.push('.endc');
