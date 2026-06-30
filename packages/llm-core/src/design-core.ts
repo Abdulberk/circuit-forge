@@ -14,6 +14,7 @@ import {
     summarizeSeries,
     resolveGenericModels,
     evaluateAssertions,
+    attachFourierThd,
     describeFailure,
     uncoveredRequiredDimensions,
     requiredDimensions,
@@ -26,6 +27,7 @@ import {
     type AcceptanceCriterion,
     type AssertionResult,
     type SpecDimension,
+    type FourierResult,
 } from '@circuit-forge/eda-core';
 import { generateCircuit, fixCircuit, type GenerateCircuitConfig } from './index';
 
@@ -200,7 +202,7 @@ export async function runDesignLoop(input: DesignLoopInput, deps: DesignDeps): P
         let jobId: string;
         let status: { status: string; metrics?: unknown };
         let result: {
-            result?: { meta?: { pointsCount?: number }; series?: DataSeries[] };
+            result?: { meta?: { pointsCount?: number }; series?: DataSeries[]; fourier?: FourierResult[] };
             metrics?: { pointsCount?: number };
             error?: string;
         };
@@ -238,6 +240,8 @@ export async function runDesignLoop(input: DesignLoopInput, deps: DesignDeps): P
                 return inconclusive(deps, circuit, analysis, explanation, history, groundingOpts,
                     'The simulation ran but its results were unavailable to check the design specifications — try again.');
             }
+            // Fold THD (from a fourier request) onto the measurements so a `thd` criterion gates like any other.
+            attachFourierThd(measurements, result.result?.fourier);
             lastAssertions = evaluateAssertions(measurements, criteria);
         }
         const specsMet = lastAssertions.every((a) => a.pass);
@@ -610,7 +614,7 @@ export async function screenCandidate(input: DesignLoopInput, deps: DesignDeps):
         const status = await pollJob(deps, jobId);
         simStatus = status.status;
         const result = (await deps.runSim.getResult(jobId, deps.userId)) as {
-            result?: { meta?: { pointsCount?: number }; series?: DataSeries[] };
+            result?: { meta?: { pointsCount?: number }; series?: DataSeries[]; fourier?: FourierResult[] };
             metrics?: { pointsCount?: number };
         };
         const statusMetrics = status.metrics as { pointsCount?: number } | undefined;
@@ -618,6 +622,7 @@ export async function screenCandidate(input: DesignLoopInput, deps: DesignDeps):
         simHealthy = status.status === 'SUCCEEDED' && pointsCount > 0;
         if (simHealthy && criteria.length > 0) {
             const measurements = (result.result?.series ?? []).map((s) => summarizeSeries(s, analysis.type));
+            attachFourierThd(measurements, result.result?.fourier);
             assertions = evaluateAssertions(measurements, criteria);
         }
     } catch {

@@ -8,6 +8,7 @@
  */
 import { sanitizeNodeName } from '../netlist/sanitizer';
 import type { SimMeasurement } from './measurements';
+import type { FourierResult } from '../types/simulation';
 
 /**
  * A measurable pass/fail check derived from the user's stated numeric intent (the plain shape; the API's
@@ -18,10 +19,11 @@ export interface AcceptanceCriterion {
     probe: string;
     /** Which measured quantity. min/max/final/pp/avg/rms are over the time/DC run (avg+rms are TIME-WEIGHTED —
      *  trapezoidal over the adaptive timesteps — so "RMS output" / "average ripple" specs are exact); "cutoff"
-     *  is the −3 dB corner (Hz) of the node's AC magnitude response (requires an "ac" analysis). */
-    metric: 'min' | 'max' | 'final' | 'pp' | 'avg' | 'rms' | 'cutoff';
+     *  is the −3 dB corner (Hz) of the node's AC magnitude response (requires an "ac" analysis); "thd" is the
+     *  Total Harmonic Distortion in PERCENT (requires a "tran" analysis with a "fourier" request on the probe). */
+    metric: 'min' | 'max' | 'final' | 'pp' | 'avg' | 'rms' | 'cutoff' | 'thd';
     op: 'lt' | 'lte' | 'gt' | 'gte' | 'approx';
-    /** Target value in SI base units (volts, amps, seconds; Hz for "cutoff"). */
+    /** Target value in SI base units (volts, amps, seconds; Hz for "cutoff"; PERCENT for "thd"). */
     value: number;
     /** Absolute tolerance for op="approx" (default 5% of |value|). */
     tol?: number;
@@ -154,6 +156,20 @@ export function evaluateAssertions(
                 };
             }
             measured = fc;
+        } else if (a.metric === 'thd') {
+            // THD (%) is folded onto the measurement from a fourier request (attachFourierThd) — it is NOT
+            // derivable from the series. Absent ⇒ the probe wasn't fourier-analyzed ⇒ not measured ⇒ not
+            // verified (never a silent pass), mirroring the cutoff handling above.
+            if (m.thd === undefined || !Number.isFinite(m.thd)) {
+                return {
+                    ...base,
+                    actual: null,
+                    distance: null,
+                    pass: false,
+                    detail: `thd(${a.probe}) not determinable — needs a "tran" analysis with a "fourier" request on this probe`,
+                };
+            }
+            measured = m.thd;
         } else {
             // Read FULL-PRECISION values (the rounded display fields can flip a marginal check — audit #8).
             const src = m.raw ?? { min: m.min, max: m.max, final: m.final, pp: m.pp, avg: m.avg, rms: m.rms };
@@ -184,6 +200,21 @@ export function evaluateAssertions(
             detail: `${a.metric}(${a.probe}) = ${actual} ${pass ? '✓' : '✗'} ${a.op} ${a.value}`,
         };
     });
+}
+
+/**
+ * Fold each `.four`/fourier THD (PERCENT) onto the matching per-node measurement, so a `thd` criterion is
+ * evaluated through the SAME measurement path as every other metric (mirrors how `cutoff` rides on the AC
+ * measurement). Matches a fourier result's probe to a measurement's node by the canonical node key. Mutates
+ * `measurements` in place; a no-op when there is no fourier data. This is the ONE place THD enters the verdict,
+ * so it composes with BOTH the nominal check AND the Monte-Carlo per-variant eval (the MC runner calls it too).
+ */
+export function attachFourierThd(measurements: SimMeasurement[], fourier: FourierResult[] | undefined): void {
+    if (!fourier || fourier.length === 0) return;
+    for (const m of measurements) {
+        const f = fourier.find((fr) => nodeKey(fr.probe) === nodeKey(m.node));
+        if (f && Number.isFinite(f.thd)) m.thd = f.thd;
+    }
 }
 
 /** A one-line, human/AI-readable description of a failed criterion incl. how far off it is — fed to the
