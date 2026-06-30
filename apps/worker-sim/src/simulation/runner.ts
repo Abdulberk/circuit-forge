@@ -9,6 +9,7 @@ import { config } from '../config';
 import { logger } from '../logger';
 import {
     parseSimulationOutput,
+    parseFourierLog,
     sanitizeNetlist,
     extractProbes,
     parseSpiceValue,
@@ -289,6 +290,19 @@ async function runOneAttempt(
                 outputSizeBytes,
                 error: `Transient ended early at t=${lastT.toExponential(2)}s of ${tranMatch![1]} (timestep collapse / non-convergence — often a floating node or missing DC path to ground)`,
             };
+        }
+    }
+
+    // Fourier/THD output (from the `fourier` control command) goes to ngspice's listing, NOT the wrdata CSV —
+    // and depending on the build it lands on the stdout pipe or the `-o` log, so parse BOTH combined. Gated on
+    // the deck actually requesting it. Best-effort + REPORT-ONLY: a parse miss never fails the run.
+    if (/^\s*fourier\s/im.test(netlistText)) {
+        try {
+            const listing = await fs.readFile(path.join(jobDir, 'stdout.log'), 'utf-8').catch(() => '');
+            const fourier = parseFourierLog(`${stdout}\n${listing}`);
+            if (fourier.length > 0) result.fourier = fourier;
+        } catch {
+            /* no listing / parse issue — Fourier is report-only, so don't fail the run */
         }
     }
 

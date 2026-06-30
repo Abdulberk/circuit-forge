@@ -12,6 +12,14 @@ export const SpiceValueSchema = z.string().regex(
 );
 
 /**
+ * Probe schema — v(node) or i(device). Defined here (before the analysis schemas) so analyses can reuse it.
+ */
+export const ProbeSchema = z.string().regex(
+    /^[vi]\([a-zA-Z0-9_]+(?:,[a-zA-Z0-9_]+)?\)$/i,
+    'Invalid probe format. Use v(node) or i(device)',
+);
+
+/**
  * Solver tuning (`.options`) schema — every numeric field must be a clean SPICE value (anchored
  * regex, no expressions: these tokens go straight onto a netlist line).
  */
@@ -36,6 +44,12 @@ export const TranAnalysisSchema = z.object({
     uic: z.boolean().optional(),
     initialConditions: z.record(z.string().min(1).max(100), z.number()).optional(),
     options: SolverOptionsSchema.optional(),
+    fourier: z
+        .object({
+            fundamentalFreq: SpiceValueSchema,
+            probes: z.array(ProbeSchema).min(1).max(20),
+        })
+        .optional(),
 });
 
 /**
@@ -79,14 +93,6 @@ export const AnalysisConfigSchema = z.discriminatedUnion('type', [
     DcAnalysisSchema,
     OpAnalysisSchema,
 ]);
-
-/**
- * Probe schema
- */
-export const ProbeSchema = z.string().regex(
-    /^[vi]\([a-zA-Z0-9_]+(?:,[a-zA-Z0-9_]+)?\)$/i,
-    'Invalid probe format. Use v(node) or i(device)',
-);
 
 /**
  * Simulation request schema

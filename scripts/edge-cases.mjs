@@ -12,7 +12,7 @@
 //   E PHYSICS   tight known-answer checks (RC settle, -3 dB corner, exact op-amp gain, loaded divider, …)
 //
 // Requires real ngspice (NGSPICE_PATH or the choco console build) + the eda-core dist build.
-import { generateNetlist, parseSimulationOutput, resolveGenericModels, extractProbes, runErc, cutoffFrequency, isAcMagnitudeSeries, summarizeSeries } from '../packages/eda-core/dist/index.js';
+import { generateNetlist, parseSimulationOutput, resolveGenericModels, extractProbes, runErc, cutoffFrequency, isAcMagnitudeSeries, summarizeSeries, parseFourierLog } from '../packages/eda-core/dist/index.js';
 import { spawnSync } from 'node:child_process';
 import { mkdtempSync, writeFileSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -53,7 +53,10 @@ function runCell(circuit, analysis, probes) {
             const sm = summarizeSeries(s, analysis.type);
             return { name: s.name, n: s.points.length, min, max, pp: max - min, final: ys[ys.length - 1], cutoff, avg: sm.raw?.avg, rms: sm.raw?.rms };
         });
-        return { netlist, exit: r.status, rows: res.meta.pointsCount, series, errors: errs, erc };
+        // `.four`/fourier output lands in the listing (log.txt or the stdout pipe), not the wrdata CSV — parse
+        // BOTH combined so a fourier cell can assert on THD against real ngspice.
+        const fourier = parseFourierLog((r.stdout || '') + '\n' + log);
+        return { netlist, exit: r.status, rows: res.meta.pointsCount, series, errors: errs, erc, fourier };
     } finally { rmSync(dir, { recursive: true, force: true }); }
 }
 
@@ -152,6 +155,11 @@ add('E-physics', 'HIGH-pass −3dB corner ≈ 1/(2πRC) ≈ 995 Hz (passband at 
 add('E-physics', 'NON-inverting op-amp gain = 1+Rf/Rg (0.5·10 = 5V)', () => ({ circuit: circuit([...rails(), V('vin', 'VIN', 'DC 0.5', 'sig', '0'), R('rg', 'RG', '1k', 'inv', '0'), R('rf', 'RF', '9k', 'out', 'inv'), opamp('u1', 'out', 'sig', 'inv')], N('vcc', 'vee', 'sig', 'inv', 'out')), analysis: OP, probes: ['v(out)'] }), (r) => near(r.series[0]?.final, 5, 0.1) ? ok() : fail(`non-inv v(out)=${r.series[0]?.final?.toFixed(3)} want 5 (1+9k/1k)·0.5; guards in+/in- binding the other way vs the inverting cell`));
 add('E-physics', 'NEGATIVE supply node stays signed: −8·R2/(R1+R2) = −6V (no spurious abs)', () => ({ circuit: circuit([V('v1', 'V1', 'DC -8', 'sup', '0'), R('r1', 'R1', '1k', 'sup', 'mid'), R('r2', 'R2', '3k', 'mid', '0')], N('sup', 'mid')), analysis: OP, probes: ['v(mid)'] }), (r) => near(r.series[0]?.final, -6, 0.05) ? ok() : fail(`v(mid)=${r.series[0]?.final?.toFixed(3)} want −6 (negative source round-trip; a voltage must NOT be magnitude'd)`));
 add('E-physics', 'sine RMS = amplitude/√2 and avg ≈ 0 (time-weighted metric, real ngspice)', () => ({ circuit: circuit([V('v1', 'V1', 'SIN(0 5 1k)', 'in', '0'), R('r1', 'R1', '1k', 'in', '0')], N('in')), analysis: { type: 'tran', stopTime: '5m', stepTime: '5u' }, probes: ['v(in)'] }), (r) => baseOk(r).pass && near(r.series[0].rms, 5 / Math.SQRT2, 0.12) && Math.abs(r.series[0].avg) < 0.12 ? ok() : fail(`sine rms=${r.series[0]?.rms?.toFixed(3)} avg=${r.series[0]?.avg?.toFixed(3)} want rms≈${(5 / Math.SQRT2).toFixed(3)} (5/√2), avg≈0`));
+// Fourier/THD (.four via the `fourier` control command) — exercises the FULL new path: generator emits the
+// fourier command, ngspice computes it, parseFourierLog extracts THD from the listing. Both THD values were
+// verified IDENTICAL on ngspice-41 (host) and ngspice-42 (CI apt): clean sine ≈ 0.27%, square ≈ 42.92%.
+add('E-physics', 'Fourier THD of a clean 1kHz sine ≈ 0% (fourier cmd, real ngspice)', () => ({ circuit: circuit([V('v1', 'V1', 'SIN(0 1 1k)', 'in', '0'), R('r1', 'R1', '1k', 'in', 'out'), C('c1', 'C1', '1u', 'out', '0')], N('in', 'out')), analysis: { type: 'tran', stopTime: '5m', stepTime: '5u', fourier: { fundamentalFreq: '1k', probes: ['v(out)'] } }, probes: ['v(out)'] }), (r) => { const f = (r.fourier || [])[0]; return f && Number.isFinite(f.thd) && f.thd >= 0 && f.thd < 1 ? ok() : fail(`clean-sine THD: want a parsed block with THD<1%, got ${JSON.stringify(r.fourier)}`); });
+add('E-physics', 'Fourier THD of a 1kHz square ≈ 43% (10-harmonic truncation, real ngspice)', () => ({ circuit: circuit([V('v1', 'V1', 'PULSE(-1 1 0 1n 1n 0.5m 1m)', 'out', '0'), R('r1', 'R1', '1k', 'out', '0')], N('out')), analysis: { type: 'tran', stopTime: '10m', stepTime: '2u', fourier: { fundamentalFreq: '1k', probes: ['v(out)'] } }, probes: ['v(out)'] }), (r) => { const f = (r.fourier || [])[0]; return f && f.thd > 38 && f.thd < 47 ? ok() : fail(`square THD: want 38-47% (≈42.9), got ${JSON.stringify(r.fourier)}`); });
 
 // ========================= F. DEVICE-physics known-answer (emission + pinId binding + sign) =========================
 add('F-device', 'VCCS Iout = gm·Vin into a load, sign-correct → +10V', () => ({ circuit: circuit([V('v1', 'V1', 'DC 2', 'in', '0'), { id: 'g1', type: 'vccs', designator: 'G1', value: '5m', pins: [{ pinId: '+', netId: '0' }, { pinId: '-', netId: 'out' }, { pinId: 'c+', netId: 'in' }, { pinId: 'c-', netId: '0' }] }, R('rl', 'RL', '1k', 'out', '0')], N('in', 'out')), analysis: OP, probes: ['v(out)'] }), (r) => near(r.series[0]?.final, 10, 0.1) ? ok() : fail(`vccs v(out)=${r.series[0]?.final?.toFixed(3)} want +10 (gm·Vin·RL = 5m·2·1k); sign + canonical out/ctrl pin binding`));

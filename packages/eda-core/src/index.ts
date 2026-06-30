@@ -49,6 +49,8 @@ export type {
     DataSeries,
     DataPoint,
     ResultMeta,
+    FourierResult,
+    FourierHarmonic,
 } from './types/simulation';
 
 export type {
@@ -176,6 +178,7 @@ export { mulberry32 } from './utils/prng';
 // which is why they live here and not in the API).
 export { summarizeSeries, type SimMeasurement } from './analysis/measurements';
 export { cutoffFrequency, isAcMagnitudeSeries, type FreqMagPoint } from './analysis/ac-measurements';
+export { parseFourierLog } from './analysis/fourier';
 export {
     nodeKey,
     isCurrentProbe,
