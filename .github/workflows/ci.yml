@@ -123,3 +123,7 @@ jobs:
         env:
           NGSPICE_PATH: ngspice
         run: node scripts/edge-cases.mjs
+        # NOTE: scripts/runner-analyses-check.mjs (drives the ACTUAL worker runner.ts for each new analysis on
+        # real ngspice) is a MANUAL QA tool — `pnpm test:runner` — NOT wired here: it needs the full worker-sim
+        # build chain (llm-core + a generated Prisma client) which this lean matrix job deliberately avoids.
+        # Verified manually on ngspice-41 (host) and ngspice-42 (apt) — 5/5 — for the QA-hardening pass.
