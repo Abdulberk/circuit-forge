@@ -11,6 +11,8 @@ export {
     isObservableCurrentProbe,
     compareAssertion,
     evaluateAssertions,
+    attachFourierThd,
+    attachTransferFunction,
     describeFailure,
     criterionDimension,
     requiredDimensions,

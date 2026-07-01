@@ -21,8 +21,16 @@ const GAIN_RE = new RegExp(`^\\s*transfer_function\\s*=\\s*(${NUM})`, 'im');
 const ZOUT_RE = new RegExp(`^\\s*output_impedance_at_(\\S+)\\s*=\\s*(${NUM})`, 'im');
 const ZIN_RE = new RegExp(`^\\s*(\\S+)#input_impedance\\s*=\\s*(${NUM})`, 'im');
 
-/** Extract the `.tf` result from an ngspice listing, or undefined when absent. */
-export function parseTransferFunction(log: string): TransferFunctionResult | undefined {
+/**
+ * Extract the `.tf` result from an ngspice listing, or undefined when absent.
+ *
+ * `expectedOutputNode` is the output probe the caller REQUESTED (from `tf <output> …`). The node identity
+ * otherwise lives ONLY in the `output_impedance_at_<node>` echo — so if that line is missing/truncated while
+ * the `transfer_function =` line is present (output truncation, build-variant echo), `outputNode` would fall
+ * back to '' and attachTransferFunction could never bind the (valid) gain to a measurement — a valid gain would
+ * silently read as "not determinable". Passing the requested probe here preserves the binding in that case.
+ */
+export function parseTransferFunction(log: string, expectedOutputNode?: string): TransferFunctionResult | undefined {
     if (!log) return undefined;
     const g = log.match(GAIN_RE);
     if (!g) return undefined; // no transfer_function line → nothing to report
@@ -37,7 +45,7 @@ export function parseTransferFunction(log: string): TransferFunctionResult | und
 
     return {
         gain: num(g[1]) ?? NaN,
-        outputNode: out?.[1] ?? '',
+        outputNode: out?.[1] ?? expectedOutputNode ?? '',
         outputImpedanceOhms: num(out?.[2]),
         inputSource: inp?.[1] ?? '',
         inputImpedanceOhms: num(inp?.[2]),

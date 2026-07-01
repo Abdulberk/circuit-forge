@@ -332,3 +332,99 @@ describe('VerificationService — worker delegation (prod path, userId present)'
         expect(createQuickSim).not.toHaveBeenCalled();
     });
 });
+
+/**
+ * Regression for the SILENT verdict-gating gap: the worker computes listing-derived metrics (THD from a
+ * `fourier` request; small-signal gain from a `tf` request) and puts them on SimulationResult.fourier /
+ * .transferFunction — but runViaWorker used to distil ONLY the wrdata series and never fold those onto the
+ * measurements. A thd/gain acceptance criterion (accepted by the public AssertionDto) could therefore NEVER
+ * pass on /verify-design — an always-"not determinable" false-negative on a shipped feature. These lock the
+ * fix at the SERVICE SEAM (the untested boundary that let it slip; eda-core's attach helpers + the worker
+ * runner + the MC batch were each already covered). ngspice-free: the worker result is injected directly.
+ */
+const OUT_NODE = `v(${sanitizeNodeName('out')})`;
+
+/** A worker SimulationResult carrying the given listing-derived metrics on the output node. */
+const resultWith = (extra: { thd?: number; gain?: number }) => ({
+    meta: { analysisType: extra.gain !== undefined ? 'op' : 'tran', xLabel: 't', pointsCount: 2 },
+    series: [
+        { name: `v(${sanitizeNodeName('in')})`, points: [{ x: 0, y: 10 }, { x: 1e-3, y: 10 }] },
+        { name: OUT_NODE, points: [{ x: 0, y: 5 }, { x: 1e-3, y: 5 }] },
+    ],
+    ...(extra.thd !== undefined ? { fourier: [{ probe: OUT_NODE, fundamentalFreq: 1000, thd: extra.thd, harmonics: [] }] } : {}),
+    ...(extra.gain !== undefined ? { transferFunction: { gain: extra.gain, outputNode: OUT_NODE, inputSource: 'V1' } } : {}),
+});
+
+describe('VerificationService — THD / gain verdict-gating on the worker path (regression)', () => {
+    const TRAN = { type: 'tran', stopTime: '2m', stepTime: '5u', fourier: { fundamentalFreq: '1k', probes: ['v(out)'] } } as never;
+    const OP_TF = { type: 'op', tf: { output: 'v(out)', inputSource: 'V1' } } as never;
+
+    it('a thd criterion PASSES when the worker returned fourier data (THD folded onto the measurement)', async () => {
+        const { svc } = makeWorkerService({ status: 'SUCCEEDED', result: resultWith({ thd: 0.5 }) });
+        const ev = await svc.verify(DIVIDER, TRAN, [A('out', 'thd', 'lt', 1)], 'user-1');
+        expect(ev.assertions[0]!.actual).toBe(0.5); // was null (always-fail) before the fix
+        expect(ev.assertions[0]!.pass).toBe(true); // 0.5% < 1%
+        expect(ev.verdict).toBe('pass');
+    });
+
+    it('a thd criterion is a clean FAIL (measured, not "not determinable") when THD exceeds the limit', async () => {
+        const { svc } = makeWorkerService({ status: 'SUCCEEDED', result: resultWith({ thd: 4.2 }) });
+        const ev = await svc.verify(DIVIDER, TRAN, [A('out', 'thd', 'lt', 1)], 'user-1');
+        expect(ev.assertions[0]!.actual).toBe(4.2); // a real measured value, not null
+        expect(ev.assertions[0]!.pass).toBe(false); // 4.2% not < 1%
+        expect(ev.verdict).toBe('fail');
+    });
+
+    it('a gain criterion PASSES when the worker returned a transfer-function result', async () => {
+        const { svc } = makeWorkerService({ status: 'SUCCEEDED', result: resultWith({ gain: 10 }) });
+        const ev = await svc.verify(DIVIDER, OP_TF, [A('out', 'gain', 'approx', 10, 0.5)], 'user-1');
+        expect(ev.assertions[0]!.actual).toBe(10); // gain folded on (was null before the fix)
+        expect(ev.assertions[0]!.pass).toBe(true);
+        expect(ev.verdict).toBe('pass');
+    });
+
+    it('a thd criterion with NO fourier data stays honestly "not determinable" (never a false pass)', async () => {
+        // default workerResult carries no fourier → thd undefined → the criterion cannot be certified.
+        const { svc } = makeWorkerService();
+        const ev = await svc.verify(DIVIDER, { type: 'op' }, [A('out', 'thd', 'lt', 1)], 'user-1');
+        expect(ev.assertions[0]!.actual).toBeNull();
+        expect(ev.assertions[0]!.pass).toBe(false);
+        expect(ev.assertions[0]!.detail).toMatch(/thd|fourier|determinable/i);
+        expect(ev.verdict).toBe('fail'); // an undeterminable spec fails the verdict — honest, not silent-pass
+    });
+
+    it('a thd criterion on a DIFFERENT node than the fourier probe stays "not determinable" (no cross-node bleed)', async () => {
+        // fourier is present but only for OUT_NODE; asserting thd on 'in' must NOT borrow the out-node THD.
+        const { svc } = makeWorkerService({ status: 'SUCCEEDED', result: resultWith({ thd: 0.5 }) });
+        const ev = await svc.verify(DIVIDER, TRAN, [A('in', 'thd', 'lt', 1)], 'user-1');
+        expect(ev.assertions[0]!.actual).toBeNull(); // THD folded onto 'out', never onto 'in'
+        expect(ev.assertions[0]!.pass).toBe(false);
+        expect(ev.verdict).toBe('fail');
+    });
+
+    it('a gain criterion with a NON-FINITE gain in the tf result stays "not determinable" (no false value)', async () => {
+        // transferFunction present but gain=NaN (unparseable ngspice value) → attachTransferFunction guards
+        // Number.isFinite and skips → the criterion cannot be certified rather than reading a bogus number.
+        const { svc } = makeWorkerService({ status: 'SUCCEEDED', result: resultWith({ gain: NaN }) });
+        const ev = await svc.verify(DIVIDER, OP_TF, [A('out', 'gain', 'approx', 10, 0.5)], 'user-1');
+        expect(ev.assertions[0]!.actual).toBeNull();
+        expect(ev.assertions[0]!.pass).toBe(false);
+        expect(ev.verdict).toBe('fail');
+    });
+
+    it('a gain criterion uses the DEFAULT 5% tolerance when tol is omitted (within band → pass)', async () => {
+        const { svc } = makeWorkerService({ status: 'SUCCEEDED', result: resultWith({ gain: 9.6 }) });
+        const ev = await svc.verify(DIVIDER, OP_TF, [A('out', 'gain', 'approx', 10)], 'user-1'); // no tol → ±5% = ±0.5
+        expect(ev.assertions[0]!.actual).toBe(9.6);
+        expect(ev.assertions[0]!.pass).toBe(true); // |9.6-10| = 0.4 ≤ 0.5
+        expect(ev.verdict).toBe('pass');
+    });
+
+    it('a gain criterion FAILS just outside the default 5% tolerance (the band is real, not unbounded)', async () => {
+        const { svc } = makeWorkerService({ status: 'SUCCEEDED', result: resultWith({ gain: 9.4 }) });
+        const ev = await svc.verify(DIVIDER, OP_TF, [A('out', 'gain', 'approx', 10)], 'user-1');
+        expect(ev.assertions[0]!.actual).toBe(9.4);
+        expect(ev.assertions[0]!.pass).toBe(false); // |9.4-10| = 0.6 > 0.5
+        expect(ev.verdict).toBe('fail');
+    });
+});

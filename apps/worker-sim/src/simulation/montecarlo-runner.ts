@@ -113,7 +113,9 @@ export async function runMonteCarloBatch(
         if (needsListing) {
             const listing = await fs.readFile(logPath, 'utf-8').catch(() => '');
             if (input.analysis.type === 'tran') attachFourierThd(measurements, parseFourierLog(listing));
-            if (input.analysis.type === 'op') attachTransferFunction(measurements, parseTransferFunction(listing));
+            // Pass the requested tf output as a fallback so a valid gain still binds if ngspice's
+            // `output_impedance_at_<node>` echo is missing/truncated (else outputNode='' matches no node).
+            if (input.analysis.type === 'op') attachTransferFunction(measurements, parseTransferFunction(listing, input.analysis.tf?.output));
         }
         return measurements;
     };
