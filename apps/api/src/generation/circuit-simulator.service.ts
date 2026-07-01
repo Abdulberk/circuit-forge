@@ -30,6 +30,10 @@ import {
     diagnoseConvergence,
     convergenceRemedyLadder,
     summarizeSeries,
+    parseFourierLog,
+    parseTransferFunction,
+    attachFourierThd,
+    attachTransferFunction,
     type CircuitJson,
     type AnalysisConfig,
     type ConvergenceReport,
@@ -182,7 +186,7 @@ export class CircuitSimulatorService {
             const sanitized = sanitizeNetlist(netlist, dir); // rejects shell directives / bad includes
             await fs.writeFile(path.join(dir, 'circuit.cir'), sanitized);
 
-            const { stderr, exitCode, timedOut } = await this.runNgspice(ngspicePath, dir);
+            const { stdout, stderr, exitCode, timedOut } = await this.runNgspice(ngspicePath, dir);
             if (timedOut) return { simStatus: 'failed', ercErrors, ercWarnings, measurements: [], nodeCount: 0, analysisType: an.type, runError: 'simulation timed out' };
             if (exitCode !== 0) {
                 return { simStatus: 'failed', ercErrors, ercWarnings, measurements: [], nodeCount: 0, analysisType: an.type, runError: this.distillNgspiceError(stderr, exitCode) };
@@ -224,7 +228,30 @@ export class CircuitSimulatorService {
                 }
             }
 
-            const measurements = result.series.map((s) => summarizeSeries(s, an.type)).slice(0, MAX_REPORTED_MEASUREMENTS);
+            const allMeasurements = result.series.map((s) => summarizeSeries(s, an.type));
+
+            // Fold in the LISTING-derived metrics a thd/gain criterion gates on. Unlike the worker's runSimulation
+            // (which parses these and puts them on SimulationResult), the inline runner only reads output.csv — so
+            // THD (from a `fourier` request) and small-signal gain (from a `tf` request) live in ngspice's `-o`
+            // listing, unread. Parse it here, gated on the deck actually requesting them, and attach — same pattern
+            // and same helpers as apps/worker-sim/src/simulation/runner.ts. Best-effort: a parse miss never fails
+            // the run (report-only metrics don't gate on their own; only an explicit thd/gain assertion does).
+            // Attach on the FULL set BEFORE the display cap below — slicing first would strip the metric from a
+            // target probe beyond MAX_REPORTED_MEASUREMENTS (the worker path is uncapped; keep parity for ≤cap).
+            const wantsFourier = /^\s*fourier\s/im.test(sanitized);
+            const wantsTf = /^\s*tf\s/im.test(sanitized);
+            if (wantsFourier || wantsTf) {
+                // Combine the stdout pipe AND the -o log — the fourier/tf tables land in one or the other
+                // depending on the ngspice build (same as the worker's runner reads both).
+                const listing = `${stdout}\n${await fs.readFile(path.join(dir, 'stdout.log'), 'utf-8').catch(() => '')}`;
+                if (wantsFourier) attachFourierThd(allMeasurements, parseFourierLog(listing));
+                // Pass the requested tf output node as a fallback so a valid gain still binds if ngspice's
+                // `output_impedance_at_<node>` echo is missing/truncated (else outputNode='' → binds to nothing).
+                if (wantsTf) attachTransferFunction(allMeasurements, parseTransferFunction(listing, sanitized.match(/^\s*tf\s+(\S+)/im)?.[1]));
+            }
+
+            // Cap the per-node list (token budget for a wide circuit) AFTER attaching so the metrics survive.
+            const measurements = allMeasurements.slice(0, MAX_REPORTED_MEASUREMENTS);
             return {
                 simStatus: 'ok',
                 ercErrors,
@@ -318,7 +345,7 @@ export class CircuitSimulatorService {
     }
 
     /** Spawn ngspice in batch mode, mirroring the worker (apps/worker-sim/src/simulation/runner.ts). */
-    private runNgspice(ngspicePath: string, cwd: string): Promise<{ stderr: string; exitCode: number | null; timedOut: boolean }> {
+    private runNgspice(ngspicePath: string, cwd: string): Promise<{ stdout: string; stderr: string; exitCode: number | null; timedOut: boolean }> {
         const timeoutMs = Number(this.config.get<string>('SIM_TIMEOUT_MS')) || DEFAULT_TIMEOUT_MS;
         // OS resource limits (Linux prod) so an untrusted/verify-design circuit can't exhaust the host;
         // direct spawn on Windows dev / SIM_SANDBOX=none.
@@ -329,13 +356,18 @@ export class CircuitSimulatorService {
                 stdio: ['ignore', 'pipe', 'pipe'],
                 timeout: timeoutMs,
             });
+            let stdout = '';
             let stderr = '';
             let timedOut = false;
-            proc.stdout?.on('data', () => undefined); // drained but unused; the result is output.csv
+            // The wrdata series is a FILE (output.csv) — the stdout pipe carries ngspice's listing echo, which is
+            // where the `fourier`/`tf` control commands may print their tables (BUILD-DEPENDENT: stdout pipe OR
+            // the `-o` log). Capture it (bounded; the listing is small, not the dataset) so a thd/gain criterion
+            // can read those metrics regardless of which sink this ngspice build uses — same as the worker.
+            proc.stdout?.on('data', (d: Buffer) => { stdout += d.toString(); });
             proc.stderr?.on('data', (d: Buffer) => { stderr += d.toString(); });
             const timer = setTimeout(() => { timedOut = true; proc.kill('SIGKILL'); }, timeoutMs);
-            proc.on('close', (code) => { clearTimeout(timer); resolve({ stderr, exitCode: code, timedOut }); });
-            proc.on('error', (err) => { clearTimeout(timer); resolve({ stderr: stderr + err.message, exitCode: 1, timedOut: false }); });
+            proc.on('close', (code) => { clearTimeout(timer); resolve({ stdout, stderr, exitCode: code, timedOut }); });
+            proc.on('error', (err) => { clearTimeout(timer); resolve({ stdout, stderr: stderr + err.message, exitCode: 1, timedOut: false }); });
         });
     }
 

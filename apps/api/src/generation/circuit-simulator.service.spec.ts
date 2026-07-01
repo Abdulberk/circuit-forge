@@ -10,6 +10,7 @@ import { existsSync } from 'fs';
 import type { ConfigService } from '@nestjs/config';
 import type { CircuitJson } from '@circuit-forge/eda-core';
 import { CircuitSimulatorService } from './circuit-simulator.service';
+import { VerificationService } from './verification.service';
 
 /** Find an ngspice binary: explicit env first, then common install paths. Empty string => skip suite. */
 function resolveNgspice(): string {
@@ -37,6 +38,18 @@ const RC_LOWPASS: CircuitJson = {
         { id: 'v1', type: 'voltage_source', designator: 'V1', value: 'SIN(0 5 1k)', pins: [{ pinId: '+', netId: 'in' }, { pinId: '-', netId: 'gnd' }] },
         { id: 'r1', type: 'resistor', designator: 'R1', value: '1.6k', pins: [{ pinId: '1', netId: 'in' }, { pinId: '2', netId: 'out' }] },
         { id: 'c1', type: 'capacitor', designator: 'C1', value: '100n', pins: [{ pinId: '1', netId: 'out' }, { pinId: '2', netId: 'gnd' }] },
+        { id: 'gnd', type: 'ground', designator: 'GND1', pins: [{ pinId: '1', netId: 'gnd' }] },
+    ],
+    nets: [{ id: 'in', name: 'in' }, { id: 'out', name: 'out' }, { id: 'gnd', name: 'gnd', isGround: true }],
+};
+
+/** A plain 1k/1k resistive divider off a DC source — Vout/Vin = 0.5, so a `.tf` gain has a known value. */
+const RES_DIVIDER: CircuitJson = {
+    version: '1.0',
+    components: [
+        { id: 'v1', type: 'voltage_source', designator: 'V1', value: 'DC 6', pins: [{ pinId: '+', netId: 'in' }, { pinId: '-', netId: 'gnd' }] },
+        { id: 'r1', type: 'resistor', designator: 'R1', value: '1k', pins: [{ pinId: '1', netId: 'in' }, { pinId: '2', netId: 'out' }] },
+        { id: 'r2', type: 'resistor', designator: 'R2', value: '1k', pins: [{ pinId: '1', netId: 'out' }, { pinId: '2', netId: 'gnd' }] },
         { id: 'gnd', type: 'ground', designator: 'GND1', pins: [{ pinId: '1', netId: 'gnd' }] },
     ],
     nets: [{ id: 'in', name: 'in' }, { id: 'out', name: 'out' }, { id: 'gnd', name: 'gnd', isGround: true }],
@@ -134,6 +147,59 @@ const NO_GROUND: CircuitJson = {
         const r = await svc.simulateWithRemedies({ version: '1.0', components: 'not-an-array', nets: [] });
         expect(r.simStatus).toBe('failed');
         expect(r.convergence).toBeUndefined();
+    });
+
+    it('THD (fourier) is folded onto the measurement so a thd criterion has a value to gate on', async () => {
+        // The inline runner previously read ONLY output.csv and discarded ngspice's fourier listing, so a thd
+        // criterion on the /verify-design dev/live fallback could never be certified. It now parses the listing
+        // (stdout pipe + -o log, build-independent) like the worker. A clean 1kHz sine through a mild RC has low
+        // but finite THD — assert it is POPULATED and physical, not an exact value (build/step-dependent).
+        const r = await svc.simulate(RC_LOWPASS, { type: 'tran', stopTime: '5m', stepTime: '5u', fourier: { fundamentalFreq: '1k', probes: ['v(out)'] } });
+        expect(r.simStatus).toBe('ok');
+        const out = r.measurements.find((m) => m.node.toLowerCase().includes('out'));
+        expect(out).toBeTruthy();
+        expect(typeof out!.thd).toBe('number'); // folded in from the fourier listing (was undefined before the fix)
+        expect(Number.isFinite(out!.thd!)).toBe(true);
+        expect(out!.thd!).toBeGreaterThanOrEqual(0);
+    });
+
+    it('transfer-function gain is folded onto the measurement so a gain criterion has a value to gate on', async () => {
+        const r = await svc.simulate(RES_DIVIDER, { type: 'op', tf: { output: 'v(out)', inputSource: 'V1' } });
+        expect(r.simStatus).toBe('ok');
+        const out = r.measurements.find((m) => m.node.toLowerCase().includes('out'));
+        expect(out).toBeTruthy();
+        expect(typeof out!.gain).toBe('number'); // folded in from the tf listing (was undefined before the fix)
+        expect(out!.gain!).toBeCloseTo(0.5, 2); // 1k/1k divider → Vout/Vin = 0.5
+    });
+
+    it('CROSS-SEAM: verify() (no userId → inline) evaluates a thd criterion against the folded value', async () => {
+        // Exercises the FULL service seam the worker-path unit tests can't: verify → simulateWithRemedies →
+        // simulate → attach THD → evaluateAssertions. Guards against a future refactor that drops the attach on
+        // only ONE path. A clean 1kHz sine through a linear RC adds no harmonics, so THD is well under a loose bound.
+        const verifier = new VerificationService(svc); // no SimulationService → inline path (no userId)
+        const ev = await verifier.verify(
+            RC_LOWPASS,
+            { type: 'tran', stopTime: '5m', stepTime: '5u', fourier: { fundamentalFreq: '1k', probes: ['v(out)'] } },
+            [{ probe: 'out', metric: 'thd', op: 'lt', value: 50 }],
+        );
+        const a = ev.assertions[0]!;
+        expect(a.actual).not.toBeNull(); // THD was measured + folded through the seam (was always-null before the fix)
+        expect(typeof a.actual).toBe('number');
+        expect(a.pass).toBe(true); // comfortably under 50%
+        expect(ev.verdict).toBe('pass');
+    });
+
+    it('CROSS-SEAM: verify() (no userId → inline) evaluates a gain criterion against the folded tf value', async () => {
+        const verifier = new VerificationService(svc);
+        const ev = await verifier.verify(
+            RES_DIVIDER,
+            { type: 'op', tf: { output: 'v(out)', inputSource: 'V1' } },
+            [{ probe: 'out', metric: 'gain', op: 'approx', value: 0.5, tol: 0.05 }],
+        );
+        const a = ev.assertions[0]!;
+        expect(a.actual).toBeCloseTo(0.5, 2); // 1k/1k divider gain folded through the seam
+        expect(a.pass).toBe(true);
+        expect(ev.verdict).toBe('pass');
     });
 
     it('never throws and executes nothing on injection-laden input (sanitizer/guards hold)', async () => {

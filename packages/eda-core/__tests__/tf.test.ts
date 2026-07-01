@@ -37,4 +37,20 @@ describe('parseTransferFunction', () => {
         expect(tf!.outputNode).toBe('');
         expect(tf!.inputSource).toBe('');
     });
+
+    it('falls back to the requested output node when the impedance echo is missing, so a valid gain still binds', () => {
+        // If ngspice prints `transfer_function =` but the `output_impedance_at_<node>` echo is truncated/absent
+        // (build variance / output truncation), the node identity is unrecoverable from the log alone. Without the
+        // requested-probe fallback, outputNode='' → attachTransferFunction binds the gain to no measurement and a
+        // valid gain silently reads as "not determinable". The fallback preserves the binding.
+        const tf = parseTransferFunction('transfer_function = 5.000000e-01\n', 'v(out)');
+        expect(tf!.gain).toBeCloseTo(0.5, 6);
+        expect(tf!.outputNode).toBe('v(out)'); // taken from the caller's requested probe, not lost to ''
+        expect(tf!.outputImpedanceOhms).toBeNull(); // impedance still genuinely absent
+    });
+
+    it('prefers the parsed echo node over the fallback when the impedance line IS present', () => {
+        const tf = parseTransferFunction(TF_LOG, 'v(somethingelse)');
+        expect(tf!.outputNode).toBe('v(out)'); // the real echo wins; fallback only fills a gap
+    });
 });

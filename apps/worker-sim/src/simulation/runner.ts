@@ -347,7 +347,10 @@ async function runOneAttempt(
                 if (measurements.length > 0) result.measurements = measurements;
             }
             if (wantsTf) {
-                const tf = parseTransferFunction(listing);
+                // Fallback to the deck's requested `tf <output>` node so a valid gain still binds if ngspice's
+                // `output_impedance_at_<node>` echo is missing/truncated (else outputNode='' matches no node).
+                const tfOutput = netlistText.match(/^\s*tf\s+(\S+)/im)?.[1];
+                const tf = parseTransferFunction(listing, tfOutput);
                 if (tf) result.transferFunction = tf;
             }
         } catch {

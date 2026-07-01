@@ -17,7 +17,7 @@ import { attachGenericModels } from './model-resolution';
 import { computeResistorPower, type PowerReport } from './power-analysis';
 import { SimulationService } from '../simulation/simulation.service';
 import type { AssertionDto } from './dto';
-import { evaluateAssertions, isCurrentProbe, type AssertionResult } from './assertions';
+import { evaluateAssertions, attachFourierThd, attachTransferFunction, isCurrentProbe, type AssertionResult } from './assertions';
 
 // Assertion evaluation now lives in the shared, pure ./assertions module (used by the AI design loop too).
 // Re-export so existing importers (controllers, specs) keep their './verification.service' path unchanged.
@@ -204,7 +204,16 @@ export class VerificationService {
                 }
                 return { simStatus: 'failed', ercErrors, ercWarnings, runError: 'simulation produced no result data', ...empty };
             }
-            return { simStatus: 'ok', ercErrors, ercWarnings, measurements: series.map((s) => summarizeSeries(s, an.type)), nodeCount: series.length, analysisType: an.type, ...(convergence ? { convergence } : {}) };
+            // Distil each series, then fold in the LISTING-derived metrics the worker computed but that don't
+            // ride on a wrdata series: THD (from a `fourier` request on a tran) and small-signal gain (from a
+            // `tf` request on an op). Without this the measurements carry thd/gain=undefined and a thd/gain
+            // acceptance criterion can NEVER pass on the /verify-design worker path — a silent false-negative
+            // verdict on a shipped, otherwise-wired feature. The AI design loop (llm-core) and the Monte-Carlo
+            // batch already attach these; this closes the same seam on the synchronous verify path.
+            const measurements = series.map((s) => summarizeSeries(s, an.type));
+            attachFourierThd(measurements, res.result?.fourier ?? undefined);
+            attachTransferFunction(measurements, res.result?.transferFunction ?? undefined);
+            return { simStatus: 'ok', ercErrors, ercWarnings, measurements, nodeCount: series.length, analysisType: an.type, ...(convergence ? { convergence } : {}) };
         } catch (e) {
             // The queue/Redis/DB was unreachable (createQuickSim / getStatus / getResult threw). Same
             // contract rule as POLL_TIMEOUT above: a transient infra outage is NOT a design fault. → inconclusive.
