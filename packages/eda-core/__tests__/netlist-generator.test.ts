@@ -165,6 +165,26 @@ describe('NetlistGenerator', () => {
             expect(netlist).toContain('i(V1)');
         });
 
+        it('resolves a BARE node-name probe (no v() wrapper) to v(<sanitized node>) — the version-sim path sends bare net ids', () => {
+            const circuit: CircuitJson = {
+                version: '1.0',
+                components: [
+                    createComponent('V1', 'voltage_source', 'V1', 'DC 5', [{ pinId: '+', netId: 'in' }, { pinId: '-', netId: '0' }]),
+                    createComponent('R1', 'resistor', 'R1', '1k', [{ pinId: '1', netId: 'in' }, { pinId: '2', netId: 'out' }]),
+                    createComponent('R2', 'resistor', 'R2', '1k', [{ pinId: '1', netId: 'out' }, { pinId: '2', netId: '0' }]),
+                ],
+                nets: [createNet('in', 'in'), createNet('out', 'out'), createNet('0', '0', true)],
+            };
+            // A bare probe (what a UI/API caller naturally sends, e.g. probes:['in','out']) must be wrapped and
+            // resolved to v(<sanitized node>), NOT emitted verbatim as `in`/`out` — those aren't ngspice vectors,
+            // so wrdata would emit nothing → an opaque "no output file" failure (the exact e2e-dry-run bug).
+            // 'in'/'out' are reserved words → sanitized to x_in/x_out.
+            const netlist = generateNetlist(circuit, { type: 'tran', stopTime: '1m' }, { probes: ['in', 'out'] });
+            const wrdata = netlist.split('\n').find((l) => /wrdata/i.test(l)) ?? '';
+            // The probe tokens (after "wrdata output.csv") are exactly the resolved voltage vectors — no bare token.
+            expect(wrdata.trim().split(/\s+/).slice(2)).toEqual(['v(x_in)', 'v(x_out)']);
+        });
+
         it('extraProbes ADD a branch-current probe while KEEPING the default node-voltage probes', () => {
             const circuit: CircuitJson = {
                 version: '1.0',
