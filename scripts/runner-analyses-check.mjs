@@ -23,6 +23,7 @@ const { generateNetlist, resolveGenericModels, summarizeSeries, evaluateAssertio
 const { runSimulation } = await import(new URL('../apps/worker-sim/dist/simulation/runner.js', import.meta.url));
 const { runMonteCarloBatch } = await import(new URL('../apps/worker-sim/dist/simulation/montecarlo-runner.js', import.meta.url));
 const { runSweepBatch } = await import(new URL('../apps/worker-sim/dist/simulation/sweep-runner.js', import.meta.url));
+const { runCornerBatch } = await import(new URL('../apps/worker-sim/dist/simulation/corner-runner.js', import.meta.url));
 
 const gnd = { id: 'gnd', name: 'GND', isGround: true };
 const CJ = (comps, nets) => ({ version: '1.0', components: comps, nets });
@@ -139,5 +140,17 @@ await mcGain('tight-gain>=10', { probe: 'v(out)', metric: 'gain', op: 'gte', val
     console.log(`${ok ? '✅' : '❌'}  parametric sweep [R1 1k..9k, out≥2V]: passed=${sw.passed}/${sw.evaluated}, passRange=${sw.passRange ? `[${sw.passRange.lo},${sw.passRange.hi}]` : 'none'}, passAll=${sw.passAll}, errored=${sw.errored}`);
 }
 
-console.log(fail === 0 ? '\nRESULT: real runner path + THD/GAIN verdict-gating + parametric sweep GREEN' : `\nRESULT: ${fail} FAILED`);
+// ===== WORST-CASE CORNER (.step's deterministic-extreme sibling): real ngspice, finds the failing corner =====
+// divider out = 5·R2/(R1+R2), both ±10%. out ≥ 2.45V passes at nominal (2.5) but breaks at R1-hi/R2-lo (2.25).
+{
+    const cornerDiv = CJ([V('v1', 'V1', 'DC 5', 'in', 'gnd'), R('r1', 'R1', '1k', 'in', 'out', 0.1), R('r2', 'R2', '1k', 'out', 'gnd', 0.1)], [{ id: 'in' }, { id: 'out' }, gnd]);
+    const crit = { probe: 'v(out)', metric: 'max', op: 'gte', value: 2.45 };
+    const wc = await runCornerBatch({ jobId: `corner-${process.pid}`, circuit: cornerDiv, analysis: { type: 'op' }, criteria: [crit], corner: {} });
+    const worst = wc.worstCorners.some((c) => c.R1 === 'hi' && c.R2 === 'lo');
+    const ok = wc.errored === 0 && wc.evaluated === 4 && wc.passAllCorners === false && wc.failed >= 1 && worst;
+    if (!ok) fail++;
+    console.log(`${ok ? '✅' : '❌'}  worst-case corner [R1,R2 ±10%, out≥2.45V]: passed=${wc.passed}/${wc.evaluated}, passAllCorners=${wc.passAllCorners}, worst={R1:hi,R2:lo} found=${worst}, errored=${wc.errored}`);
+}
+
+console.log(fail === 0 ? '\nRESULT: real runner path + THD/GAIN verdict-gating + parametric sweep + worst-case corner GREEN' : `\nRESULT: ${fail} FAILED`);
 process.exit(fail === 0 ? 0 : 1);
