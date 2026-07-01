@@ -206,6 +206,10 @@ canonical pin names from `COMPONENT_PINS`, and the line format from `componentTo
 | `logic_and` / `logic_or` / `logic_nand` / `logic_nor` / `logic_xor` / `logic_xnor` | `A` | `[]` (variable: `in1`..`inN` + `out`) | `A1 [<in1> <in2> …] <out> CFD_<GATE>` | XSPICE event-driven gate; auto-supplied timing model; **no** user `value`/`model`. See §1.7.1 |
 | `logic_not` / `logic_buffer` | `A` | `[]` (single `in1` + `out`) | `A1 <in1> <out> CFD_NOT`/`CFD_BUF` | single-input gate; **scalar** input port (no brackets) |
 | `dff` | `A` | `['d','clk','set','rst','q','qb']` | `A1 <d> <clk> <set> <rst> <q> <qb> CFD_DFF` | rising-edge D flip-flop; `set`/`rst` active-HIGH **and optional** (an omitted one is auto-tied to a synthesized LOW rail); bound by pinId. See §1.7.1 |
+| `jkff` | `A` | `['j','k','clk','set','rst','q','qb']` | `A1 <j> <k> <clk> <set> <rst> <q> <qb> CFD_JKFF` | JK flip-flop (XSPICE `d_jkff`); J=K=1 toggles on clock; `set`/`rst` active-HIGH and optional (same LOW-rail tie-off as `dff`); bound by pinId. See §1.7.1 |
+| `tff` | `A` | `['t','clk','set','rst','q','qb']` | `A1 <t> <clk> <set> <rst> <q> <qb> CFD_TFF` | toggle flip-flop (XSPICE `d_tff`); `set`/`rst` active-HIGH and optional; bound by pinId. See §1.7.1 |
+| `dlatch` | `A` | `['d','en','set','rst','q','qb']` | `A1 <d> <en> <set> <rst> <q> <qb> CFD_DLATCH` | level-sensitive D latch (XSPICE `d_dlatch`); transparent while `en` is HIGH; `set`/`rst` active-HIGH and optional; bound by pinId. See §1.7.1 |
+| `tristate` | `A` | `['in1','en','out']` | `A1 <in1> <en> <out> CFD_TRI` | tristate buffer (XSPICE `d_tristate`); drives `out` from `in1` while `en` is HIGH, releases (floats) on LOW — the only digital source ERC allows to share a bus net; bound by pinId |
 | `ground` | `''` (none) | `['1']` | *(no line emitted)* | `componentToSpice` returns `null`; ground is realized as node `'0'` |
 | `generic` | `''` (none) | `[]` (from the catalog part) | *(no line emitted)* | **Catalog-only** placeholder for a real part with no simulatable model yet (IC/transistor/connector). Carries `mpn`/`manufacturer`/`sourcing`; skipped by the generator. Test with `isSimulatable()`. |
 
@@ -228,8 +232,9 @@ Behavioral details from `componentToSpice()`:
 
 #### 1.7.1 Digital logic + mixed-signal (XSPICE)
 
-Logic gates and the D flip-flop are simulated with **ngspice XSPICE event-driven code models** (`d_and`,
-`d_dff`, …), not analog emulation. The whole subsystem lives in
+Logic gates, the flip-flops/latch (`dff`/`jkff`/`tff`/`dlatch`), and the `tristate` buffer are simulated
+with **ngspice XSPICE event-driven code models** (`d_and`, `d_dff`, `d_jkff`, `d_tff`, `d_dlatch`,
+`d_tristate`, …), not analog emulation. The whole subsystem lives in
 [netlist/digital.ts](../packages/eda-core/src/netlist/digital.ts) and is driven by a pre-pass,
 `planMixedSignal(circuit, nodeMap)`, run right after the node map is built. It is a **strict no-op for
 analog-only circuits** (an analog-only netlist is byte-for-byte unchanged).
@@ -246,18 +251,20 @@ analog-only circuits** (an analog-only netlist is byte-for-byte unchanged).
   The analog node keeps the net's original sanitized name (analog devices are untouched); the digital pins
   get a derived node via an override map. There are **no bridge components in CircuitJson** — just wire a
   gate to a source/load and the generator inserts the bridge.
-- **Constant rails.** A flip-flop's `set`/`rst` are active-HIGH; an omitted one is tied to a synthesized
-  constant digital-LOW rail (a `DC 0` analog source + `adc_bridge`).
+- **Constant rails.** A sequential element's (`dff`/`jkff`/`tff`/`dlatch`) `set`/`rst` are active-HIGH; an
+  omitted one is tied to a synthesized constant digital-LOW rail (a `DC 0` analog source + `adc_bridge`).
 - **Probing.** A raw digital event node can't be sampled through `wrdata`, so a probed pure-digital net is
   bridged to an analog `_p` twin and **that** is probed — for both default probes and caller-supplied
   `options.probes` (`v(<netId>)`/`v(<name>)`/`v(<sanitized node>)` all redirect to the twin).
 - **Parametric timing models.** Authors set **no** `model` on digital components; the timing `.model` is
   synthesized and namespaced `CFD_*` (so it can never collide with a caller-supplied model). Timing is
   **per-component**, read from `properties` so a value typed into a properties panel flows straight into
-  the SPICE model: gates accept `riseDelay`, `fallDelay`, `inputLoad`; `dff` accepts `clkDelay`,
-  `setDelay`, `resetDelay`, `riseDelay`, `fallDelay`, and `ic` (`"1"` → Q starts HIGH). All optional (SPICE
-  value strings like `"2n"`, validated/sanitized), defaulting to `1n` delays / `0.5p` load. Components that
-  resolve to **identical** parameters share one deduped model (the clean base name `CFD_AND`…`CFD_DFF`);
+  the SPICE model: gates accept `riseDelay`, `fallDelay`, `inputLoad`; `dff`/`jkff`/`tff` share one param
+  family — `clkDelay`, `setDelay`, `resetDelay`, `riseDelay`, `fallDelay`, and `ic` (`"1"` → Q starts HIGH);
+  `dlatch` swaps `clkDelay` for `dataDelay`/`enableDelay` (plus the same `setDelay`/`resetDelay`/
+  `riseDelay`/`fallDelay`/`ic`); `tristate` has a single `delay` param. All optional (SPICE value strings
+  like `"2n"`, validated/sanitized), defaulting to `1n` delays / `0.5p` load. Components that resolve to
+  **identical** parameters share one deduped model (the clean base name `CFD_AND`…`CFD_DFF`…`CFD_TRI`);
   each distinct custom timing gets its own `CFD_<TYPE>_<n>`. The `CFD_ADC`/`CFD_DAC` bridge models are
   separate (see Logic voltage below).
 - **Logic voltage (auto-scaled).** The bridge levels are **not** hardcoded to 5 V: the logic-HIGH rail is
@@ -913,8 +920,18 @@ performs one repair retry on invalid output before throwing. It exposes:
 
 It imports `CircuitJson`/`CircuitJsonSchema` from `@circuit-forge/eda-core` (`workspace:*`). The API
 wires it via `GenerationService` (env: `LLM_API_KEY` / `LLM_BASE_URL` / `LLM_MODEL` / `LLM_USER_AGENT`).
-Known gap: the generator is **not yet grounded in the parts catalog** (no tool-use / real-MPN
-selection) — that is the next step (AI ↔ catalog grounding).
+
+**Parts-catalog grounding (shipped).** Generation is grounded in the live TME parts catalog via native
+Anthropic tool-use — `generateCircuit(input, config, grounding?)` accepts an optional grounding param that
+turns `callModel()` into a capped agentic tool-use loop (`MAX_TOOL_ITERS=5`): the model is offered
+`search_parts`/`get_part_details` tools (`PART_TOOLS` + a `GROUNDING_PROMPT` addendum), each `tool_use` is
+executed via an injected `ToolExecutor` and fed back as a `tool_result`, and a final tool-less turn forces
+termination. Without `grounding`, `generateCircuit` stays a single-shot call (backward compatible); the
+JSON-repair retry is always tool-less. On the API side, `GenerationService` injects `PartsService` and
+enables grounding only when the catalog is fully configured (`TME_TOKEN && TME_SECRET`), falling back to
+ungrounded generation otherwise; a post-pass (`enrichSourcing()`) attaches authoritative sourcing for any
+component the model tagged with an `mpn`, via an **exact** (case-insensitive) MPN match only — no match
+attaches nothing, never a different part's price/stock.
 
 ---
 

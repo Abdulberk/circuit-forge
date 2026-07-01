@@ -1,9 +1,9 @@
 # Circuit Forge — Data Model Reference
 
-This document is the authoritative reference for the Circuit Forge persistence layer. Every statement below is derived directly from the Prisma schema [apps/api/prisma/schema.prisma](../apps/api/prisma/schema.prisma) and confirmed against the generated SQL migration [apps/api/prisma/migrations/20260529111305_init/migration.sql](../apps/api/prisma/migrations/20260529111305_init/migration.sql).
+This document is the authoritative reference for the Circuit Forge persistence layer. Every statement below is derived directly from the Prisma schema [apps/api/prisma/schema.prisma](../apps/api/prisma/schema.prisma) and confirmed against the generated SQL migrations — see [Migrations](#migrations) below for the full list.
 
-- **Models:** 9 (`User`, `Organization`, `OrgMembership`, `Project`, `ProjectVersion`, `Template`, `Asset`, `SimulationJob`, `AuditLog`)
-- **Enums:** 4 (`OrgRole`, `AssetType`, `SimJobStatus`, `SimEngine`)
+- **Models:** 12 (`User`, `RefreshToken`, `Organization`, `OrgMembership`, `Project`, `ProjectVersion`, `Template`, `Asset`, `SimulationJob`, `DesignJob`, `AuditLog`, `UsageRecord`)
+- **Enums:** 5 (`OrgRole`, `AssetType`, `SimJobStatus`, `SimEngine`, `DesignJobStatus`)
 - **ORM:** Prisma Client JS
 - **Database:** PostgreSQL
 
@@ -32,13 +32,30 @@ datasource db {
 
 `DATABASE_URL` is supplied through the environment. Per the project conventions, apps load the monorepo **root** `.env` (the API resolves `['.env.local', '.env', '../../.env']`, and `prisma/seed.ts` self-loads the root `.env`). See [LOCAL_SETUP.md](../LOCAL_SETUP.md).
 
-> Note on physical types: Prisma maps `String` → `TEXT`, `Int` → `INTEGER`, `DateTime` → `TIMESTAMP(3)`, `Json` → `JSONB`, `String[]` → `TEXT[]`, and `Boolean` → `BOOLEAN` for PostgreSQL. The `@db.Text` modifier on `SimulationJob.netlist`/`stdout`/`stderr` is explicit (Prisma already maps `String` to `TEXT` on Postgres, so it documents intent for large content). The migration SQL confirms all of these mappings.
+> Note on physical types: Prisma maps `String` → `TEXT`, `Int` → `INTEGER`, `DateTime` → `TIMESTAMP(3)`, `Json` → `JSONB`, `String[]` → `TEXT[]`, and `Boolean` → `BOOLEAN` for PostgreSQL. The `@db.Text` modifier on `SimulationJob.netlist`/`stdout`/`stderr`/`DesignJob.prompt`/`constraints` is explicit (Prisma already maps `String` to `TEXT` on Postgres, so it documents intent for large content). The migration SQL confirms all of these mappings.
+
+---
+
+## Migrations
+
+The schema was not created by a single migration. [apps/api/prisma/migrations/](../apps/api/prisma/migrations/) contains, in order:
+
+| Migration | Adds |
+| --- | --- |
+| `20260529111305_init` | The original 9-model schema (`User` … `AuditLog`, no lifecycle/refresh/design-job fields). |
+| `20260610072208_template_analysis_config` | `Template.analysisConfig` (optional `Json`). |
+| `20260611085602_usage_records` / `20260611110701_usage_tune` | `UsageRecord` model + a follow-up tuning migration. |
+| `20260611171928_auth_lockout_fields` | `User.failedLoginCount` / `lastFailedLoginAt` / `lockedUntil` (brute-force lockout). |
+| `20260612062805_auth_account_lifecycle` | `User.emailVerified` + email-verification and password-reset token-hash/expiry fields. |
+| `20260612064352_refresh_rotation_audit` | `RefreshToken` model (refresh-token rotation with reuse detection) + makes `AuditLog.orgId` nullable (user-scoped events) + a `[userId, createdAt]` audit index. |
+| `20260612070536_audit_user_cascade` | Changes `AuditLog.userId`'s FK to `ON DELETE CASCADE` (was `RESTRICT`). |
+| `20260616123329_design_jobs` | `DesignJob` model + `DesignJobStatus` enum (async AI design loop). |
 
 ---
 
 ## Enums
 
-All four enums are created as native PostgreSQL `ENUM` types in the migration.
+All five enums are created as native PostgreSQL `ENUM` types in the migrations.
 
 ### `OrgRole`
 Membership role of a user within an organization. Default for a new membership is `MEMBER`.
@@ -77,6 +94,17 @@ Simulation backend. Default for a new job is `NGSPICE`.
 | --- | --- |
 | `NGSPICE` | The ngspice engine (the only supported engine). See [docs/SIMULATION.md](SIMULATION.md). |
 
+### `DesignJobStatus`
+Lifecycle state of an async AI design job (`DesignJob`). Default for a new job is `QUEUED`.
+
+| Value | Meaning |
+| --- | --- |
+| `QUEUED` | Created, awaiting the design loop to pick it up (default) |
+| `RUNNING` | The generate → simulate → fix loop is executing |
+| `SUCCEEDED` | Loop finished; `result` holds the full design() payload |
+| `FAILED` | Loop finished with an error; `errorMessage` set |
+| `CANCELED` | Canceled via `abortRequested` |
+
 ---
 
 ## Models
@@ -95,10 +123,40 @@ Application user with credentials. Source: [schema.prisma](../apps/api/prisma/sc
 | `name` | `String` | `TEXT` | — | Display name |
 | `createdAt` | `DateTime` | `TIMESTAMP(3)` | `@default(now())` | Row creation timestamp |
 | `updatedAt` | `DateTime` | `TIMESTAMP(3)` | `@updatedAt` | Auto-updated on write |
+| `failedLoginCount` | `Int` | `INTEGER` | `@default(0)` | Brute-force lockout counter; resets on a successful login |
+| `lastFailedLoginAt` | `DateTime?` | `TIMESTAMP(3)` (nullable) | — | Timestamp of the most recent failed login |
+| `lockedUntil` | `DateTime?` | `TIMESTAMP(3)` (nullable) | — | While set and in the future, login is gated (5 fails → 15min lockout) |
+| `emailVerified` | `Boolean` | `BOOLEAN` | `@default(false)` | Gates verified-only features (opt-in) |
+| `emailVerificationTokenHash` | `String?` | `TEXT` (nullable) | — | sha256 hash of the emailed verification token (raw token never stored) |
+| `emailVerificationExpiresAt` | `DateTime?` | `TIMESTAMP(3)` (nullable) | — | Expiry of the pending email-verification token |
+| `passwordResetTokenHash` | `String?` | `TEXT` (nullable) | — | sha256 hash of the emailed password-reset token |
+| `passwordResetExpiresAt` | `DateTime?` | `TIMESTAMP(3)` (nullable) | — | Expiry of the pending password-reset token |
 
-Relations (outgoing): `memberships OrgMembership[]`, `projectVersions ProjectVersion[]`, `auditLogs AuditLog[]`.
+Relations (outgoing): `memberships OrgMembership[]`, `projectVersions ProjectVersion[]`, `auditLogs AuditLog[]`, `refreshTokens RefreshToken[]`.
 
 Unique constraints / indexes: `users_email_key` UNIQUE on (`email`).
+
+### `RefreshToken` → table `refresh_tokens`
+
+Server-side state for refresh-token rotation. Every issued refresh JWT has a row here, keyed by its `jti`. Rotation marks the old row `usedAt` and issues a successor in the same `familyId` (one family per login/device); reuse of an already-used token is theft evidence and revokes the whole family. Raw tokens are never stored — lookup is by `jti` plus a `tokenHash` check.
+
+| Field | Prisma Type | SQL Type | Attributes / Modifiers | Notes |
+| --- | --- | --- | --- | --- |
+| `id` | `String` | `TEXT` | `@id @default(uuid())` | Primary key, UUID |
+| `jti` | `String` | `TEXT` | `@unique` | JWT ID of the issued refresh token |
+| `userId` | `String` | `TEXT` | FK → `users.id` | Owning user |
+| `familyId` | `String` | `TEXT` | — | Groups rotated tokens from one login/device |
+| `tokenHash` | `String` | `TEXT` | — | Hash of the raw token (never stored in plaintext) |
+| `expiresAt` | `DateTime` | `TIMESTAMP(3)` | — | Token expiry |
+| `usedAt` | `DateTime?` | `TIMESTAMP(3)` (nullable) | — | Set when rotated (successor issued) |
+| `revokedAt` | `DateTime?` | `TIMESTAMP(3)` (nullable) | — | Set by logout or reuse detection |
+| `ip` | `String?` | `TEXT` (nullable) | — | Session metadata (device management later) |
+| `userAgent` | `String?` | `TEXT` (nullable) | — | Session metadata |
+| `createdAt` | `DateTime` | `TIMESTAMP(3)` | `@default(now())` | Row creation timestamp |
+
+Relations: `user User @relation(fields: [userId], references: [id], onDelete: Cascade)`.
+
+Constraints / indexes: `@@index([userId])`, `@@index([familyId])`, FK `refresh_tokens_userId_fkey` ON DELETE CASCADE.
 
 ### `Organization` → table `organizations`
 
@@ -111,7 +169,7 @@ The top-level tenant boundary. Almost all business data is scoped to an organiza
 | `createdAt` | `DateTime` | `TIMESTAMP(3)` | `@default(now())` | Row creation timestamp |
 | `updatedAt` | `DateTime` | `TIMESTAMP(3)` | `@updatedAt` | Auto-updated on write |
 
-Relations (outgoing): `memberships OrgMembership[]`, `projects Project[]`, `templates Template[]`, `assets Asset[]`, `simulationJobs SimulationJob[]`, `auditLogs AuditLog[]`.
+Relations (outgoing): `memberships OrgMembership[]`, `projects Project[]`, `templates Template[]`, `assets Asset[]`, `simulationJobs SimulationJob[]`, `designJobs DesignJob[]`, `auditLogs AuditLog[]`.
 
 ### `OrgMembership` → table `org_memberships`
 
@@ -191,6 +249,7 @@ A reusable starter circuit. **Stores circuit JSON.** Can be **public** (org-less
 | `description` | `String?` | `TEXT` (nullable) | — | Optional description |
 | `tags` | `String[]` | `TEXT[]` | — | Free-form tags array |
 | `circuitJson` | `Json` | `JSONB` | — | **Circuit definition for the template** |
+| `analysisConfig` | `Json?` | `JSONB` (nullable) | — | Optional recommended simulation setup: `{ analysis: AnalysisConfig, probes?: string[] }`. Lets a template carry the analysis it was validated with — including `tran` `initialConditions` (e.g. an oscillator's startup seed) that `circuitJson` itself cannot express. The frontend "Run" action uses this when present. |
 | `createdAt` | `DateTime` | `TIMESTAMP(3)` | `@default(now())` | Row creation timestamp |
 | `updatedAt` | `DateTime` | `TIMESTAMP(3)` | `@updatedAt` | Auto-updated on write |
 
@@ -221,7 +280,7 @@ Org-scoped binary asset (SPICE models, symbol packs, etc.) stored in object stor
 Relations:
 - `org Organization @relation(fields: [orgId], references: [id], onDelete: Cascade)`
 
-Constraints / indexes: FK `assets_orgId_fkey` ON DELETE CASCADE. (No `@@unique`/`@@index` declared.)
+Constraints / indexes: `@@index([orgId])` → `assets_orgId_idx` (the storage quota aggregates `SUM(sizeBytes)` per org on every upload presign). FK `assets_orgId_fkey` ON DELETE CASCADE.
 
 > The actual bytes live in object storage (MinIO locally — console at http://localhost:9001). This table holds only the pointer (`s3Key`) and metadata.
 
@@ -258,30 +317,77 @@ Constraints / indexes:
 - FK `simulation_jobs_orgId_fkey` ON DELETE CASCADE.
 - FK `simulation_jobs_projectVersionId_fkey` ON DELETE SET NULL.
 
-### `AuditLog` → table `audit_logs`
+### `DesignJob` → table `design_jobs`
 
-Append-only record of significant actions, scoped to an org and attributed to a user.
+One persisted record per `/design-jobs` request — the long-running-operation (LRO) handle the client polls. The agentic loop (generate → simulate → fix, up to `maxRounds`) can take minutes, so the request returns `202` plus this row's id immediately and the loop runs detached, writing its outcome here. Mirrors `SimulationJob`'s shape/indexing.
 
 | Field | Prisma Type | SQL Type | Attributes / Modifiers | Notes |
 | --- | --- | --- | --- | --- |
 | `id` | `String` | `TEXT` | `@id @default(uuid())` | Primary key, UUID |
-| `orgId` | `String` | `TEXT` | FK → `organizations.id` | Org the action occurred in |
+| `orgId` | `String` | `TEXT` | FK → `organizations.id` | Owning organization |
+| `userId` | `String` | `TEXT` | — | Requesting user (no relation declared) |
+| `status` | `DesignJobStatus` | `"DesignJobStatus"` | `@default(QUEUED)` | Job lifecycle state |
+| `prompt` | `String` | `TEXT` | `@db.Text` | **Input prompt** (from the `DesignCircuitDto`) |
+| `constraints` | `String?` | `TEXT` (nullable) | `@db.Text` | Optional input constraints |
+| `maxRounds` | `Int` | `INTEGER` | `@default(2)` | Cap on generate → simulate → fix rounds |
+| `result` | `Json?` | `JSONB` (nullable) | — | **Full `design()` payload** (circuit/analysis/explanation/history/verdict/criteria/assertions/caveats); `null` until the loop finishes |
+| `errorMessage` | `String?` | `TEXT` (nullable) | — | Human-readable failure reason |
+| `abortRequested` | `Boolean` | `BOOLEAN` | `@default(false)` | Cooperative-cancel flag the loop checks between rounds / before start |
+| `createdAt` | `DateTime` | `TIMESTAMP(3)` | `@default(now())` | Enqueue timestamp |
+| `startedAt` | `DateTime?` | `TIMESTAMP(3)` (nullable) | — | When the loop began |
+| `finishedAt` | `DateTime?` | `TIMESTAMP(3)` (nullable) | — | When the loop ended |
+
+Relations:
+- `org Organization @relation(fields: [orgId], references: [id], onDelete: Cascade)`
+
+Constraints / indexes:
+- `@@index([orgId, createdAt])` → org job history listing.
+- `@@index([status])` → polling by status.
+- FK `design_jobs_orgId_fkey` ON DELETE CASCADE.
+
+### `UsageRecord` → table `usage_records`
+
+Quota-metering counter for usage that has no natural source table to aggregate from (e.g. parts-catalog calls). Sim runtime/jobs and storage are aggregated **on-demand** from `SimulationJob` / `Asset` instead (drift-free), so they intentionally have no counter rows here.
+
+| Field | Prisma Type | SQL Type | Attributes / Modifiers | Notes |
+| --- | --- | --- | --- | --- |
+| `id` | `String` | `TEXT` | `@id @default(uuid())` | Primary key, UUID |
+| `scope` | `String` | `TEXT` | — | `'org'` or `'user'` |
+| `scopeId` | `String` | `TEXT` | — | The org or user id being metered |
+| `metric` | `String` | `TEXT` | — | e.g. `'parts_calls'` |
+| `period` | `String` | `TEXT` | — | UTC month, `'YYYY-MM'` |
+| `amount` | `Int` | `INTEGER` | `@default(0)` | Running count for the (scope, scopeId, metric, period) |
+| `updatedAt` | `DateTime` | `TIMESTAMP(3)` | `@updatedAt` | Auto-updated on write |
+
+Relations: none (no FK; `scopeId` is a loose reference to a `users.id`/`organizations.id`).
+
+Constraints / indexes: `@@unique([scope, scopeId, metric, period])` (one counter row per scope/metric/period). No FK — not tied to `ON DELETE` behavior of `User`/`Organization`.
+
+### `AuditLog` → table `audit_logs`
+
+Append-only record of significant actions, attributed to a user. `orgId` is nullable: most events are scoped to an org, but user-scoped events with no org context (e.g. `auth.login_failed`, `auth.login_lockout`) set `orgId` to `null`.
+
+| Field | Prisma Type | SQL Type | Attributes / Modifiers | Notes |
+| --- | --- | --- | --- | --- |
+| `id` | `String` | `TEXT` | `@id @default(uuid())` | Primary key, UUID |
+| `orgId` | `String?` | `TEXT` (nullable) | FK → `organizations.id` | Org the action occurred in; `null` for user-scoped events (e.g. `auth.*`) with no org context |
 | `userId` | `String` | `TEXT` | FK → `users.id` | Acting user |
-| `action` | `String` | `TEXT` | — | e.g. `"project.create"`, `"simulation.start"` |
-| `entityType` | `String` | `TEXT` | — | e.g. `"Project"`, `"SimulationJob"` |
+| `action` | `String` | `TEXT` | — | e.g. `"project.create"`, `"simulation.start"`, `"auth.login_failed"` |
+| `entityType` | `String` | `TEXT` | — | e.g. `"Project"`, `"SimulationJob"`, `"User"` |
 | `entityId` | `String` | `TEXT` | — | Target entity id |
 | `meta` | `Json?` | `JSONB` (nullable) | — | Additional context |
 | `createdAt` | `DateTime` | `TIMESTAMP(3)` | `@default(now())` | Row creation timestamp |
 
 Relations:
-- `org Organization @relation(fields: [orgId], references: [id], onDelete: Cascade)`
-- `user User @relation(fields: [userId], references: [id])` — DB-level `ON DELETE RESTRICT`.
+- `org Organization? @relation(fields: [orgId], references: [id], onDelete: Cascade)` — optional relation; `orgId` nullable means an event can be user-scoped with no org.
+- `user User @relation(fields: [userId], references: [id], onDelete: Cascade)` — **DELIBERATE**: user-cascade means erasing an account also erases its audit rows. These rows hold the user's PII (`ip`/`userAgent`), so cascade is the GDPR-erasure-aligned default and keeps account deletion unblocked. Tradeoff: security-evidence events (`refresh_reuse_detected`, `account_locked`) die with the account — if/when a compliance regime requires audit to outlive the subject, switch `userId` to optional + `onDelete: SetNull` (anonymize the actor, keep the row).
 
 Constraints / indexes:
 - `@@index([orgId, createdAt])` → `audit_logs_orgId_createdAt_idx` (per-org audit timeline).
+- `@@index([userId, createdAt])` → per-user audit timeline.
 - `@@index([entityType, entityId])` → `audit_logs_entityType_entityId_idx` (per-entity history).
 - FK `audit_logs_orgId_fkey` ON DELETE CASCADE.
-- FK `audit_logs_userId_fkey` ON DELETE RESTRICT.
+- FK `audit_logs_userId_fkey` ON DELETE CASCADE.
 
 ---
 
@@ -300,8 +406,10 @@ All foreign keys, their referenced columns, and on-delete behavior are taken fro
 | `Asset` | `org` | `Organization` | many-to-1 | `orgId` → `organizations.id` | CASCADE |
 | `SimulationJob` | `org` | `Organization` | many-to-1 | `orgId` → `organizations.id` | CASCADE |
 | `SimulationJob` | `projectVersion` | `ProjectVersion` | many-to-1 (optional) | `projectVersionId` → `project_versions.id` (nullable) | SET NULL |
-| `AuditLog` | `org` | `Organization` | many-to-1 | `orgId` → `organizations.id` | CASCADE |
-| `AuditLog` | `user` | `User` | many-to-1 | `userId` → `users.id` | RESTRICT |
+| `RefreshToken` | `user` | `User` | many-to-1 | `userId` → `users.id` | CASCADE |
+| `DesignJob` | `org` | `Organization` | many-to-1 | `orgId` → `organizations.id` | CASCADE |
+| `AuditLog` | `org` | `Organization` | many-to-1 (optional) | `orgId` → `organizations.id` (nullable) | CASCADE |
+| `AuditLog` | `user` | `User` | many-to-1 | `userId` → `users.id` | CASCADE |
 
 ### Many-to-many: User ↔ Organization
 
@@ -309,10 +417,12 @@ All foreign keys, their referenced columns, and on-delete behavior are taken fro
 
 ### One-to-many summaries
 
-- `Organization` 1—many `OrgMembership`, `Project`, `Template`, `Asset`, `SimulationJob`, `AuditLog`.
-- `User` 1—many `OrgMembership`, `ProjectVersion` (as author), `AuditLog` (as actor).
+- `Organization` 1—many `OrgMembership`, `Project`, `Template`, `Asset`, `SimulationJob`, `DesignJob`, `AuditLog` (optional).
+- `User` 1—many `OrgMembership`, `ProjectVersion` (as author), `AuditLog` (as actor), `RefreshToken`.
 - `Project` 1—many `ProjectVersion`.
 - `ProjectVersion` 1—many `SimulationJob`.
+
+`UsageRecord` has no declared relation to any other model (see its section above).
 
 There are no 1-to-1 relations in this schema.
 
@@ -322,17 +432,19 @@ There are no 1-to-1 relations in this schema.
 
 Circuit Forge is **org-scoped multi-tenancy** with a shared schema (single set of tables; rows partitioned by `orgId`).
 
-1. **Tenant boundary = `Organization`.** Every business entity that holds data — `Project`, `Template` (optionally), `Asset`, `SimulationJob`, `AuditLog` — carries an `orgId` foreign key to `organizations.id`. `ProjectVersion` inherits its org indirectly through its parent `Project`.
+1. **Tenant boundary = `Organization`.** Every business entity that holds data — `Project`, `Template` (optionally), `Asset`, `SimulationJob`, `DesignJob`, `AuditLog` (optionally) — carries an `orgId` foreign key to `organizations.id`. `ProjectVersion` inherits its org indirectly through its parent `Project`.
 
 2. **Membership & roles.** A `User` is not directly attached to an org. Instead, the `OrgMembership` join table links a user to an org and assigns an `OrgRole` (`OWNER` / `ADMIN` / `MEMBER`, default `MEMBER`). The `@@unique([orgId, userId])` constraint guarantees a single membership per user per org. A user can be a member of multiple orgs, and an org can have many users — the many-to-many relationship described above.
 
-3. **Cascade isolation.** Deleting an `Organization` cascades to all of its memberships, projects (and their versions), templates, assets, simulation jobs, and audit logs (`ON DELETE CASCADE` on every `orgId` FK). This makes tenant data removal atomic at the org level.
+3. **Cascade isolation.** Deleting an `Organization` cascades to all of its memberships, projects (and their versions), templates, assets, simulation jobs, design jobs, and org-scoped audit logs (`ON DELETE CASCADE` on every `orgId` FK). This makes tenant data removal atomic at the org level.
 
-4. **Referential safety for attribution.** `ProjectVersion.createdByUserId` and `AuditLog.userId` use `ON DELETE RESTRICT`, so a user that authored a version or generated audit history cannot be hard-deleted out from under those records, preserving authorship/audit integrity.
+4. **Referential safety for attribution.** `ProjectVersion.createdByUserId` uses `ON DELETE RESTRICT`, so a user that authored a version cannot be hard-deleted out from under it, preserving authorship integrity. `AuditLog.userId` and `RefreshToken.userId`, by contrast, use `ON DELETE CASCADE`: this is deliberate — erasing an account also erases its audit rows and sessions, which is the GDPR-erasure-aligned default (audit rows hold PII like `ip`/`userAgent`) and keeps account deletion unblocked. Tradeoff: security-evidence audit rows (`refresh_reuse_detected`, `account_locked`) die with the account.
 
 5. **Public vs. private templates.** `Template.orgId` is nullable: a `null` org means a **public template** available across tenants, while a non-null `orgId` scopes the template to a single org.
 
 6. **Soft references for jobs.** `SimulationJob.projectVersionId` is nullable with `ON DELETE SET NULL`, so historical job records (including their netlist/results/metrics) survive deletion of the originating project version.
+
+7. **User-scoped audit events.** `AuditLog.orgId` is nullable: auth events with no org context (e.g. `auth.login_failed`, `auth.login_lockout`) are recorded with `orgId = null`, scoped only to the acting `userId`.
 
 Application-level enforcement (which queries filter by the caller's org, how roles gate actions) lives in the API; see [docs/SECURITY.md](SECURITY.md) and [docs/API.md](API.md). This document covers only what the schema/migration guarantees at the data layer.
 
@@ -364,11 +476,14 @@ erDiagram
     Organization ||--o{ OrgMembership : "has"
     User }o--o{ Organization : "member-of (via OrgMembership)"
 
+    User ||--o{ RefreshToken : "sessions"
+
     Organization ||--o{ Project : "owns"
     Organization ||--o{ Template : "owns (optional)"
     Organization ||--o{ Asset : "owns"
     Organization ||--o{ SimulationJob : "owns"
-    Organization ||--o{ AuditLog : "scopes"
+    Organization ||--o{ DesignJob : "owns"
+    Organization ||--o{ AuditLog : "scopes (optional)"
 
     Project ||--o{ ProjectVersion : "has versions"
     User ||--o{ ProjectVersion : "authored"
@@ -381,8 +496,29 @@ erDiagram
         string email UK
         string passwordHash
         string name
+        int failedLoginCount
+        datetime lastFailedLoginAt
+        datetime lockedUntil
+        boolean emailVerified
+        string emailVerificationTokenHash
+        datetime emailVerificationExpiresAt
+        string passwordResetTokenHash
+        datetime passwordResetExpiresAt
         datetime createdAt
         datetime updatedAt
+    }
+    RefreshToken {
+        string id PK
+        string jti UK
+        string userId FK
+        string familyId
+        string tokenHash
+        datetime expiresAt
+        datetime usedAt
+        datetime revokedAt
+        string ip
+        string userAgent
+        datetime createdAt
     }
     Organization {
         string id PK
@@ -421,6 +557,7 @@ erDiagram
         string description
         string_array tags
         json circuitJson
+        json analysisConfig "nullable"
         datetime createdAt
         datetime updatedAt
     }
@@ -454,9 +591,24 @@ erDiagram
         datetime startedAt
         datetime finishedAt
     }
-    AuditLog {
+    DesignJob {
         string id PK
         string orgId FK
+        string userId
+        DesignJobStatus status
+        string prompt
+        string constraints "nullable"
+        int maxRounds
+        json result "nullable"
+        string errorMessage
+        boolean abortRequested
+        datetime createdAt
+        datetime startedAt
+        datetime finishedAt
+    }
+    AuditLog {
+        string id PK
+        string orgId FK "nullable"
         string userId FK
         string action
         string entityType
@@ -466,6 +618,8 @@ erDiagram
     }
 ```
 
+`UsageRecord` (table `usage_records`) has no foreign keys to any other model, so it is omitted from the relationship diagram above. Its fields are `id`, `scope`, `scopeId`, `metric`, `period`, `amount`, `updatedAt`, with `@@unique([scope, scopeId, metric, period])`.
+
 ---
 
 ## Index of Mapped Table Names
@@ -473,6 +627,7 @@ erDiagram
 | Prisma Model | DB Table (`@@map`) |
 | --- | --- |
 | `User` | `users` |
+| `RefreshToken` | `refresh_tokens` |
 | `Organization` | `organizations` |
 | `OrgMembership` | `org_memberships` |
 | `Project` | `projects` |
@@ -480,7 +635,9 @@ erDiagram
 | `Template` | `templates` |
 | `Asset` | `assets` |
 | `SimulationJob` | `simulation_jobs` |
+| `DesignJob` | `design_jobs` |
 | `AuditLog` | `audit_logs` |
+| `UsageRecord` | `usage_records` |
 
 ---
 

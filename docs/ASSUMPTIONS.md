@@ -104,9 +104,9 @@ This document captures design decisions made during the implementation of the AI
 - **Rationale**: Better for real-time data; offset pagination can miss items
 
 ### A21: Rate Limiting
-- **Decision**: 120 requests per 60 seconds (`medium` limiter; plus a `short` 10/1s)
+- **Decision**: 120 requests per 60 seconds (`default` limiter; plus a `burst` 30/1s)
 - **Rationale**: Generous for normal use; prevents abuse
-- **Status**: ⚠️ Configured but **NOT enforced**. `ThrottlerModule.forRoot(...)` and the per-route `@Throttle` decorators exist, but no `ThrottlerGuard` is registered (no global `APP_GUARD`, no `@UseGuards(ThrottlerGuard)`), so the limits are currently inert. Register `{ provide: APP_GUARD, useClass: ThrottlerGuard }` in [app.module.ts](../apps/api/src/app.module.ts) to enforce them.
+- **Status**: ✅ Shipped — **enforced**. `ThrottlerGuard` is registered globally via `{ provide: APP_GUARD, useClass: ThrottlerGuard }` in [app.module.ts](../apps/api/src/app.module.ts), so both the sustained `default` budget and the `burst` window apply to every route (per-route `@Throttle` decorators can still override `default`).
 
 ### A22: Quick Simulation Scope
 - **Decision**: Quick sims (/simulations/quick) require authentication and count against user's first org
@@ -145,8 +145,9 @@ This document captures design decisions made during the implementation of the AI
 - **Rationale**: ngspice batch mode is sandboxed; focus on preventing injection
 
 ### A29: CORS
-- **Decision**: CORS is **enabled** via `app.enableCors()` ([main.ts](../apps/api/src/main.ts)) with **default options (any origin reflected)** — no allowlist yet
-- **Rationale**: Unblocks a browser frontend during development. ⚠️ Before production, restrict to an explicit origin allowlist (e.g. a `CORS_ORIGINS` env) rather than reflecting any origin.
+- **Decision**: CORS is **enabled** via `app.enableCors()` ([main.ts](../apps/api/src/main.ts)) with an **explicit origin allowlist** from the comma-separated `CORS_ORIGINS` env var, falling back to localhost dev origins when unset
+- **Rationale**: Unblocks a browser frontend during development while never reflecting a wildcard origin.
+- **Status**: ✅ Shipped. Origin is never a wildcard — `CORS_ORIGINS` drives the allowlist in production; with no env set it defaults to `http://localhost:3000` / `http://localhost:5173` (dev only).
 
 ### A30: Audit Log Retention
 - **Decision**: No automatic purge in MVP
@@ -180,19 +181,31 @@ This document captures design decisions made during the implementation of the AI
 
 ## Future Considerations (Not Implemented in MVP)
 
-These items are explicitly deferred:
+These items were explicitly deferred at MVP time. Several have since shipped — see "Shipped since MVP" below; the rest are still deferred:
 
-1. **Email verification**: Not required in MVP
-2. **Password reset**: Not implemented
+1. ~~**Email verification**: Not required in MVP~~ — ✅ shipped (email verification + password reset flows now exist)
+2. ~~**Password reset**: Not implemented~~ — ✅ shipped (see above)
 3. **OAuth providers**: Not implemented (email/password only)
 4. **Team invitations**: Org membership created directly in MVP
 5. **Billing/quotas**: Not implemented
 6. **Subcircuit import**: Not implemented (flat circuits only)
 7. **AC/DC sweep with multiple sources**: Single source only
-8. **Monte Carlo analysis**: Not supported
+8. ~~**Monte Carlo analysis**: Not supported~~ — ✅ shipped, see A8 above
 9. **Schematic layout algorithms**: Basic grid placement only
 10. **Collaborative editing**: Single user edit model
 
+### Shipped since MVP
+
+The following capabilities did not exist at MVP time and have since shipped:
+
+- **Monte-Carlo yield / robustness verdicts** (A8 above): `perturbValue`/`perturbCircuit`/`monteCarloVariants`/`computeYield`/`runMonteCarlo` in eda-core, with a Wilson 95% CI and adaptive-N early stop; the worker runs real ngspice per variant (`runMonteCarloBatch`). The generation "verified" verdict now gates on THD and small-signal GAIN, evaluated both at nominal and robustly across tolerance variants.
+- **Rate limiting enforcement** (A21 above) and an **explicit CORS allowlist** (A29 above).
+- **Additional ngspice-native analyses**, report-only on `SimulationResult`: Fourier/THD, `.meas` measurements, `.tf` DC transfer function, `.noise`, and `.sens` DC sensitivity.
+- **Assertion metric enum expansion**: `AssertionDto`/`AcceptanceCriterion` now supports `min | max | final | pp | avg | rms | cutoff | thd | gain` (was a smaller set at MVP time).
+- **SPICE netlist round-trip import**: `parseNetlist` now imports analog and digital/XSPICE netlists, preserving `.model`/`.subckt`/`.options`/`.ic` and re-merging split mixed-signal nets.
+- **Durable async design loop**: the design-generation loop now runs on a durable BullMQ `design` queue + worker (with graceful shutdown) instead of an in-process detached runner, plus an orphan design-reaper that cleans up stuck jobs.
+- **Readiness probes**: a `/health` readiness check pings DB, Redis, and S3 concurrently and reports 503 on degraded dependencies.
+
 ---
 
-*Last updated: Initial version*
+*Last updated: 2026-07-01*

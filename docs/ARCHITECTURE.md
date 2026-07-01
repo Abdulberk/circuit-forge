@@ -23,10 +23,10 @@ BullMQ queue; a separate worker process consumes those jobs and shells out to th
 | **API** | [apps/api](../apps/api) (NestJS) | REST API, auth/RBAC, CRUD, enqueues simulation jobs, reads results |
 | **worker-sim** | [apps/worker-sim](../apps/worker-sim) | BullMQ consumer that runs `ngspice` and writes results back |
 | **PostgreSQL** | via Prisma ([schema.prisma](../apps/api/prisma/schema.prisma)) | Primary datastore (users, orgs, projects, versions, jobs, assets) |
-| **Redis** | BullMQ queue `simulations` | Job queue between API (producer) and worker (consumer) |
+| **Redis** | BullMQ queues `simulations` + `design` | Job queues between API (producer) and worker (consumer) — `simulations` for deterministic sim runs (§1), `design` for the durable AI design loop (§2) |
 | **MinIO / S3** | AWS SDK v3 (`@aws-sdk/client-s3`) | Object storage for asset files and large simulation results |
-| **eda-core** | [packages/eda-core](../packages/eda-core) | Pure-TS library: CircuitJson types, netlist generation, output parsing, ERC |
-| **llm-core** | [packages/llm-core](../packages/llm-core) | LLM circuit generation via the real Anthropic SDK (`@anthropic-ai/sdk`): `generateCircuit` / `editCircuit` / `fixCircuit` / `explainCircuit`, with JSON validation + a single repair retry |
+| **eda-core** | [packages/eda-core](../packages/eda-core) | Pure-TS library: CircuitJson types, netlist generation, output parsing, ERC, Monte-Carlo tolerance/yield analysis |
+| **llm-core** | [packages/llm-core](../packages/llm-core) | LLM circuit generation via the real Anthropic SDK (`@anthropic-ai/sdk`): `generateCircuit` / `editCircuit` / `fixCircuit` / `explainCircuit`, with JSON validation + a single repair retry; also `runDesignLoop` — the framework-free generate→simulate→AI-fix→re-simulate agentic loop shared by the API and worker-sim |
 
 ### Diagram
 
@@ -120,7 +120,157 @@ Key wiring evidence:
 
 ---
 
-## 2. Monorepo Layout & Turbo Pipeline
+## 2. AI Design Loop & Verification
+
+Beyond the deterministic simulation path in §1, Circuit Forge runs an **agentic AI
+design loop**: given a natural-language prompt, generate a candidate circuit,
+simulate it, and iterate (AI-fix → re-simulate) until it verifies against the
+user's stated intent — or the round budget is exhausted.
+
+### Durable design queue (worker-owned, not detached-in-API)
+
+The loop used to run **detached inside the API process** (a `void`ed promise) —
+an API deploy or crash would silently abandon it, leaving the job stuck
+`RUNNING` forever. That in-process runner was **removed** (commit `b940951`).
+The loop now runs on a **second, durable BullMQ queue named `design`**
+(distinct from the `simulations` queue in §1), consumed by a dedicated worker
+in `apps/worker-sim`:
+
+- **API side** — [design-job.service.ts](../apps/api/src/generation/design-job.service.ts)
+  `create()` inserts a `QUEUED` `DesignJob` row (the row the client polls) and
+  enqueues the same payload onto the `design` queue (`@InjectQueue('design')`).
+- **Worker side** — [design/processor.ts](../apps/worker-sim/src/design/processor.ts)
+  `createDesignWorker()` consumes the `design` queue with its own concurrency
+  pool (`DESIGN_CONCURRENCY`, separate from the sim worker's pool, so a design
+  job's *local* simulations never contend with themselves for a slot). It
+  atomically claims a job (`QUEUED → RUNNING`, optimistic-concurrency guarded
+  against a race with the API's enqueue-failure path), runs the loop, and
+  writes a terminal row (`SUCCEEDED` / `FAILED` / `CANCELED`) — it never
+  throws, so a client poll always sees a terminal status with a message.
+  Started **only** when `LLM_API_KEY` is configured — a sim-only worker
+  deliberately does not consume the `design` queue.
+- **Shared intelligence** — both the worker and (for the synchronous path) the
+  API inject their own dependencies into the **same** `runDesignLoop` from
+  [packages/llm-core/src/design-core.ts](../packages/llm-core/src/design-core.ts):
+  an LLM config, a simulation surface (the worker uses a **local**-ngspice
+  surface, `makeLocalSim`, which never re-enqueues onto `simulations` — this
+  avoids a self-deadlock), catalog grounding, a cooperative-abort check, and a
+  progress sink.
+- **Multi-candidate orchestration** — [design/multi-candidate.ts](../apps/worker-sim/src/design/multi-candidate.ts)
+  (`runMultiCandidateDesign`) generates `DESIGN_CANDIDATES_N` candidates,
+  screens/Paretos them, runs the full fix-loop on the `DESIGN_FINALISTS_K`
+  survivors, and runs Monte-Carlo only on the winner — all under a hard
+  per-request LLM-request ceiling (`DESIGN_JOB_LLM_BUDGET`). With
+  `DESIGN_CANDIDATES_N=1` (the default) it degenerates to a single
+  `runDesignLoop` call, so it ships **byte-identical** to the pre-multi-candidate
+  behavior until `N` is raised.
+
+### Orphan reaper
+
+A durable queue removes "an API deploy abandons in-flight work", but two
+failure modes remain (the same ones every distributed job system has to
+handle): a worker can die **mid-job** (the row is left `RUNNING` forever,
+since a BullMQ redelivery is a no-op against the `QUEUED`-gated claim), or a
+crash can land strictly **between** the API's insert and its enqueue (a row
+`QUEUED` that no worker will ever see). [design/reaper.ts](../apps/worker-sim/src/design/reaper.ts)
+(`startDesignReaper`) reconciles stale rows against the queue's ground truth —
+a job BullMQ still reports `waiting`/`delayed`/`active` within a generous
+runtime deadline is never touched, so it cannot kill healthy work; every write
+is a conditional `updateMany` gated on `status ∈ {QUEUED, RUNNING}`, so
+concurrent reapers across worker instances are idempotent. It starts alongside
+the design worker (same `LLM_API_KEY` gate) and stops as part of the same
+graceful-shutdown sequence — see §5's worker shutdown order.
+
+### Monte-Carlo yield / tolerance-aware robustness
+
+A design that verifies at **nominal** component values may not hold up once
+real-world part tolerances are considered. `packages/eda-core`'s Monte-Carlo
+subsystem ([montecarlo.ts](../packages/eda-core/src/montecarlo.ts)) makes this
+explicit rather than silently ignored:
+
+- `perturbValue` / `perturbCircuit` — sample each toleranced component's value
+  from its tolerance band (Gaussian by default); `monteCarloVariants` builds N
+  perturbed `CircuitJson` variants from one nominal circuit.
+- `runMonteCarlo` — runs the variants, evaluates each one's acceptance
+  criteria, and folds the outcomes into `computeYield`: a yield fraction with a
+  **Wilson 95% confidence interval** (more honest than a normal approximation
+  at small N or extreme pass rates), plus an **adaptive-N early stop** — a
+  clearly-robust or clearly-bad design converges in far fewer than the
+  requested N runs.
+- `classifyRobustness` (in `packages/llm-core`) turns a yield report into a
+  robustness tier (`robust` / `marginal` / `at-risk` / `unknown`) — `unknown`
+  when no MC ran at all (no toleranced parts), which honestly means "verified
+  at nominal values only." This tier is **informational**: it never gates
+  `ok`/`verified` on its own (a correct design is never false-failed for being
+  reported as less robust).
+- The worker executes the actual per-variant ngspice runs
+  ([simulation/montecarlo-runner.ts](../apps/worker-sim/src/simulation/montecarlo-runner.ts),
+  `runMonteCarloBatch`) — real ngspice per variant, not a simulated yield.
+
+### THD / GAIN verdict-gating (composed with the robustness Monte-Carlo)
+
+Circuit Forge exposes five ngspice-native analyses beyond plain `tran`/`ac`/`dc`/`op`
+series (config + parser + result field, full detail in
+[SIMULATION.md](SIMULATION.md)): Fourier/THD (`TranAnalysis.fourier`, `parseFourierLog`,
+`SimulationResult.fourier`), `.meas` measurements (`TranAnalysis.measurements[]`,
+`parseMeasurements`), `.tf` DC transfer function (`OpAnalysis.tf`,
+`parseTransferFunction`, `SimulationResult.transferFunction`), `.noise`
+(`NoiseAnalysis`, `parseNoise`), and `.sens` DC sensitivity (`SensAnalysis`,
+`parseSensitivity`). All five were originally **report-only**. Two of them
+have since been promoted to **verdict-gating** acceptance metrics:
+
+- **THD** — a `thd` `AcceptanceCriterion.metric` rides on a transient's
+  `fourier` request (THD %); `attachFourierThd` folds it onto the matching
+  per-node measurement so it flows through the same `evaluateAssertions` path
+  as every other metric.
+- **GAIN** — a `gain` metric rides on an `op` analysis's `tf` request
+  (small-signal Vout/Vin); `attachTransferFunction` folds it on analogously.
+
+Both are gated **at nominal AND across tolerance variants** — the Monte-Carlo
+`runVariant` path parses the same `fourier`/`tf` data per perturbed variant and
+folds it in before evaluating that variant's criteria, so a `thd`/`gain`
+criterion contributes to the robustness tier above ("robust-THD" /
+"robust-GAIN"), not just the nominal pass/fail. The fold-in happens in one
+place (`attachFourierThd` / `attachTransferFunction` in
+[packages/eda-core/src/analysis/assertions.ts](../packages/eda-core/src/analysis/assertions.ts))
+shared by the AI design loop, the Monte-Carlo batch, and the synchronous
+`/verify-design` worker path
+([verification.service.ts](../apps/api/src/generation/verification.service.ts)) —
+without that last seam, a `thd`/`gain` criterion could never pass on
+`/verify-design` even though the mechanism was otherwise fully wired.
+`AcceptanceCriterion.metric` is `min | max | final | pp | avg | rms | cutoff |
+thd | gain`. Note the scope: this is **report→gate** only — the mechanism is
+API-free and tested without the LLM, but having the AI actually **emit** a
+`thd`/`gain` criterion (LLM prompt work) is a separate, still-open piece.
+
+### SPICE round-trip import (analog + digital/XSPICE)
+
+`parseNetlist` ([packages/eda-core/src/parser/netlist-parser.ts](../packages/eda-core/src/parser/netlist-parser.ts))
+imports a raw SPICE netlist back into `CircuitJson` — not just the analog
+devices Circuit Forge itself generates, but `.model`/long `.subckt` bodies,
+`.options`, and `.ic` cards from real-world KiCad/LTspice exports, which are
+captured and carried through so a re-export emits an equivalent deck rather
+than silently dropping them. It also understands the **digital/XSPICE** side
+of the mixed-signal generator: XSPICE `A`-device lines are mapped back to
+their digital `ComponentType` via their `CFD_*` model name (`CFD_AND` →
+`logic_and`, `CFD_JKFF` → `jkff`, etc.), and a mixed-signal net that the
+generator had split (moving a digital pin onto a synthesized bridge node) is
+re-merged onto the same net the analog devices use (`buildDigitalMergeMap`)
+so the round trip is lossless. Full detail (including the CFD_ADC/CFD_DAC
+bridge handling) is in [EDA_CORE.md §4.2](EDA_CORE.md#42-netlist-parsing-parsenetlist).
+
+This import path shares the netlist **sanitizer**
+([packages/eda-core/src/netlist/sanitizer.ts](../packages/eda-core/src/netlist/sanitizer.ts))
+with the generator's own output validation: shell/system/source/exec/cd/load/
+osdi/codemodel/pre_osdi are blocked as the line's first token — dot-prefix
+stripped — so the same check catches them whether they appear at the top
+level or, RCE-relevant, **inside a `.control` … `.endc` block** (which ngspice
+does execute in `-b` batch mode). The match is token-exact, so a device name
+like `Cd1` or `Lload2` still passes.
+
+---
+
+## 3. Monorepo Layout & Turbo Pipeline
 
 ### Workspace layout
 
@@ -226,7 +376,7 @@ These are the underlying scripts Turbo invokes:
 
 ---
 
-## 3. Tech Stack
+## 4. Tech Stack
 
 | Layer | Technology | Where | Notes |
 |-------|-----------|-------|-------|
@@ -236,7 +386,7 @@ These are the underlying scripts Turbo invokes:
 | API docs | `@nestjs/swagger` 7 | [main.ts](../apps/api/src/main.ts) | Swagger UI mounted at `/docs` |
 | ORM / DB | Prisma 5 + `@prisma/client` | [schema.prisma](../apps/api/prisma/schema.prisma) | PostgreSQL |
 | Database | PostgreSQL 15 | docker-compose `postgres` | `postgres:15-alpine` |
-| Queue | BullMQ 5 | api (`@nestjs/bullmq`) + worker (`bullmq`) | Queue `simulations` |
+| Queue | BullMQ 5 | api (`@nestjs/bullmq`) + worker (`bullmq`) | Queues `simulations` + `design` |
 | Redis client | ioredis 5 | api + worker | BullMQ connection transport |
 | Cache/queue store | Redis 7 | docker-compose `redis` | `redis:7-alpine` |
 | Object storage SDK | `@aws-sdk/client-s3` 3, `@aws-sdk/s3-request-presigner` (api), `@aws-sdk/lib-storage` (worker) | api + worker | S3-compatible |
@@ -254,7 +404,7 @@ These are the underlying scripts Turbo invokes:
 
 ---
 
-## 4. Infrastructure
+## 5. Infrastructure
 
 ### docker-compose services ([docker-compose.yml](../docker-compose.yml))
 
@@ -298,7 +448,7 @@ Per-service detail:
 > No code reads `API_PORT` anywhere. In Docker it still works only because `PORT`
 > is unset and the code falls back to `3000`, which happens to match the published
 > port. If you ever set `API_PORT` to something else, the API ignores it. See
-> §5 for the local-dev consequence (local `.env` uses `PORT=3001`).
+> §7 for the local-dev consequence (local `.env` uses `PORT=3001`).
 
 ### Dockerfiles
 
@@ -325,9 +475,28 @@ installs deps. `development` stage `CMD ["pnpm","run","dev"]`. `builder` runs
 `/tmp/sim` (`chmod 777`, matches default `SIM_TEMP_DIR`), runs `ngspice --version`
 to verify the install, and `CMD ["node","dist/main.js"]`.
 
+### Graceful shutdown
+
+Both `main.ts` entry points install `SIGTERM`/`SIGINT` handlers so a container
+stop/redeploy drains in-flight work instead of dropping it:
+
+- **api** — [main.ts](../apps/api/src/main.ts): `app.close()` (runs Nest's
+  lifecycle hooks and stops accepting new HTTP connections), then
+  `shutdownTelemetry()`, then `process.exit(0)`. Telemetry deliberately
+  registers no signal handler of its own — this handler is the single owner
+  of process exit.
+- **worker-sim** — [main.ts](../apps/worker-sim/src/main.ts): closes the
+  simulation `Worker` (BullMQ waits for the active handler to finish before
+  `close()` resolves), then — only if a design worker was started
+  (`LLM_API_KEY` set) — closes the **design** `Worker` too (so a long design
+  loop finishes its current round / lands its terminal row) and stops the
+  **design reaper** (see §2), then disconnects Prisma, then flushes telemetry
+  **last** (after the in-flight job has drained and DB queries are done),
+  then `process.exit(0)`.
+
 ---
 
-## 5. Environment Variables
+## 6. Environment Variables
 
 ### How env is loaded (important)
 
@@ -376,7 +545,7 @@ file is a harmless no-op.
 | `API_HOST` | Intended bind host | `0.0.0.0` | api (declared only) |
 | `LLM_API_KEY` | Anthropic-compatible API key (**server-side only**) — required for `/generate-circuit` etc. | _(blank)_ | api ([generation.service.ts](../apps/api/src/generation/generation.service.ts)) → llm-core |
 | `LLM_BASE_URL` | LLM provider base URL (SDK appends `/v1/messages`) | `https://api.zentio.dev` | api → llm-core |
-| `LLM_MODEL` | Model id used for circuit generation | `claude-sonnet-4-6` | api → llm-core |
+| `LLM_MODEL` | Model id used for circuit generation | `claude-sonnet-4-6` in `.env.example`; the working `.env` currently pins an Opus model (`claude-opus-4-6`) — see `.env` / `.env.example` for the exact id in effect | api → llm-core |
 | `LLM_USER_AGENT` | Override UA (gateway WAF blocks the SDK default) | `Mozilla/5.0 (circuit-forge)` | llm-core (optional) |
 | `TME_TOKEN` / `TME_SECRET` | TME v2 OAuth2 app credentials (**server-side only**) — required for `/parts/*` | _(blank)_ | api ([tme.config.ts](../apps/api/src/parts/tme/tme.config.ts)) |
 | `TME_BASE_URL` | TME API base URL | `https://api.tme.eu` | api (parts) |
@@ -404,10 +573,18 @@ Notes / caveats verified against source:
   ([config.ts](../apps/worker-sim/src/config.ts)) also accepts `NGSPICE_PATH`
   (default `ngspice`), `QUEUE_NAME` (default `simulations`), and `CONCURRENCY`
   (default `2`). These have working defaults, so they need not be set explicitly.
+- **Design-queue vars, also not in `.env.example`** (see §2): `DESIGN_QUEUE_NAME`
+  (default `design`), `DESIGN_CONCURRENCY` (default `2`), `DESIGN_CANDIDATES_N`
+  (default `1` — the multi-candidate orchestrator degenerates to a single
+  `runDesignLoop` at this default), `DESIGN_FINALISTS_K` (default `2`),
+  `DESIGN_JOB_LLM_BUDGET` (default `12`), `DESIGN_MC_ENABLED` (default on;
+  `'false'` disables the informational Monte-Carlo yield pass),
+  `DESIGN_MC_RUNS` (MC variant-count override), and `DESIGN_POLL_TIMEOUT_MS`
+  (per-round sim poll budget). All have working defaults.
 
 ---
 
-## 6. Local Dev vs Docker
+## 7. Local Dev vs Docker
 
 | Concern | Local (pnpm + Turbo) | Docker (compose) |
 |---------|----------------------|------------------|

@@ -6,7 +6,7 @@
 > contract + everything the frontend needs to consume it. Complements `FRONTEND_BRIEF.md` §4.4.11 / §6.
 >
 > **Backend module:** `apps/api/src/parts/` · **Swagger tag:** `parts` · **Base URL:** `http://localhost:3001`
-> **Last verified:** 2026-05-31 against the live TME v2 API.
+> **Last verified:** 2026-07-01 against the live TME v2 API.
 
 ---
 
@@ -36,8 +36,8 @@ All endpoints are **JWT-guarded** (`Authorization: Bearer <accessToken>`). No gl
 | GET | `/parts/:symbol` | — | `CatalogPart` (full detail) | 30 / 60s |
 | GET | `/parts/:symbol/component` | — | `MappedComponent` | 30 / 60s |
 
-\* **Throttle limits are declared but NOT currently enforced** app-wide (no global `ThrottlerGuard` yet —
-a known follow-up). Don't rely on `429`s; still **debounce** the search box client-side (~300ms).
+\* **Throttle limits are now enforced app-wide** via a global `ThrottlerGuard` (`app.module.ts:71`).
+Expect real `429`s if you exceed them; still **debounce** the search box client-side (~300ms) to avoid hitting the limit.
 
 `:symbol` is the **TME symbol** = `CatalogPart.supplierId` (e.g. `NE555P`, `WR06X1002FTL`) — **not** the MPN.
 URL-encode it.
@@ -52,7 +52,7 @@ interface SearchResult {
   items: CatalogPart[];
   page: number;          // echoes the requested page (1-based)
   pageSize: number;      // number of items on this page (TME returns ~20/page)
-  total?: number;        // usually ABSENT — TME does not return a grand total here
+  total?: number;        // grand total match count, from TME's `data.products.amount` — enables numeric pagination
 }
 
 // A normalized, supplier-agnostic part
@@ -60,7 +60,8 @@ interface CatalogPart {
   mpn: string;                 // manufacturer part number, e.g. "NE555P"
   manufacturer: string;        // e.g. "TEXAS INSTRUMENTS"
   description: string;
-  category?: string;           // e.g. "Watchdog and reset circuits"
+  category?: string;           // e.g. "Watchdog and reset circuits" (human-readable, localized)
+  categoryId?: string;         // stable, locale-independent category id — the primary classification signal
   footprint?: string;          // package/case, e.g. "0603", "DIP8", "SOIC-8"
   photo?: string;              // absolute https thumbnail URL
   datasheetUrl?: string;       // see gotcha: may be a .txt redirect link, not always a PDF
@@ -153,8 +154,9 @@ A modal or editor side-panel:
    no transistor/IC type in `CircuitJson` yet (the "active-component" roadmap item). Always branch on this.
 4. **`component` is PARTIAL** — no `id`/`designator`/`pins`. The editor owns those (generate a unique
    designator ending in a digit; wire pins from `COMPONENT_PINS[type]`). Don't expect a ready-to-render component.
-5. **Pagination:** TME returns ~**20 items/page**, pass `page` (1-based). **`total` is usually absent** — use a
-   "load more / next page" pattern (there's a next page if `pageSize === 20`), not a numbered pager with totals.
+5. **Pagination:** TME returns ~**20 items/page**, pass `page` (1-based). `total` (from TME's grand match count)
+   is now returned, so a **numbered pager with totals** is viable; a "load more / next page" pattern (next page
+   exists if `pageSize === 20`) still works too.
 6. **Weird/blocked search phrases return empty, not an error.** TME's WAF rejects payloads like `<script>` or
    SQLi-looking strings; the backend turns that into **`200` with `items: []`**. So always handle "no results"
    gracefully — never assume an error.
@@ -164,7 +166,7 @@ A modal or editor side-panel:
 10. **`footprint` may be missing** for some categories (e.g. inductors expose no standard case code). It comes from the part's "Case" parameter.
 11. **Pricing:** `priceBreaks` are **NET** prices in the part's `currency` (default **EUR**, server-configurable),
     one tier per minimum quantity. `currency` is always set (never empty). `stock` can be `0`; `unitCost` can be absent.
-12. **Throttle not enforced yet** (see §2) — debounce search yourself.
+12. **Throttle is enforced** (see §2) — debounce search yourself to avoid tripping it.
 13. **Default market:** `country=PL`, `currency=EUR` (server env). If you target a specific market later, that's a one-line server env change, not a frontend concern.
 
 ---
@@ -221,6 +223,6 @@ Nexperia=`1241`, onsemi=`41`, STM=`35`; categories — Semiconductors=`112140`, 
 - **Active components (biggest one):** ICs/transistors/op-amps are searchable but **not simulatable**
   (`simulatable:false`) — `CircuitJson` has no transistor/IC/`.model`/`.subckt` type yet. Until that lands,
   the picker is "full catalog for browsing/BOM, passives+diodes for simulation."
-- **Global rate limiting** (`ThrottlerGuard`) and an **HTTP body-size limit** are pending app-wide hardening.
-- **Facet-only browsing** (no keyword) and a **result `total`/count** are not exposed yet.
+- **Global rate limiting** (`ThrottlerGuard`) is now enforced app-wide; an **HTTP body-size limit** is still pending.
+- **Facet-only browsing** (no keyword) is not exposed yet. A result **`total`/count** is now exposed (§3, §5).
 - More suppliers (DigiKey/LCSC) can be added behind `PartProvider` without changing this contract.
