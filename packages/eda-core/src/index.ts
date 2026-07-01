@@ -192,6 +192,17 @@ export {
     type SweepResult,
 } from './sweep';
 
+// Worst-case (corner) analysis — the deterministic tolerance-EXTREME lens: does the spec hold at every ±tol
+// corner? (random Monte-Carlo can miss the true worst corner; this hits them exactly). Shares the VariantRunner.
+export {
+    cornerVariants,
+    runWorstCase,
+    type CornerSpec,
+    type CornerSide,
+    type CornerPoint,
+    type WorstCaseResult,
+} from './corner';
+
 // Analysis — measurement distillation + assertion evaluation (shared by the API AND the Monte-Carlo worker,
 // which is why they live here and not in the API).
 export { summarizeSeries, type SimMeasurement } from './analysis/measurements';
