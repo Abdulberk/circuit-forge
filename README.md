@@ -31,27 +31,41 @@ A backend system for AI-assisted circuit design and **SPICE-based simulation**. 
 
 ## 🏗️ Architecture
 
-```
-                         ┌──────────────────────────────────────────────┐
-        client  ───────► │                 API (NestJS)                 │
-                         │  auth · orgs · projects · versions · parts ·  │
-                         │  templates · assets · simulation · generation │
-                         │  · netlist · usage · health                   │
-                         └───┬───────────────┬───────────────┬──────────┘
-                             │ Prisma        │ BullMQ         │ S3 SDK
-                             ▼               ▼               ▼
-                      ┌────────────┐  ┌────────────┐  ┌────────────┐
-                      │  Postgres  │  │   Redis    │  │   MinIO    │
-                      │ (database) │  │  (queue)   │  │  (S3 obj)  │
-                      └────────────┘  └─────┬──────┘  └─────▲──────┘
-                                            │ consume       │ results / models
-                                            ▼               │
-                                   ┌────────────────────────┴───┐
-                                   │      worker-sim (BullMQ)    │
-                                   │   ┌──────────────────────┐  │
-                                   │   │  ngspice (-b) runner  │  │
-                                   │   └──────────────────────┘  │
-                                   └─────────────────────────────┘
+```mermaid
+flowchart TB
+    client(["Client / Frontend"])
+
+    subgraph API["API · NestJS (apps/api)"]
+        core["auth · orgs · projects · versions · templates<br/>assets · parts · netlist · usage · health"]
+        gen["generation<br/>generate / edit / explain / design / verify-design"]
+    end
+
+    subgraph STORES["Stateful backing services"]
+        pg[("PostgreSQL<br/>(Prisma)")]
+        redis[("Redis<br/>BullMQ: simulations + design")]
+        s3[("MinIO / S3<br/>models + large results")]
+    end
+
+    subgraph WORKER["worker-sim (apps/worker-sim)"]
+        simw["simulations worker<br/>ngspice -b + Monte-Carlo yield"]
+        designw["design worker<br/>runDesignLoop + orphan reaper"]
+    end
+
+    anthropic{{"Anthropic API<br/>Claude tool-use (llm-core)"}}
+    tme{{"TME catalog API<br/>real parts + sourcing"}}
+
+    client --> API
+    core -->|Prisma| pg
+    API -->|enqueue jobs| redis
+    core -->|presign| s3
+    gen -->|generate / ground| anthropic
+    gen -->|parts grounding| tme
+
+    redis -->|consume| WORKER
+    simw -->|write results| pg
+    simw <-->|models / results| s3
+    designw -->|AI fix loop| anthropic
+    designw -->|land DesignJob rows| pg
 ```
 
 Full details: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
