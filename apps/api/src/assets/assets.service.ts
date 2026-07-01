@@ -19,8 +19,8 @@ import { randomUUID } from 'crypto';
 
 @Injectable()
 export class AssetsService {
-    private s3: S3Client;
-    private bucket: string;
+    private readonly s3: S3Client;
+    private readonly bucket: string;
 
     constructor(
         private readonly prisma: PrismaService,

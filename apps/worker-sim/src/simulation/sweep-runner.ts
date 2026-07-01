@@ -5,9 +5,6 @@
  * and the worker-only concerns: one reused job dir, and a hard cap on the number of swept points so a runaway
  * sweep (e.g. a 10 000-point dec range) can't hold a worker slot indefinitely.
  */
-import * as fs from 'fs/promises';
-import * as path from 'path';
-import { config } from '../config';
 import { logger } from '../logger';
 import {
     runParametricSweep,
@@ -17,7 +14,7 @@ import {
     type SweepSpec,
     type SweepResult,
 } from '@circuit-forge/eda-core';
-import { makeVariantRunner } from './variant-runner';
+import { withVariantJobDir } from './job-dir';
 
 /** Hard cap on swept points (mirrors runMonteCarlo's 300-variant cap) — a runaway sweep can't spin forever. */
 const MAX_SWEEP_POINTS = 100;
@@ -55,28 +52,16 @@ function clampSpec(spec: SweepSpec): { spec: SweepSpec; clamped: boolean } {
  */
 export async function runSweepBatch(input: SweepBatchInput): Promise<SweepBatchResult> {
     const startTime = Date.now();
-    const jobDir = path.join(config.SIM_TEMP_DIR, `${input.jobId}-sweep`);
     const { spec, clamped } = clampSpec(input.sweep);
 
-    await fs.mkdir(jobDir, { recursive: true });
-    // Legacy two-user mode needs the dropped ngspice user to write here; single-uid keeps tight perms.
-    if (config.SIM_SANDBOX_USER) await fs.chmod(jobDir, 0o777).catch(() => undefined);
-
-    // Model files are identical across every swept point — write them once.
-    if (input.modelFiles) {
-        for (const m of input.modelFiles) await fs.writeFile(path.join(jobDir, m.name), m.content);
-    }
-
-    const runVariant = makeVariantRunner(jobDir, input.analysis);
-
-    try {
-        const result = await runParametricSweep(input.circuit, input.criteria, spec, runVariant);
+    // Reused job dir + shared per-variant runner (stale-CSV safety, OOM guard) — see job-dir.ts / variant-runner.ts.
+    const result = await withVariantJobDir(input.jobId, 'sweep', input.analysis, input.modelFiles, async (runVariant) => {
+        const r = await runParametricSweep(input.circuit, input.criteria, spec, runVariant);
         logger.info(
-            { jobId: input.jobId, parameter: result.parameter, evaluated: result.evaluated, passed: result.passed, passAll: result.passAll, clamped },
+            { jobId: input.jobId, parameter: r.parameter, evaluated: r.evaluated, passed: r.passed, passAll: r.passAll, clamped },
             'Parametric sweep complete',
         );
-        return { ...result, runtimeMs: Date.now() - startTime, clamped };
-    } finally {
-        await fs.rm(jobDir, { recursive: true, force: true }).catch(() => undefined);
-    }
+        return r;
+    });
+    return { ...result, runtimeMs: Date.now() - startTime, clamped };
 }

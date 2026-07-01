@@ -34,11 +34,11 @@ export class SimulationService {
     private readonly bucket: string;
 
     constructor(
-        private prisma: PrismaService,
-        private versionsService: VersionsService,
-        private orgsService: OrgsService,
-        private usageService: UsageService,
-        @InjectQueue('simulations') private simulationQueue: Queue,
+        private readonly prisma: PrismaService,
+        private readonly versionsService: VersionsService,
+        private readonly orgsService: OrgsService,
+        private readonly usageService: UsageService,
+        @InjectQueue('simulations') private readonly simulationQueue: Queue,
     ) {
         this.bucket = process.env.S3_BUCKET || 'circuitforge';
         this.s3 = new S3Client({
