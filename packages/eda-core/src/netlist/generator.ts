@@ -373,7 +373,7 @@ export function generateNetlist(
     const probes = [
         ...new Set(
             rawProbes
-                .map((p) => rewriteProbeNodeRefs(rewriteProbeDeviceRefs(p, designatorToInstance), netRefToNode))
+                .map((p) => rewriteProbeNodeRefs(rewriteProbeDeviceRefs(normalizeProbe(p), designatorToInstance), netRefToNode))
                 .filter((p) => p.trim().length > 0) // a probe that reduced to nothing (e.g. v(gnd)) is dropped
                 .filter((p) => !isDigitalCurrentProbe(p, digitalDeviceRefs)) // i(<digital a-device>) has no current vector → drop (else it aborts the whole wrdata line)
                 .map((p) => {
@@ -644,6 +644,20 @@ function rewriteProbeNodeRefs(probe: string, map: Map<string, string>): string {
         if (unchanged) return whole; // no remap and no ground arg — preserve the original text verbatim
         return nonGround.length === 0 ? '' : `v(${nonGround.join(',')})`;
     });
+}
+
+/**
+ * Normalize a caller-supplied probe: a BARE node token (no v()/i()/@ wrapper) is a voltage probe, so wrap it as
+ * v(<token>) — then it flows through the SAME net-id → sanitized-node resolution (rewriteProbeNodeRefs) as an
+ * explicit v(<net>). Without this a probe like "out" (a natural thing for a client/UI to send) lands in the
+ * wrdata line verbatim as `out`, which is NOT a valid ngspice vector (it must be v(x_out)); wrdata then emits
+ * nothing and the run yields an opaque "no output file" failure. Already-typed probes — v(...), i(...), @dev[i],
+ * or any token containing '(' or '@' — pass through untouched.
+ */
+function normalizeProbe(probe: string): string {
+    const t = probe.trim();
+    if (!t || t.includes('(') || t.includes('@')) return t;
+    return `v(${t})`;
 }
 
 /**
