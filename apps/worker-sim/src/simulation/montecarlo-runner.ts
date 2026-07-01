@@ -12,8 +12,6 @@
  *     spec failure — we can't tell a solver hiccup from a genuinely-broken corner, so we exclude it (and the
  *     `errored` count surfaces it). Reuses the IDENTICAL sandboxed executeNgspice as a normal sim.
  */
-import * as fs from 'fs/promises';
-import * as path from 'path';
 import { config } from '../config';
 import { logger } from '../logger';
 import {
@@ -23,7 +21,7 @@ import {
     type AcceptanceCriterion,
     type MonteCarloYield,
 } from '@circuit-forge/eda-core';
-import { makeVariantRunner } from './variant-runner';
+import { withVariantJobDir } from './job-dir';
 
 export interface MonteCarloBatchInput {
     jobId: string;
@@ -52,25 +50,14 @@ export async function runMonteCarloBatch(
     onProgress?: (ran: number) => void,
 ): Promise<MonteCarloBatchResult> {
     const startTime = Date.now();
-    const jobDir = path.join(config.SIM_TEMP_DIR, `${input.jobId}-mc`);
     const deadline = startTime + config.MC_BATCH_BUDGET_MS;
     let budgetHit = false;
 
-    await fs.mkdir(jobDir, { recursive: true });
-    // Legacy two-user mode needs the dropped ngspice user to write here; single-uid keeps tight perms.
-    if (config.SIM_SANDBOX_USER) await fs.chmod(jobDir, 0o777).catch(() => undefined);
-
-    // Model files are identical across variants — write them once.
-    if (input.modelFiles) {
-        for (const m of input.modelFiles) await fs.writeFile(path.join(jobDir, m.name), m.content);
-    }
-
-    // The per-variant ngspice execution (stale-CSV safety, OOM guard, THD/gain fold) is shared with the
-    // parametric-sweep batch — see variant-runner.ts. MC only differs in HOW variants are drawn (random).
-    const runVariant = makeVariantRunner(jobDir, input.analysis);
-
-    try {
-        const summary = await runMonteCarlo(input.circuit, input.criteria, runVariant, {
+    // The per-variant ngspice execution (stale-CSV safety, OOM guard, THD/gain fold) + the reused job dir are
+    // shared with the sweep/corner batches (see job-dir.ts + variant-runner.ts). MC only differs in HOW variants
+    // are drawn (random).
+    const summary = await withVariantJobDir(input.jobId, 'mc', input.analysis, input.modelFiles, async (runVariant) => {
+        const s = await runMonteCarlo(input.circuit, input.criteria, runVariant, {
             n: input.n ?? config.MC_N_DEFAULT,
             seed: input.seed ?? 1,
             ciStopHalfWidth: config.MC_CI_HALFWIDTH_STOP,
@@ -84,11 +71,10 @@ export async function runMonteCarloBatch(
             onProgress,
         });
         logger.info(
-            { jobId: input.jobId, ran: summary.ran, evaluated: summary.evaluated, yield: summary.yield, budgetHit },
+            { jobId: input.jobId, ran: s.ran, evaluated: s.evaluated, yield: s.yield, budgetHit },
             'Monte-Carlo batch complete',
         );
-        return { ...summary, runtimeMs: Date.now() - startTime, budgetHit };
-    } finally {
-        await fs.rm(jobDir, { recursive: true, force: true }).catch(() => undefined);
-    }
+        return s;
+    });
+    return { ...summary, runtimeMs: Date.now() - startTime, budgetHit };
 }

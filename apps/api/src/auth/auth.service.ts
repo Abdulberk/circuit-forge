@@ -65,10 +65,10 @@ export class AuthService {
     private readonly logger = new Logger(AuthService.name);
 
     constructor(
-        private prisma: PrismaService,
-        private jwtService: JwtService,
-        private configService: ConfigService,
-        private email: EmailService,
+        private readonly prisma: PrismaService,
+        private readonly jwtService: JwtService,
+        private readonly configService: ConfigService,
+        private readonly email: EmailService,
     ) { }
 
     /** Canonical email form: trimmed + lowercased, so case/whitespace variants are one account. */

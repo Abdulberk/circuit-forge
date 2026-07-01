@@ -8,9 +8,6 @@
  * ⇒ ≤256 corners). A caller with many toleranced parts should pre-rank the most influential ones (e.g. via a
  * `.sens` run) and pass them in `corner.components`; that sensitivity-guided selection is a caller-side concern.
  */
-import * as fs from 'fs/promises';
-import * as path from 'path';
-import { config } from '../config';
 import { logger } from '../logger';
 import {
     runWorstCase,
@@ -20,7 +17,7 @@ import {
     type CornerSpec,
     type WorstCaseResult,
 } from '@circuit-forge/eda-core';
-import { makeVariantRunner } from './variant-runner';
+import { withVariantJobDir } from './job-dir';
 
 export interface CornerBatchInput {
     jobId: string;
@@ -42,27 +39,15 @@ export interface CornerBatchResult extends WorstCaseResult {
  */
 export async function runCornerBatch(input: CornerBatchInput): Promise<CornerBatchResult> {
     const startTime = Date.now();
-    const jobDir = path.join(config.SIM_TEMP_DIR, `${input.jobId}-corner`);
 
-    await fs.mkdir(jobDir, { recursive: true });
-    // Legacy two-user mode needs the dropped ngspice user to write here; single-uid keeps tight perms.
-    if (config.SIM_SANDBOX_USER) await fs.chmod(jobDir, 0o777).catch(() => undefined);
-
-    // Model files are identical across every corner — write them once.
-    if (input.modelFiles) {
-        for (const m of input.modelFiles) await fs.writeFile(path.join(jobDir, m.name), m.content);
-    }
-
-    const runVariant = makeVariantRunner(jobDir, input.analysis);
-
-    try {
-        const result = await runWorstCase(input.circuit, input.criteria, input.corner, runVariant);
+    // Reused job dir + shared per-variant runner (stale-CSV safety, OOM guard) — see job-dir.ts / variant-runner.ts.
+    const result = await withVariantJobDir(input.jobId, 'corner', input.analysis, input.modelFiles, async (runVariant) => {
+        const r = await runWorstCase(input.circuit, input.criteria, input.corner, runVariant);
         logger.info(
-            { jobId: input.jobId, cornered: result.componentsCornered, evaluated: result.evaluated, passAllCorners: result.passAllCorners, omitted: result.omitted.length },
+            { jobId: input.jobId, cornered: r.componentsCornered, evaluated: r.evaluated, passAllCorners: r.passAllCorners, omitted: r.omitted.length },
             'Worst-case corner batch complete',
         );
-        return { ...result, runtimeMs: Date.now() - startTime };
-    } finally {
-        await fs.rm(jobDir, { recursive: true, force: true }).catch(() => undefined);
-    }
+        return r;
+    });
+    return { ...result, runtimeMs: Date.now() - startTime };
 }

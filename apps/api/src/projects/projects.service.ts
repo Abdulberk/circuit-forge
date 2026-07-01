@@ -9,8 +9,8 @@ import { paginated, type Paginated } from '../common/dto/pagination.dto';
 @Injectable()
 export class ProjectsService {
     constructor(
-        private prisma: PrismaService,
-        private orgsService: OrgsService,
+        private readonly prisma: PrismaService,
+        private readonly orgsService: OrgsService,
     ) { }
 
     async findAllForOrg(orgId: string, userId: string, page: { limit: number; offset: number }): Promise<Paginated<unknown>> {
