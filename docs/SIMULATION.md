@@ -43,8 +43,18 @@ Source files:
 | Logger | [logger.ts](../apps/worker-sim/src/logger.ts) |
 | Netlist generator | [packages/eda-core/src/netlist/generator.ts](../packages/eda-core/src/netlist/generator.ts) |
 | Netlist sanitizer | [packages/eda-core/src/netlist/sanitizer.ts](../packages/eda-core/src/netlist/sanitizer.ts) |
+| Netlist round-trip import (§15) | [packages/eda-core/src/parser/netlist-parser.ts](../packages/eda-core/src/parser/netlist-parser.ts) |
 | CSV / output parser | [packages/eda-core/src/parser/csv-parser.ts](../packages/eda-core/src/parser/csv-parser.ts) |
+| Fourier/THD, `.meas`, `.tf`, `.noise`, `.sens` parsers (§10) | [packages/eda-core/src/analysis/](../packages/eda-core/src/analysis/) |
+| Verdict-gating assertions (§11) | [packages/eda-core/src/analysis/assertions.ts](../packages/eda-core/src/analysis/assertions.ts) |
+| Monte-Carlo orchestration (§12) | [packages/eda-core/src/montecarlo.ts](../packages/eda-core/src/montecarlo.ts) |
+| Monte-Carlo batch runner (§12) | [simulation/montecarlo-runner.ts](../apps/worker-sim/src/simulation/montecarlo-runner.ts) |
+| Design queue worker (§13) | [design/processor.ts](../apps/worker-sim/src/design/processor.ts) |
+| Orphan design-job reaper (§13) | [design/reaper.ts](../apps/worker-sim/src/design/reaper.ts) |
 | Job that enqueues work | [apps/api/src/simulation/simulation.service.ts](../apps/api/src/simulation/simulation.service.ts) |
+| Simulation queue options (§3) | [apps/api/src/simulation/simulation.module.ts](../apps/api/src/simulation/simulation.module.ts) |
+| Design queue options (§13) | [apps/api/src/generation/generation.module.ts](../apps/api/src/generation/generation.module.ts) |
+| Readiness probe (§14) | [apps/api/src/health/health.controller.ts](../apps/api/src/health/health.controller.ts) |
 | DB schema | [apps/api/prisma/schema.prisma](../apps/api/prisma/schema.prisma) |
 
 ---
@@ -115,7 +125,7 @@ interface SimulationJobPayload {
   orgId: string;
   netlist: string;                       // full SPICE netlist text
   probeNames: string[];                  // names passed to the CSV parser (see quirk §9)
-  analysisType: string;                  // 'tran' | 'ac' | 'dc' | 'op' | ...
+  analysisType: string;                  // 'tran' | 'ac' | 'dc' | 'op' | 'noise' | 'sens'
   analysisConfig: Record<string, unknown>;
   modelAssets?: string[];                // optional S3 keys of model files to download
 }
@@ -171,7 +181,21 @@ otherwise `FAILED`.
 - Catch path: `{ error }` only.
 
 > The catch block re-throws after marking the row `FAILED`, so BullMQ also sees the job
-> as failed and fires the `failed` event. There is no automatic retry configured.
+> as failed and fires the `failed` event.
+>
+> **Retry is configured, but it is infra-only.** The `'simulations'` queue's `defaultJobOptions`
+> (set on the API side in
+> [apps/api/src/simulation/simulation.module.ts](../apps/api/src/simulation/simulation.module.ts)) give BullMQ
+> `attempts: 3` with `backoff: { type: 'exponential', delay: 1000 }` (retries at ~1 s, then ~2 s). This
+> only matters for a **thrown** job — i.e. the "Unhandled exception (catch)" row above, which re-throws
+> after marking `FAILED`. A genuine simulation fault (non-convergence, bad circuit, `ngspice exited with
+> code N`) is *returned* by the runner, not thrown, so `handleFailure` completes the job normally and
+> BullMQ never retries it — re-running a deterministically-bad deck would just waste a worker slot. Only
+> transient infrastructure hiccups (ngspice couldn't spawn, a momentary S3/DB/Redis blip) throw and get
+> the retry. The same queue also sets `removeOnComplete: { age: 3600, count: 1000 }` and
+> `removeOnFail: { age: 24 * 3600, count: 1000 }` so Redis doesn't accumulate finished job records
+> forever — the API always reads job status/results from Postgres, never from the BullMQ record, so the
+> queue entry is disposable once terminal.
 
 ---
 
@@ -392,6 +416,172 @@ const result = parseSimulationOutput(outputContent, probeNames, input.analysisTy
 `extractProbes` (eda-core) parses the names out of the netlist's `wrdata` line, so the parser's
 `probeNames` stay in lockstep with whatever probes the netlist actually wrote — version/default sims
 now return populated `series`.
+
+---
+
+## 10. ngspice-native analyses beyond tran/ac/dc/op
+
+Besides the four base analysis types, the worker surfaces five ngspice-native analyses/features. All
+are **report-only**: a parse miss never fails the run, and — with the exception of THD/gain feeding the
+verdict-gating framework in §11 — none of them gate pass/fail on their own.
+
+| Analysis / feature | Config type (eda-core) | Parser | Surfaced on `SimulationResult` |
+|---|---|---|---|
+| Fourier / THD | `TranAnalysis.fourier: { fundamentalFreq, probes }` | `parseFourierLog` | `fourier?: FourierResult[]` |
+| `.meas` measurements | `TranAnalysis.measurements?: MeasureSpec[]` | `parseMeasurements` | `measurements?: MeasurementResult[]` |
+| `.tf` transfer function | `OpAnalysis.tf: { output, inputSource }` | `parseTransferFunction` | `transferFunction?: TransferFunctionResult` |
+| `.noise` | `NoiseAnalysis` (own `analysisType: 'noise'`) | `parseNoise` (+ `parseNoiseTotals`) | `noise?: NoiseResult`; spectrum in `series` as `onoise_spectrum`/`inoise_spectrum` |
+| `.sens` | `SensAnalysis` (own `analysisType: 'sens'`) | `parseSensitivity` | `sensitivity?: SensitivityResult` |
+
+All five types live in [packages/eda-core/src/types/analysis.ts](../packages/eda-core/src/types/analysis.ts);
+the parsers live under [packages/eda-core/src/analysis/](../packages/eda-core/src/analysis/) (`fourier.ts`,
+`measure.ts`, `tf.ts`, `noise.ts`, `sens.ts`).
+
+- **Fourier/THD and `.tf`** ride on an existing `tran`/`op` run — no extra simulation. `runner.ts`
+  detects them from the generated netlist itself (`fourier` / `tf` control commands, or a `.meas` card)
+  via regex against the netlist text, reads the ngspice **listing** (`stdout` + the `-o stdout.log` file
+  concatenated), and parses both. This is deliberate: a `.four` card printed under the generator's
+  `quit`-terminated `.control` block emits nothing — only the `fourier`/`tf` *commands* inside `.control`
+  produce output, so the parsers read the listing rather than `output.csv`.
+- **`.meas`** measurement names are read back out of the netlist (`/^\s*\.meas\s+\w+\s+(\w+)\b/gim`) so
+  the parse is scoped to the measures actually requested. A failed measure (e.g. a `when` threshold never
+  reached) is returned as `{ value: null, failed: true }` rather than failing the job.
+- **`.noise`** and **`.sens`** are their own `analysisType` values (not overlays on `tran`/`op`). `.sens`
+  is scalar-only — ngspice prints a table to the listing and writes **no** `output.csv` — so `runner.ts`
+  special-cases it before the "no output file ⇒ fail" guard that every other analysis relies on. `.noise`
+  is parsed from **both** the CSV (the per-frequency spectrum) and the listing (the integrated totals)
+  together, since ngspice splits the two outputs across the two channels.
+
+---
+
+## 11. Verdict-gating framework (assertions)
+
+A "verified" verdict is decided by `evaluateAssertions` in
+[packages/eda-core/src/analysis/assertions.ts](../packages/eda-core/src/analysis/assertions.ts) — the one
+place a measurable spec is checked against a simulation result. It is shared by verify-design
+(user-supplied assertions), the AI design loop (model-emitted acceptance criteria), and the Monte-Carlo
+batch runner (§12), so all three paths agree on what "pass" means.
+
+- **Metric enum.** The API's `AssertionDto` (and eda-core's structurally-identical `AcceptanceCriterion`)
+  exposes nine metrics: `min | max | final | pp | avg | rms | cutoff | thd | gain`. `min`/`max`/`final`/
+  `pp`/`avg`/`rms` are read straight off a node's summarized series (`avg`/`rms` are **time-weighted** —
+  trapezoidal over the adaptive timesteps, not sample-averaged). `cutoff` is the −3 dB corner of an AC
+  magnitude sweep. `thd` and `gain` are **not** derivable from the series at all — they only exist if the
+  analysis explicitly requested a Fourier/`.tf` overlay (§10).
+- **How THD/gain get onto a measurement.** `attachFourierThd(measurements, fourier)` and
+  `attachTransferFunction(measurements, tf)` fold the `FourierResult`/`TransferFunctionResult` from §10
+  onto the matching per-node `SimMeasurement` (matched by canonical node key) **before**
+  `evaluateAssertions` runs. This means a `thd`/`gain` criterion rides on the design's **own** analysis
+  config — a `thd` criterion requires the same design's `tran` analysis to also carry a `fourier` request
+  on that probe; a `gain` criterion requires its `op` analysis to carry a `tf` request to that probe.
+  Without the matching overlay, `m.thd`/`m.gain` stay `undefined` and the criterion resolves
+  `actual: null, pass: false` — never a silent pass.
+- Both `runner.ts` (nominal sim) and `montecarlo-runner.ts` (§12, per-variant) call `attachFourierThd`/
+  `attachTransferFunction`, so THD/gain gate identically at nominal and across tolerance variants.
+
+---
+
+## 12. Monte-Carlo yield orchestration
+
+Real components vary within a tolerance; a design that passes at its nominal value can fail once R is
++5% and C is −5%. The Monte-Carlo subsystem answers "what fraction of real-world builds would actually
+pass?" instead of just "does the nominal value pass?".
+
+**Pure orchestration (eda-core, no ngspice):**
+[packages/eda-core/src/montecarlo.ts](../packages/eda-core/src/montecarlo.ts) —
+
+- `perturbValue`/`perturbCircuit` sample each toleranced component's value (gaussian ±tol as 3σ,
+  hard-clamped, or uniform ±tol) with a seeded PRNG (`mulberry32`), so a given seed reproduces the exact
+  same variant set.
+- `monteCarloVariants` draws N perturbed `CircuitJson` clones from one seed.
+- `computeYield` aggregates per-variant outcomes (`'pass' | 'fail' | 'errored'`) into a **Wilson 95%
+  confidence interval** on the yield. `errored` (a variant ngspice couldn't even run — spawn/infra fault,
+  not a spec failure) is excluded from the yield denominator so an infra blip never masquerades as a low
+  yield.
+- `runMonteCarlo(circuit, criteria, runVariant, opts)` is the orchestrator: draws a variant, calls the
+  injected `runVariant` (real ngspice in production, a fake in tests), evaluates `criteria` against the
+  returned measurements via `evaluateAssertions`, and repeats up to `opts.n` (hard-capped at 300). It
+  supports **adaptive-N**: once `minRuns` (default 24) evaluated variants have run, it stops early once
+  the Wilson CI half-width is ≤ `ciStopHalfWidth` (default 0.03 = ±3%) — a clearly-robust or clearly-bad
+  design converges in far fewer than N runs. `opts.shouldStop` lets a caller impose a wall-clock budget;
+  `opts.onProgress` lets it checkpoint partial progress.
+
+**Real-ngspice batch runner (worker):**
+[apps/worker-sim/src/simulation/montecarlo-runner.ts](../apps/worker-sim/src/simulation/montecarlo-runner.ts)
+supplies the `VariantRunner` that plugs into `runMonteCarlo`:
+
+- Reuses **one** job dir across all variants (`<SIM_TEMP_DIR>/<jobId>-mc`) rather than one per variant.
+  Before every spawn it deletes `output.csv`/`stdout.log` from the prior variant — otherwise a variant
+  that produces no file could silently read the previous variant's leftover result.
+- Immediately reduces each variant's result to `summarizeSeries` scalars and discards the raw series
+  (OOM guard — 300 full `SimulationResult`s would never accumulate).
+- Folds THD/gain onto each variant's measurements via `attachFourierThd`/`attachTransferFunction` (§11)
+  when the analysis requests them, so THD/gain gate **per variant**, not just at nominal.
+- Enforces a per-batch wall-clock budget (`config.MC_BATCH_BUDGET_MS`, default 60 s) via `shouldStop`; on
+  a hit it returns an honest partial (`budgetHit: true`, real counts — never a claimed N).
+- Config knobs (worker `config.ts`): `MC_N_DEFAULT` (default 300, the variant cap), `MC_CI_HALFWIDTH_STOP`
+  (default 0.03), `MC_BATCH_BUDGET_MS` (default 60000).
+- `apps/worker-sim/src/simulation/processor.ts` and `apps/worker-sim/src/design/local-sim.ts` both call
+  `runMonteCarloBatch` — the former as an informational batch attached to a plain simulation job
+  (`metrics.monteCarlo`), the latter as part of the agentic design loop's robustness pass.
+
+---
+
+## 13. Durable design queue + orphan reaper
+
+The agentic design loop (AI-driven circuit generation + fix loop) runs on its own durable BullMQ `'design'`
+queue + worker, consumed only by worker-sim instances (not the API). This replaced an earlier in-process
+detached runner (removed).
+
+- **Worker.** `createDesignWorker()` in
+  [apps/worker-sim/src/design/processor.ts](../apps/worker-sim/src/design/processor.ts) is started from
+  `main.ts` **only when `LLM_API_KEY` is configured** — a sim-only deployment (no LLM key) deliberately
+  never consumes the `'design'` queue, since it would just fail every job.
+- **Job options** on the `'design'` queue (set in
+  [apps/api/src/generation/generation.module.ts](../apps/api/src/generation/generation.module.ts)):
+  `attempts: 1` (deliberately **no retry** — the design loop is not idempotent/checkpointed, so a BullMQ
+  redelivery would restart from round 1 and re-bill the LLM; a crash surfaces as a terminal `FAILED` the
+  user can explicitly retry, never a silent re-run), plus the same `removeOnComplete: { age: 3600, count:
+  1000 }` / `removeOnFail: { age: 24 * 3600, count: 1000 }` cleanup as the simulation queue (§3) — the
+  `DesignJob` row in Postgres is the source of truth the client polls, so the queue record is disposable.
+- **Orphan reaper.** [apps/worker-sim/src/design/reaper.ts](../apps/worker-sim/src/design/reaper.ts) runs
+  alongside the design worker (boot sweep + every `REAPER_INTERVAL_MS`, default 60 s) and reconciles
+  `DesignJob` rows stuck in `QUEUED`/`RUNNING` past a grace window (`DESIGN_REAP_GRACE_MS`, default 60 s)
+  against the queue's ground truth (`queue.getJob(rowId)` — the BullMQ job id is set equal to the
+  `DesignJob` row id). It recovers two failure modes every distributed job system has: a worker dying
+  mid-job (row stuck `RUNNING` forever) and the insert↔enqueue gap (a row inserted `QUEUED` just before an
+  API crash, so no worker ever picks it up). A row whose queue job is still legitimately `waiting`/
+  `delayed`/`active` (within `DESIGN_REAP_RUNNING_DEADLINE_MS`, default 30 min) is never touched — every
+  reap is a **conditional** `updateMany` gated on the row still being `QUEUED`/`RUNNING`, so it can't
+  clobber a row the worker already finalized, and concurrent reaper instances race harmlessly.
+- **Graceful shutdown order (worker-sim).** `apps/worker-sim/src/main.ts` closes the simulation worker and
+  the design worker first (letting in-flight jobs drain), **then** stops the reaper, **then** disconnects
+  Prisma, and flushes OpenTelemetry **last** — so the final spans/metrics from the draining job still
+  export before the process exits. (The API's own shutdown in `apps/api/src/main.ts` is simpler — it owns
+  no worker or reaper, just `app.close()` then `shutdownTelemetry()`.)
+
+---
+
+## 14. Readiness probe
+
+The API exposes `GET /health/ready` ([apps/api/src/health/health.controller.ts](../apps/api/src/health/health.controller.ts)),
+which concurrently pings Postgres (`SELECT 1`), Redis, and S3/MinIO — the three hard dependencies the API
+needs to actually enqueue/serve a simulation. Each check is isolated (one dead dependency never masks the
+others) and the endpoint returns **503** with a `status: 'degraded'` body plus a per-check breakdown when
+any check fails, so an orchestrator (k8s readiness probe) pulls the pod from rotation instead of routing
+traffic to an API that can't reach the queue or storage. `GET /health/live` is a separate, dependency-free
+liveness check — the process being alive is orthogonal to its dependencies being reachable. Both endpoints
+are exempted from the global rate limiter (`@SkipThrottle()`), since orchestrator probes poll frequently.
+
+---
+
+## 15. SPICE netlist round-trip import
+
+`parseNetlist` in
+[packages/eda-core/src/parser/netlist-parser.ts](../packages/eda-core/src/parser/netlist-parser.ts) parses
+a raw SPICE deck back into structured form — the inverse of `generateNetlist`. It handles both analog and
+digital/XSPICE (`CFD_*` model) components, preserves `.model`/`.subckt`/`.options`/`.ic` cards, and
+re-merges nets that a mixed-signal circuit's analog/digital bridging had split apart during generation.
 
 ---
 

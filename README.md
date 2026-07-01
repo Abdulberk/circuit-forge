@@ -9,18 +9,21 @@ A backend system for AI-assisted circuit design and **SPICE-based simulation**. 
 ## ✨ Features
 
 - **Multi-tenant REST API** (NestJS) — organizations, projects, versioned circuits, templates, model assets, and simulations, secured with JWT + RBAC.
-- **Async simulation pipeline** — API enqueues jobs on a BullMQ/Redis queue; a dedicated worker runs **ngspice** in an isolated, sandboxed per-job directory and stores results in Postgres or S3/MinIO.
+- **Async simulation pipeline** — API enqueues jobs on a BullMQ/Redis queue; a dedicated worker runs **ngspice** in an isolated, sandboxed per-job directory and stores results in Postgres or S3/MinIO. Simulation jobs retry with backoff and clean themselves up on completion/failure; jobs are capped by a sim timeout and output-size/point limits.
+- **Durable AI design queue** — the AI design loop runs on its own durable BullMQ queue (not an in-process detached runner), with graceful shutdown (workers close → orphan reaper stops → DB disconnects → telemetry flushes, on both API and worker `SIGTERM`/`SIGINT`) and an orphan-design reaper that reconciles rows stuck `QUEUED`/`RUNNING` against the queue's real state after a crash.
 - **EDA core library** (`@circuit-forge/eda-core`):
   - Circuit-JSON → SPICE **netlist generation** for a broad device set — R/L/C, transformers & lossless transmission lines, independent + controlled (E/G) + arbitrary behavioral (B) sources, diodes/Zener, BJT/MOSFET/JFET, voltage-controlled switches, thyristors/SCR, IGBTs, and op-amp/IC `.subckt` macromodels — backed by a curated generic **model library**, plus control block and probes.
   - **SPICE security/sanitization** — reserved-word & node-name sanitization, shell-metacharacter rejection, `.include` path whitelisting.
   - **ERC** (Electrical Rule Check) with coded findings.
-  - **Result parsing** — ngspice CSV / raw ASCII → typed series.
-  - **Zod schemas** for circuit and analysis config (transient / AC / DC / operating point).
+  - **Result parsing** — ngspice CSV / raw ASCII → typed series, plus five report-only ngspice-native analyses: `.four`/THD (Fourier), `.meas` measurements, `.tf` DC transfer function, `.noise`, and `.sens` DC sensitivity.
+  - **Zod schemas** for circuit and analysis config (transient / AC / DC / operating point), including per-analysis `fourier`/`measurements` (transient) and `tf` (operating point) config plus dedicated noise/sensitivity analysis types.
 - **LLM core** (`@circuitforge/llm-core`) — AI circuit generation via Claude using a native **tool-use loop grounded in the live parts catalog** (the model searches/inspects real parts before specifying components, so outputs carry real MPNs + sourcing), plus a simulate-in-the-loop design endpoint that runs ngspice and self-repairs until the circuit verifies.
+- **Verdict-gating spec assertions** — the AssertionDto metric enum (`min | max | final | pp | avg | rms | cutoff | thd | gain`) lets a spec gate the "verified" verdict on THD and small-signal gain, not just raw voltage/current levels; both are also evaluated for robustness across component-tolerance variants via the Monte-Carlo yield engine (informally "robust-THD"/"robust-gain" — pass at nominal AND across tolerance draws, not nominal alone).
 - **Live component catalog** (`parts`) — TME-backed search over 1.3M+ real manufacturer parts (stock, pricing tiers, datasheets), structured classification, and CircuitJson component mapping; OAuth tokens + responses cached. Feeds AI grounding and per-version **BOM** export.
-- **SPICE netlist interchange** (`netlist`) — import/export standard SPICE decks (LTspice/KiCad round-trip) with generic model bodies inlined on export.
+- **SPICE netlist interchange** (`netlist`) — import/export standard SPICE decks (LTspice/KiCad round-trip), covering both analog and digital/XSPICE (flip-flops, latches, gates, tristate) circuits, with generic model bodies inlined on export.
 - **Usage metering & quotas** (`usage`) — always-on metering with default-unlimited quotas (per `QUOTA_*` env): multi-tenant simulation fairness (concurrent/monthly), per-user catalog-call ceilings, and per-org storage caps; drift-free on-demand aggregation, structured `429 QUOTA_EXCEEDED`.
-- **Auth & security** — Argon2 password hashing, JWT access + refresh tokens, per-org roles (OWNER/ADMIN/MEMBER), `class-validator` + Zod input validation, rate limiting, simulation timeout & output caps.
+- **Auth & security** — Argon2 password hashing, JWT access + refresh token rotation, login brute-force lockout, email verification + password reset, per-org roles (OWNER/ADMIN/MEMBER), `class-validator` + Zod input validation, global rate limiting, CORS allowlist, security headers.
+- **Production robustness** — a `/health/ready` readiness probe pings DB + Redis + S3 concurrently and reports 503 on degradation; LLM calls carry a per-call timeout, a token budget, and retry-on-timeout; simulation jobs are capped by output-size and point limits (see the durable-queue bullet above for retry/cleanup).
 - **Local infra via Docker Compose** — Postgres, Redis, MinIO (+ auto bucket creation).
 - **Demo seed** — ready-to-use user, org, 10 circuit templates, and a sample project.
 

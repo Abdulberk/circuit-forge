@@ -1,6 +1,6 @@
 # Circuit Forge — Frontend Build Brief
 
-**Date:** 2026-05-30 · **Audience:** an AI coding agent (e.g. Claude Code) building a greenfield frontend · **Status:** ready-to-implement specification
+**Date:** 2026-05-30 (last verified 2026-07-01) · **Audience:** an AI coding agent (e.g. Claude Code) building a greenfield frontend · **Status:** ready-to-implement specification
 
 This document is an implementable technical specification for building a **new, from-scratch (greenfield) frontend** for **Circuit Forge** — an enterprise-grade EDA (Electronic Design Automation) platform. The backend already exists, is verified, and is the system of record; this frontend is purely a client of its REST API. Read every section in order: the contracts here are derived directly from the real backend source and are binding.
 
@@ -479,9 +479,16 @@ Request:
   circuit: CircuitJson,                  // required
   analysisConfig?: AnalysisConfig,       // optional; defaults to an operating-point analysis
   assertions?: {                         // optional; max 50. Each is one spec checked vs the SIMULATION
-    probe: string;                       // a NODE name — "out" or "v(out)" (the v() wrapper is optional, case-insensitive).
-                                         //   ⚠️ current/power probes (i(R1), @r1[i]) are NOT supported yet → 400.
-    metric: 'min' | 'max' | 'final' | 'pp';   // pp = peak-to-peak (max-min). final = last value (use for DC/settled level).
+    probe: string;                       // a NODE name — "out" or "v(out)" (the v() wrapper is optional, case-insensitive) —
+                                         //   OR a branch current "i(R1)" on a resistor/cap/source/inductor/vcvs/ccvs (R/C/V/L/E/H;
+                                         //   the server auto-unions it into the netlist's probes). A diode/transistor/subckt/switch
+                                         //   terminal current has no branch-current vector → 400 with an actionable message
+                                         //   ("probe a series resistor's current instead").
+    metric: 'min' | 'max' | 'final' | 'pp' | 'avg' | 'rms' | 'cutoff' | 'thd' | 'gain';
+                                         // pp = peak-to-peak (max-min); final = last value (DC/settled level); avg/rms are
+                                         // TIME-WEIGHTED over the run; cutoff = −3dB corner Hz (needs an "ac" analysis);
+                                         // thd = % (needs a "tran" analysis with fourier configured on the probe);
+                                         // gain = small-signal Vout/Vin (needs an "op" analysis with a "tf" to the probe).
     op: 'lt' | 'lte' | 'gt' | 'gte' | 'approx';
     value: number;                       // SI base units (volts/seconds)
     tol?: number;                        // absolute tolerance for op:"approx" (default 5% of |value|)
@@ -500,8 +507,9 @@ Response `DesignEvidence` (always `200` for a valid circuit — a failed verific
   analysisType?: string;
   runError?: string;
   erc: { errors: {code,message,relatedIds}[]; warnings: {code,message,relatedIds}[] };
-  measurements: { node: string; min: number; max: number; final: number; pp: number }[]; // per node, the EVIDENCE
-  assertions: { label; probe; metric; op; target; tol?; actual: number|null; pass: boolean; detail: string }[];
+  measurements: { node: string; min: number; max: number; final: number; pp: number; avg: number; rms: number;
+                   cutoff?: number|null; thd?: number; gain?: number }[]; // per node, the EVIDENCE
+  assertions: { label; probe; metric; op; target; tol?; actual: number|null; pass: boolean; distance: number|null; detail: string }[];
   checks: { total: number; passed: number; failed: number };
   // Present only when the run hit a CONVERGENCE failure (the "Convergence Doctor" auto-applied solver
   // remedies). recovered:true means a remedy fixed it — surface a subtle "needed solver help: <remedy>"
@@ -516,7 +524,7 @@ Response `DesignEvidence` (always `200` for a valid circuit — a failed verific
 - Render `verdict` as a badge (green pass / red fail / grey inconclusive) + `checks` (e.g. "2/3 specs met"). Show each assertion row with `actual` vs `target` and the ✓/✗. Plot `measurements` / the waveform as the "receipts".
 - If `convergence` is present, show the plain-language `diagnosis` (and `remedyApplied` when `recovered`) — this turns ngspice's cryptic "Timestep too small" into something a user understands.
 - If `power` is present, show each resistor's dissipation; badge `overRating` ones (⚠️ red when `ratingIsDefault:false`, softer amber when it's the 0.25W default guess). It never fails the verdict — it's a heads-up, not a gate.
-- `400` only for a malformed `circuit`/`analysisConfig` or an unsupported current probe — everything else (even a circuit that doesn't simulate) returns a `200` evidence pack.
+- `400` only for a malformed `circuit`/`analysisConfig` or a current-probe assertion on a device with no branch-current vector (diode/transistor/subckt/switch — probe a series resistor instead) — everything else (even a circuit that doesn't simulate, and current probes on R/C/V/L/E/H) returns a `200` evidence pack.
 
 **Caveats (all AI dialogs):**
 - Re-validate the returned `circuit` with `safeValidateCircuitJson` (and `analysisConfig` with `safeValidateAnalysisConfig`) client-side before inserting — defense in depth even though the backend already validated.

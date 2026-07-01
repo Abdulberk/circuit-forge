@@ -3,7 +3,7 @@
 Complete, source-derived reference for the Circuit Forge backend API (NestJS). Every statement here is grounded in the code under [apps/api/src](../apps/api/src); file links are provided throughout. Where the running code diverges from older docs or from environment configuration, the discrepancy is called out explicitly.
 
 - **Source of truth:** [apps/api/src](../apps/api/src)
-- **Verified live:** 2026-05-29
+- **Verified live:** 2026-07-01
 
 ---
 
@@ -62,24 +62,30 @@ All `class-validator` decorators on the DTOs (documented per endpoint below) are
 
 ### CORS
 
-CORS is enabled with **no options** in [main.ts](../apps/api/src/main.ts): `app.enableCors();`. This applies Nest/Express defaults — effectively reflecting the request origin (all origins allowed), default allowed methods, credentials not enabled. There is no origin allowlist configured in code.
+CORS is enabled with an **explicit origin allowlist** in [main.ts](../apps/api/src/main.ts) (lines 56–68): the allowed origins come from the comma-separated `CORS_ORIGINS` env var; if it's unset, the server falls back to the localhost dev origins `http://localhost:3000` and `http://localhost:5173` — never a wildcard. `credentials: true`, methods `GET, POST, PUT, PATCH, DELETE, OPTIONS`, allowed headers `Content-Type, Authorization`, `maxAge: 3600`.
+
+```ts
+const allowedOrigins = (process.env.CORS_ORIGINS ?? '')
+  .split(',').map((o) => o.trim()).filter(Boolean);
+app.enableCors({
+  origin: allowedOrigins.length > 0 ? allowedOrigins : ['http://localhost:3000', 'http://localhost:5173'],
+  credentials: true,
+  methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
+  allowedHeaders: ['Content-Type', 'Authorization'],
+  maxAge: 3600,
+});
+```
 
 ### Rate limiting (throttler)
 
-Global throttling is configured in [app.module.ts](../apps/api/src/app.module.ts) via `ThrottlerModule.forRoot([...])` with two named tiers:
+Global throttling is configured in [app.module.ts](../apps/api/src/app.module.ts) via `ThrottlerModule.forRoot([...])` with two named tiers, and is **enforced globally** via a global `ThrottlerGuard` bound through `APP_GUARD` (app.module.ts:71):
 
 | Tier name | `ttl` (ms) | `limit` (requests) | Meaning |
 |-----------|-----------:|-------------------:|---------|
-| `short` | `1000` | `10` | Max 10 requests per 1 second. |
-| `medium` | `60000` | `120` | Max 120 requests per 60 seconds. |
+| `default` | `60000` | `120` | Sustained per-route budget. Routes with no `@Throttle` decorator inherit this — 120 requests per 60 seconds. |
+| `burst` | `1000` | `30` | Universal short-window guard against hammering; not route-overridable — max 30 requests per 1 second. |
 
-> **Important:** `ThrottlerModule` is registered, but **no global `ThrottlerGuard` is applied** (there is no `APP_GUARD` provider and no app-level `useGlobalGuards`). As written, the two tiers above are **not enforced globally**. The only place throttling is actively bound is the simulation **quick-sim** endpoint, which uses the `@Throttle` decorator (see [simulation.controller.ts](../apps/api/src/simulation/simulation.controller.ts)):
-
-```ts
-@Throttle({ default: { limit: 10, ttl: 60000 } })
-```
-
-i.e. 10 quick simulations per 60 seconds. Other endpoints are not rate-limited by the current code.
+Every `@Throttle({ default: { limit, ttl } })` decorator on a specific route overrides the `default` tier's limit/ttl for that route only (the `burst` tier still applies underneath). Throttling is disabled under `NODE_ENV=test` (`skipIf`) so test suites firing request bursts from one IP aren't rate-limited. Per-route overrides seen in the code include quick-sim (10/60s), version-based simulation (30/60s), AI generate/edit (5/60s), explain-circuit (10/60s), agentic design (3/60s), verify-design (10/60s), and netlist/parts import-export-search routes (30/60s, parts facets 60/60s).
 
 ### Error envelope
 
@@ -403,12 +409,12 @@ No controller prefix; full paths per route. Entire controller is `@UseGuards(Jwt
 
 | Method | Path | Auth | Role | Request body | Response |
 |--------|------|------|------|--------------|----------|
-| POST | `/versions/:versionId/simulations` | Yes (`JwtAuthGuard`) | membership (via version→project→org) | `CreateSimulationDto` | `201` `{ jobId }` |
+| POST | `/versions/:versionId/simulations` | Yes (`JwtAuthGuard`) | membership (via version→project→org) | `CreateSimulationDto` | `201` `{ jobId }` — **throttled 30/60s** |
 | POST | `/simulations/quick` | Yes (`JwtAuthGuard`) | membership (uses caller's first org) | `QuickSimulationDto` | `201` `{ jobId }` — **throttled 10/60s** |
 | GET | `/simulations/:jobId` | Yes (`JwtAuthGuard`) | membership (of job's org) | none | `200` status object |
 | GET | `/simulations/:jobId/result` | Yes (`JwtAuthGuard`) | membership (of job's org) | none | `200` result object |
 
-Only `POST /simulations/quick` carries `@Throttle({ default: { limit: 10, ttl: 60000 } })`.
+`POST /versions/:versionId/simulations` carries `@Throttle({ default: { limit: 30, ttl: 60000 } })`; `POST /simulations/quick` carries `@Throttle({ default: { limit: 10, ttl: 60000 } })`. Both ride on top of the global `default`/`burst` tiers described in §1.4.
 
 **DTOs** ([simulation/dto/index.ts](../apps/api/src/simulation/dto/index.ts)):
 
@@ -435,7 +441,107 @@ Only `POST /simulations/quick` carries `@Throttle({ default: { limit: 10, ttl: 6
 
 > **Simulation prerequisite:** ngspice must be installed where `worker-sim` runs (locally `choco install ngspice -y` on Windows). Without it, jobs transition to a failed state and `getResult` returns the `stderr` in the `error` field. A version-based transient simulation has been verified end-to-end on this setup.
 
-### 3.8 Health — `[health.controller.ts](../apps/api/src/health/health.controller.ts)`
+### 3.8 AI Generation — `[generation.controller.ts](../apps/api/src/generation/generation.controller.ts)`
+
+No controller prefix; full paths per route. Entire controller is `@UseGuards(JwtAuthGuard)` + `@ApiBearerAuth()`.
+
+| Method | Path | Auth | Role | Request body | Response |
+|--------|------|------|------|--------------|----------|
+| POST | `/generate-circuit` | Yes (`JwtAuthGuard`) | — | `GenerateCircuitDto` | `201` generated `CircuitJson` — **throttled 5/60s** |
+| POST | `/edit-circuit` | Yes (`JwtAuthGuard`) | — | `EditCircuitDto` | `201` edited `CircuitJson` — **throttled 5/60s** |
+| POST | `/explain-circuit` | Yes (`JwtAuthGuard`) | — | `ExplainCircuitDto` | `201` plain-language explanation — **throttled 10/60s** |
+
+**DTOs** ([generation/dto/index.ts](../apps/api/src/generation/dto/index.ts)):
+
+`GenerateCircuitDto`: `prompt` (string, 1–2000 chars) + optional `constraints` (string, ≤1000 chars).
+`EditCircuitDto`: `circuit` (CircuitJson object) + `instruction` (string, 1–2000 chars) + optional `analysisConfig`/`constraints`.
+`ExplainCircuitDto`: `circuit` (CircuitJson object) only.
+
+`generate`/`edit`/`explain` delegate directly to `GenerationService` — AI generation is grounded in the live parts catalog via Anthropic tool-use (`search_parts`/`get_part_details`).
+
+### 3.9 Verification — `[verification.controller.ts](../apps/api/src/generation/verification.controller.ts)`
+
+No controller prefix; full paths per route. Entire controller is `@UseGuards(JwtAuthGuard)` + `@ApiBearerAuth()`.
+
+| Method | Path | Auth | Role | Request body | Response |
+|--------|------|------|------|--------------|----------|
+| POST | `/verify-design` | Yes (`JwtAuthGuard`) | — | `VerifyDesignDto` | `200` `DesignEvidence` — **throttled 10/60s** |
+
+Deterministic, simulation-backed verification: ERC + ngspice (delegated to the worker queue, server-side-polled so the HTTP response stays synchronous) + spec assertions, returning a pass/fail/inconclusive evidence pack (verdict + measurements + ERC + per-assertion results). A malformed circuit/analysis config is a `400`; a valid circuit that fails verification is a `200` with `verdict: "fail"`. A current-probe assertion on a diode/transistor/subckt terminal (no branch-current vector in ngspice) is rejected with a `400` steering the caller to probe a series sense resistor instead.
+
+**`VerifyDesignDto`** ([generation/dto/index.ts](../apps/api/src/generation/dto/index.ts)): `circuit` (CircuitJson object) + optional `analysisConfig` (defaults to an operating-point analysis) + optional `assertions` (`AssertionDto[]`, max 50).
+
+**`AssertionDto`** fields: `probe` (string, 1–64 chars), `metric` (enum `min | max | final | pp | avg | rms | cutoff | thd | gain`), `op` (enum `lt | lte | gt | gte | approx`), `value` (number, SI base units; Hz for `cutoff`), optional `tol` (default 5% of `|value|` for `op: "approx"`), optional `label`. `avg`/`rms` are time-weighted (trapezoidal over the adaptive timesteps); `cutoff` is the −3 dB corner of an AC magnitude response (requires an `ac` analysis); `thd` is Total Harmonic Distortion in percent (requires a `tran` analysis with a `fourier` request on the probe); `gain` is small-signal DC gain Vout/Vin (requires an `op` analysis with a `tf` request to the probe).
+
+> **Verdict gating:** `"verified"` gates not just on the listed assertions but also on THD and small-signal GAIN when the design's own analysis produces them (`thd` from `tran`+`fourier`, `gain` from `op`+`tf`), evaluated both at nominal values and across tolerance variants via Monte-Carlo (surfaced as "robust-THD"/"robust-GAIN").
+
+### 3.10 Design (synchronous) — `[design.controller.ts](../apps/api/src/generation/design.controller.ts)`
+
+No controller prefix; full paths per route. Entire controller is `@UseGuards(JwtAuthGuard)` + `@ApiBearerAuth()`.
+
+| Method | Path | Auth | Role | Request body | Response |
+|--------|------|------|------|--------------|----------|
+| POST | `/design-circuit` | Yes (`JwtAuthGuard`) | — | `DesignCircuitDto` | `201` design result — **throttled 3/60s** |
+
+Agentic closed-loop design: generate → simulate → AI-fix on failure, for up to `maxRounds` (1–4, default 2). Runs **synchronously** and can hold the HTTP connection for minutes — kept for back-compat; `/design-jobs` (below) is the scalable async alternative.
+
+**`DesignCircuitDto`** ([generation/dto/index.ts](../apps/api/src/generation/dto/index.ts)): `prompt` (string, 1–2000 chars), optional `constraints` (string, ≤1000 chars), optional `maxRounds` (int, 1–4, default 2).
+
+### 3.11 Design Jobs (async LRO) — `[design-jobs.controller.ts](../apps/api/src/generation/design-jobs.controller.ts)`
+
+Controller prefix: `design-jobs`. Entire controller is `@UseGuards(JwtAuthGuard)` + `@ApiBearerAuth()`. `:id` path params are validated with `ParseUUIDPipe`.
+
+| Method | Path | Auth | Role | Request body | Response |
+|--------|------|------|------|--------------|----------|
+| POST | `/design-jobs` | Yes (`JwtAuthGuard`) | — | `DesignCircuitDto` | `202` `{ jobId, status }` — **throttled 3/60s** |
+| GET | `/design-jobs/:id` | Yes (`JwtAuthGuard`) | membership (of job's org) | none | `200` status + (when finished) full design result |
+| DELETE | `/design-jobs/:id` | Yes (`JwtAuthGuard`) | membership (of job's org) | none | `200` cancel outcome |
+
+The long-running-operation contract for agentic design: `POST` enqueues onto a **durable BullMQ `design` queue** and returns `202` immediately with a job id; a dedicated worker runs the agentic loop and persists the outcome onto the `DesignJob` row (an API deploy/crash no longer abandons in-flight work). The client polls `GET` until a terminal status. `DELETE` cancels — `QUEUED` jobs are canceled outright, `RUNNING` jobs receive a cooperative abort signal. `maxRounds` is clamped server-side to 1–4 (default 2).
+
+### 3.12 Netlist — `[netlist.controller.ts](../apps/api/src/netlist/netlist.controller.ts)`
+
+Controller prefix: `netlist`. Entire controller is `@UseGuards(JwtAuthGuard)` + `@ApiBearerAuth()`. Both routes throttled `30/60s`.
+
+| Method | Path | Auth | Role | Request body | Response |
+|--------|------|------|------|--------------|----------|
+| POST | `/netlist/import` | Yes (`JwtAuthGuard`) | — | `ImportNetlistDto` | `201` parsed `CircuitJson` + analysis + warnings + schema verdict — **throttled 30/60s** |
+| POST | `/netlist/export` | Yes (`JwtAuthGuard`) | — | `ExportNetlistDto` | `201` `text/plain` SPICE deck (`Content-Disposition: attachment; filename="circuit.cir"`) — **throttled 30/60s** |
+
+`import`: parses a standard SPICE netlist (LTspice/KiCad/ngspice deck, max 200 KB) into `CircuitJson`, including analog **and** digital/XSPICE (`CFD_*` models), preserving `.model`/`.subckt`/`.options`/`.ic` cards and re-merging split mixed-signal nets. `export`: generates a self-contained SPICE deck from `CircuitJson` with generic model bodies inlined, given an optional `analysisConfig` (defaults to `{ type: "op" }`) and optional explicit `probes` (defaults to one voltage probe per node, max 100).
+
+**DTOs** ([netlist/dto/index.ts](../apps/api/src/netlist/dto/index.ts)):
+
+`ImportNetlistDto`: `netlist` (string, 1–200,000 chars).
+`ExportNetlistDto`: `circuitJson` (object) + optional `analysisConfig` (object) + optional `probes` (string[], max 100).
+
+### 3.13 Parts (component catalog) — `[parts.controller.ts](../apps/api/src/parts/parts.controller.ts)`
+
+Controller prefix: `parts`. Entire controller is `@UseGuards(JwtAuthGuard)` + `@ApiBearerAuth()`. Literal routes (`search`/`manufacturers`/`categories`) are declared before the `:symbol` wildcard route.
+
+| Method | Path | Auth | Role | Request / query | Response |
+|--------|------|------|------|------------------|----------|
+| GET | `/parts/search` | Yes (`JwtAuthGuard`) | — | query `SearchPartsDto` | `200` search results — **throttled 30/60s**, metered |
+| GET | `/parts/manufacturers` | Yes (`JwtAuthGuard`) | — | none | `200` manufacturers + product counts — **throttled 60/60s**, unmetered |
+| GET | `/parts/categories` | Yes (`JwtAuthGuard`) | — | none | `200` category tree + product counts — **throttled 60/60s**, unmetered |
+| GET | `/parts/:symbol` | Yes (`JwtAuthGuard`) | — | path `symbol` | `200` part detail (params, pricing tiers, stock, datasheet) — **throttled 30/60s**, metered |
+| GET | `/parts/:symbol/component` | Yes (`JwtAuthGuard`) | — | path `symbol` | `200` `CircuitJson` component (+ `simulatable` flag) — **throttled 30/60s**, metered |
+
+Backed by the TME v2 OAuth parts catalog. `search`/`:symbol`/`:symbol/component` are metered **per request** (cache hits included — the billable unit is the API request, not the upstream TME call) via `UsageService.assertAndCountPartsCall`, gated only when `QUOTA_PARTS_CALLS_PER_MONTH` is set; the facet routes (`manufacturers`/`categories`) are intentionally unmetered. `search` results include a numeric `total` (`data.products.amount`); each `CatalogPart` carries a `categoryId` as its primary classification signal.
+
+**`SearchPartsDto`** ([parts/dto/index.ts](../apps/api/src/parts/dto/index.ts)): `q` (string, 1–100 chars) + optional `manufacturerId`/`categoryId` (string, ≤50 chars) + optional `page` (int, 1–1000, default 1).
+
+### 3.14 Usage — `[usage.controller.ts](../apps/api/src/usage/usage.controller.ts)`
+
+No controller prefix; full path declared on the route. Entire controller is `@UseGuards(JwtAuthGuard)` + `@ApiBearerAuth()`.
+
+| Method | Path | Auth | Role | Request | Response |
+|--------|------|------|------|---------|----------|
+| GET | `/orgs/:orgId/usage` | Yes (`JwtAuthGuard`) | membership | path `orgId` (UUID) | `200` `OrgUsage` |
+
+Current-month usage snapshot for the frontend's usage page: sim jobs/runtime-ms/in-flight count, agentic design jobs/in-flight count, asset+result storage bytes, and parts-catalog calls (the requesting user's calls this period) — each paired with its configured limit (`null` = unlimited). Sim runtime, sim/design in-flight counts, and storage are aggregated on-demand from their source tables (never drift-prone counters); parts calls use a `UsageRecord` counter row (no natural source table). Periods are UTC calendar months (`'YYYY-MM'`). Quota violations elsewhere in the API throw `429` with a structured body: `{ code: 'QUOTA_EXCEEDED', metric, used, limit, period }`.
+
+### 3.15 Health — `[health.controller.ts](../apps/api/src/health/health.controller.ts)`
 
 Controller prefix: `health`. No guards — all routes are public. No request body or params.
 

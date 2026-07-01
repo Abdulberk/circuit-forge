@@ -1,6 +1,6 @@
 # Circuit Forge — Cost Analysis
 
-> Comprehensive unit-economics + infrastructure cost model. Last updated 2026-06-26.
+> Comprehensive unit-economics + infrastructure cost model. Last updated 2026-07-01.
 > **Headline:** the LLM provider bills **per request** (flat $250/mo = 107,142 requests/mo on Opus 4.8), so
 > token counts are irrelevant to cost — **the unit that matters is "requests per design"**. Compute (ngspice)
 > is cheap and is **not** the bottleneck; the binding daily constraint is the LLM request cap. A small AWS
@@ -59,9 +59,23 @@ Derived from the loop (1 generate + one request per AI-fix round; Monte-Carlo us
 > cost — not dollars, but **how fast it burns the daily cap**. The vetted plan minimizes this by running the
 > full fix-loop on only K=2 finalists and Monte-Carlo on the winner **only**.
 
+> **Update (2026-07-01):** the adaptive-N + Wilson-CI Monte-Carlo-on-winner design described above is **shipped**,
+> not just planned (`packages/eda-core/src/montecarlo.ts`, wired into the design loop; worker `runMonteCarloBatch`
+> runs real ngspice per variant). Separately, the "verified" verdict is now **gated** on THD and small-signal GAIN
+> (2026-06-30, `robust-THD` / `robust-GAIN`, evaluated at nominal + across tolerance variants via the same
+> Monte-Carlo machinery). Both are **CPU-only** — they add ngspice work on the design's own analysis, **zero**
+> additional LLM requests — so the request-billing unit economics in this section are unchanged.
+
 ---
 
 ## 3. Compute (ngspice) — measured, and why it is NOT the bottleneck
+
+> **Update (2026-07-01):** 5 additional ngspice-native analyses have shipped since the table below was measured
+> — fourier/THD, `.meas`, `.tf`, `.noise`, `.sens` — all **report-only** (surfaced on `SimulationResult`, never
+> auto-run). They add a modest extra ngspice invocation **only when a design's config requests them**, and do
+> **not** change the request-billing unit economics below: still **0 LLM requests**, CPU-only. The timing table
+> below predates these analyses and has not been re-measured with them enabled; treat it as directionally valid,
+> not exact, for designs that opt into the new analyses.
 
 Measured on the real worker (`runSimulation` / `runMonteCarloBatch`):
 
