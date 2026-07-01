@@ -11,7 +11,7 @@ import { VersionsService } from '../versions/versions.service';
 import { OrgsService } from '../orgs/orgs.service';
 import { UsageService } from '../usage/usage.service';
 import { generateNetlist, safeValidateCircuitJson, safeValidateAnalysisConfig, downsampleResult } from '@circuit-forge/eda-core';
-import type { CircuitJson, AnalysisConfig, SimulationResult, AcceptanceCriterion } from '@circuit-forge/eda-core';
+import type { CircuitJson, AnalysisConfig, SimulationResult, AcceptanceCriterion, CornerSpec } from '@circuit-forge/eda-core';
 import { propagation, context as otelContext } from '@opentelemetry/api';
 
 /** Capture the current trace context as a W3C carrier to ride on the queued job, so the worker's
@@ -233,6 +233,65 @@ export class SimulationService {
                 criteria,
                 ...(opts.n ? { n: opts.n } : {}),
                 ...(opts.seed ? { seed: opts.seed } : {}),
+            },
+            otel: otelCarrier(),
+        });
+
+        return { jobId: job.id };
+    }
+
+    /**
+     * Enqueue a WORST-CASE (corner) job: the worker evaluates `criteria` at the 2^k deterministic ±tolerance
+     * corners of the circuit's toleranced components and persists the result in metrics.worstCase (see the
+     * worker's handleCorner). One job = one quota unit (the whole batch), mirroring createMonteCarloJob.
+     */
+    async createCornerJob(
+        circuit: CircuitJson,
+        analysisConfig: Record<string, unknown> | undefined,
+        criteria: AcceptanceCriterion[],
+        spec: CornerSpec,
+        userId: string,
+    ) {
+        const orgs = await this.orgsService.findAllForUser(userId);
+        const orgId = orgs[0]?.id;
+        if (!orgId) throw new NotFoundException('No organization found for user');
+
+        const validCircuit = safeValidateCircuitJson(circuit);
+        if (!validCircuit.success) {
+            const issues = validCircuit.error.errors.slice(0, 5).map((e) => `${e.path.join('.') || '(root)'}: ${e.message}`).join('; ');
+            throw new BadRequestException(`Invalid circuit for worst-case: ${issues}`);
+        }
+        const validAnalysis = safeValidateAnalysisConfig(analysisConfig);
+        if (!validAnalysis.success) {
+            const issues = validAnalysis.error.errors.map((e) => `${e.path.join('.') || '(root)'}: ${e.message}`).join('; ');
+            throw new BadRequestException(`Invalid analysis config for worst-case: ${issues}`);
+        }
+
+        const job = await this.usageService.createSimGuarded(orgId, (tx) =>
+            tx.simulationJob.create({
+                data: {
+                    orgId,
+                    status: 'QUEUED',
+                    engine: 'NGSPICE',
+                    analysisConfig: (analysisConfig || {}) as Prisma.InputJsonValue,
+                    netlist: '', // the worker regenerates a netlist per corner from corner.circuit
+                },
+            }),
+        );
+
+        await this.simulationQueue.add('simulation', {
+            jobId: job.id,
+            orgId,
+            mode: 'corner',
+            netlist: '',
+            probeNames: [],
+            analysisType: (analysisConfig as { type?: string } | undefined)?.type || 'op',
+            analysisConfig: analysisConfig || {},
+            corner: {
+                circuit: validCircuit.data as CircuitJson,
+                analysis: validAnalysis.data as AnalysisConfig,
+                criteria,
+                spec,
             },
             otel: otelCarrier(),
         });

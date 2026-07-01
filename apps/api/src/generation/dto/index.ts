@@ -13,6 +13,7 @@ import {
     IsNumber,
     IsIn,
     IsArray,
+    IsBoolean,
     ArrayMaxSize,
     ValidateNested,
 } from 'class-validator';
@@ -56,6 +57,22 @@ export class AssertionDto {
     label?: string;
 }
 
+/** Optional robustness checks layered on top of the nominal verify-design verdict (informational — they never
+ *  flip the pass/fail verdict, they annotate how robust a PASSING design is). */
+export class RobustnessDto {
+    @ApiPropertyOptional({ description: 'Check the spec at every ±tolerance worst-case corner of the toleranced components (needs components with a "tolerance"). Runs only when the nominal verdict is "pass".' })
+    @IsBoolean()
+    @IsOptional()
+    corner?: boolean;
+
+    @ApiPropertyOptional({ description: 'Cap on how many toleranced components to corner (⇒ ≤ 2^n runs); default 8. With more toleranced parts, the first n (circuit order) are cornered and the rest reported as omitted.' })
+    @IsInt()
+    @Min(1)
+    @Max(12)
+    @IsOptional()
+    maxCorners?: number;
+}
+
 export class VerifyDesignDto {
     @ApiProperty({ description: 'The circuit to verify (CircuitJson)' })
     @IsObject()
@@ -73,6 +90,13 @@ export class VerifyDesignDto {
     @ValidateNested({ each: true })
     @Type(() => AssertionDto)
     assertions?: AssertionDto[];
+
+    @ApiPropertyOptional({ description: 'Optional robustness checks (informational — never flip the verdict)', type: RobustnessDto })
+    @IsObject()
+    @IsOptional()
+    @ValidateNested()
+    @Type(() => RobustnessDto)
+    robustness?: RobustnessDto;
 }
 
 export class GenerateCircuitDto {
