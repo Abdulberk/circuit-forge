@@ -182,6 +182,16 @@ export {
 } from './montecarlo';
 export { mulberry32 } from './utils/prng';
 
+// Parametric sweep (`.step`-style) — the deterministic sibling of Monte-Carlo: over what RANGE of a chosen
+// parameter does the design still meet spec? (reuses the same injected VariantRunner + one-job-dir batch path)
+export {
+    sweepVariants,
+    runParametricSweep,
+    type SweepSpec,
+    type SweepPoint,
+    type SweepResult,
+} from './sweep';
+
 // Analysis — measurement distillation + assertion evaluation (shared by the API AND the Monte-Carlo worker,
 // which is why they live here and not in the API).
 export { summarizeSeries, type SimMeasurement } from './analysis/measurements';
