@@ -57,6 +57,6 @@ export class VerificationController {
             analysis = a.data as AnalysisConfig;
         }
 
-        return this.verification.verify(circuit.data, analysis, dto.assertions ?? [], user.id);
+        return this.verification.verify(circuit.data, analysis, dto.assertions ?? [], user.id, dto.robustness);
     }
 }

@@ -183,10 +183,11 @@ function makeWorkerService(opts: { status?: string; metrics?: unknown; result?: 
         result: 'result' in opts ? opts.result : workerResult,
         ...(opts.resultError ? { error: opts.resultError } : {}),
     }));
-    const simulation = { createQuickSim, getStatus, getResult } as unknown as SimulationService;
+    const createCornerJob = jest.fn(async () => ({ jobId: 'corner-1' }));
+    const simulation = { createQuickSim, getStatus, getResult, createCornerJob } as unknown as SimulationService;
     const simulateWithRemedies = jest.fn(); // must NOT be called on the worker path
     const simulator = { simulateWithRemedies } as unknown as CircuitSimulatorService;
-    return { svc: new VerificationService(simulator, simulation), createQuickSim, getStatus, getResult, simulateWithRemedies };
+    return { svc: new VerificationService(simulator, simulation), createQuickSim, getStatus, getResult, createCornerJob, simulateWithRemedies };
 }
 
 describe('VerificationService — worker delegation (prod path, userId present)', () => {
@@ -426,5 +427,63 @@ describe('VerificationService — THD / gain verdict-gating on the worker path (
         expect(ev.assertions[0]!.actual).toBe(9.4);
         expect(ev.assertions[0]!.pass).toBe(false); // |9.4-10| = 0.6 > 0.5
         expect(ev.verdict).toBe('fail');
+    });
+});
+
+describe('VerificationService — worst-case (corner) robustness option (informational, never gates the verdict)', () => {
+    const passing = [A('out', 'final', 'approx', 5.0, 0.1)]; // DIVIDER out≈5 → nominal PASS
+    const wc = (over: Record<string, unknown> = {}) => ({
+        componentsCornered: ['R1', 'R2'], omitted: [], evaluated: 4, passed: 4, failed: 0, errored: 0,
+        passAllCorners: true, worstCorners: [], ...over,
+    });
+
+    it('runs the corner batch and folds passAllCorners into evidence.robustness when the nominal verdict is pass', async () => {
+        const { svc, createCornerJob } = makeWorkerService({ status: 'SUCCEEDED', metrics: { pointsCount: 1, worstCase: wc() } });
+        const ev = await svc.verify(DIVIDER, { type: 'op' }, passing, 'user-1', { corner: true });
+        expect(ev.verdict).toBe('pass');
+        expect(createCornerJob).toHaveBeenCalledTimes(1);
+        expect(ev.robustness?.worstCase?.passAllCorners).toBe(true);
+        expect(ev.robustness?.worstCase?.componentsCornered).toEqual(['R1', 'R2']);
+    });
+
+    it('surfaces the failing corner (does NOT change the pass verdict — robustness is informational)', async () => {
+        const failing = wc({ passed: 3, failed: 1, passAllCorners: false, worstCorners: [{ R1: 'hi', R2: 'lo' }] });
+        const { svc } = makeWorkerService({ status: 'SUCCEEDED', metrics: { pointsCount: 1, worstCase: failing } });
+        const ev = await svc.verify(DIVIDER, { type: 'op' }, passing, 'user-1', { corner: true });
+        expect(ev.verdict).toBe('pass'); // nominal still passes — the corner miss NEVER flips the verdict
+        expect(ev.robustness?.worstCase?.passAllCorners).toBe(false);
+        expect(ev.robustness?.worstCase?.worstCorners).toContainEqual({ R1: 'hi', R2: 'lo' });
+    });
+
+    it('is SKIPPED entirely when the nominal verdict is not pass (no point cornering a failing design)', async () => {
+        const { svc, createCornerJob } = makeWorkerService({ status: 'SUCCEEDED', metrics: { pointsCount: 1, worstCase: wc() } });
+        const ev = await svc.verify(DIVIDER, { type: 'op' }, [A('out', 'final', 'approx', 99)], 'user-1', { corner: true }); // 5≉99 → fail
+        expect(ev.verdict).toBe('fail');
+        expect(createCornerJob).not.toHaveBeenCalled();
+        expect(ev.robustness).toBeUndefined();
+    });
+
+    it('is not run at all when the caller does not request it', async () => {
+        const { svc, createCornerJob } = makeWorkerService({ status: 'SUCCEEDED', metrics: { pointsCount: 1, worstCase: wc() } });
+        const ev = await svc.verify(DIVIDER, { type: 'op' }, passing, 'user-1'); // no robustness arg
+        expect(createCornerJob).not.toHaveBeenCalled();
+        expect(ev.robustness).toBeUndefined();
+    });
+
+    it('reports "unavailable" (no toleranced components) when the corner batch evaluated nothing', async () => {
+        const empty = wc({ componentsCornered: [], evaluated: 0, passed: 0, passAllCorners: false });
+        const { svc } = makeWorkerService({ status: 'SUCCEEDED', metrics: { pointsCount: 1, worstCase: empty } });
+        const ev = await svc.verify(DIVIDER, { type: 'op' }, passing, 'user-1', { corner: true });
+        expect(ev.verdict).toBe('pass');
+        expect(ev.robustness?.worstCase).toBeUndefined();
+        expect(ev.robustness?.unavailable).toMatch(/toleranced/i);
+    });
+
+    it('reports "unavailable" (never throws / never a design fail) when the corner batch enqueue fails', async () => {
+        const { svc, createCornerJob } = makeWorkerService({ status: 'SUCCEEDED', metrics: { pointsCount: 1, worstCase: wc() } });
+        (createCornerJob as jest.Mock).mockRejectedValueOnce(new Error('Redis down'));
+        const ev = await svc.verify(DIVIDER, { type: 'op' }, passing, 'user-1', { corner: true });
+        expect(ev.verdict).toBe('pass'); // infra failure of the informational check never touches the verdict
+        expect(ev.robustness?.unavailable).toMatch(/worker|queue|unavailable/i);
     });
 });

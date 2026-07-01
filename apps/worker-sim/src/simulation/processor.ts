@@ -9,10 +9,11 @@ import { config } from '../config';
 import { logger } from '../logger';
 import { runSimulation, type SimulationJobResult } from './runner';
 import { runMonteCarloBatch } from './montecarlo-runner';
+import { runCornerBatch } from './corner-runner';
 import { classifyJobOutcome, isFinalAttempt } from './outcome';
 import { downloadFile, uploadJsonResult } from '../storage/s3-client';
 import { downsampleResult } from '@circuit-forge/eda-core';
-import type { CircuitJson, AnalysisConfig, AcceptanceCriterion } from '@circuit-forge/eda-core';
+import type { CircuitJson, AnalysisConfig, AcceptanceCriterion, CornerSpec } from '@circuit-forge/eda-core';
 import { Prisma } from '@prisma/client';
 import { recordSim } from '../observability/telemetry';
 import { propagation, context as otelContext, trace, SpanStatusCode } from '@opentelemetry/api';
@@ -43,16 +44,22 @@ export interface SimulationJobPayload {
     /** W3C trace context injected by the API at enqueue — links this job's span to the request that
      *  created it, so a verify-design / simulate trace spans API → queue → worker end-to-end. */
     otel?: Record<string, string>;
-    /** Monte-Carlo YIELD job: instead of one sim, run N perturbed variants locally and aggregate a yield.
-     *  When set, the normal single-sim path is skipped (see handleMonteCarlo). Informational — never a
-     *  design failure. */
-    mode?: 'monte-carlo';
+    /** Batch robustness job (skips the normal single-sim path): 'monte-carlo' = N random tolerance draws →
+     *  yield (handleMonteCarlo); 'corner' = the 2^k deterministic ±tol corners → worst-case (handleCorner).
+     *  Both are informational robustness signals — never a design failure. */
+    mode?: 'monte-carlo' | 'corner';
     montecarlo?: {
         circuit: CircuitJson;
         analysis: AnalysisConfig;
         criteria: AcceptanceCriterion[];
         n?: number;
         seed?: number;
+    };
+    corner?: {
+        circuit: CircuitJson;
+        analysis: AnalysisConfig;
+        criteria: AcceptanceCriterion[];
+        spec: CornerSpec;
     };
 }
 
@@ -147,6 +154,16 @@ async function processJob(job: Job<SimulationJobPayload>): Promise<void> {
                 if (job.data.mode === 'monte-carlo' && job.data.montecarlo) {
                     await handleMonteCarlo(job, modelFiles.length > 0 ? modelFiles : undefined);
                     span.setAttribute('sim.outcome', 'montecarlo');
+                    span.setStatus({ code: SpanStatusCode.OK });
+                    return;
+                }
+
+                // Worst-case CORNER job: evaluate the criteria at the 2^k deterministic ±tol corners, instead of
+                // one sim. Same posture as Monte-Carlo — persisted SUCCEEDED with metrics.worstCase (or FAILED+
+                // infra → inconclusive); never retried, never a design failure.
+                if (job.data.mode === 'corner' && job.data.corner) {
+                    await handleCorner(job, modelFiles.length > 0 ? modelFiles : undefined);
+                    span.setAttribute('sim.outcome', 'worstcase');
                     span.setStatus({ code: SpanStatusCode.OK });
                     return;
                 }
@@ -287,6 +304,56 @@ async function handleMonteCarlo(
     } catch (error) {
         const msg = error instanceof Error ? error.message : String(error);
         logger.error({ jobId, error: msg }, 'Monte-Carlo batch failed');
+        recordSim({ status: 'failed' });
+        await prisma.simulationJob.update({
+            where: { id: jobId },
+            data: {
+                status: 'FAILED',
+                finishedAt: new Date(),
+                metrics: { error: msg, failureClass: 'infra' } as unknown as Prisma.InputJsonValue,
+            },
+        });
+    }
+}
+
+/**
+ * Worst-case corner job: evaluate the acceptance criteria at the 2^k deterministic ±tolerance corners and
+ * persist the result in metrics.worstCase. Same contract as handleMonteCarlo — informational, never retried,
+ * never a design failure; runCornerBatch never throws on a sim fault (a dead corner is counted `errored`), so
+ * the catch is a defensive net that persists FAILED+infra → the API treats it as inconclusive.
+ */
+async function handleCorner(
+    job: Job<SimulationJobPayload>,
+    modelFiles?: Array<{ name: string; content: Buffer }>,
+): Promise<void> {
+    const { jobId } = job.data;
+    const wc = job.data.corner!;
+    try {
+        const result = await runCornerBatch({ jobId, circuit: wc.circuit, analysis: wc.analysis, criteria: wc.criteria, corner: wc.spec, modelFiles });
+        recordSim({ status: 'succeeded', durationMs: result.runtimeMs });
+        await prisma.simulationJob.update({
+            where: { id: jobId },
+            data: {
+                status: 'SUCCEEDED',
+                finishedAt: new Date(),
+                metrics: {
+                    runtimeMs: result.runtimeMs,
+                    worstCase: {
+                        componentsCornered: result.componentsCornered,
+                        omitted: result.omitted,
+                        evaluated: result.evaluated,
+                        passed: result.passed,
+                        failed: result.failed,
+                        errored: result.errored,
+                        passAllCorners: result.passAllCorners,
+                        worstCorners: result.worstCorners,
+                    },
+                } as unknown as Prisma.InputJsonValue,
+            },
+        });
+    } catch (error) {
+        const msg = error instanceof Error ? error.message : String(error);
+        logger.error({ jobId, error: msg }, 'Worst-case corner batch failed');
         recordSim({ status: 'failed' });
         await prisma.simulationJob.update({
             where: { id: jobId },

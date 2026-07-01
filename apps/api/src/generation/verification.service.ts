@@ -10,7 +10,7 @@
  * server-side job polling.
  */
 import { Injectable, Optional, Logger } from '@nestjs/common';
-import { runErc, generateNetlist, type AnalysisConfig, type SimulationResult } from '@circuit-forge/eda-core';
+import { runErc, generateNetlist, type AnalysisConfig, type SimulationResult, type AcceptanceCriterion, type CornerSpec } from '@circuit-forge/eda-core';
 import { safeValidateCircuitJson, type CircuitJson } from '@circuit-forge/eda-core';
 import { CircuitSimulatorService, summarizeSeries, type SimMeasurement, type SimSummary, type ConvergenceReport } from './circuit-simulator.service';
 import { attachGenericModels } from './model-resolution';
@@ -48,6 +48,27 @@ export interface DesignEvidence {
     /** Per-resistor steady-state power dissipation + over-rating flags (informational — does NOT change
      *  the verdict, since the default rating is a guess). Present only when the run produced data. */
     power?: PowerReport;
+    /** Worst-case (corner) robustness — present only when the caller requested it AND the nominal verdict is
+     *  'pass'. INFORMATIONAL (never changes `verdict` — same posture as `power` / Monte-Carlo robustness):
+     *  reports whether the spec still holds at every ±tolerance corner, or why it couldn't be checked. */
+    robustness?: WorstCaseEvidence;
+}
+
+/** The worst-case corner robustness section of a DesignEvidence (see VerificationService.runCornerRobustness). */
+export interface WorstCaseEvidence {
+    /** Present when the corner batch ran: the outcome across the 2^k ±tolerance corners. */
+    worstCase?: {
+        componentsCornered: string[];
+        omitted: string[];
+        evaluated: number;
+        passed: number;
+        failed: number;
+        errored: number;
+        passAllCorners: boolean;
+        worstCorners: Array<Record<string, 'lo' | 'hi'>>;
+    };
+    /** Present instead when the check couldn't be performed (no toleranced parts / infra / didn't complete). */
+    unavailable?: string;
 }
 
 @Injectable()
@@ -68,6 +89,7 @@ export class VerificationService {
         analysisConfig?: AnalysisConfig,
         assertions: AssertionDto[] = [],
         userId?: string,
+        robustness?: { corner?: boolean; maxCorners?: number },
     ): Promise<DesignEvidence> {
         // Branch-current assertions (i(R1)) need their probe UNIONed into the netlist — the voltage-only
         // defaults never save it, so without this a current assertion would always read "probe not found".
@@ -99,6 +121,20 @@ export class VerificationService {
             verdict = 'pass';
         }
 
+        // Worst-case (corner) robustness — INFORMATIONAL, only when the caller asked for it AND the nominal
+        // design already PASSES (no point cornering a design that fails at nominal) AND we have a worker+user
+        // to run the batch. Never changes `verdict` (same posture as power / Monte-Carlo robustness).
+        let robustnessEvidence: WorstCaseEvidence | undefined;
+        if (robustness?.corner && verdict === 'pass' && this.simulation && userId) {
+            robustnessEvidence = await this.runCornerRobustness(
+                circuit,
+                analysisConfig ?? { type: 'op' },
+                assertions,
+                robustness.maxCorners ? { maxComponents: robustness.maxCorners } : {},
+                userId,
+            );
+        }
+
         return {
             verdict,
             summary: this.summarize(verdict, sim, assertionResults),
@@ -115,7 +151,42 @@ export class VerificationService {
             },
             ...(sim.convergence ? { convergence: sim.convergence } : {}),
             ...(power ? { power } : {}),
+            ...(robustnessEvidence ? { robustness: robustnessEvidence } : {}),
         };
+    }
+
+    /**
+     * Enqueue a worst-case corner batch on the worker, poll it, and distill metrics.worstCase into the evidence's
+     * robustness section. Never throws — an infra/queue failure or a circuit with no toleranced parts returns an
+     * `unavailable` reason, never a design failure (this is informational, exactly like the Monte-Carlo path).
+     */
+    private async runCornerRobustness(
+        circuit: unknown,
+        analysis: AnalysisConfig,
+        assertions: AssertionDto[],
+        spec: CornerSpec,
+        userId: string,
+    ): Promise<WorstCaseEvidence> {
+        try {
+            const { jobId } = await this.simulation!.createCornerJob(
+                circuit as CircuitJson,
+                analysis as unknown as Record<string, unknown>,
+                assertions as unknown as AcceptanceCriterion[],
+                spec,
+                userId,
+            );
+            const { status, metrics } = await this.pollJob(jobId, userId);
+            if (status !== 'SUCCEEDED') {
+                return { unavailable: `worst-case corner check did not complete (${status.toLowerCase()}) — try again` };
+            }
+            const wc = (metrics as { worstCase?: WorstCaseEvidence['worstCase'] } | null | undefined)?.worstCase;
+            if (!wc) return { unavailable: 'worst-case corner check produced no result' };
+            if (wc.evaluated === 0) return { unavailable: 'no toleranced components to corner — add a "tolerance" to R/C/L values' };
+            return { worstCase: wc };
+        } catch (e) {
+            this.logger.error(`worst-case corner run failed: ${e instanceof Error ? e.message : e}`);
+            return { unavailable: 'worst-case corner check could not be run (worker/queue unavailable) — try again' };
+        }
     }
 
     /**
