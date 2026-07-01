@@ -66,7 +66,7 @@ circuit-forge/
 │  ├─ api/                         # NestJS REST API
 │  │  ├─ __tests__/                # integration + e2e smoke tests
 │  │  ├─ prisma/
-│  │  │  ├─ migrations/            # SQL migrations (init → usage_records → usage_tune)
+│  │  │  ├─ migrations/            # SQL migrations (init → template cfg → usage → auth lifecycle → refresh rotation → design jobs)
 │  │  │  ├─ schema.prisma          # data model
 │  │  │  └─ seed.ts                # demo data seeder
 │  │  └─ src/
@@ -81,32 +81,41 @@ circuit-forge/
 │  │     ├─ parts/                 # TME component catalog (search, detail, mapping, cache)
 │  │     ├─ netlist/               # SPICE deck import / export (LTspice/KiCad interchange)
 │  │     ├─ usage/                 # usage metering + quota gates (sim, parts, storage)
-│  │     ├─ health/                # health / ready / live
+│  │     ├─ health/                # health / ready / live (DB+Redis+S3 readiness)
+│  │     ├─ email/                 # transactional email (verification / password reset)
+│  │     ├─ observability/         # OpenTelemetry instrumentation + telemetry
+│  │     ├─ common/                # shared DTOs + exception filters
+│  │     ├─ config/                # env validation (zod)
 │  │     ├─ prisma/                # PrismaService module
 │  │     ├─ app.module.ts
 │  │     └─ main.ts                # bootstrap (reads PORT, Swagger /docs)
-│  └─ worker-sim/                  # BullMQ simulation worker
+│  └─ worker-sim/                  # BullMQ worker — simulation + AI design queues
 │     └─ src/
-│        ├─ simulation/            # processor (queue) + runner (ngspice)
+│        ├─ simulation/            # processor (queue) + runner (ngspice) + montecarlo-runner (yield)
+│        ├─ design/                # AI design-loop worker: processor + orphan reaper + multi-candidate + local-sim
 │        ├─ storage/               # S3 client (download models / upload results)
+│        ├─ observability/         # OpenTelemetry instrumentation + telemetry
 │        ├─ prisma/                # Prisma client
+│        ├─ util/                  # async semaphore (concurrency bound)
 │        ├─ config.ts              # zod-validated env config
 │        ├─ logger.ts
-│        └─ main.ts
+│        └─ main.ts                # boots sim + design workers + reaper; graceful shutdown
 ├─ packages/
 │  ├─ eda-core/                    # circuit & netlist library
 │  │  ├─ __tests__/                # unit + coverage-matrix / sweep / fuzz harnesses (live ngspice)
 │  │  └─ src/
 │  │     ├─ netlist/               # generator.ts + sanitizer.ts (security)
 │  │     ├─ models/                # curated generic SPICE model library (diodes, BJT/FET, digital, …)
-│  │     ├─ parser/                # csv-parser.ts + netlist-parser.ts
+│  │     ├─ parser/                # csv-parser.ts + netlist-parser.ts (SPICE round-trip import)
+│  │     ├─ analysis/              # measurement distillation + assertions + fourier/meas/tf/noise/sens parsers
 │  │     ├─ erc/                   # checker.ts + codes.ts (rule checks)
 │  │     ├─ schemas/               # analysis.schema.ts + circuit.schema.ts (zod)
 │  │     ├─ types/                 # circuit / analysis / erc / simulation
-│  │     ├─ utils/                 # unit-parser.ts
+│  │     ├─ utils/                 # unit-parser, E-series snapping, downsample, seeded PRNG
+│  │     ├─ montecarlo.ts          # tolerance/yield engine (Monte-Carlo + Wilson CI)
 │  │     └─ index.ts               # public API surface
 │  └─ llm-core/                    # AI generation (Claude tool-use + catalog grounding)
-│     └─ src/index.ts
+│     └─ src/                      # index.ts (generate/edit/fix/explain) + design-core.ts (runDesignLoop) + policy.ts (timeout/budget)
 ├─ infra/
 │  └─ docker/                      # api.Dockerfile + worker-sim.Dockerfile
 ├─ docs/                           # ← detailed documentation (see index below)
