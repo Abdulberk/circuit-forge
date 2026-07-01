@@ -567,8 +567,10 @@ function buildFixMessage(input: FixCircuitInput): string {
         `component, an unreasonable component value, or an analysis that doesn't excite the circuit ` +
         `(e.g. a transient on a purely DC circuit). PRESERVE each unchanged component's existing ` +
         `"mpn"/"manufacturer"/"footprint" (those are real catalog parts) — only alter what's needed to ` +
-        `fix the problem. Return ONLY the corrected JSON object ` +
-        `({"circuit", "analysisConfig", "explanation"}), no prose or code fences.`
+        `fix the problem. KEEP the current analysisConfig — including any "fourier" (transient) or "tf" (op) ` +
+        `overlay — unless the fix specifically requires changing it: a "thd" criterion needs the "fourier" ` +
+        `request and a "gain" criterion needs the "tf" request to stay measurable. Return ONLY the corrected ` +
+        `JSON object ({"circuit", "analysisConfig", "explanation"}), no prose or code fences.`
     );
 }
 
@@ -642,6 +644,8 @@ AnalysisConfig — choose the analysis that best reveals the circuit's behavior:
 - Operating point: { "type": "op" }                                              // DC steady state
 - DC sweep:   { "type": "dc", "source": "V1", "startVal": "0", "stopVal": "5", "increment": "0.1" }
 - AC:         { "type": "ac", "variation": "dec", "points": 20, "startFreq": "10", "stopFreq": "1Meg" }   // small-signal frequency response; REQUIRED for a cutoff/corner-frequency spec (see the "cutoff" metric). One source MUST declare an AC magnitude, e.g. value "AC 1". Center the sweep ~two decades either side of the expected fc.
+- Fourier/THD: { "type": "tran", "stopTime": "5m", "stepTime": "5u", "fourier": { "fundamentalFreq": "1k", "probes": ["v(out)"] } }   // adds harmonic (THD) analysis ON TOP OF a transient; REQUIRED for a THD/distortion spec (see the "thd" metric). Drive with a periodic source at fundamentalFreq and cover several full periods at a fine step.
+- Transfer function: { "type": "op", "tf": { "output": "v(out)", "inputSource": "V1" } }   // adds small-signal DC gain Vout/Vin ON TOP OF an operating point; REQUIRED for a small-signal "gain" spec (see the "gain" metric). "inputSource" is the input source DESIGNATOR (e.g. "V1") and MUST end in a digit.
 (values are SPICE strings)
 
 Acceptance criteria — THIS IS HOW THE DESIGN IS GRADED. Derive measurable pass/fail checks from the user's
@@ -649,10 +653,13 @@ stated intent and return them in "acceptanceCriteria". After simulation, the loo
 measured result; the design is reported "verified" ONLY if they all pass — otherwise the failing checks are
 fed back and the circuit is revised. So: encode the user's actual numeric goal, not a trivially-true check.
 Each criterion:
-{ "probe": "out", "metric": "min|max|final|pp|cutoff", "op": "lt|lte|gt|gte|approx", "value": <number, SI base units>, "tol": <number, optional>, "label": "<short human label>" }
+{ "probe": "out", "metric": "min|max|final|pp|cutoff|thd|gain", "op": "lt|lte|gt|gte|approx", "value": <number, SI base units>, "tol": <number, optional>, "label": "<short human label>" }
 - "probe" is a net/node name from your circuit (the v() wrapper is optional). "metric": min/max/final = the
   minimum/maximum/last value of that node over the run; "pp" = peak-to-peak (max−min), i.e. amplitude;
-  "cutoff" = the −3 dB corner frequency (Hz) of that node's AC magnitude response (requires an "ac" analysis).
+  "cutoff" = the −3 dB corner frequency (Hz) of that node's AC magnitude response (requires an "ac" analysis);
+  "thd" = total harmonic distortion in PERCENT (1 means 1%, NOT 0.01) — requires a "tran" carrying a "fourier"
+  request on that probe; "gain" = small-signal DC voltage gain Vout/Vin (dimensionless) — requires an "op"
+  carrying a "tf" to that probe.
 - Values are SI base units: volts, amps, seconds (e.g. 9.5 not "9.5V"). Use "approx" with "tol" for
   "about X"; use gte/lte/gt/lt for thresholds.
 - MEASURE THE QUANTITY THE USER NAMED, not a proxy. If the user states a CURRENT (e.g. "10 mA through the
@@ -677,11 +684,28 @@ Each criterion:
   UNVERIFIED for the frequency until a real "cutoff" criterion is present. The sweep must be wide enough that
   the response crosses −3 dB exactly once (a first-order low-/high-pass); for a band-pass, the single-corner
   check does not apply.
+- THD / DISTORTION: when the user names a total-harmonic-distortion or "low distortion" target, verify it
+  DIRECTLY with the "thd" metric — do NOT eyeball the waveform. (1) drive the circuit with a periodic source
+  (e.g. SIN(0 1 1k)); (2) set analysisConfig to a "tran" covering several full periods at a fine step AND add
+  a "fourier" request {"fundamentalFreq":"<the source frequency, e.g. 1k>","probes":["<the output>"]}; (3) add
+  {probe:"out", metric:"thd", op:"lt", value:<PERCENT, e.g. 1 for 1%>}. THD is in PERCENT (1 = 1%, not 0.01).
+  Without a "fourier" request on that probe the "thd" metric is not measurable, and the design is reported
+  UNVERIFIED for distortion until a real "thd" criterion is present.
+- SMALL-SIGNAL GAIN: when the user states a voltage GAIN as a RATIO (e.g. "gain of 20 V/V", "×100 amplifier",
+  "closed-loop gain 10"), verify it DIRECTLY with the "gain" metric — the small-signal DC Vout/Vin. (1) set
+  analysisConfig to {"type":"op","tf":{"output":"<the output>","inputSource":"<the input source designator,
+  e.g. V1>"}}; (2) add {probe:"out", metric:"gain", op:"approx", value:<the ratio, e.g. 20>, tol:<~5-10% of it>}.
+  Use this for a linear amplifier's stated V/V gain (op-amp, controlled source, small-signal stage). For a
+  LARGE-SIGNAL output-SWING goal instead ("amplify a 1V signal to 10V"), the "pp" amplitude check below still
+  applies — pick the one the user actually means.
 - DERIVE FROM INTENT: "gain 10" on a 1V-amplitude input → output amplitude ≥ ~10 → {probe:"out", metric:"pp",
   op:"gte", value:9.5}. "regulates to 5V" → {probe:"out", metric:"final", op:"approx", value:5, tol:0.25}.
   "ripple under 50mV" → {probe:"out", metric:"pp", op:"lt", value:0.05}. "10 mA through the load" →
   {probe:"i(R1)", metric:"final", op:"approx", value:0.01, tol:0.002}. "1 kHz low-pass cutoff" → analysis
   "ac" 10..100k with the source "AC 1" → {probe:"out", metric:"cutoff", op:"approx", value:1000, tol:150}.
+  "THD under 1%" → source SIN(0 1 1k), analysis "tran" 5m/5u + fourier {fundamentalFreq:"1k",probes:["v(out)"]}
+  → {probe:"out", metric:"thd", op:"lt", value:1}. "gain of 20 V/V" → analysis "op" + tf
+  {output:"v(out)",inputSource:"V1"} → {probe:"out", metric:"gain", op:"approx", value:20, tol:2}.
 - Do NOT relax an explicit user spec to make it pass, and do NOT invent a lax check just to succeed — the
   point is to catch a circuit that simulates but is WRONG. If the prompt truly states no measurable numeric
   target, you may return a small sanity check (e.g. output is non-trivial) or an empty array.
