@@ -17,23 +17,13 @@ import * as path from 'path';
 import { config } from '../config';
 import { logger } from '../logger';
 import {
-    generateNetlist,
-    sanitizeNetlist,
-    extractProbes,
-    parseSimulationOutput,
-    parseFourierLog,
-    attachFourierThd,
-    parseTransferFunction,
-    attachTransferFunction,
-    summarizeSeries,
     runMonteCarlo,
     type CircuitJson,
     type AnalysisConfig,
     type AcceptanceCriterion,
-    type SimMeasurement,
     type MonteCarloYield,
 } from '@circuit-forge/eda-core';
-import { executeNgspice } from './runner';
+import { makeVariantRunner } from './variant-runner';
 
 export interface MonteCarloBatchInput {
     jobId: string;
@@ -63,9 +53,6 @@ export async function runMonteCarloBatch(
 ): Promise<MonteCarloBatchResult> {
     const startTime = Date.now();
     const jobDir = path.join(config.SIM_TEMP_DIR, `${input.jobId}-mc`);
-    const netlistPath = path.join(jobDir, 'circuit.cir');
-    const outputPath = path.join(jobDir, 'output.csv');
-    const logPath = path.join(jobDir, 'stdout.log');
     const deadline = startTime + config.MC_BATCH_BUDGET_MS;
     let budgetHit = false;
 
@@ -78,47 +65,9 @@ export async function runMonteCarloBatch(
         for (const m of input.modelFiles) await fs.writeFile(path.join(jobDir, m.name), m.content);
     }
 
-    const runVariant = async (variant: CircuitJson): Promise<SimMeasurement[] | null> => {
-        let netlist: string;
-        try {
-            netlist = sanitizeNetlist(generateNetlist(variant, input.analysis), jobDir);
-        } catch {
-            return null; // a variant that won't even generate/sanitize — count errored, never crash the batch
-        }
-        // STALE-CSV SAFETY: clear the prior variant's artifacts so a no-output run can't read them.
-        await fs.rm(outputPath, { force: true }).catch(() => undefined);
-        await fs.rm(logPath, { force: true }).catch(() => undefined);
-        await fs.writeFile(netlistPath, netlist);
-
-        const { exitCode, timedOut, spawnError } = await executeNgspice(netlistPath);
-        if (spawnError || timedOut || exitCode !== 0) return null; // couldn't evaluate this corner → errored
-
-        let csv: string;
-        try {
-            csv = await fs.readFile(outputPath, 'utf-8');
-        } catch {
-            return null; // ngspice exited 0 but emitted no data (degenerate / non-converging) → errored
-        }
-        if (Buffer.byteLength(csv) > config.SIM_MAX_OUTPUT_BYTES) return null;
-
-        const probes = extractProbes(netlist);
-        const result = parseSimulationOutput(csv, probes, input.analysis.type);
-        // OOM-GUARD: collapse to scalar measurements now; `result.series` is dropped when this returns.
-        const measurements = result.series.map((s) => summarizeSeries(s, input.analysis.type));
-        // ROBUST scalar metrics (THD from fourier, gain from tf) live in the LISTING, not the CSV — fold them onto
-        // each variant's measurements so a `thd`/`gain` criterion is evaluated PER VARIANT. Without this the gate
-        // would pass at nominal but the robustness tier would stay 'unknown' on that dimension. Read the listing
-        // once when either is requested.
-        const needsListing = (input.analysis.type === 'tran' && input.analysis.fourier) || (input.analysis.type === 'op' && input.analysis.tf);
-        if (needsListing) {
-            const listing = await fs.readFile(logPath, 'utf-8').catch(() => '');
-            if (input.analysis.type === 'tran') attachFourierThd(measurements, parseFourierLog(listing));
-            // Pass the requested tf output as a fallback so a valid gain still binds if ngspice's
-            // `output_impedance_at_<node>` echo is missing/truncated (else outputNode='' matches no node).
-            if (input.analysis.type === 'op') attachTransferFunction(measurements, parseTransferFunction(listing, input.analysis.tf?.output));
-        }
-        return measurements;
-    };
+    // The per-variant ngspice execution (stale-CSV safety, OOM guard, THD/gain fold) is shared with the
+    // parametric-sweep batch — see variant-runner.ts. MC only differs in HOW variants are drawn (random).
+    const runVariant = makeVariantRunner(jobDir, input.analysis);
 
     try {
         const summary = await runMonteCarlo(input.circuit, input.criteria, runVariant, {

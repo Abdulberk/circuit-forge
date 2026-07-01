@@ -22,6 +22,7 @@ const eda = await import(new URL('../packages/eda-core/dist/index.js', import.me
 const { generateNetlist, resolveGenericModels, summarizeSeries, evaluateAssertions, attachFourierThd, attachTransferFunction } = eda;
 const { runSimulation } = await import(new URL('../apps/worker-sim/dist/simulation/runner.js', import.meta.url));
 const { runMonteCarloBatch } = await import(new URL('../apps/worker-sim/dist/simulation/montecarlo-runner.js', import.meta.url));
+const { runSweepBatch } = await import(new URL('../apps/worker-sim/dist/simulation/sweep-runner.js', import.meta.url));
 
 const gnd = { id: 'gnd', name: 'GND', isGround: true };
 const CJ = (comps, nets) => ({ version: '1.0', components: comps, nets });
@@ -126,5 +127,17 @@ async function mcGain(name, crit, wantHigh) {
 await mcGain('loose-gain>=1.5', { probe: 'v(out)', metric: 'gain', op: 'gte', value: 1.5 }, true);  // ~2 across variants → high
 await mcGain('tight-gain>=10', { probe: 'v(out)', metric: 'gain', op: 'gte', value: 10 }, false);    // ~2 < 10 → gated per variant → low
 
-console.log(fail === 0 ? '\nRESULT: real runner path + THD & GAIN verdict-gating (nominal + robust-MC) GREEN' : `\nRESULT: ${fail} FAILED`);
+// ===== PARAMETRIC SWEEP (.step sibling): real ngspice, contiguous passRange over a swept R =====
+// divider out = 5·R2/(R1+R2) = 5·2k/(R1+2k). Sweep R1 1k..9k (1k,3k,5k,7k,9k); out≥2V ⇔ R1≤3k → pass at 1k,3k.
+{
+    const sweep = { designator: 'R1', start: 1000, stop: 9000, points: 5 };
+    const crit = { probe: 'v(out)', metric: 'max', op: 'gte', value: 2.0 };
+    const sw = await runSweepBatch({ jobId: `sweep-${process.pid}`, circuit: divider, analysis: { type: 'op' }, criteria: [crit], sweep });
+    const ok = sw.errored === 0 && sw.evaluated === 5 && sw.passed === 2 && sw.passAll === false
+        && sw.passRange?.lo === 1000 && sw.passRange?.hi === 3000;
+    if (!ok) fail++;
+    console.log(`${ok ? '✅' : '❌'}  parametric sweep [R1 1k..9k, out≥2V]: passed=${sw.passed}/${sw.evaluated}, passRange=${sw.passRange ? `[${sw.passRange.lo},${sw.passRange.hi}]` : 'none'}, passAll=${sw.passAll}, errored=${sw.errored}`);
+}
+
+console.log(fail === 0 ? '\nRESULT: real runner path + THD/GAIN verdict-gating + parametric sweep GREEN' : `\nRESULT: ${fail} FAILED`);
 process.exit(fail === 0 ? 0 : 1);
