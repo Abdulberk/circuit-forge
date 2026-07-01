@@ -31,44 +31,122 @@ A backend system for AI-assisted circuit design and **SPICE-based simulation**. 
 
 ## 🏗️ Architecture
 
+Two deployable Node services — the **API** (NestJS) and **worker-sim** (BullMQ consumer) — over
+PostgreSQL / Redis / S3, sharing two pure libraries (**eda-core**, **llm-core**), and talking to
+Anthropic (LLM), the TME parts catalog, and SMTP. OpenTelemetry spans both tiers.
+
 ```mermaid
 flowchart TB
-    client(["Client / Frontend"])
+    client(["Web / API client<br/>JWT + RBAC"])
 
-    subgraph API["API · NestJS (apps/api)"]
-        core["auth · orgs · projects · versions · templates<br/>assets · parts · netlist · usage · health"]
-        gen["generation<br/>generate / edit / explain / design / verify-design"]
+    subgraph api["API — NestJS (apps/api)"]
+        api_ai["Circuit AI<br/>generate · edit · explain · design · design-jobs · verify-design"]
+        api_sim["Simulation<br/>quick + versioned jobs"]
+        api_cat["Catalog & interchange<br/>parts · netlist import/export · versions/BOM"]
+        api_ten["Tenancy & CRUD<br/>auth · orgs · projects · templates · assets"]
+        api_ops["Ops<br/>usage/quotas · health/readiness · email"]
     end
 
-    subgraph STORES["Stateful backing services"]
-        pg[("PostgreSQL<br/>(Prisma)")]
-        redis[("Redis<br/>BullMQ: simulations + design")]
-        s3[("MinIO / S3<br/>models + large results")]
+    subgraph pkg["Shared pure libraries (packages)"]
+        eda["eda-core<br/>netlist gen/parse · ERC · 5 analyses · Monte-Carlo · Convergence Doctor"]
+        llm["llm-core<br/>generate/edit/fix/explain · runDesignLoop · timeout+budget"]
     end
 
-    subgraph WORKER["worker-sim (apps/worker-sim)"]
-        simw["simulations worker<br/>ngspice -b + Monte-Carlo yield"]
-        designw["design worker<br/>runDesignLoop + orphan reaper"]
+    subgraph data["Stateful backing services"]
+        pg[("PostgreSQL<br/>Prisma ×2 (api + worker)")]
+        redis[("Redis · BullMQ<br/>queues: simulations + design")]
+        s3[("MinIO / S3<br/>assets · models · large results")]
     end
 
-    anthropic{{"Anthropic API<br/>Claude tool-use (llm-core)"}}
-    tme{{"TME catalog API<br/>real parts + sourcing"}}
+    subgraph worker["worker-sim (apps/worker-sim)"]
+        simw["Simulation worker<br/>ngspice -b (sandboxed) · Monte-Carlo batch"]
+        designw["Design worker<br/>runDesignLoop · multi-candidate · local-sim · orphan reaper"]
+    end
 
-    client --> API
-    core -->|Prisma| pg
-    API -->|enqueue jobs| redis
-    core -->|presign| s3
-    gen -->|generate / ground| anthropic
-    gen -->|parts grounding| tme
+    subgraph ext["External services"]
+        anthropic{{"Anthropic API<br/>Claude tool-use"}}
+        tme{{"TME v2 catalog<br/>real parts + sourcing (OAuth)"}}
+        smtp{{"SMTP / SES<br/>verify + reset email"}}
+        otel{{"OTLP collector<br/>traces + metrics (gated)"}}
+    end
 
-    redis -->|consume| WORKER
-    simw -->|write results| pg
-    simw <-->|models / results| s3
-    designw -->|AI fix loop| anthropic
-    designw -->|land DesignJob rows| pg
+    client -->|HTTPS| api
+    api --> eda
+    api_ai --> llm
+    llm --> anthropic
+    api_ai -->|parts grounding| tme
+    api_cat -->|catalog| tme
+    api_ten -->|email| smtp
+    api -->|Prisma| pg
+    api_ai -->|enqueue design| redis
+    api_sim -->|enqueue sims| redis
+    api_ten -->|presign| s3
+
+    redis -->|consume simulations| simw
+    redis -->|consume design| designw
+    worker --> eda
+    designw --> llm
+    simw -->|models + results| s3
+    simw -->|job rows| pg
+    designw -->|DesignJob rows| pg
+    designw -.->|reconcile orphans| redis
+
+    api -.->|traces| otel
+    worker -.->|traces| otel
 ```
 
-Full details: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
+**How the pieces talk**
+
+- The **API** owns HTTP, auth (JWT access + refresh-token rotation, brute-force lockout), RBAC, quota
+  admission, CRUD, and Swagger — but runs **no ngspice itself**; it enqueues work and polls.
+- **worker-sim** consumes two BullMQ queues: `simulations` (deterministic ngspice, sandboxed with
+  rlimit + optional bubblewrap) and `design` (the agentic loop). An **orphan reaper** reconciles jobs
+  stuck after a crash; both workers drain on `SIGTERM` before telemetry flushes.
+- Both tiers share **eda-core** (netlist gen/parse + SPICE round-trip import, ERC, the five ngspice
+  analyses, Monte-Carlo yield, the Convergence Doctor) and **llm-core** (`generateCircuit`/`editCircuit`/
+  `fixCircuit`/`explainCircuit` + the framework-free `runDesignLoop`).
+- `/health/ready` gates traffic on DB + Redis + S3; usage metering enforces per-org quotas at enqueue;
+  telemetry exports to an OTLP collector when `OTEL_*` is configured (inert otherwise).
+
+### The closed-loop design + verify flow (the moat)
+
+The differentiator: the AI doesn't just emit a circuit — the worker **simulates it, checks it against the
+spec, and self-repairs until it verifies**, then stress-tests robustness across component tolerances.
+
+```mermaid
+sequenceDiagram
+    autonumber
+    actor C as Client
+    participant A as API (design-jobs)
+    participant Q as Redis (design queue)
+    participant W as Design worker
+    participant L as Anthropic (llm-core)
+    participant N as ngspice (in-process)
+    participant DB as PostgreSQL
+
+    C->>A: POST /design-jobs {prompt, constraints}
+    A->>DB: insert DesignJob (QUEUED)
+    A->>Q: enqueue design job
+    A-->>C: 202 {jobId}
+    Q->>W: consume job
+    W->>DB: claim QUEUED → RUNNING
+    loop each round (≤ maxRounds)
+        W->>L: generate / fix circuit (tool-use)
+        L-->>W: CircuitJson
+        W->>N: simulate locally (no re-enqueue → no deadlock)
+        N-->>W: measurements
+        W->>W: evaluateAssertions (+ THD / gain gate)
+    end
+    W->>N: Monte-Carlo on the winner (yield + Wilson CI)
+    N-->>W: robustness tier
+    W->>DB: terminal DesignJob (SUCCEEDED + result)
+    C->>A: GET /design-jobs/:id (poll)
+    A->>DB: read status / result
+    A-->>C: {SUCCEEDED, circuit, assertions, yield, BOM}
+```
+
+Full details — services, queues, sandbox, shutdown ordering, verify-design worker delegation — in
+[docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
 
 ---
 
