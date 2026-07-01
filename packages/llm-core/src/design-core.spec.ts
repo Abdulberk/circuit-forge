@@ -4,7 +4,7 @@
  * design-spec-satisfaction suite (mocked SDK + sim); here we only lock the NEW abort hook, which fires at the
  * first checkpoint BEFORE any LLM/sim call — so it needs no Anthropic SDK mock.
  */
-import { runDesignLoop, DesignAbortedError, specCloseness, selectFinalists, screenSpecsMet, classifyRobustness, type DesignDeps, type ScreenResult } from './design-core';
+import { runDesignLoop, DesignAbortedError, specCloseness, selectFinalists, screenSpecsMet, classifyRobustness, preserveMetricOverlays, type DesignDeps, type ScreenResult } from './design-core';
 import type { AssertionResult, AcceptanceCriterion, CircuitJson } from '@circuit-forge/eda-core';
 
 const A = (over: Partial<AssertionResult>): AssertionResult => ({
@@ -215,5 +215,87 @@ describe('selectFinalists', () => {
         const picked = selectFinalists([marginal, robust], 2);
         expect(picked[0]).toBe(robust); // wider margin wins despite the WORSE closeness
         expect(picked[1]).toBe(marginal);
+    });
+});
+
+describe('preserveMetricOverlays — a fix cannot silently drop a thd/gain overlay', () => {
+    const F = { fundamentalFreq: '1k', probes: ['v(out)'] };
+    const TF = { output: 'v(out)', inputSource: 'V1' };
+    const tran = (fourier?: unknown) => ({ type: 'tran', stopTime: '5m', stepTime: '5u', ...(fourier ? { fourier } : {}) }) as never;
+    const op = (tf?: unknown) => ({ type: 'op', ...(tf ? { tf } : {}) }) as never;
+    const thdCrit = [{ probe: 'out', metric: 'thd', op: 'lt', value: 1 }] as never;
+    const gainCrit = [{ probe: 'out', metric: 'gain', op: 'approx', value: 20, tol: 2 }] as never;
+
+    it('carries the fourier overlay forward when a thd criterion needs it and the fix dropped it', () => {
+        const out = preserveMetricOverlays(tran(F), tran(), thdCrit) as { fourier?: unknown };
+        expect(out.fourier).toEqual(F);
+    });
+
+    it('carries the tf overlay forward when a gain criterion needs it and the fix dropped it', () => {
+        const out = preserveMetricOverlays(op(TF), op(), gainCrit) as { tf?: unknown };
+        expect(out.tf).toEqual(TF);
+    });
+
+    it('does NOT carry an overlay when no thd/gain criterion is active', () => {
+        const out = preserveMetricOverlays(tran(F), tran(), [{ probe: 'out', metric: 'pp', op: 'lt', value: 1 }] as never) as { fourier?: unknown };
+        expect(out.fourier).toBeUndefined();
+    });
+
+    it('respects a deliberate analysis-TYPE change by the fix (tran+fourier → op): does not force-carry', () => {
+        const out = preserveMetricOverlays(tran(F), op(), thdCrit) as { type: string; fourier?: unknown };
+        expect(out.type).toBe('op');        // the fix's new type stands
+        expect(out.fourier).toBeUndefined(); // a tran overlay is not smuggled onto an op
+    });
+
+    it('does NOT clobber an overlay the fix already re-emitted itself', () => {
+        const fresh = { fundamentalFreq: '2k', probes: ['v(x)'] };
+        const out = preserveMetricOverlays(tran(F), tran(fresh), thdCrit) as { fourier?: unknown };
+        expect(out.fourier).toEqual(fresh); // keep the model's own, don't overwrite with the stale one
+    });
+});
+
+describe('runDesignLoop — a thd criterion is measured via the seed analysis fourier (SDK-free)', () => {
+    // A divider/RC seed is enough — the sim is FAKED, so we test the plumbing (fold fourier → measurement →
+    // evaluate → verdict), not real ngspice THD. Seeding skips generateCircuit, so no real Anthropic call.
+    const SEED_T: CircuitJson = {
+        version: '1.0',
+        components: [
+            { id: 'v1', type: 'voltage_source', designator: 'V1', value: 'SIN(0 1 1k)', pins: [{ pinId: '+', netId: 'in' }, { pinId: '-', netId: '0' }] },
+            { id: 'r1', type: 'resistor', designator: 'R1', value: '1k', pins: [{ pinId: '1', netId: 'in' }, { pinId: '2', netId: 'out' }] },
+            { id: 'c1', type: 'capacitor', designator: 'C1', value: '100n', pins: [{ pinId: '1', netId: 'out' }, { pinId: '2', netId: '0' }] },
+            { id: 'gnd', type: 'ground', designator: 'GND1', pins: [{ pinId: '1', netId: '0' }] },
+        ],
+        nets: [{ id: 'in', name: 'in' }, { id: 'out', name: 'out' }, { id: '0', name: '0', isGround: true }],
+    } as unknown as CircuitJson;
+
+    it('folds THD from the sim result onto the measurement so a thd criterion verifies (was always-null before the loop attached it)', async () => {
+        const result = {
+            meta: { pointsCount: 3 },
+            series: [{ name: 'v(out)', points: [{ x: 0, y: 0 }, { x: 1e-3, y: 1 }, { x: 2e-3, y: 0 }] }],
+            fourier: [{ probe: 'v(out)', fundamentalFreq: 1000, thd: 0.5, harmonics: [] }],
+        };
+        const runSim = {
+            createQuickSim: jest.fn(async () => ({ jobId: 'j1' })),
+            getStatus: jest.fn(async () => ({ status: 'SUCCEEDED', metrics: { pointsCount: 3 } })),
+            getResult: jest.fn(async () => ({ status: 'SUCCEEDED', result, metrics: { pointsCount: 3 } })),
+            createMonteCarloJob: jest.fn(),
+        };
+        const deps = fakeDeps({ runSim: runSim as unknown as DesignDeps['runSim'] });
+        const res = await runDesignLoop(
+            {
+                prompt: 'a low-distortion stage, THD under 1%',
+                seedCircuit: SEED_T,
+                seedAnalysisConfig: { type: 'tran', stopTime: '5m', stepTime: '5u', fourier: { fundamentalFreq: '1k', probes: ['v(out)'] } } as never,
+                seedCriteria: [{ probe: 'out', metric: 'thd', op: 'lt', value: 1 }] as never,
+                maxRounds: 1,
+            },
+            deps,
+        );
+        expect(runSim.createQuickSim).toHaveBeenCalledTimes(1); // seed simulated directly, no LLM
+        expect(res.ok).toBe(true);
+        expect(res.verified).toBe(true);
+        const a = (res.assertions ?? []).find((x) => x.metric === 'thd');
+        expect(a?.actual).toBe(0.5); // THD folded from result.fourier (undefined → not-determinable before)
+        expect(a?.pass).toBe(true);  // 0.5% < 1%
     });
 });

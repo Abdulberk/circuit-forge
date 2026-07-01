@@ -24,6 +24,8 @@ import {
     currentKey,
     type CircuitJson,
     type AnalysisConfig,
+    type TranAnalysis,
+    type OpAnalysis,
     type DataSeries,
     type AcceptanceCriterion,
     type AssertionResult,
@@ -323,9 +325,13 @@ export async function runDesignLoop(input: DesignLoopInput, deps: DesignDeps): P
             await checkAbort(deps); // don't spend another LLM call if a cancel arrived
             const fixed = await applyFix(deps, circuit, analysis, problem);
             circuit = fixed.circuit;
-            analysis = fixed.analysis;
             explanation = fixed.explanation;
             criteria = mergeCriteria(criteria, fixed.acceptanceCriteria, requiredDims);
+            // A fix may DROP the listing-overlay (fourier/tf) a thd/gain criterion needs to be measurable — the
+            // fix prompt asks the model to keep it, but guarantee it: carry the prior round's overlay forward
+            // when an active criterion still requires it and the analysis is still the compatible type. Without
+            // this, a dropped overlay would flip an otherwise-good thd/gain check to "not determinable" mid-loop.
+            analysis = preserveMetricOverlays(analysis, fixed.analysis, criteria);
             currentProbes = criteria.filter((c) => isCurrentProbe(c.probe)).map((c) => c.probe);
         }
     }
@@ -354,6 +360,31 @@ export async function runDesignLoop(input: DesignLoopInput, deps: DesignDeps): P
                 : 'Could not produce a successful simulation within the round budget.',
         ...(freqCaveat ? { caveats: freqCaveat } : {}),
     };
+}
+
+/**
+ * Guarantee that the listing-derived overlays a thd/gain criterion depends on survive a fix round.
+ *
+ * `thd` is only measurable when the transient carries a `fourier` request on that probe; `gain` only when the
+ * op carries a `tf`. A fix model may silently drop the overlay while keeping the criterion — which would flip an
+ * otherwise-passing check to "not determinable". We NEVER fabricate an overlay (we don't know the fundamental
+ * frequency / input source out of thin air); we only CARRY FORWARD the prior round's overlay, and only when the
+ * criterion still needs it AND the fixed analysis is still the compatible type (so a deliberate analysis-type
+ * change by the fix is respected — a mismatched criterion then reads not-determinable and is fed back honestly).
+ */
+export function preserveMetricOverlays(prev: AnalysisConfig, next: AnalysisConfig, criteria: AcceptanceCriterion[]): AnalysisConfig {
+    let out = next;
+    const prevTran = prev.type === 'tran' ? (prev as TranAnalysis) : undefined;
+    const nextTran = next.type === 'tran' ? (next as TranAnalysis) : undefined;
+    if (criteria.some((c) => c.metric === 'thd') && prevTran?.fourier && nextTran && !nextTran.fourier) {
+        out = { ...nextTran, fourier: prevTran.fourier };
+    }
+    const prevOp = prev.type === 'op' ? (prev as OpAnalysis) : undefined;
+    const nextOp = out.type === 'op' ? (out as OpAnalysis) : undefined;
+    if (criteria.some((c) => c.metric === 'gain') && prevOp?.tf && nextOp && !nextOp.tf) {
+        out = { ...nextOp, tf: prevOp.tf };
+    }
+    return out;
 }
 
 async function applyFix(
