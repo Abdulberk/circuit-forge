@@ -470,6 +470,35 @@ async function main(): Promise<void> {
     });
     console.log(`✓ Created user: ${user.email}`);
 
+    // Bootstrap the first platform admin from env (idempotent) — the ONLY out-of-band way to mint an
+    // admin; afterwards PATCH /admin/users/:id/role promotes others. If the account already exists
+    // (a real user being promoted), ONLY the platformRole is set — the password is never touched.
+    // Email is normalized (trim+lowercase) to match AuthService.normalizeEmail so login lines up.
+    const rawAdminEmail = process.env.PLATFORM_ADMIN_EMAIL?.trim().toLowerCase();
+    if (rawAdminEmail) {
+        const adminPassword = process.env.PLATFORM_ADMIN_PASSWORD;
+        const existingAdmin = await prisma.user.findUnique({ where: { email: rawAdminEmail } });
+        if (existingAdmin) {
+            await prisma.user.update({ where: { id: existingAdmin.id }, data: { platformRole: 'ADMIN' } });
+            console.log(`✓ Promoted existing account to platform ADMIN: ${rawAdminEmail}`);
+        } else if (!adminPassword) {
+            console.warn(
+                `⚠ PLATFORM_ADMIN_EMAIL=${rawAdminEmail} has no matching account and PLATFORM_ADMIN_PASSWORD is unset — skipping admin bootstrap (set the password, or register the account first).`,
+            );
+        } else {
+            const admin = await prisma.user.create({
+                data: {
+                    email: rawAdminEmail,
+                    passwordHash: await argon2.hash(adminPassword),
+                    name: 'Platform Admin',
+                    emailVerified: true,
+                    platformRole: 'ADMIN',
+                },
+            });
+            console.log(`✓ Created platform ADMIN: ${admin.email}`);
+        }
+    }
+
     // Create demo organization
     const org = await prisma.organization.upsert({
         where: { id: 'demo-org-id' },

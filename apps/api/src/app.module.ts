@@ -1,11 +1,13 @@
 /**
  * Root Application Module
  */
-import { Module } from '@nestjs/common';
+import { Module, NestModule, MiddlewareConsumer } from '@nestjs/common';
 import { ConfigModule } from '@nestjs/config';
 import { APP_GUARD } from '@nestjs/core';
 import { ThrottlerModule, ThrottlerGuard } from '@nestjs/throttler';
 import { validateEnv } from './config/env.validation';
+import { requestContextMiddleware } from './common/context/request-context';
+import { AuditModule } from './common/audit/audit.module';
 import { PrismaModule } from './prisma/prisma.module';
 import { AuthModule } from './auth/auth.module';
 import { OrgsModule } from './orgs/orgs.module';
@@ -19,6 +21,7 @@ import { PartsModule } from './parts/parts.module';
 import { NetlistModule } from './netlist/netlist.module';
 import { UsageModule } from './usage/usage.module';
 import { HealthModule } from './health/health.module';
+import { AdminModule } from './admin/admin.module';
 
 @Module({
     imports: [
@@ -51,6 +54,9 @@ import { HealthModule } from './health/health.module';
         // Database
         PrismaModule,
 
+        // Cross-cutting: centralized audit writer (global).
+        AuditModule,
+
         // Feature modules
         AuthModule,
         OrgsModule,
@@ -64,6 +70,7 @@ import { HealthModule } from './health/health.module';
         NetlistModule,
         UsageModule,
         HealthModule,
+        AdminModule,
     ],
     providers: [
         // Activates the rate limiter for EVERY route (the @Throttle decorators only override the
@@ -71,4 +78,11 @@ import { HealthModule } from './health/health.module';
         { provide: APP_GUARD, useClass: ThrottlerGuard },
     ],
 })
-export class AppModule { }
+export class AppModule implements NestModule {
+    // Mint a per-request correlation id (x-request-id) for EVERY route before anything else runs, so
+    // guards/services/AuditService all share it. Registered here (not just in main.ts) so the
+    // integration tests, which bootstrap AppModule directly, also get request context.
+    configure(consumer: MiddlewareConsumer): void {
+        consumer.apply(requestContextMiddleware).forRoutes('*');
+    }
+}

@@ -20,7 +20,7 @@
  */
 import { HttpException, HttpStatus, Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
-import { Prisma } from '@prisma/client';
+import { Prisma, OrgQuotaOverride } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 
 /** A Prisma client OR an interactive-transaction client — the read+write quota methods accept either,
@@ -55,6 +55,46 @@ export interface OrgUsage {
 /** A job still QUEUED/RUNNING after this long is an orphan (crashed worker) — it must not count
  *  against the concurrency gate forever. Worker timeouts are seconds; 24h is generous. */
 const CONCURRENT_STALENESS_MS = 24 * 60 * 60 * 1000;
+
+/** JSON-safe view of a per-org quota override (storageBytes BigInt -> number so res.json can serialize). */
+export interface QuotaOverrideView {
+    simConcurrent: number | null;
+    simJobsPerMonth: number | null;
+    simRuntimeMsPerMonth: number | null;
+    designConcurrent: number | null;
+    designJobsPerMonth: number | null;
+    storageBytes: number | null;
+    partsCallsPerMonth: number | null;
+    updatedByAdminId: string | null;
+    updatedAt: Date;
+}
+
+/** The org usage snapshot the ADMIN console sees: same metering as OrgUsage but EFFECTIVE (override-aware)
+ *  limits, no user-scoped parts count, plus the raw override row for transparency. */
+export interface AdminOrgUsage {
+    orgId: string;
+    period: string;
+    sim: OrgUsage['sim'];
+    design: OrgUsage['design'];
+    storage: OrgUsage['storage'];
+    override: QuotaOverrideView | null;
+}
+
+/** Map a Prisma OrgQuotaOverride to a JSON-safe view (BigInt storageBytes -> number). */
+export function toQuotaOverrideView(o: OrgQuotaOverride | null): QuotaOverrideView | null {
+    if (!o) return null;
+    return {
+        simConcurrent: o.simConcurrent,
+        simJobsPerMonth: o.simJobsPerMonth,
+        simRuntimeMsPerMonth: o.simRuntimeMsPerMonth,
+        designConcurrent: o.designConcurrent,
+        designJobsPerMonth: o.designJobsPerMonth,
+        storageBytes: o.storageBytes === null ? null : Number(o.storageBytes),
+        partsCallsPerMonth: o.partsCallsPerMonth,
+        updatedByAdminId: o.updatedByAdminId,
+        updatedAt: o.updatedAt,
+    };
+}
 
 @Injectable()
 export class UsageService {
@@ -153,10 +193,11 @@ export class UsageService {
      *  - QUOTA_SIM_RUNTIME_MS_PER_MONTH — summed worker runtime this month.
      * Pass a transaction client to run the checks inside an advisory-locked tx (see createSimGuarded).
      */
-    async assertSimQuota(orgId: string, db: Db = this.prisma): Promise<void> {
-        const concurrentLimit = this.limit('QUOTA_SIM_CONCURRENT_PER_ORG');
-        const jobsLimit = this.limit('QUOTA_SIM_JOBS_PER_MONTH');
-        const runtimeLimit = this.limit('QUOTA_SIM_RUNTIME_MS_PER_MONTH');
+    async assertSimQuota(orgId: string, db: Db = this.prisma, override?: OrgQuotaOverride | null): Promise<void> {
+        const ov = override === undefined ? await this.loadOverride(orgId, db) : override;
+        const concurrentLimit = this.effective('QUOTA_SIM_CONCURRENT_PER_ORG', ov?.simConcurrent);
+        const jobsLimit = this.effective('QUOTA_SIM_JOBS_PER_MONTH', ov?.simJobsPerMonth);
+        const runtimeLimit = this.effective('QUOTA_SIM_RUNTIME_MS_PER_MONTH', ov?.simRuntimeMsPerMonth);
         const [inFlight, monthly] = await Promise.all([
             concurrentLimit !== null ? this.simConcurrent(orgId, db) : null,
             jobsLimit !== null || runtimeLimit !== null ? this.simUsageThisMonth(orgId, db) : null,
@@ -176,9 +217,13 @@ export class UsageService {
      * no transaction, no lock — preserving today's behavior. `create(tx)` must do only the job insert.
      */
     async createSimGuarded<T>(orgId: string, create: (tx: Db) => Promise<T>): Promise<T> {
-        if (!this.hasSimQuota()) return create(this.prisma);
+        // Suspension is enforced for EVERY write (one PK-join read), regardless of quota config; the same
+        // read tells us whether a per-org override is active, so an override enforces even with no env quota.
+        const gate = await this.loadOrgGate(orgId);
+        this.throwIfSuspended(gate);
+        if (!this.hasSimQuota() && !this.simOverrideActive(gate.override)) return create(this.prisma);
         return this.withOrgLock('sim', orgId, async (tx) => {
-            await this.assertSimQuota(orgId, tx);
+            await this.assertSimQuota(orgId, tx); // re-loads the override fresh under the lock
             return create(tx);
         });
     }
@@ -223,9 +268,10 @@ export class UsageService {
      *  - QUOTA_DESIGN_JOBS_PER_MONTH    — design jobs created this month.
      * Pass a tx client to run inside the advisory-locked tx (see createDesignGuarded).
      */
-    async assertDesignQuota(orgId: string, db: Db = this.prisma): Promise<void> {
-        const concurrentLimit = this.limit('QUOTA_DESIGN_CONCURRENT_PER_ORG');
-        const jobsLimit = this.limit('QUOTA_DESIGN_JOBS_PER_MONTH');
+    async assertDesignQuota(orgId: string, db: Db = this.prisma, override?: OrgQuotaOverride | null): Promise<void> {
+        const ov = override === undefined ? await this.loadOverride(orgId, db) : override;
+        const concurrentLimit = this.effective('QUOTA_DESIGN_CONCURRENT_PER_ORG', ov?.designConcurrent);
+        const jobsLimit = this.effective('QUOTA_DESIGN_JOBS_PER_MONTH', ov?.designJobsPerMonth);
         const [inFlight, monthly] = await Promise.all([
             concurrentLimit !== null ? this.designConcurrent(orgId, db) : null,
             jobsLimit !== null ? this.designJobsThisMonth(orgId, db) : null,
@@ -242,9 +288,11 @@ export class UsageService {
      * DesignJob insert only (the BullMQ add happens AFTER the lock releases — never hold a lock over Redis).
      */
     async createDesignGuarded<T>(orgId: string, create: (tx: Db) => Promise<T>): Promise<T> {
-        if (!this.hasDesignQuota()) return create(this.prisma);
+        const gate = await this.loadOrgGate(orgId);
+        this.throwIfSuspended(gate);
+        if (!this.hasDesignQuota() && !this.designOverrideActive(gate.override)) return create(this.prisma);
         return this.withOrgLock('design', orgId, async (tx) => {
-            await this.assertDesignQuota(orgId, tx);
+            await this.assertDesignQuota(orgId, tx); // re-loads the override fresh under the lock
             return create(tx);
         });
     }
@@ -266,8 +314,9 @@ export class UsageService {
     }
 
     /** Gate an upload of `addBytes` against QUOTA_STORAGE_BYTES_PER_ORG (unset = unlimited). */
-    async assertStorageQuota(orgId: string, addBytes: number, db: Db = this.prisma): Promise<void> {
-        const limit = this.limit('QUOTA_STORAGE_BYTES_PER_ORG');
+    async assertStorageQuota(orgId: string, addBytes: number, db: Db = this.prisma, override?: OrgQuotaOverride | null): Promise<void> {
+        const ov = override === undefined ? await this.loadOverride(orgId, db) : override;
+        const limit = this.effective('QUOTA_STORAGE_BYTES_PER_ORG', ov?.storageBytes);
         if (limit === null) return;
         const { assetBytes, resultBytes } = await this.storageBytes(orgId, db);
         // `used` is the PROJECTED total (current + this upload), so the 429 always shows used > limit.
@@ -282,9 +331,13 @@ export class UsageService {
      * directly with no transaction/lock overhead.
      */
     async createAssetGuarded<T>(orgId: string, addBytes: number, create: (tx: Db) => Promise<T>): Promise<T> {
-        if (this.limit('QUOTA_STORAGE_BYTES_PER_ORG') === null) return create(this.prisma);
+        const gate = await this.loadOrgGate(orgId);
+        this.throwIfSuspended(gate);
+        if (this.limit('QUOTA_STORAGE_BYTES_PER_ORG') === null && !this.storageOverrideActive(gate.override)) {
+            return create(this.prisma);
+        }
         return this.withOrgLock('storage', orgId, async (tx) => {
-            await this.assertStorageQuota(orgId, addBytes, tx);
+            await this.assertStorageQuota(orgId, addBytes, tx); // re-loads the override fresh under the lock
             return create(tx);
         });
     }
@@ -399,6 +452,117 @@ export class UsageService {
                 calls: partsRow?.amount ?? 0,
                 limits: { callsPerMonth: this.limit('QUOTA_PARTS_CALLS_PER_MONTH') },
             },
+        };
+    }
+
+    // ---------------------------------------------------------------- per-org overrides (admin)
+
+    /** The per-org quota override row (null = none configured → every metric inherits the env default). */
+    async loadOverride(orgId: string, db: Db = this.prisma): Promise<OrgQuotaOverride | null> {
+        return db.orgQuotaOverride.findUnique({ where: { orgId } });
+    }
+
+    /**
+     * The EFFECTIVE limit for one metric: a positive per-org override wins; otherwise the env default;
+     * otherwise unlimited. A non-positive/absent override falls back to env — matching the env rule that
+     * 0/blank = unlimited, so quotas are never *tightened* by a stray 0. Use suspension to hard-block.
+     */
+    private effective(envKey: string, override: number | bigint | null | undefined): number | null {
+        if (override !== null && override !== undefined) {
+            const n = typeof override === 'bigint' ? Number(override) : override;
+            if (Number.isFinite(n) && n > 0) return Math.floor(n);
+        }
+        return this.limit(envKey);
+    }
+
+    // ---------------------------------------------------------------- suspension + override gating
+
+    /** One read of the org's write-gate state: suspension + its quota override (a PK-join query). */
+    private async loadOrgGate(
+        orgId: string,
+        db: Db = this.prisma,
+    ): Promise<{ suspendedAt: Date | null; suspendReason: string | null; override: OrgQuotaOverride | null }> {
+        const org = await db.organization.findUnique({
+            where: { id: orgId },
+            select: { suspendedAt: true, suspendReason: true, quotaOverride: true },
+        });
+        return {
+            suspendedAt: org?.suspendedAt ?? null,
+            suspendReason: org?.suspendReason ?? null,
+            override: org?.quotaOverride ?? null,
+        };
+    }
+
+    private throwIfSuspended(gate: { suspendedAt: Date | null; suspendReason: string | null }): void {
+        if (gate.suspendedAt) {
+            throw new HttpException(
+                {
+                    code: 'ORG_SUSPENDED',
+                    message: 'This organization is suspended and cannot perform this action.',
+                    suspendedAt: gate.suspendedAt,
+                    reason: gate.suspendReason,
+                },
+                HttpStatus.FORBIDDEN,
+            );
+        }
+    }
+
+    /** Suspension gate for a write path that does NOT go through a guarded create (e.g. asset presign).
+     *  READS must never call this — a suspended org keeps read access so its members can see the reason. */
+    async assertOrgNotSuspended(orgId: string, db: Db = this.prisma): Promise<void> {
+        this.throwIfSuspended(await this.loadOrgGate(orgId, db));
+    }
+
+    private simOverrideActive(o: OrgQuotaOverride | null): boolean {
+        return !!o && (o.simConcurrent !== null || o.simJobsPerMonth !== null || o.simRuntimeMsPerMonth !== null);
+    }
+    private designOverrideActive(o: OrgQuotaOverride | null): boolean {
+        return !!o && (o.designConcurrent !== null || o.designJobsPerMonth !== null);
+    }
+    private storageOverrideActive(o: OrgQuotaOverride | null): boolean {
+        return !!o && o.storageBytes !== null;
+    }
+
+    /** Cross-tenant usage snapshot for the admin console — EFFECTIVE (override-aware) limits, no
+     *  user-scoped parts count. Not membership-gated (the admin guard authorizes the caller). */
+    async getOrgUsageForAdmin(orgId: string): Promise<AdminOrgUsage> {
+        const period = this.period();
+        const [sim, concurrent, designJobs, designConcurrent, storage, override] = await Promise.all([
+            this.simUsageThisMonth(orgId),
+            this.simConcurrent(orgId),
+            this.designJobsThisMonth(orgId),
+            this.designConcurrent(orgId),
+            this.storageBytes(orgId),
+            this.loadOverride(orgId),
+        ]);
+        return {
+            orgId,
+            period,
+            sim: {
+                jobs: sim.jobs,
+                runtimeMs: sim.runtimeMs,
+                concurrent,
+                limits: {
+                    jobsPerMonth: this.effective('QUOTA_SIM_JOBS_PER_MONTH', override?.simJobsPerMonth),
+                    runtimeMsPerMonth: this.effective('QUOTA_SIM_RUNTIME_MS_PER_MONTH', override?.simRuntimeMsPerMonth),
+                    concurrent: this.effective('QUOTA_SIM_CONCURRENT_PER_ORG', override?.simConcurrent),
+                },
+            },
+            design: {
+                jobs: designJobs,
+                concurrent: designConcurrent,
+                limits: {
+                    jobsPerMonth: this.effective('QUOTA_DESIGN_JOBS_PER_MONTH', override?.designJobsPerMonth),
+                    concurrent: this.effective('QUOTA_DESIGN_CONCURRENT_PER_ORG', override?.designConcurrent),
+                },
+            },
+            storage: {
+                assetBytes: storage.assetBytes,
+                resultBytes: storage.resultBytes,
+                totalBytes: storage.assetBytes + storage.resultBytes,
+                limits: { bytes: this.effective('QUOTA_STORAGE_BYTES_PER_ORG', override?.storageBytes) },
+            },
+            override: toQuotaOverrideView(override),
         };
     }
 }
