@@ -1,0 +1,470 @@
+(session dense
+  (base_design dense)
+  (placement
+    (resolution um 10)
+    (component "simple_chip:5.3000x4.4100_mm"
+      (place "U1_source_component_0" -90000 50000 front 0)
+    )
+    (component "simple_chip:5.3000x8.2200_mm"
+      (place "U2_source_component_1" 90000 -50000 front 0)
+    )
+    (component "simple_resistor:2.4500x0.9500_mm"
+      (place "R1_source_component_2" -160000 120000 front 0)
+      (place "R2_source_component_3" -100000 120000 front 0)
+      (place "R3_source_component_4" -40000 120000 front 0)
+      (place "R4_source_component_5" 20000 120000 front 0)
+      (place "R5_source_component_6" 80000 120000 front 0)
+      (place "R6_source_component_7" 140000 120000 front 0)
+    )
+    (component "simple_capacitor:2.4500x0.9500_mm"
+      (place "C1_source_component_8" -140000 -120000 front 0)
+      (place "C2_source_component_9" -60000 -120000 front 0)
+      (place "C3_source_component_10" 20000 -120000 front 0)
+      (place "C4_source_component_11" 100000 -120000 front 0)
+    )
+    (component "simple_led:2.4500x0.9500_mm"
+      (place "LED1_source_component_12" 170000 80000 front 0)
+      (place "LED2_source_component_13" 170000 30000 front 0)
+    )
+  )
+  (was_is
+  )
+  (routes 
+    (resolution um 10)
+    (parser
+      (host_cad "KiCad's Pcbnew")
+      (host_version )
+    )
+    (library_out 
+      (padstack "Via[0-1]_600:300_um"
+        (shape
+          (circle F.Cu 6000 0 0)
+        )
+        (shape
+          (circle B.Cu 6000 0 0)
+        )
+        (attach off)
+      )
+      (padstack "Via[0-1]_600:300_um"
+        (shape
+          (circle F.Cu 6000 0 0)
+        )
+        (shape
+          (circle B.Cu 6000 0 0)
+        )
+        (attach off)
+      )
+    )
+    (network_out 
+      (net "Net-(C1_source_component_8-Pad1)"
+        (wire
+          (path F.Cu 1500
+            -68500 69050
+            -75767 69050
+          )
+        )
+        (wire
+          (path F.Cu 1500
+            -75767 69050
+            -75767 67812
+            -105196 38383
+            -115466 38383
+            -148250 5599
+            -148250 -120000
+          )
+        )
+      )
+      (net "Net-(C1_source_component_8-Pad2)"
+        (wire
+          (path F.Cu 1500
+            -131750 -120000
+            -125483 -120000
+          )
+        )
+        (wire
+          (path F.Cu 1500
+            -51750 -120000
+            -58017 -120000
+          )
+        )
+        (wire
+          (path F.Cu 1500
+            -58017 -120000
+            -58017 -122350
+            -62684 -127017
+            -118466 -127017
+            -125483 -120000
+          )
+        )
+      )
+      (net "Net-(C2_source_component_9-Pad1)"
+        (wire
+          (path F.Cu 1500
+            -68250 -120000
+            -61983 -120000
+          )
+        )
+        (wire
+          (path F.Cu 1500
+            -68500 30950
+            -61233 30950
+          )
+        )
+        (wire
+          (path F.Cu 1500
+            -61983 -120000
+            -61233 -119250
+            -61233 30950
+          )
+        )
+      )
+      (net "Net-(C3_source_component_10-Pad1)"
+        (wire
+          (path F.Cu 1500
+            111500 -11900
+            104233 -11900
+          )
+        )
+        (wire
+          (path F.Cu 1500
+            11750 -120000
+            18017 -120000
+          )
+        )
+        (wire
+          (path F.Cu 1500
+            18017 -120000
+            18017 -117650
+            52846 -82821
+            72656 -82821
+            104233 -51244
+            104233 -11900
+          )
+        )
+      )
+      (net "Net-(C3_source_component_10-Pad2)"
+        (wire
+          (path F.Cu 1500
+            28250 -120000
+            34517 -120000
+          )
+        )
+        (wire
+          (path F.Cu 1500
+            108250 -120000
+            101983 -120000
+          )
+        )
+        (wire
+          (path F.Cu 1500
+            101983 -120000
+            101983 -122350
+            97316 -127017
+            41534 -127017
+            34517 -120000
+          )
+        )
+      )
+      (net "Net-(C4_source_component_11-Pad1)"
+        (wire
+          (path F.Cu 1500
+            68500 -88100
+            75767 -88100
+          )
+        )
+        (wire
+          (path F.Cu 1500
+            91750 -120000
+            85483 -120000
+          )
+        )
+        (wire
+          (path F.Cu 1500
+            85483 -120000
+            85483 -97816
+            75767 -88100
+          )
+        )
+      )
+      (net "Net-(LED1_source_component_12-Pad2)"
+        (wire
+          (path F.Cu 1500
+            178250 80000
+            178250 106920
+            151770 133400
+            -150933 133400
+            -161983 122350
+            -161983 120000
+          )
+        )
+        (wire
+          (path F.Cu 1500
+            -168250 120000
+            -161983 120000
+          )
+        )
+      )
+      (net "Net-(LED2_source_component_13-Pad2)"
+        (wire
+          (path F.Cu 1500
+            -108250 120000
+            -101983 120000
+          )
+        )
+        (wire
+          (path F.Cu 1500
+            178250 30000
+            171983 30000
+          )
+        )
+        (wire
+          (path F.Cu 1500
+            171983 30000
+            171983 108223
+            149823 130383
+            -93950 130383
+            -101983 122350
+            -101983 120000
+          )
+        )
+      )
+      (net "Net-(R1_source_component_2-Pad2)"
+        (wire
+          (path F.Cu 1500
+            -111500 69050
+            -118767 69050
+          )
+        )
+        (wire
+          (path F.Cu 1500
+            -151750 120000
+            -145483 120000
+          )
+        )
+        (wire
+          (path F.Cu 1500
+            -145483 120000
+            -145483 95766
+            -118767 69050
+          )
+        )
+      )
+      (net "Net-(R2_source_component_3-Pad2)"
+        (wire
+          (path F.Cu 1500
+            -111500 56350
+            -104233 56350
+          )
+        )
+        (wire
+          (path F.Cu 1500
+            -91750 120000
+            -91750 68833
+            -104233 56350
+          )
+        )
+      )
+      (net "Net-(R3_source_component_4-Pad1)"
+        (wire
+          (path F.Cu 1500
+            -41983 120000
+            -41983 122328
+            -37294 127017
+            -1534 127017
+            5483 120000
+          )
+        )
+        (wire
+          (path F.Cu 1500
+            -48250 120000
+            -41983 120000
+          )
+        )
+        (wire
+          (path F.Cu 1500
+            11750 120000
+            5483 120000
+          )
+        )
+      )
+      (net "Net-(R3_source_component_4-Pad2)"
+        (wire
+          (path F.Cu 1500
+            -111500 43650
+            -104233 43650
+          )
+        )
+        (wire
+          (path F.Cu 1500
+            -31750 120000
+            -38017 120000
+          )
+        )
+        (wire
+          (path F.Cu 1500
+            -38017 120000
+            -38017 117133
+            -104233 50917
+            -104233 43650
+          )
+        )
+      )
+      (net "Net-(R4_source_component_5-Pad2)"
+        (wire
+          (path F.Cu 1500
+            68500 -11900
+            61233 -11900
+          )
+        )
+        (wire
+          (path F.Cu 1500
+            28250 120000
+            34517 120000
+          )
+        )
+        (wire
+          (path F.Cu 1500
+            34517 120000
+            34517 14816
+            61233 -11900
+          )
+        )
+      )
+      (net "Net-(R5_source_component_6-Pad2)"
+        (wire
+          (path F.Cu 1500
+            68500 -24600
+            75767 -24600
+          )
+        )
+        (wire
+          (path F.Cu 1500
+            88250 120000
+            81983 120000
+          )
+        )
+        (wire
+          (path F.Cu 1500
+            81983 120000
+            81983 -18384
+            75767 -24600
+          )
+        )
+      )
+      (net "Net-(R6_source_component_7-Pad2)"
+        (wire
+          (path F.Cu 1500
+            75767 -37300
+            88562 -24505
+            88562 60312
+            141983 113733
+            141983 120000
+          )
+        )
+        (wire
+          (path F.Cu 1500
+            148250 120000
+            141983 120000
+          )
+        )
+        (wire
+          (path F.Cu 1500
+            68500 -37300
+            75767 -37300
+          )
+        )
+      )
+      (net "Net-(U1_source_component_0-Pad4)"
+        (wire
+          (path F.Cu 1500
+            -104233 30950
+            -85814 49369
+            -38136 49369
+            61233 -50000
+          )
+        )
+        (wire
+          (path F.Cu 1500
+            -111500 30950
+            -104233 30950
+          )
+        )
+        (wire
+          (path F.Cu 1500
+            68500 -50000
+            61233 -50000
+          )
+        )
+      )
+      (net "Net-(U1_source_component_0-Pad6)"
+        (wire
+          (path F.Cu 1500
+            -68500 43650
+            -61233 43650
+          )
+        )
+        (wire
+          (path F.Cu 1500
+            68500 -62700
+            45117 -62700
+            -61233 43650
+          )
+        )
+      )
+      (net "Net-(U1_source_component_0-Pad7)"
+        (wire
+          (path F.Cu 1500
+            68500 -75400
+            75767 -75400
+          )
+        )
+        (wire
+          (path F.Cu 1500
+            75767 -75400
+            75767 -45298
+            75190 -44721
+            62686 -44721
+            -38385 56350
+            -68500 56350
+          )
+        )
+      )
+      (net "Net-(U2_source_component_1-Pad8)"
+        (wire
+          (path F.Cu 1500
+            111500 -88100
+            118767 -88100
+          )
+        )
+        (wire
+          (path F.Cu 1500
+            161750 80000
+            168017 80000
+          )
+        )
+        (wire
+          (path F.Cu 1500
+            168017 80000
+            168017 -38850
+            118767 -88100
+          )
+        )
+      )
+      (net "Net-(U2_source_component_1-Pad9)"
+        (wire
+          (path F.Cu 1500
+            161750 30000
+            161750 -32417
+            118767 -75400
+          )
+        )
+        (wire
+          (path F.Cu 1500
+            111500 -75400
+            118767 -75400
+          )
+        )
+      )
+    )
+  )
+)

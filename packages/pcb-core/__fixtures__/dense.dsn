@@ -1,0 +1,203 @@
+(pcb ./converted_dsn.dsn
+  (parser
+    (string_quote ")
+    (space_in_quoted_tokens on)
+    (host_cad "KiCad's Pcbnew")
+    (host_version "")
+  )
+  (resolution um 10)
+  (unit um)
+  (structure
+    (layer F.Cu
+      (type signal)
+      (property
+        (index 0)
+      )
+    )
+    (layer B.Cu
+      (type signal)
+      (property
+        (index 1)
+      )
+    )
+    (boundary
+      (path pcb 0  -20000 -15000 20000 -15000 20000 15000 -20000 15000 -20000 -15000)
+    )
+    (via "Via[0-1]_600:300_um")
+    (rule
+      (width 200)
+      (clearance 150)
+      (clearance 50 (type smd_smd))
+    )
+  )
+  (placement
+    (component "simple_chip:5.3000x4.4100_mm"
+      (place U1_source_component_0 -9000 5000 front 0)
+    )
+    (component "simple_chip:5.3000x8.2200_mm"
+      (place U2_source_component_1 9000 -5000.000000000001 front 0)
+    )
+    (component "simple_resistor:2.4500x0.9500_mm"
+      (place R1_source_component_2 -16000 12000 front 0 (PN "10k"))
+      (place R2_source_component_3 -10000 12000 front 0 (PN "10k"))
+      (place R3_source_component_4 -4000 12000 front 0 (PN "10k"))
+      (place R4_source_component_5 2000 12000 front 0 (PN "10k"))
+      (place R5_source_component_6 8000 12000 front 0 (PN "10k"))
+      (place R6_source_component_7 14000 12000 front 0 (PN "10k"))
+    )
+    (component "simple_capacitor:2.4500x0.9500_mm"
+      (place C1_source_component_8 -14000 -12000 front 0 (PN "0.100uF"))
+      (place C2_source_component_9 -6000 -12000 front 0 (PN "0.100uF"))
+      (place C3_source_component_10 2000 -12000 front 0 (PN "0.100uF"))
+      (place C4_source_component_11 10000 -12000 front 0 (PN "0.100uF"))
+    )
+    (component "simple_led:2.4500x0.9500_mm"
+      (place LED1_source_component_12 17000 8000 front 0)
+      (place LED2_source_component_13 17000 3000 front 0)
+    )
+  )
+  (library
+    (image "simple_chip:5.3000x4.4100_mm"
+      (pin RoundRect[T]Pad_1000x600_um 1 -2150.0000000000005 1905.0000000000002)
+      (pin RoundRect[T]Pad_1000x600_um 2 -2150.0000000000005 634.9999999999998)
+      (pin RoundRect[T]Pad_1000x600_um 3 -2150.0000000000005 -634.9999999999998)
+      (pin RoundRect[T]Pad_1000x600_um 4 -2150.0000000000005 -1905.0000000000002)
+      (pin RoundRect[T]Pad_1000x600_um 5 2150.0000000000005 -1905.0000000000002)
+      (pin RoundRect[T]Pad_1000x600_um 6 2150.0000000000005 -634.9999999999998)
+      (pin RoundRect[T]Pad_1000x600_um 7 2150.0000000000005 634.9999999999998)
+      (pin RoundRect[T]Pad_1000x600_um 8 2150.0000000000005 1905.0000000000002)
+    )
+    (image "simple_chip:5.3000x8.2200_mm"
+      (pin RoundRect[T]Pad_1000x600_um 1 -2150.0000000000005 3810.000000000001)
+      (pin RoundRect[T]Pad_1000x600_um 2 -2150.0000000000005 2540.000000000001)
+      (pin RoundRect[T]Pad_1000x600_um 3 -2150.0000000000005 1270.000000000001)
+      (pin RoundRect[T]Pad_1000x600_um 4 -2150.0000000000005 8.881784197001252e-13)
+      (pin RoundRect[T]Pad_1000x600_um 5 -2150.0000000000005 -1269.9999999999986)
+      (pin RoundRect[T]Pad_1000x600_um 6 -2150.0000000000005 -2539.999999999998)
+      (pin RoundRect[T]Pad_1000x600_um 7 -2150.0000000000005 -3809.9999999999995)
+      (pin RoundRect[T]Pad_1000x600_um 8 2150.0000000000005 -3809.9999999999995)
+      (pin RoundRect[T]Pad_1000x600_um 9 2150.0000000000005 -2539.999999999999)
+      (pin RoundRect[T]Pad_1000x600_um 10 2150.0000000000005 -1269.9999999999986)
+      (pin RoundRect[T]Pad_1000x600_um 11 2150.0000000000005 8.881784197001252e-13)
+      (pin RoundRect[T]Pad_1000x600_um 12 2150.0000000000005 1270.000000000001)
+      (pin RoundRect[T]Pad_1000x600_um 13 2150.0000000000005 2540.0000000000005)
+      (pin RoundRect[T]Pad_1000x600_um 14 2150.0000000000005 3810.000000000001)
+    )
+    (image "simple_resistor:2.4500x0.9500_mm"
+      (pin RoundRect[T]Pad_800x950_um 1 -824.9999999999993 0)
+      (pin RoundRect[T]Pad_800x950_um 2 824.9999999999993 0)
+    )
+    (image "simple_capacitor:2.4500x0.9500_mm"
+      (pin RoundRect[T]Pad_800x950_um 1 -824.9999999999993 0)
+      (pin RoundRect[T]Pad_800x950_um 2 824.9999999999993 0)
+    )
+    (image "simple_led:2.4500x0.9500_mm"
+      (pin RoundRect[T]Pad_800x950_um 1 -824.9999999999993 0)
+      (pin RoundRect[T]Pad_800x950_um 2 824.9999999999993 0)
+    )
+    (padstack "Via[0-1]_600:300_um"
+      (shape (circle F.Cu 600))
+      (shape (circle B.Cu 600))
+      (attach off)
+    )
+    (padstack "RoundRect[T]Pad_1000x600_um"
+      (shape (polygon F.Cu 0 -500 300 500 300 500 -300 -500 -300 -500 300))
+      (attach off)
+    )
+    (padstack "RoundRect[T]Pad_800x950_um"
+      (shape (polygon F.Cu 0 -400 475 400 475 400 -475 -400 -475 -400 475))
+      (attach off)
+    )
+  )
+  (network
+    (net "Net-(C1_source_component_8-Pad1)"
+      (pins C1_source_component_8-1 U1_source_component_0-8)
+    )
+    (net "Net-(C1_source_component_8-Pad2)"
+      (pins C1_source_component_8-2 C2_source_component_9-2)
+    )
+    (net "Net-(C2_source_component_9-Pad1)"
+      (pins C2_source_component_9-1 U1_source_component_0-5)
+    )
+    (net "Net-(C3_source_component_10-Pad1)"
+      (pins C3_source_component_10-1 U2_source_component_1-14)
+    )
+    (net "Net-(C3_source_component_10-Pad2)"
+      (pins C3_source_component_10-2 C4_source_component_11-2)
+    )
+    (net "Net-(C4_source_component_11-Pad1)"
+      (pins C4_source_component_11-1 U2_source_component_1-7)
+    )
+    (net "Net-(LED1_source_component_12-Pad2)"
+      (pins LED1_source_component_12-2 R1_source_component_2-1)
+    )
+    (net "Net-(LED2_source_component_13-Pad2)"
+      (pins LED2_source_component_13-2 R2_source_component_3-1)
+    )
+    (net "Net-(R1_source_component_2-Pad2)"
+      (pins R1_source_component_2-2 U1_source_component_0-1)
+    )
+    (net "Net-(R2_source_component_3-Pad2)"
+      (pins R2_source_component_3-2 U1_source_component_0-2)
+    )
+    (net "Net-(R3_source_component_4-Pad1)"
+      (pins R3_source_component_4-1 R4_source_component_5-1)
+    )
+    (net "Net-(R3_source_component_4-Pad2)"
+      (pins R3_source_component_4-2 U1_source_component_0-3)
+    )
+    (net "Net-(R4_source_component_5-Pad2)"
+      (pins R4_source_component_5-2 U2_source_component_1-1)
+    )
+    (net "Net-(R5_source_component_6-Pad2)"
+      (pins R5_source_component_6-2 U2_source_component_1-2)
+    )
+    (net "Net-(R6_source_component_7-Pad2)"
+      (pins R6_source_component_7-2 U2_source_component_1-3)
+    )
+    (net "Net-(U1_source_component_0-Pad4)"
+      (pins U1_source_component_0-4 U2_source_component_1-4)
+    )
+    (net "Net-(U1_source_component_0-Pad6)"
+      (pins U1_source_component_0-6 U2_source_component_1-5)
+    )
+    (net "Net-(U1_source_component_0-Pad7)"
+      (pins U1_source_component_0-7 U2_source_component_1-6)
+    )
+    (net "Net-(U2_source_component_1-Pad8)"
+      (pins U2_source_component_1-8 LED1_source_component_12-1)
+    )
+    (net "Net-(U2_source_component_1-Pad9)"
+      (pins U2_source_component_1-9 LED2_source_component_13-1)
+    )
+    (net "unconnected-(R5_source_component_6-Pad1)"
+      (pins R5_source_component_6-1)
+    )
+    (net "unconnected-(R6_source_component_7-Pad1)"
+      (pins R6_source_component_7-1)
+    )
+    (net "unconnected-(U2_source_component_1-Pad10)"
+      (pins U2_source_component_1-10)
+    )
+    (net "unconnected-(U2_source_component_1-Pad11)"
+      (pins U2_source_component_1-11)
+    )
+    (net "unconnected-(U2_source_component_1-Pad12)"
+      (pins U2_source_component_1-12)
+    )
+    (net "unconnected-(U2_source_component_1-Pad13)"
+      (pins U2_source_component_1-13)
+    )
+    (class "kicad_default" "" "Net-(C1_source_component_8-Pad1)" "Net-(C1_source_component_8-Pad2)" "Net-(C2_source_component_9-Pad1)" "Net-(C3_source_component_10-Pad1)" "Net-(C3_source_component_10-Pad2)" "Net-(C4_source_component_11-Pad1)" "Net-(LED1_source_component_12-Pad2)" "Net-(LED2_source_component_13-Pad2)" "Net-(R1_source_component_2-Pad2)" "Net-(R2_source_component_3-Pad2)" "Net-(R3_source_component_4-Pad1)" "Net-(R3_source_component_4-Pad2)" "Net-(R4_source_component_5-Pad2)" "Net-(R5_source_component_6-Pad2)" "Net-(R6_source_component_7-Pad2)" "Net-(U1_source_component_0-Pad4)" "Net-(U1_source_component_0-Pad6)" "Net-(U1_source_component_0-Pad7)" "Net-(U2_source_component_1-Pad8)" "Net-(U2_source_component_1-Pad9)" "unconnected-(R5_source_component_6-Pad1)" "unconnected-(R6_source_component_7-Pad1)" "unconnected-(U2_source_component_1-Pad10)" "unconnected-(U2_source_component_1-Pad11)" "unconnected-(U2_source_component_1-Pad12)" "unconnected-(U2_source_component_1-Pad13)"
+      (circuit
+        (use_via "Via[0-1]_600:300_um")
+      )
+      (rule
+        (width 150)
+        (clearance 150)
+      )
+    )
+  )
+  (wiring
+  )
+)
