@@ -2,10 +2,11 @@
  * Admin API DTOs. Query DTOs extend the shared PaginationQueryDto so every admin list is bounded and
  * returns the standard { items, total, limit, offset, hasMore } envelope. (Phase 2 adds mutation DTOs.)
  */
-import { IsBoolean, IsDateString, IsEnum, IsInt, IsOptional, IsString, IsUUID, MaxLength, Min } from 'class-validator';
+import { IsBoolean, IsDateString, IsEnum, IsIn, IsInt, IsOptional, IsString, IsUUID, MaxLength, Min } from 'class-validator';
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import { SimJobStatus, DesignJobStatus, PlatformRole, OrgRole } from '@prisma/client';
 import { PaginationQueryDto } from '../../common/dto/pagination.dto';
+import { PURGEABLE_STATUSES, type PurgeableStatus } from '../admin-queue.service';
 
 export class AdminUsersQueryDto extends PaginationQueryDto {
     @ApiPropertyOptional({ description: 'Case-insensitive substring match on email or name' })
@@ -187,5 +188,11 @@ export class SetQuotaOverrideDto extends ReasonDto {
     partsCallsPerMonth?: number | null;
 }
 
-/** Bare reason payload for actions with no other body (logout-all, job cancel/retry). */
+/** Bare reason payload for actions with no other body (logout-all, job cancel/retry, queue pause/resume). */
 export class ActionReasonDto extends ReasonDto {}
+
+export class PurgeQueueDto extends ReasonDto {
+    @ApiProperty({ enum: PURGEABLE_STATUSES, description: 'Which terminal job records to purge (completed/failed history)' })
+    @IsIn(PURGEABLE_STATUSES as unknown as string[])
+    status!: PurgeableStatus;
+}

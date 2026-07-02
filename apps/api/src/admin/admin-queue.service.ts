@@ -5,7 +5,7 @@
  * inline connection, mirroring GenerationModule) — a separate client to the SAME named Redis queues, so
  * job counts and (Phase 3) pause/resume act on the real queues without depending on the feature modules.
  */
-import { Injectable } from '@nestjs/common';
+import { BadRequestException, Injectable } from '@nestjs/common';
 import { InjectQueue } from '@nestjs/bullmq';
 import { Queue } from 'bullmq';
 
@@ -18,6 +18,15 @@ export interface QueueHealth {
     delayed: number;
     paused: boolean;
 }
+
+/** The two admin-controllable queues. */
+export const ADMIN_QUEUE_NAMES = ['simulations', 'design'] as const;
+export type AdminQueueName = (typeof ADMIN_QUEUE_NAMES)[number];
+
+/** Job states an admin may purge — terminal/history cruft only. NEVER 'active' (a running job) or
+ *  'wait'/'delayed' (pending work a purge would silently cancel). */
+export const PURGEABLE_STATUSES = ['completed', 'failed'] as const;
+export type PurgeableStatus = (typeof PURGEABLE_STATUSES)[number];
 
 @Injectable()
 export class AdminQueueService {
@@ -75,5 +84,38 @@ export class AdminQueueService {
         analysisConfig: unknown;
     }): Promise<void> {
         await this.simQueue.add('simulation', { ...payload, otel: {} }, { jobId: payload.jobId });
+    }
+
+    // ---------------------------------------------------------------- kill-switch + maintenance
+
+    private byName(name: string): Queue {
+        if (name === 'simulations') return this.simQueue;
+        if (name === 'design') return this.designQueue;
+        throw new BadRequestException(`Unknown queue "${name}" (allowed: ${ADMIN_QUEUE_NAMES.join(', ')}).`);
+    }
+
+    /** Pause consumption on a queue (BullMQ-global via Redis): in-flight jobs drain, no new ones start. */
+    async pause(name: string): Promise<{ name: string; paused: boolean }> {
+        const queue = this.byName(name);
+        await queue.pause();
+        return { name, paused: true };
+    }
+
+    /** Resume a paused queue. */
+    async resume(name: string): Promise<{ name: string; paused: boolean }> {
+        const queue = this.byName(name);
+        await queue.resume();
+        return { name, paused: false };
+    }
+
+    /**
+     * Purge terminal job-record cruft (completed/failed history) from a queue. grace=0 → all of that
+     * status. Bounded by `limit`. Never touches active/waiting/delayed jobs, so it can't cancel pending
+     * work — it only reclaims Redis memory from finished records.
+     */
+    async purge(name: string, status: PurgeableStatus, limit = 10000): Promise<{ name: string; status: string; removed: number }> {
+        const queue = this.byName(name);
+        const removed = await queue.clean(0, limit, status);
+        return { name, status, removed: removed.length };
     }
 }

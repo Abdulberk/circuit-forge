@@ -31,6 +31,7 @@ import {
     UpdateMemberRoleDto,
     SetQuotaOverrideDto,
     ActionReasonDto,
+    PurgeQueueDto,
 } from './dto';
 import { PaginationQueryDto } from '../common/dto/pagination.dto';
 
@@ -245,5 +246,30 @@ export class AdminController {
     @ApiOperation({ summary: 'Cancel a design job (QUEUED → CANCELED, RUNNING → cooperative abort)' })
     cancelDesignJob(@Param('id', ParseUUIDPipe) id: string, @Body() dto: ActionReasonDto, @CurrentPlatformActor() actor: PlatformActor) {
         return this.adminService.cancelDesignJob(id, dto, actor);
+    }
+
+    // -------- queue kill-switch + maintenance (ADMIN — platform-wide blast radius)
+    @Post('queues/:name/pause')
+    @HttpCode(HttpStatus.OK)
+    @PlatformRoles(PlatformRole.ADMIN)
+    @ApiOperation({ summary: 'Pause a queue (simulations|design) — in-flight drains, no new jobs start' })
+    pauseQueue(@Param('name') name: string, @Body() dto: ActionReasonDto, @CurrentPlatformActor() actor: PlatformActor) {
+        return this.adminService.pauseQueue(name, dto, actor);
+    }
+
+    @Post('queues/:name/resume')
+    @HttpCode(HttpStatus.OK)
+    @PlatformRoles(PlatformRole.ADMIN)
+    @ApiOperation({ summary: 'Resume a paused queue (simulations|design)' })
+    resumeQueue(@Param('name') name: string, @Body() dto: ActionReasonDto, @CurrentPlatformActor() actor: PlatformActor) {
+        return this.adminService.resumeQueue(name, dto, actor);
+    }
+
+    @Post('queues/:name/purge')
+    @HttpCode(HttpStatus.OK)
+    @PlatformRoles(PlatformRole.ADMIN)
+    @ApiOperation({ summary: 'Purge terminal job-record cruft (completed|failed) from a queue' })
+    purgeQueue(@Param('name') name: string, @Body() dto: PurgeQueueDto, @CurrentPlatformActor() actor: PlatformActor) {
+        return this.adminService.purgeQueue(name, dto, actor);
     }
 }
