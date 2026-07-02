@@ -45,6 +45,10 @@ export class AssetsService {
     async presignUpload(orgId: string, userId: string, dto: PresignUploadDto) {
         await this.orgsService.requireMembership(orgId, userId);
 
+        // A suspended org can't upload (writes are blocked platform-wide); the commit path is guarded too,
+        // but reject at presign so we don't hand out an upload URL that can never be committed.
+        await this.usageService.assertOrgNotSuspended(orgId);
+
         // Storage quota gate (no-op until QUOTA_STORAGE_BYTES_PER_ORG is configured): reject before
         // handing out an upload URL, so the org can't keep growing past its cap.
         await this.usageService.assertStorageQuota(orgId, dto.sizeBytes);

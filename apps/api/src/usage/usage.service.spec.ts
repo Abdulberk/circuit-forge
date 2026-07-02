@@ -29,6 +29,12 @@ function prismaStub(over: Partial<Record<string, unknown>> = {}) {
             findUnique: jest.fn().mockResolvedValue({ amount: 7 }),
             upsert: jest.fn().mockResolvedValue({}),
         },
+        // Suspension + per-org quota-override gate reads (default: not suspended, no override → env-only
+        // behavior identical to before these were added).
+        organization: {
+            findUnique: jest.fn().mockResolvedValue({ suspendedAt: null, suspendReason: null, quotaOverride: null }),
+        },
+        orgQuotaOverride: { findUnique: jest.fn().mockResolvedValue(null) },
         ...over,
     };
     stub.$transaction = jest.fn(async (fn: (tx: unknown) => unknown) => fn(stub));
@@ -207,5 +213,68 @@ describe('UsageService', () => {
     it('treats garbage/zero env limits as unlimited', async () => {
         const svc = new UsageService(prismaStub(), cfg({ QUOTA_SIM_JOBS_PER_MONTH: '0', QUOTA_SIM_RUNTIME_MS_PER_MONTH: 'abc' }));
         await expect(svc.assertSimQuota('org1')).resolves.toBeUndefined();
+    });
+
+    // ---------------------------------------------------------------- suspension + per-org overrides
+
+    const overrideRow = (partial: Record<string, number | null>) => ({
+        simConcurrent: null,
+        simJobsPerMonth: null,
+        simRuntimeMsPerMonth: null,
+        designConcurrent: null,
+        designJobsPerMonth: null,
+        storageBytes: null,
+        partsCallsPerMonth: null,
+        updatedByAdminId: 'admin1',
+        updatedAt: new Date(),
+        ...partial,
+    });
+
+    it('assertOrgNotSuspended: 403 ORG_SUSPENDED for a suspended org, resolves otherwise', async () => {
+        const suspended = prismaStub({
+            organization: { findUnique: jest.fn().mockResolvedValue({ suspendedAt: new Date(), suspendReason: 'abuse', quotaOverride: null }) },
+        });
+        await expect(new UsageService(suspended, cfg({})).assertOrgNotSuspended('org1')).rejects.toMatchObject({
+            response: { code: 'ORG_SUSPENDED' },
+        });
+        await expect(new UsageService(prismaStub(), cfg({})).assertOrgNotSuspended('org1')).resolves.toBeUndefined();
+    });
+
+    it('createSimGuarded: rejects ORG_SUSPENDED before running the create (write path blocked platform-wide)', async () => {
+        const prisma = prismaStub({
+            organization: { findUnique: jest.fn().mockResolvedValue({ suspendedAt: new Date(), suspendReason: 'abuse', quotaOverride: null }) },
+        });
+        const svc = new UsageService(prisma, cfg({}));
+        const create = jest.fn();
+        await expect(svc.createSimGuarded('org1', create as never)).rejects.toMatchObject({ response: { code: 'ORG_SUSPENDED' } });
+        expect(create).not.toHaveBeenCalled();
+        expect(rec(prisma).$transaction).not.toHaveBeenCalled();
+    });
+
+    it('a per-org override overrides the env default (tighter override wins)', async () => {
+        // env allows 10 concurrent, override says 2, and 2 are in flight → 429 at the override limit
+        const prisma = prismaStub({
+            orgQuotaOverride: { findUnique: jest.fn().mockResolvedValue(overrideRow({ simConcurrent: 2 })) },
+            simulationJob: { count: jest.fn().mockResolvedValue(2) },
+        });
+        const svc = new UsageService(prisma, cfg({ QUOTA_SIM_CONCURRENT_PER_ORG: '10' }));
+        await expect(svc.assertSimQuota('org1')).rejects.toMatchObject({
+            response: { metric: 'sim_concurrent', used: 2, limit: 2 },
+        });
+    });
+
+    it('createSimGuarded: a per-org override enforces even with NO env quota (enters the advisory lock)', async () => {
+        const prisma = prismaStub({
+            organization: {
+                findUnique: jest.fn().mockResolvedValue({ suspendedAt: null, suspendReason: null, quotaOverride: overrideRow({ simConcurrent: 1 }) }),
+            },
+            orgQuotaOverride: { findUnique: jest.fn().mockResolvedValue(overrideRow({ simConcurrent: 1 })) },
+            simulationJob: { count: jest.fn().mockResolvedValue(1) }, // 1 in-flight >= override 1 → 429
+        });
+        const svc = new UsageService(prisma, cfg({})); // no env quota at all
+        await expect(svc.createSimGuarded('org1', async () => ({ id: 'x' }))).rejects.toMatchObject({
+            response: { metric: 'sim_concurrent', limit: 1 },
+        });
+        expect(rec(prisma).$transaction).toHaveBeenCalledTimes(1); // entered the lock despite no env quota
     });
 });

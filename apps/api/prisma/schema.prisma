@@ -38,13 +38,27 @@ model User {
   passwordResetTokenHash     String?
   passwordResetExpiresAt     DateTime?
 
+  // Platform-admin identity — ORTHOGONAL to the tenant OrgRole (that is per-org; this is per-user,
+  // platform-wide). NONE = ordinary user. Graduated least-privilege: SUPPORT reads, OPERATOR mutates,
+  // ADMIN does destructive/config + role management. Read LIVE from the DB by PlatformAdminGuard on
+  // every /admin/* request, so a demotion takes effect on the very next request (no stale JWT claim).
+  platformRole PlatformRole @default(NONE)
+
   // Relations
   memberships     OrgMembership[]
   projectVersions ProjectVersion[]
-  auditLogs       AuditLog[]
+  auditLogs       AuditLog[]       @relation("AuditSubject")
+  adminAuditLogs  AuditLog[]       @relation("AdminActor")
   refreshTokens   RefreshToken[]
 
   @@map("users")
+}
+
+enum PlatformRole {
+  NONE
+  SUPPORT
+  OPERATOR
+  ADMIN
 }
 
 // Server-side refresh-token state: every issued refresh JWT has a row here (keyed by its jti).
@@ -82,6 +96,12 @@ model Organization {
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
+  // Platform-admin suspension. When set, the SHARED write path (UsageService) rejects every
+  // enqueue/upload for this org with 403 ORG_SUSPENDED; READS stay allowed so members can still see
+  // their data and the reason. Reinstating clears both fields.
+  suspendedAt   DateTime?
+  suspendReason String?
+
   // Relations
   memberships    OrgMembership[]
   projects       Project[]
@@ -90,8 +110,29 @@ model Organization {
   simulationJobs SimulationJob[]
   designJobs     DesignJob[]
   auditLogs      AuditLog[]
+  quotaOverride  OrgQuotaOverride?
 
   @@map("organizations")
+}
+
+// Per-org quota overrides. The env QUOTA_* values are the GLOBAL default; a row here overrides them
+// for a single org (UsageService.limit reads this first, falls back to env). A NULL column = inherit
+// the env default for that metric. One row per org (orgId is the PK).
+model OrgQuotaOverride {
+  orgId                String   @id
+  simConcurrent        Int?
+  simJobsPerMonth      Int?
+  simRuntimeMsPerMonth Int?
+  designConcurrent     Int?
+  designJobsPerMonth   Int?
+  storageBytes         BigInt? // bytes can exceed Int32 (a 5GB cap > 2.1e9), so BigInt
+  partsCallsPerMonth   Int?
+  updatedByAdminId     String?
+  updatedAt            DateTime @updatedAt
+
+  org Organization @relation(fields: [orgId], references: [id], onDelete: Cascade)
+
+  @@map("org_quota_overrides")
 }
 
 model OrgMembership {
@@ -299,26 +340,33 @@ enum DesignJobStatus {
 // ============================================================================
 
 model AuditLog {
-  id         String   @id @default(uuid())
-  orgId      String? // null = user-scoped event (auth.* — login, reset, …) with no org context
-  userId     String
-  action     String   // e.g., "project.create", "simulation.start", "auth.login_failed"
-  entityType String   // e.g., "Project", "SimulationJob", "User"
-  entityId   String
-  meta       Json?    // Additional context
-  createdAt  DateTime @default(now())
+  id           String   @id @default(uuid())
+  orgId        String? // null = user-scoped event (auth.* — login, reset, …) with no org context
+  // Subject of the event. Nullable + onDelete:SetNull so the audit trail OUTLIVES account deletion
+  // (enterprise access-transparency / SOC 2): erasing a user anonymizes the actor (userId → null) but
+  // KEEPS the row and its security-evidence (refresh_reuse_detected, account_locked). A GDPR erase
+  // scrubs PII out of meta separately. (Was: required + cascade — GDPR-aligned but lost the trail.)
+  userId       String?
+  // The platform admin who INITIATED this event (null = the subject's own, non-admin action). Nullable
+  // + SetNull for the same reason: an admin's own account deletion must not erase the trail they wrote.
+  adminActorId String?
+  action       String // e.g., "project.create", "simulation.start", "admin.org.suspend"
+  entityType   String // e.g., "Project", "SimulationJob", "User", "Organization"
+  entityId     String
+  meta         Json? // { requestId, before, after, adminActorEmail, reason, ... }
+  createdAt    DateTime @default(now())
 
-  // Relations. DELIBERATE: user-cascade means erasing an account also erases its audit rows. These
-  // rows hold the user's PII (ip/userAgent), so cascade is the GDPR-erasure-aligned default and keeps
-  // account deletion unblocked. TRADEOFF: security-evidence events (refresh_reuse_detected,
-  // account_locked) die with the account — if/when a compliance regime requires audit to OUTLIVE the
-  // subject, switch userId to optional + onDelete:SetNull (anonymize the actor, keep the row).
-  org  Organization? @relation(fields: [orgId], references: [id], onDelete: Cascade)
-  user User          @relation(fields: [userId], references: [id], onDelete: Cascade)
+  org        Organization? @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  user       User?         @relation("AuditSubject", fields: [userId], references: [id], onDelete: SetNull)
+  adminActor User?         @relation("AdminActor", fields: [adminActorId], references: [id], onDelete: SetNull)
 
   @@index([orgId, createdAt])
   @@index([userId, createdAt])
   @@index([entityType, entityId])
+  // Admin console filters by action ('admin.*') and by the acting admin — index both so the
+  // platform-wide audit read (Phase 1) doesn't table-scan.
+  @@index([action, createdAt])
+  @@index([adminActorId, createdAt])
   @@map("audit_logs")
 }
 // ============================================================================
