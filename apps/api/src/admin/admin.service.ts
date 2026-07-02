@@ -26,6 +26,7 @@ import {
     UpdateMemberRoleDto,
     SetQuotaOverrideDto,
     ActionReasonDto,
+    PurgeQueueDto,
 } from './dto';
 
 /** Far-future timestamp used for an "indefinite" account lock (no natural expiry). */
@@ -316,6 +317,50 @@ export class AdminService {
 
     async queueHealth() {
         return this.queues.health();
+    }
+
+    // -------- queue kill-switch + maintenance (ADMIN — platform-wide blast radius)
+
+    async pauseQueue(name: string, dto: ActionReasonDto, actor: PlatformActor) {
+        const result = await this.queues.pause(name); // validates the name (400 on unknown)
+        await this.audit.record({
+            action: 'admin.queue.pause',
+            entityType: 'Queue',
+            entityId: name,
+            adminActorId: actor.id,
+            adminActorEmail: actor.email,
+            reason: dto.reason,
+            after: { paused: true },
+        });
+        return result;
+    }
+
+    async resumeQueue(name: string, dto: ActionReasonDto, actor: PlatformActor) {
+        const result = await this.queues.resume(name);
+        await this.audit.record({
+            action: 'admin.queue.resume',
+            entityType: 'Queue',
+            entityId: name,
+            adminActorId: actor.id,
+            adminActorEmail: actor.email,
+            reason: dto.reason,
+            after: { paused: false },
+        });
+        return result;
+    }
+
+    async purgeQueue(name: string, dto: PurgeQueueDto, actor: PlatformActor) {
+        const result = await this.queues.purge(name, dto.status);
+        await this.audit.record({
+            action: 'admin.queue.purge',
+            entityType: 'Queue',
+            entityId: name,
+            adminActorId: actor.id,
+            adminActorEmail: actor.email,
+            reason: dto.reason,
+            after: { status: dto.status, removed: result.removed },
+        });
+        return result;
     }
 
     /** System-wide dependency + queue health for the operator dashboard. */

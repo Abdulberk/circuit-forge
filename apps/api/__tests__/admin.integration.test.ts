@@ -251,6 +251,34 @@ describe('Platform Admin API (e2e, real stack)', () => {
         });
     });
 
+    // ---------------------------------------------------------------- queue controls (real Redis)
+    describe('queue kill-switch + purge', () => {
+        it('OPERATOR cannot pause a queue (ADMIN-only); ADMIN can pause + resume (state restored)', async () => {
+            // tier: pausing a whole queue is platform-wide blast radius → ADMIN only
+            await post('/admin/queues/simulations/pause', opTok, {}).expect(403);
+
+            await post('/admin/queues/simulations/pause', adminTok, { reason: 'e2e pause' }).expect(200);
+            try {
+                const paused = await get('/admin/queues/health', adminTok).expect(200);
+                expect(paused.body.simulations.paused).toBe(true);
+            } finally {
+                // ALWAYS restore — the queue lives in a shared Redis; a left-paused queue would wedge the app.
+                await post('/admin/queues/simulations/resume', adminTok, { reason: 'e2e resume' });
+            }
+            const resumed = await get('/admin/queues/health', adminTok).expect(200);
+            expect(resumed.body.simulations.paused).toBe(false);
+        });
+
+        it('purge cleans terminal cruft and reports a count; rejects an unknown queue / bad status', async () => {
+            const purge = await post('/admin/queues/design/purge', adminTok, { status: 'completed', reason: 'e2e purge' }).expect(200);
+            expect(purge.body).toMatchObject({ name: 'design', status: 'completed' });
+            expect(typeof purge.body.removed).toBe('number');
+
+            await post('/admin/queues/bogus/purge', adminTok, { status: 'failed' }).expect(400); // unknown queue
+            await post('/admin/queues/design/purge', adminTok, { status: 'active' }).expect(400); // non-purgeable status
+        });
+    });
+
     // ---------------------------------------------------------------- audit trail
     describe('admin audit trail', () => {
         it('every mutation left an admin.* row with adminActorId + before/after + requestId', async () => {
