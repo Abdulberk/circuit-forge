@@ -17,6 +17,12 @@ export interface FabProfile {
     minClearanceMm: number;
     viaDrillMm: number;
     viaAnnularMm: number;
+    /**
+     * Clearance freerouting keeps around VIAS (track↔via, via↔via, via↔pad). freerouting applies the
+     * general clearance to wire↔wire but a laxer default to via types, so an unset via clearance lets it
+     * place a via ~0.12mm from a track — below the 0.2mm KiCad rule (proven live 3 Tem 2026). Defaults to
+     * 1.25× minClearance so a routed via is DRC-clean without over-spacing signal tracks. */
+    viaClearanceMm?: number;
     /** Faz-3 (IPC-2221) hook: per-net minimum trace width, keyed by EMITTED net name (e.g. "GND"). */
     perNetMinWidthMm?: Record<string, number>;
     /** Pour the ground plane (bottom layer) when a GND net exists. */
