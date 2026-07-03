@@ -1,0 +1,18 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "outDir": "./dist",
+    "rootDir": "./src",
+    "composite": true,
+    // The tscircuit ecosystem is ESM-only ("type":"module"). This package still EMITS CommonJS (no
+    // "type" in package.json => .js is CJS), but module=node16 makes tsc PRESERVE dynamic `import()`
+    // expressions instead of down-compiling them to require() — the one legal CJS->ESM bridge. All
+    // tscircuit imports therefore go through `await import(...)` in the eval/converter seam modules;
+    // a top-level `import` of an ESM-only package is a compile ERROR here, which is exactly the guard
+    // we want.
+    "module": "node16",
+    "moduleResolution": "node16"
+  },
+  "include": ["src/**/*"],
+  "exclude": ["node_modules", "dist", "**/*.spec.ts", "**/*.test.ts"]
+}
