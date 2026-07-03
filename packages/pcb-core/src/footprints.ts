@@ -51,6 +51,29 @@ export function soicForPinCount(pinCount: number): string | null {
     return null; // beyond the v1 curated ladder — requires an explicit footprint override
 }
 
+/** Fixed pad counts for the non-numbered curated packages. */
+const FIXED_PAD_COUNTS: Record<string, number> = {
+    sot23: 3,
+    to92: 3,
+    sod123: 2,
+    '0402': 2,
+    '0603': 2,
+    '0805': 2,
+    '1206': 2,
+};
+
+/**
+ * Physical pad count of a (normalized) footprint, when knowable: numbered families (soic8/dip14/
+ * tssop20/pinrow2/...) parse their trailing number; curated fixed packages use the table. Returns
+ * null for an unknown footprint — the caller must treat that as "NC unknowable" and say so, never
+ * silently assume zero (approval condition 3).
+ */
+export function footprintPadCount(footprint: string): number | null {
+    const numbered = /^(?:soic|dip|tssop|ssop|qfp|qfn|pinrow|msop|sop)(\d+)$/.exec(footprint);
+    if (numbered) return Number(numbered[1]);
+    return FIXED_PAD_COUNTS[footprint] ?? null;
+}
+
 /**
  * Resolve the footprint for a LAYOUTABLE component. Returns null when the curated map has no default
  * and no override exists — the caller (layoutability) turns that into an honest diagnostic, never a

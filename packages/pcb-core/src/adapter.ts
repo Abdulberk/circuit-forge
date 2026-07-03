@@ -55,18 +55,26 @@ export function sanitizeName(raw: string): string {
     return /^[A-Za-z]/.test(cleaned) ? cleaned : `X${cleaned}`;
 }
 
-/** Net name: ground -> GND; else upper-cased sanitized name; numeric-only gets an N prefix. */
-function baseNetName(net: { id: string; name: string; isGround?: boolean }): string {
-    if (net.isGround) return 'GND';
+/** Net name: upper-cased sanitized name; numeric-only gets an N prefix. */
+function baseNetName(net: { id: string; name: string }): string {
     const cleaned = (net.name || net.id).replace(/[^A-Za-z0-9_]/g, '_').toUpperCase();
     return /^[A-Za-z]/.test(cleaned) ? cleaned : `N${cleaned}`;
 }
 
-/** Assign unique emitted names to all nets (collision -> _2, _3 ...). */
+/**
+ * Assign emitted names to all nets. GROUND SEMANTICS mirror the SPICE generator: EVERY isGround net
+ * maps to THE SAME "GND" name (the generator maps them all to node 0 — separate GND/GND_2 islands
+ * would make the board differ from the verified circuit). "GND" is RESERVED: a signal net whose name
+ * sanitizes to GND is renamed away so the pour and per-net rules can never attach to a signal net.
+ */
 export function buildNetNames(circuit: CircuitJson): Record<string, string> {
-    const used = new Set<string>();
+    const used = new Set<string>(['GND']); // reserved for ground, even when no ground net exists
     const byId: Record<string, string> = {};
     for (const net of circuit.nets) {
+        if (net.isGround) byId[net.id] = 'GND'; // ALL grounds merge onto one name, like SPICE node 0
+    }
+    for (const net of circuit.nets) {
+        if (net.isGround) continue;
         let name = baseNetName(net);
         let n = 2;
         while (used.has(name)) name = `${baseNetName(net)}_${n++}`;
@@ -106,11 +114,16 @@ function mosfetChannel(component: Component): string {
 /**
  * Chip pin order: subckt uses the macromodel port order when the ModelDef declares `ports` (the same
  * rule the SPICE generator binds by), else the authored pin order; jfet uses its canonical d,g,s.
+ *
+ * Returns null for a generic catalog part whose pinIds are ALL NUMERIC — those denote PHYSICAL pad
+ * numbers ("3" means pad 3) and must map directly (pinId N -> pinN), NOT by array position: a sparse
+ * or out-of-order pins array would otherwise wire nets to the wrong pads (review finding, 3 Tem).
  */
-function chipPinOrder(component: Component, circuit: CircuitJson): string[] {
+function chipPinOrder(component: Component, circuit: CircuitJson): string[] | null {
     if (component.type === 'jfet') return ['d', 'g', 's'];
     const model = circuit.models?.find((m) => m.name === component.model);
     if (component.type === 'subckt' && model?.ports?.length) return [...model.ports];
+    if (component.type === 'generic' && component.pins.every((p) => /^\d+$/.test(p.pinId))) return null;
     return component.pins.map((p) => p.pinId);
 }
 
@@ -135,7 +148,7 @@ function computePlacements(
 ): Map<string, Placement> {
     const out = new Map<string, Placement>();
     const positions = ui?.positions ?? {};
-    const allPositioned = physical.length > 0 && physical.every((p) => positions[p.component.id]);
+    const allPositioned = physical.length > 1 && physical.every((p) => positions[p.component.id]);
 
     if (allPositioned) {
         const pts = physical.map((p) => positions[p.component.id]!);
@@ -143,27 +156,42 @@ function computePlacements(
         const maxX = Math.max(...pts.map((p) => p.x));
         const minY = Math.min(...pts.map((p) => p.y));
         const maxY = Math.max(...pts.map((p) => p.y));
-        const spanX = Math.max(1, maxX - minX);
-        const spanY = Math.max(1, maxY - minY);
-        const scale = Math.min((boardW - 2 * MARGIN_MM) / spanX, (boardH - 2 * MARGIN_MM) / spanY);
-        for (const plan of physical) {
-            const p = positions[plan.component.id]!;
-            out.set(plan.component.id, {
-                x: round2((p.x - minX - spanX / 2) * scale),
-                y: round2((p.y - minY - spanY / 2) * scale),
-                rotation: p.rotation ? Number(p.rotation) : undefined,
-            });
+        const rawSpanX = maxX - minX;
+        const rawSpanY = maxY - minY;
+        // All points identical -> no arrangement to preserve; fall through to the grid (stacking every
+        // component at one point would be unroutable). A single degenerate AXIS is fine: raw spans
+        // center it at 0 instead of shoving it off by half a clamped span.
+        if (rawSpanX > 0 || rawSpanY > 0) {
+            const scale = Math.min(
+                (boardW - 2 * MARGIN_MM) / Math.max(1, rawSpanX),
+                (boardH - 2 * MARGIN_MM) / Math.max(1, rawSpanY),
+            );
+            for (const plan of physical) {
+                const p = positions[plan.component.id]!;
+                out.set(plan.component.id, {
+                    x: round2((p.x - minX - rawSpanX / 2) * scale),
+                    y: round2((p.y - minY - rawSpanY / 2) * scale),
+                    rotation: p.rotation ? Number(p.rotation) : undefined,
+                });
+            }
+            return out;
         }
-        return out;
     }
 
     const cols = Math.max(1, Math.ceil(Math.sqrt(physical.length)));
+    const rows = Math.max(1, Math.ceil(physical.length / cols));
+    // Respect an explicitly-sized board: shrink the pitch so the grid never places parts outside the
+    // outline (auto-sized boards are derived FROM the default pitch, so they keep it).
+    const pitch = Math.max(
+        1,
+        Math.min(GRID_PITCH_MM, (boardW - 2 * MARGIN_MM) / Math.max(1, cols - 1 || 1), (boardH - 2 * MARGIN_MM) / Math.max(1, rows - 1 || 1)),
+    );
     physical.forEach((plan, i) => {
         const col = i % cols;
         const row = Math.floor(i / cols);
         out.set(plan.component.id, {
-            x: round2((col - (cols - 1) / 2) * GRID_PITCH_MM),
-            y: round2((row - (Math.ceil(physical.length / cols) - 1) / 2) * GRID_PITCH_MM),
+            x: round2((col - (cols - 1) / 2) * pitch),
+            y: round2((row - (rows - 1) / 2) * pitch),
         });
     });
     return out;
@@ -220,9 +248,10 @@ export function generateTscircuitCode(
         elementLines.push(`    <${element} ${attrs.join(' ')} />`);
 
         // pins -> traces to named nets + parity expectations
-        const chipOrder = element === 'chip' ? chipPinOrder(c, circuit) : null;
+        const isChip = element === 'chip';
+        const chipOrder = isChip ? chipPinOrder(c, circuit) : null;
         for (const pin of c.pins) {
-            const port = portNameFor(element, pin.pinId, chipOrder, c, diagnostics, name);
+            const port = portNameFor(element, pin.pinId, isChip, chipOrder, c, diagnostics);
             if (!port) continue; // declared-unmappable pin (e.g. mosfet bulk on the source net)
             const netName = netNameById[pin.netId];
             if (!netName) {
@@ -284,12 +313,15 @@ function pushValueAttr(element: string, c: Component, attrs: string[], diagnosti
 function portNameFor(
     element: string,
     pinId: string,
+    isChip: boolean,
     chipOrder: string[] | null,
     c: Component,
     diagnostics: LayoutDiagnostic[],
-    emittedName: string,
 ): string | null {
-    if (chipOrder) {
+    if (isChip) {
+        // Numeric-direct mapping (generic catalog part, all-numeric pinIds): pinId = the PHYSICAL pad
+        // number, so "3" MUST land on pin3 — positional mapping would miswire sparse pin arrays.
+        if (chipOrder === null) return `pin${pinId}`;
         const idx = chipOrder.indexOf(pinId);
         if (idx === -1) {
             diagnostics.push({
@@ -304,18 +336,8 @@ function portNameFor(
     }
 
     if (element === 'mosfet' && pinId === 'b') {
-        // SOT-23 has no bulk pin. Same net as source (the common case) -> implicit, silently fine.
-        // A bulk on a DIFFERENT net would change connectivity — declare it loudly.
-        const sourceNet = c.pins.find((p) => p.pinId === 's')?.netId;
-        const bulkNet = c.pins.find((p) => p.pinId === 'b')?.netId;
-        if (bulkNet !== sourceNet) {
-            diagnostics.push({
-                code: 'PCB010',
-                severity: 'warning',
-                componentId: c.id,
-                message: `${emittedName}: MOSFET bulk is on a different net than source — SOT-23 mapping cannot express it; review the board.`,
-            });
-        }
+        // SOT-23 has no bulk pin: same-net-as-source is implicit; a DIFFERENT net was already judged
+        // by layoutability (PCB010, error unless allowPartial) — either way the pin emits no trace.
         return null;
     }
 

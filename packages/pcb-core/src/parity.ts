@@ -13,6 +13,12 @@
  * They must agree with each other AND with our expectations — a shared-fate bug in one view cannot
  * silently pass. Port identity is matched through `port_hints` (tscircuit's own semantic aliases,
  * e.g. anode/collector), NOT through the adapter's pin map — the anchor the review asked for.
+ *
+ * HONEST LIMIT: the check certifies that the traces the adapter EMITTED landed where their selectors
+ * say — a STATIC pin-map typo that is consistent on both sides (e.g. mapping our 'c' to their 'b'
+ * token everywhere) passes. That residue is covered by (a) the DIRECT_PIN_MAPS uniqueness/identity
+ * unit tests and (b) the harness's semantic-anchor asserts against tscircuit's own hints on real
+ * evaluated boards, which alarm on any upstream alias change.
  */
 import type { PinExpectation } from './adapter';
 import type { LayoutDiagnostic } from './layoutability';
@@ -61,6 +67,17 @@ class UnionFind {
 
 export function checkConnectivityParity(evaluated: TscElement[], expectations: PinExpectation[]): ParityResult {
     const diagnostics: LayoutDiagnostic[] = [];
+
+    if (expectations.length === 0) {
+        // A board with NOTHING to verify must never be certified vacuously (zero-pin components /
+        // empty net lists slip every other check — review finding, 3 Tem).
+        diagnostics.push({
+            code: 'PCB026',
+            severity: 'error',
+            message: 'parity: no pin expectations — nothing was verified; refusing a vacuous pass.',
+        });
+        return { ok: false, diagnostics, checkedPins: 0, expectedPins: 0 };
+    }
 
     // ---- index tscircuit's source model
     const componentNameById = new Map<string, string>();

@@ -10,7 +10,7 @@
  * Convention: like test:matrix / test:edge, this is a node harness (the tscircuit deps are ESM-only,
  * which keeps real-eval integration out of jest); exits non-zero on any failure.
  */
-import { mkdirSync, writeFileSync, readFileSync, existsSync } from 'node:fs';
+import { mkdirSync, writeFileSync, readFileSync, existsSync, rmSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { execFileSync } from 'node:child_process';
@@ -121,7 +121,14 @@ const boards = [];
 for (const [name, circuit] of cases) {
     console.log(`\n── ${name}`);
     const t0 = Date.now();
-    const result = await layoutCircuit(circuit, {});
+    let result;
+    try {
+        result = await layoutCircuit(circuit, {});
+    } catch (e) {
+        // one throwing fixture must not abort the whole harness — count it and keep going
+        fail(`${name}: layoutCircuit threw — ${String(e).slice(0, 300)}`);
+        continue;
+    }
     const dir = join(outRoot, name);
     mkdirSync(dir, { recursive: true });
     writeFileSync(join(dir, 'generated.tsx.txt'), result.code);
@@ -157,6 +164,27 @@ for (const [name, circuit] of cases) {
 
     const pourNote = result.diagnostics.find((d) => d.code === 'PCB032' || d.code === 'PCB033');
     if (pourNote) ok(`pour: ${pourNote.code === 'PCB032' ? 'zone injected' : 'skipped honestly'} — ${pourNote.message.slice(0, 90)}`);
+
+    // SEMANTIC ANCHORS: the parity check certifies against the adapter's own selectors; these asserts
+    // pin the STATIC map to tscircuit's OWN hints on a real evaluated board (upstream alias-change alarm).
+    if (name === 'ce-amp') {
+        const q1 = result.evaluated.find((e) => e.type === 'source_component' && e.name === 'Q1');
+        const qPorts = result.evaluated.filter((e) => e.type === 'source_port' && e.source_component_id === q1?.source_component_id);
+        for (const letter of ['c', 'b', 'e']) {
+            const matches = qPorts.filter((p) => (p.port_hints ?? []).includes(letter));
+            if (matches.length !== 1) fail(`semantic anchor: transistor hint '${letter}' matches ${matches.length} ports (expected exactly 1) — upstream alias change!`);
+        }
+        ok('semantic anchors: transistor c/b/e hints unique on the real board');
+    }
+    if (name === 'divider-led') {
+        const led = result.evaluated.find((e) => e.type === 'source_component' && e.name === 'LED1');
+        const ledPorts = result.evaluated.filter((e) => e.type === 'source_port' && e.source_component_id === led?.source_component_id);
+        const anode = ledPorts.filter((p) => (p.port_hints ?? []).includes('anode'));
+        const cathode = ledPorts.filter((p) => (p.port_hints ?? []).includes('cathode'));
+        if (anode.length !== 1 || cathode.length !== 1 || anode[0] === cathode[0]) {
+            fail('semantic anchor: led anode/cathode hints not uniquely resolvable — upstream alias change!');
+        } else ok('semantic anchors: led anode/cathode hints unique on the real board');
+    }
     boards.push([name, dir]);
 }
 
@@ -179,6 +207,7 @@ if (dockerOk) {
     console.log('\n── notary: kicad-cli 10 DRC (--refill-zones, errors-only, judged by OUR .kicad_pro rules)');
     for (const [name, dir] of boards) {
         const toDocker = (p) => p.replace(/\\/g, '/');
+        rmSync(join(dir, 'drc.json'), { force: true }); // never let a STALE report masquerade as this run's verdict
         try {
             execFileSync(
                 'docker',
@@ -189,6 +218,11 @@ if (dockerOk) {
             );
             ok(`${name}: DRC CLEAN — manufacturable stamp ✔`);
         } catch (e) {
+            // exit 5 = violations found (the notary DID run); anything else = the notary itself failed.
+            if (e.status !== 5) {
+                fail(`${name}: kicad-cli execution failed (exit ${e.status ?? '?'}) — ${String(e.stderr ?? e).slice(0, 200)}`);
+                continue;
+            }
             const report = existsSync(join(dir, 'drc.json')) ? JSON.parse(readFileSync(join(dir, 'drc.json'), 'utf8')) : null;
             const viols = report?.violations ?? [];
             const byType = {};

@@ -107,4 +107,66 @@ describe('classifyCircuit — honesty policy (approval condition 2)', () => {
         expect(r.layoutable).toBe(false);
         expect(r.diagnostics.some((d) => d.code === 'PCB001')).toBe(true);
     });
+
+    it('a ZERO-pin physical component is always an error (PCB011) — even with allowPartial', () => {
+        const r = classifyCircuit(
+            circuit([comp({ designator: 'U1', type: 'generic', footprint: 'SOIC-8', pins: [] }), comp({ designator: 'R1' })]),
+            { allowPartial: true },
+        );
+        expect(r.diagnostics.some((d) => d.code === 'PCB011' && d.severity === 'error')).toBe(true);
+        expect(r.layoutable).toBe(false);
+    });
+
+    it('MOSFET bulk on a DIFFERENT net than source fails by default; allowPartial downgrades (PCB010)', () => {
+        const mos = (bulkNet: string) =>
+            comp({
+                designator: 'M1',
+                type: 'mosfet',
+                model: 'NMOS',
+                pins: [
+                    { pinId: 'd', netId: 'n1' },
+                    { pinId: 'g', netId: 'n2' },
+                    { pinId: 's', netId: 'n2' },
+                    { pinId: 'b', netId: bulkNet },
+                ],
+            });
+        const same = classifyCircuit(circuit([mos('n2')]));
+        expect(same.diagnostics.some((d) => d.code === 'PCB010')).toBe(false);
+        const diff = classifyCircuit(circuit([mos('n1')]));
+        expect(diff.diagnostics.some((d) => d.code === 'PCB010' && d.severity === 'error')).toBe(true);
+        expect(diff.layoutable).toBe(false);
+        const partial = classifyCircuit(circuit([mos('n1')]), { allowPartial: true });
+        expect(partial.diagnostics.some((d) => d.code === 'PCB010' && d.severity === 'warning')).toBe(true);
+        expect(partial.layoutable).toBe(true);
+    });
+
+    it('NC declaration covers GENERIC catalog parts and OVERRIDE footprints (soic20 -> 15 NC; unknown -> honest note)', () => {
+        // generic on soic8 with 5 wired pins -> 3 NC declared
+        const g = comp({
+            designator: 'U2',
+            type: 'generic',
+            footprint: 'SOIC-8',
+            pins: Array.from({ length: 5 }, (_, i) => ({ pinId: String(i + 1), netId: 'n1' })),
+        });
+        const r1 = classifyCircuit(circuit([g, comp({ designator: 'R1' })]));
+        expect(r1.plans.find((p) => p.component.designator === 'U2')!.ncPinCount).toBe(3);
+        expect(r1.diagnostics.some((d) => d.code === 'PCB006' && d.message.includes('3 footprint pin'))).toBe(true);
+
+        // subckt override 'soic20' (outside the old 6-entry table): 5 ports -> 15 NC, DECLARED
+        const s = comp({
+            designator: 'U3',
+            type: 'subckt',
+            model: 'OP',
+            footprint: 'soic20',
+            pins: Array.from({ length: 5 }, (_, i) => ({ pinId: `p${i}`, netId: 'n1' })),
+        });
+        const r2 = classifyCircuit(circuit([s, comp({ designator: 'R1' })]));
+        expect(r2.plans.find((p) => p.component.designator === 'U3')!.ncPinCount).toBe(15);
+
+        // unknown footprint vocabulary: NC unknowable — said EXPLICITLY, never a silent zero
+        const u = comp({ designator: 'U4', type: 'generic', footprint: 'weirdpkg', pins: [{ pinId: '1', netId: 'n1' }] });
+        const r3 = classifyCircuit(circuit([u, comp({ designator: 'R1' })]));
+        expect(r3.plans.find((p) => p.component.designator === 'U4')!.ncPinCount).toBeUndefined();
+        expect(r3.diagnostics.some((d) => d.code === 'PCB006' && d.message.includes('unknowable'))).toBe(true);
+    });
 });
