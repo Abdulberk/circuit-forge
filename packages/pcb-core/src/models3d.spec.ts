@@ -14,8 +14,11 @@ describe('resolveModel — tscircuit footprint id -> KiCad bundled 3D model', ()
         expect(resolveModel('tscircuit:chip_soic16')).toContain('SOIC-16_3.9x9.9mm_P1.27mm.step');
         expect(resolveModel('tscircuit:diode_sod123')).toContain('Diode_SMD.3dshapes/D_SOD-123.step');
         expect(resolveModel('tscircuit:transistor_sot23')).toContain('Package_TO_SOT_SMD.3dshapes/SOT-23.step');
+        expect(resolveModel('tscircuit:mosfet_sot23')).toContain('Package_TO_SOT_SMD.3dshapes/SOT-23.step'); // MOSFET too
         expect(resolveModel('tscircuit:transistor_to92')).toContain('Package_TO_SOT_THT.3dshapes/TO-92.step');
+        expect(resolveModel('tscircuit:chip_to220')).toContain('Package_TO_SOT_THT.3dshapes/TO-220-3_Vertical.step'); // regulators
         expect(resolveModel('tscircuit:pin_header_pinrow2')).toContain('PinHeader_1x02_P2.54mm_Vertical.step');
+        expect(resolveModel('tscircuit:pin_header_pinrow6')).toContain('PinHeader_1x06_P2.54mm_Vertical.step'); // parametric N
     });
 
     it('accepts a bare id (no tscircuit: prefix) and honours a custom base', () => {

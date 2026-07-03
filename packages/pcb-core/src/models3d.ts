@@ -40,9 +40,9 @@ const SOIC_MODEL: Record<string, string> = {
 /** Fixed (non-parametric) footprint id -> library-relative step path. */
 const FIXED_MODEL: Array<[RegExp, string]> = [
     [/^diode_sod123/, 'Diode_SMD.3dshapes/D_SOD-123.step'],
-    [/^transistor_sot23/, 'Package_TO_SOT_SMD.3dshapes/SOT-23.step'],
-    [/^transistor_to92/, 'Package_TO_SOT_THT.3dshapes/TO-92.step'],
-    [/^pin_header_pinrow2/, 'Connector_PinHeader_2.54mm.3dshapes/PinHeader_1x02_P2.54mm_Vertical.step'],
+    [/^(transistor|mosfet)_sot23/, 'Package_TO_SOT_SMD.3dshapes/SOT-23.step'], // BJT and MOSFET both use SOT-23
+    [/^(transistor|mosfet)_to92/, 'Package_TO_SOT_THT.3dshapes/TO-92.step'],
+    [/^chip_to220/, 'Package_TO_SOT_THT.3dshapes/TO-220-3_Vertical.step'], // 3-pin regulators (7805, LM317, ...)
 ];
 
 /**
@@ -62,6 +62,12 @@ export function resolveModel(footprintId: string, base: string = KICAD_3DMODEL_B
     if (soic) {
         const name = SOIC_MODEL[soic[1]!];
         return name ? `${base}Package_SO.3dshapes/${name}.step` : null;
+    }
+
+    // pin headers: 1×N vertical, N from the footprint (voltage sources → pinrow2, ICSP → pinrow6, ...)
+    const pinrow = /^pin_header_pinrow(\d+)/.exec(id);
+    if (pinrow) {
+        return `${base}Connector_PinHeader_2.54mm.3dshapes/PinHeader_1x${String(pinrow[1]).padStart(2, '0')}_P2.54mm_Vertical.step`;
     }
 
     for (const [re, rel] of FIXED_MODEL) {

@@ -1,6 +1,6 @@
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { JLC_FAB_PROFILE, boardExtraProps, kicadProjectJson, injectZone, reportViaCompliance } from './fab-profile';
+import { JLC_FAB_PROFILE, FAB_TIERS, boardExtraProps, kicadProjectJson, injectZone, reportViaCompliance } from './fab-profile';
 
 const realPcb = readFileSync(join(__dirname, '..', '__fixtures__', 'small.kicad_pcb'), 'utf8');
 
@@ -19,6 +19,16 @@ describe('kicadProjectJson — the notary judges by OUR rules (single source of 
         expect(rules.min_via_annular_width).toBe(0.15);
         expect(rules.min_via_diameter).toBeCloseTo(0.6); // 0.3 + 2*0.15
         expect(rules.min_through_hole_diameter).toBe(0.3);
+    });
+
+    it('sets the Default net class clearance/width to the profile (what DRC actually checks track↔pad)', () => {
+        // A tighter tier must lower the Default netclass, not just min_clearance — else DRC false-fails at
+        // KiCad's 0.2mm default netclass (found live 3 Tem 2026).
+        const std = JSON.parse(kicadProjectJson(FAB_TIERS.standard));
+        const def = std.net_settings.classes.find((c: { name: string }) => c.name === 'Default');
+        expect(def.clearance).toBe(0.127);
+        expect(def.track_width).toBe(0.127);
+        expect(def.via_drill).toBe(0.25);
     });
 });
 

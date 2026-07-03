@@ -18,26 +18,44 @@ export interface FabProfile {
     viaDrillMm: number;
     viaAnnularMm: number;
     /**
-     * Clearance freerouting keeps around VIAS (track↔via, via↔via, via↔pad). freerouting applies the
-     * general clearance to wire↔wire but a laxer default to via types, so an unset via clearance lets it
-     * place a via ~0.12mm from a track — below the 0.2mm KiCad rule (proven live 3 Tem 2026). Defaults to
-     * 1.25× minClearance so a routed via is DRC-clean without over-spacing signal tracks. */
+     * Explicit clearance freerouting must keep around VIAS (track↔via, via↔via, via↔pad). Normally leave
+     * unset — it defaults to `minClearance + viaClearanceGuardMm`. Set only to force a specific value.
+     */
     viaClearanceMm?: number;
-    /** Faz-3 (IPC-2221) hook: per-net minimum trace width, keyed by EMITTED net name (e.g. "GND"). */
+    /**
+     * FIXED guard added to minClearance for via clearance. freerouting's via-clearance model runs tighter
+     * than KiCad measures it, and the gap GROWS with layout density (measured live 3 Tem 2026: sparse
+     * boards need ~0.03mm, but dense multi-via boards — 555, 74HC00, 4017 — leave a via ~0.08–0.10mm tight
+     * of the rule). It is an additive geometric offset, NOT proportional (a scale factor under-guards tight
+     * HDI profiles). Default 0.10mm clears every gauntlet circuit; raise it if a dense board still trips a
+     * via↔track clearance. */
+    viaClearanceGuardMm?: number;
+    /** Copper weight (oz) for IPC-2221 width sizing — 1 oz = 35 µm = 1.378 mil (default 1). */
+    copperOz?: number;
+    /** Allowed trace temperature rise (°C) for IPC-2221 width sizing (default 10 — conservative). */
+    deltaTC?: number;
+    /** Per-net minimum trace width, keyed by EMITTED net name (e.g. "GND"). Computed from IPC-2221 when
+     *  net currents are supplied; can also be set explicitly to force a width. */
     perNetMinWidthMm?: Record<string, number>;
     /** Pour the ground plane (bottom layer) when a GND net exists. */
     gndPour?: boolean;
 }
 
-/** JLC-compatible conservative defaults (see PCB_VERIFICATION §3.3; annular 0.15 = our safe default,
- *  0.1 is the absolute fab floor). */
-export const JLC_FAB_PROFILE: FabProfile = {
-    minTraceWidthMm: 0.2,
-    minClearanceMm: 0.2,
-    viaDrillMm: 0.3,
-    viaAnnularMm: 0.15,
-    gndPour: true,
+/**
+ * Fab capability tiers (JLCPCB 2-layer, real published limits). Pick by cost/density:
+ *  - economy  — cheapest, most robust; 0.2mm track/space, 0.3mm drill (the conservative default).
+ *  - standard — JLCPCB standard process; 0.127mm (5 mil) track/space, 0.25mm drill.
+ *  - advanced — JLCPCB advanced/HDI; 0.0889mm (3.5 mil) track/space, 0.2mm drill.
+ * All verified to route DRC-clean through the quality pipeline (the via guard holds at each tier).
+ */
+export const FAB_TIERS: Record<'economy' | 'standard' | 'advanced', FabProfile> = {
+    economy: { minTraceWidthMm: 0.2, minClearanceMm: 0.2, viaDrillMm: 0.3, viaAnnularMm: 0.15, copperOz: 1, deltaTC: 10, gndPour: true },
+    standard: { minTraceWidthMm: 0.127, minClearanceMm: 0.127, viaDrillMm: 0.25, viaAnnularMm: 0.13, copperOz: 1, deltaTC: 10, gndPour: true },
+    advanced: { minTraceWidthMm: 0.0889, minClearanceMm: 0.0889, viaDrillMm: 0.2, viaAnnularMm: 0.1, copperOz: 1, deltaTC: 10, gndPour: true },
 };
+
+/** JLC-compatible conservative default = the economy tier (backward-compatible). */
+export const JLC_FAB_PROFILE: FabProfile = FAB_TIERS.economy;
 
 /** Board-tag props enforcing the profile upstream (verified knobs only). */
 export function boardExtraProps(profile: FabProfile): string {
@@ -72,6 +90,24 @@ export function kicadProjectJson(profile: FabProfile): string {
                         min_via_diameter: viaDiameter,
                     },
                 },
+            },
+            // The Default net class clearance/width is what KiCad DRC actually checks track↔pad/track against
+            // (design_settings.min_clearance is only a floor). Without this, DRC judges every board at KiCad's
+            // 0.2mm default netclass — so a tighter tier (0.127/0.0889) would false-fail (found live 3 Tem
+            // 2026). Setting the Default class to the profile makes the notary judge by OUR clearance.
+            net_settings: {
+                classes: [
+                    {
+                        name: 'Default',
+                        clearance: profile.minClearanceMm,
+                        track_width: profile.minTraceWidthMm,
+                        via_diameter: viaDiameter,
+                        via_drill: profile.viaDrillMm,
+                        microvia_diameter: round3(Math.max(0.2, viaDiameter)),
+                        microvia_drill: round3(Math.max(0.1, profile.viaDrillMm)),
+                    },
+                ],
+                meta: { version: 4 },
             },
             meta: { filename: 'board.kicad_pro', version: 3 },
         },

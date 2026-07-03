@@ -1,4 +1,4 @@
-import { applyFabRulesToDsn, stripRouting, enlargeBoard, findFullyUnroutedNets } from './route';
+import { applyFabRulesToDsn, applyPerNetWidths, stripRouting, enlargeBoard, findFullyUnroutedNets } from './route';
 import { JLC_FAB_PROFILE } from './fab-profile';
 
 // applyFabRulesToDsn is a pure string transform (no ESM dsn-converter), so it lives in jest; exportDsn
@@ -36,11 +36,11 @@ describe('applyFabRulesToDsn — lift the DSN net class to the fab floor (freero
         expect(out).toContain('(clearance 500)'); // not shrunk to 200
     });
 
-    it('appends via clearance types (freerouting under-spaces vias without them) at 1.25× clearance', () => {
+    it('appends via clearance types at minClearance + guard (freerouting under-spaces vias)', () => {
         const out = applyFabRulesToDsn(dsn, JLC_FAB_PROFILE);
-        expect(out).toContain('(clearance 250 (type via_via))'); // 0.2 * 1.25 = 0.25mm
-        expect(out).toContain('(clearance 250 (type wire_via))');
-        expect(out).toContain('(clearance 250 (type via_smd))');
+        expect(out).toContain('(clearance 300 (type via_via))'); // 0.2 + 0.1 guard = 0.3mm
+        expect(out).toContain('(clearance 300 (type wire_via))');
+        expect(out).toContain('(clearance 300 (type via_smd))');
     });
 
     it('honours an explicit viaClearanceMm override', () => {
@@ -59,6 +59,42 @@ describe('applyFabRulesToDsn — lift the DSN net class to the fab floor (freero
         const twice = applyFabRulesToDsn(once, JLC_FAB_PROFILE);
         expect(twice).toBe(once);
         expect((twice.match(/\(type via_via\)/g) ?? []).length).toBe((once.match(/\(type via_via\)/g) ?? []).length);
+    });
+});
+
+describe('applyPerNetWidths — split kicad_default into IPC width classes (freerouting per-net width)', () => {
+    const dsn = [
+        '(pcb x (network',
+        '    (class "kicad_default" "" "GND_source_net_1" "IN_source_net_5" "VCC_source_net_3"',
+        '      (circuit',
+        '        (use_via "Via[0-1]_600:300_um")',
+        '      )',
+        '      (rule',
+        '        (width 200)',
+        '        (clearance 200) (clearance 250 (type via_via))',
+        '      )',
+        '    )',
+        '  )',
+        '  (wiring',
+        '  )',
+        ')',
+    ].join('\n');
+
+    it('moves a widened net into its own class WITHOUT mangling the net list (the [^"]* quote fix)', () => {
+        const out = applyPerNetWidths(dsn, { VCC: 1.0 }, JLC_FAB_PROFILE);
+        // kicad_default keeps the two signal nets with their REAL names (the [^"]+ bug turned these into
+        // single-space tokens; the positive match below fails if that regression returns).
+        expect(out).toMatch(/\(class "kicad_default" "GND_source_net_1" "IN_source_net_5"/);
+        expect(out).not.toMatch(/"kicad_default" " "/); // the specific cross-paired-quote corruption
+        // VCC lands in a 1000µm class
+        expect(out).toMatch(/\(class "w1000" "VCC_source_net_3"/);
+        expect(out).toMatch(/w1000[\s\S]*\(width 1000\)/);
+    });
+
+    it('leaves the DSN untouched when no net exceeds the floor width', () => {
+        const out = applyPerNetWidths(dsn, { VCC: 0.2 }, JLC_FAB_PROFILE); // 0.2mm == floor → no split
+        expect(out).toContain('"GND_source_net_1" "IN_source_net_5" "VCC_source_net_3"');
+        expect(out).not.toContain('(class "w');
     });
 });
 

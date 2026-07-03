@@ -108,7 +108,9 @@ function transistorType(component: Component): string {
     return /pnp/i.test(component.model ?? '') ? 'pnp' : 'npn';
 }
 function mosfetChannel(component: Component): string {
-    return /(^|[^a-z])p(mos|chan)|pmos/i.test(component.model ?? '') ? 'pmos' : 'nmos';
+    // tscircuit's mosfet channelType enum is 'n' | 'p' (NOT 'nmos'/'pmos' — that value is rejected at
+    // component creation, breaking every mosfet; caught 3 Tem 2026 by the H-bridge gauntlet).
+    return /(^|[^a-z])p(mos|chan)|pmos/i.test(component.model ?? '') ? 'p' : 'n';
 }
 
 /**
