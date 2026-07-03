@@ -14,6 +14,7 @@ import { checkConnectivityParity, type ParityResult, type TscElement } from './p
 import { boardExtraProps, reportViaCompliance, injectZone, kicadProjectJson, JLC_FAB_PROFILE, type FabProfile } from './fab-profile';
 import { generateGerbers, generateKicadPcb, buildBomCsv, buildPnpCsv, type GerberOutputs } from './outputs';
 import { exportDsn, mergeSes, stripRouting, enlargeBoard, findFullyUnroutedNets, type FreeroutingRunner } from './route';
+import { ipc2221WidthMm } from './ipc2221';
 
 export interface LayoutOptions {
     ui?: UiJson;
@@ -29,6 +30,10 @@ export interface LayoutOptions {
     /** Routing headroom (mm/side) added to the board before a quality route so freerouting can complete
      *  tight auto-sized boards. Default 6. Set 0 to route within the exact auto-size outline. */
     routingMarginMm?: number;
+    /** RMS current (A) per EMITTED net name (e.g. { GND: 1.5, VBUS: 2 }). Drives IPC-2221 per-net trace
+     *  width on the quality router — a power/ground net routes wider than a signal net, deterministically.
+     *  Typically fed from simulation; nets without an entry use the profile's minimum width. */
+    netCurrentsA?: Record<string, number>;
     boardWidthMm?: number;
     boardHeightMm?: number;
 }
@@ -109,10 +114,17 @@ export async function layoutCircuit(circuit: CircuitJson, opts: LayoutOptions = 
         };
     }
 
-    // 5) quality route (freerouting), applied only when a runner is injected. Reroute from placement,
-    //    then splice the SES copper back onto the full board — components/pads/bodies preserved.
-    //    Proven live 3 Tem 2026: this flow comes back DRC-CLEAN where the local route needs the notary.
-    const { routedBoard, qualityApplied } = await applyQualityRoute(evaluated, opts, profile, diagnostics);
+    // 5a) IPC-2221 per-net trace widths from supplied net currents (a power/ground net must be wider than
+    //     a signal net — deterministic, no LLM). Merges with any explicit profile.perNetMinWidthMm.
+    const perNetWidthMm = computeIpcWidths(opts.netCurrentsA, profile, diagnostics);
+
+    // 5b) quality route (freerouting), applied only when a runner is injected. Reroute from placement,
+    //     then splice the SES copper back onto the full board — components/pads/bodies preserved.
+    //     Proven live 3 Tem 2026: this flow comes back DRC-CLEAN where the local route needs the notary.
+    const { routedBoard, qualityApplied } = await applyQualityRoute(evaluated, opts, profile, perNetWidthMm, diagnostics);
+
+    // Confirm the widened nets actually routed at their IPC width (freerouting honoured the per-net class).
+    if (qualityApplied) verifyPerNetWidths(routedBoard, perNetWidthMm, diagnostics);
 
     // Via compliance on the FINAL copper. freerouting routes with the DSN padstack (0.6/0.3 = compliant),
     // so quality boards clear this; the local router's undersized vias are an honest limitation we report
@@ -167,11 +179,69 @@ export async function layoutCircuit(circuit: CircuitJson, opts: LayoutOptions = 
     };
 }
 
+/**
+ * Merge explicit `profile.perNetMinWidthMm` with IPC-2221 widths computed from `netCurrentsA`. Emits a
+ * diagnostic per widened net (and per clamp) so the sizing is never silent. Keyed by EMITTED net name.
+ */
+function computeIpcWidths(
+    netCurrentsA: Record<string, number> | undefined,
+    profile: FabProfile,
+    diagnostics: LayoutDiagnostic[],
+): Record<string, number> {
+    const widths: Record<string, number> = { ...(profile.perNetMinWidthMm ?? {}) };
+    if (!netCurrentsA) return widths;
+    for (const [net, currentA] of Object.entries(netCurrentsA)) {
+        const r = ipc2221WidthMm({ currentA, copperOz: profile.copperOz, deltaTC: profile.deltaTC });
+        const widthMm = Math.max(r.widthMm, profile.minTraceWidthMm, widths[net] ?? 0);
+        widths[net] = widthMm;
+        if (widthMm > profile.minTraceWidthMm) {
+            diagnostics.push({
+                code: 'PCB040',
+                severity: 'info',
+                message: `net ${net}: ${currentA}A → IPC-2221 min width ${widthMm}mm (vs ${profile.minTraceWidthMm}mm signal default).`,
+            });
+        }
+        if (r.clamped) {
+            diagnostics.push({ code: 'PCB041', severity: 'warning', message: `net ${net} IPC-2221 sizing clamped — ${r.notes.join('; ')}` });
+        }
+    }
+    return widths;
+}
+
+/** After a quality route, confirm each widened net actually carries a trace at (≈) its target width. */
+function verifyPerNetWidths(board: TscElement[], perNetWidthMm: Record<string, number>, diagnostics: LayoutDiagnostic[]): void {
+    const wide = Object.entries(perNetWidthMm).filter(([, mm]) => mm > 0);
+    if (wide.length === 0) return;
+    const srcTraceById = new Map(board.filter((e) => e.type === 'source_trace').map((e) => [(e as { source_trace_id?: string }).source_trace_id, e]));
+    const netNameById = new Map(board.filter((e) => e.type === 'source_net').map((e) => [(e as { source_net_id?: string }).source_net_id, (e as { name?: string }).name]));
+    const maxWidthByNet = new Map<string, number>();
+    for (const t of board.filter((e) => e.type === 'pcb_trace')) {
+        const st = srcTraceById.get((t as { source_trace_id?: string }).source_trace_id) as { connected_source_net_ids?: string[] } | undefined;
+        const name = st?.connected_source_net_ids?.[0] ? netNameById.get(st.connected_source_net_ids[0]) : undefined;
+        if (!name) continue;
+        const w = Math.max(...((t as { route?: Array<{ width?: number }> }).route ?? []).map((p) => p.width ?? 0), 0);
+        maxWidthByNet.set(name, Math.max(maxWidthByNet.get(name) ?? 0, w));
+    }
+    for (const [net, target] of wide) {
+        if (target <= 0) continue;
+        const got = maxWidthByNet.get(net);
+        if (got === undefined) continue; // net not on this board (or single-pin) — nothing to check
+        if (got < target * 0.95) {
+            diagnostics.push({
+                code: 'PCB042',
+                severity: 'warning',
+                message: `net ${net} routed at ${got.toFixed(2)}mm but IPC-2221 needs ${target}mm — the router narrowed it; widen the board or check clearances.`,
+            });
+        }
+    }
+}
+
 /** Reroute a placed board through the injected freerouting runner and splice the copper back. */
 async function applyQualityRoute(
     evaluated: TscElement[],
     opts: LayoutOptions,
     profile: FabProfile,
+    perNetWidthMm: Record<string, number>,
     diagnostics: LayoutDiagnostic[],
 ): Promise<{ routedBoard: TscElement[]; qualityApplied: boolean }> {
     if (opts.router !== 'quality') return { routedBoard: evaluated, qualityApplied: false };
@@ -188,7 +258,7 @@ async function applyQualityRoute(
         // (proven live 3 Tem 2026: margin 5 & 12 complete, 8 leaves a net unrouted). So try a spread of
         // margins and keep the first that routes EVERY net (SES-level oracle, no Docker); fall to the
         // best partial otherwise. The enlarged board is the splice base, so its outline stays consistent.
-        const best = await routeBestMargin(evaluated, opts, profile);
+        const best = await routeBestMargin(evaluated, opts, profile, perNetWidthMm);
         if (best.unrouted.length > 0) {
             // freerouting dropped a whole net (electrically broken) — worse than the fast route, which is
             // fully connected (only its via geometry trips DRC). Ship the fast board and say so honestly;
@@ -225,6 +295,7 @@ async function routeBestMargin(
     evaluated: TscElement[],
     opts: LayoutOptions,
     profile: FabProfile,
+    perNetWidthMm: Record<string, number>,
 ): Promise<{ routedBoard: TscElement[]; unrouted: string[]; marginMm: number; tried: number }> {
     const freeroute = opts.freeroute!;
     // An EXPLICIT routingMarginMm is a binding cap: try only that size (no auto-growth), honouring the
@@ -238,7 +309,7 @@ async function routeBestMargin(
     for (const marginMm of margins) {
         tried++;
         const routingBase = enlargeBoard(evaluated, marginMm);
-        const dsn = await exportDsn(stripRouting(routingBase), profile);
+        const dsn = await exportDsn(stripRouting(routingBase), profile, perNetWidthMm);
         const ses = await freeroute(dsn);
         const unrouted = findFullyUnroutedNets(dsn, ses);
         if (unrouted.length === 0) {
@@ -301,12 +372,14 @@ export { generateTscircuitCode, sanitizeName, buildNetNames } from './adapter';
 export type { AdapterResult, PinExpectation, AdapterOptions } from './adapter';
 export { checkConnectivityParity } from './parity';
 export type { ParityResult, TscElement } from './parity';
-export { JLC_FAB_PROFILE, boardExtraProps, kicadProjectJson, injectZone, reportViaCompliance } from './fab-profile';
+export { JLC_FAB_PROFILE, FAB_TIERS, boardExtraProps, kicadProjectJson, injectZone, reportViaCompliance } from './fab-profile';
 export type { FabProfile, ZoneInjectionResult } from './fab-profile';
 export { generateGerbers, generateKicadPcb, buildBomCsv, buildPnpCsv } from './outputs';
 export type { GerberOutputs } from './outputs';
 export { evaluateTscircuit } from './evaluate';
-export { exportDsn, mergeSes, stripRouting, applyFabRulesToDsn, enlargeBoard } from './route';
+export { exportDsn, mergeSes, stripRouting, applyFabRulesToDsn, applyPerNetWidths, enlargeBoard } from './route';
 export type { FreeroutingRunner } from './route';
+export { ipc2221WidthMm } from './ipc2221';
+export type { IpcWidthInput, IpcWidthResult } from './ipc2221';
 export { resolveModel, injectModels, KICAD_3DMODEL_BASE } from './models3d';
 export type { InjectModelsResult } from './models3d';

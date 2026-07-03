@@ -20,14 +20,25 @@ import { JLC_FAB_PROFILE, type FabProfile } from './fab-profile';
  * only ever RAISE a value to the floor (`max`), never shrink a deliberately-wider class, and we leave
  * TYPED clearances (`(clearance 50 (type smd_smd))`) untouched — those govern pad spacing, not tracks.
  */
-export async function exportDsn(circuitJson: TscElement[], profile: FabProfile = JLC_FAB_PROFILE): Promise<string> {
+export async function exportDsn(
+    circuitJson: TscElement[],
+    profile: FabProfile = JLC_FAB_PROFILE,
+    perNetWidthMm?: Record<string, number>,
+): Promise<string> {
     const { convertCircuitJsonToDsnString } = await import('dsn-converter');
     const raw = convertCircuitJsonToDsnString(circuitJson as never);
-    return applyFabRulesToDsn(raw, profile);
+    const ruled = applyFabRulesToDsn(raw, profile);
+    return perNetWidthMm && Object.keys(perNetWidthMm).length > 0 ? applyPerNetWidths(ruled, perNetWidthMm, profile) : ruled;
 }
 
 /** Specctra clearance types that govern via spacing — freerouting under-spaces these unless told. */
 const VIA_CLEARANCE_TYPES = ['via_via', 'via_smd', 'smd_via', 'wire_via', 'via_wire', 'via_pin', 'pin_via'];
+
+/** Via clearance (µm): explicit override, else minClearance + a fixed guard for freerouting's via model. */
+function viaClearanceUm(profile: FabProfile): number {
+    const mm = profile.viaClearanceMm ?? profile.minClearanceMm + (profile.viaClearanceGuardMm ?? 0.1);
+    return Math.round(mm * 1000);
+}
 
 /**
  * Raise the DSN net class to the fab floor: `(width)` and bare `(clearance)` up to the profile min,
@@ -38,16 +49,62 @@ const VIA_CLEARANCE_TYPES = ['via_via', 'via_smd', 'smd_via', 'wire_via', 'via_w
 export function applyFabRulesToDsn(dsn: string, profile: FabProfile = JLC_FAB_PROFILE): string {
     const widthUm = Math.round(profile.minTraceWidthMm * 1000);
     const clearanceUm = Math.round(profile.minClearanceMm * 1000);
-    const viaClearanceUm = Math.round((profile.viaClearanceMm ?? profile.minClearanceMm * 1.25) * 1000);
+    const viaClr = viaClearanceUm(profile);
     // Idempotent: raising width/clearance is `max` (stable), but the via-clearance types would DUPLICATE
     // on a second pass (the rewritten bare `(clearance N)` still matches) — so append them only when the
     // DSN hasn't already been ruled.
-    const viaTypes = dsn.includes('(type via_via)') ? '' : ' ' + VIA_CLEARANCE_TYPES.map((t) => `(clearance ${viaClearanceUm} (type ${t}))`).join(' ');
+    const viaTypes = dsn.includes('(type via_via)') ? '' : ' ' + VIA_CLEARANCE_TYPES.map((t) => `(clearance ${viaClr} (type ${t}))`).join(' ');
     return dsn
         .replace(/\(width (\d+(?:\.\d+)?)\)/g, (_m, n: string) => `(width ${Math.max(Number(n), widthUm)})`)
         // bare `(clearance N)` only — the `)` must follow the number, so typed forms like
         // `(clearance 50 (type smd_smd))` are skipped. Append the via clearance types beside each.
         .replace(/\(clearance (\d+(?:\.\d+)?)\)/g, (_m, n: string) => `(clearance ${Math.max(Number(n), clearanceUm)})${viaTypes}`);
+}
+
+/** Balanced-paren s-expression starting at the first `kw` occurrence (from `from`); null if none. */
+function balancedSexpr(s: string, kw: string, from = 0): { start: number; end: number; text: string } | null {
+    const a = s.indexOf(kw, from);
+    if (a < 0) return null;
+    let depth = 0;
+    for (let i = a; i < s.length; i++) {
+        const c = s[i];
+        if (c === '(') depth++;
+        else if (c === ')') { depth--; if (depth === 0) return { start: a, end: i + 1, text: s.slice(a, i + 1) }; }
+    }
+    return null;
+}
+
+/**
+ * Give individual nets their own trace width by splitting the single `kicad_default` net class into
+ * width-keyed classes (freerouting honours per-class width — verified live 3 Tem 2026: a net moved to a
+ * 1.0mm class routes at 1.0mm while signal nets stay 0.2mm). `widthMmByEmitted` is keyed by EMITTED net
+ * name (e.g. "GND", "VCC"); a DSN net `VCC_source_net_3` maps back by stripping the `_source_net_N`
+ * suffix. Widths ≤ the base floor stay in kicad_default. This is how IPC-2221 per-net widths reach the
+ * router. (Quote tokens are matched with `[^"]*` — `+` cross-pairs around the empty class-name `""`.)
+ */
+export function applyPerNetWidths(dsn: string, widthMmByEmitted: Record<string, number>, profile: FabProfile = JLC_FAB_PROFILE): string {
+    const blk = balancedSexpr(dsn, '(class "kicad_default"');
+    if (!blk) return dsn;
+    const headerLine = blk.text.slice(0, blk.text.indexOf('\n'));
+    const nets = [...headerLine.matchAll(/"([^"]*)"/g)].map((m) => m[1]!).filter((s) => s !== 'kicad_default' && s !== '');
+    const circuit = balancedSexpr(blk.text, '(circuit')?.text ?? '(circuit\n      )';
+    const floorUm = Math.round(profile.minTraceWidthMm * 1000);
+    const viaClr = viaClearanceUm(profile);
+    const clearance = `(clearance ${Math.round(profile.minClearanceMm * 1000)}) ` +
+        VIA_CLEARANCE_TYPES.map((t) => `(clearance ${viaClr} (type ${t}))`).join(' ');
+    const emittedOf = (n: string) => n.replace(/_source_net_\d+$/, '');
+
+    const groups = new Map<number, string[]>();
+    for (const n of nets) {
+        const mm = widthMmByEmitted[emittedOf(n)];
+        const um = mm && Math.round(mm * 1000) > floorUm ? Math.round(mm * 1000) : floorUm;
+        if (!groups.has(um)) groups.set(um, []);
+        groups.get(um)!.push(n);
+    }
+    const mkClass = (name: string, ns: string[], um: number) =>
+        `    (class "${name}" ${ns.map((n) => `"${n}"`).join(' ')}\n      ${circuit}\n      (rule\n        (width ${um})\n        ${clearance}\n      )\n    )`;
+    const classes = [...groups.entries()].map(([um, ns]) => mkClass(um === floorUm ? 'kicad_default' : `w${um}`, ns, um));
+    return dsn.slice(0, blk.start) + classes.join('\n') + dsn.slice(blk.end);
 }
 
 /**

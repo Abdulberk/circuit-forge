@@ -112,7 +112,7 @@ describe('generateTscircuitCode', () => {
                 comp({ designator: 'M1', type: 'mosfet', model: 'NMOSGEN', value: undefined, pins: [{ pinId: 'd', netId: 'vin' }, { pinId: 'g', netId: 'gnd' }, { pinId: 's', netId: 'gnd' }, { pinId: 'b', netId: 'gnd' }] }),
             ]),
         );
-        expect(r.code).toContain('channelType="nmos" mosfetMode="enhancement"');
+        expect(r.code).toContain('channelType="n" mosfetMode="enhancement"'); // tscircuit enum is n|p, not nmos
     });
 
     it('subckt chip pins follow the MODEL PORT ORDER (pin1..pinN), not the authored order', () => {
