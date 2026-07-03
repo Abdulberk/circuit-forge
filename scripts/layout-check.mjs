@@ -10,15 +10,16 @@
  * Convention: like test:matrix / test:edge, this is a node harness (the tscircuit deps are ESM-only,
  * which keeps real-eval integration out of jest); exits non-zero on any failure.
  */
-import { mkdirSync, writeFileSync, readFileSync, existsSync, rmSync } from 'node:fs';
+import { mkdirSync, writeFileSync, readFileSync, existsSync, rmSync, statSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { execFileSync } from 'node:child_process';
+import { makeFreeroutingRunner } from './lib/freerouting.mjs';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const pkgRoot = join(__dirname, '..', 'packages', 'pcb-core');
 const outRoot = join(pkgRoot, '.layout-check');
-const { layoutCircuit, exportDsn, mergeSes, stripRouting } = await import(
+const { layoutCircuit, exportDsn, mergeSes, stripRouting, injectModels } = await import(
     new URL(`file://${join(pkgRoot, 'dist', 'index.js').replace(/\\/g, '/')}`).href
 );
 
@@ -232,6 +233,119 @@ if (dockerOk) {
     }
 }
 
+// ---------------------------------------------------------------- quality route (the DRC-CLEAN stamp)
+
+const FR_IMAGE = 'ghcr.io/freerouting/freerouting:2.2.4';
+let frOk = false;
+if (dockerOk) {
+    try {
+        execFileSync('docker', ['image', 'inspect', FR_IMAGE], { stdio: 'ignore', timeout: 30000 });
+        frOk = true;
+    } catch {
+        console.log(`\n(quality tier skipped — ${FR_IMAGE} not available locally)`);
+    }
+}
+
+if (frOk) {
+    // Unlike the Phase-1 notary above (report-only, fast router), the quality route IS the pass/fail
+    // manufacturable stamp: freerouting routes with the fab padstack -> mergeSes splices the copper onto
+    // the FULL placed board -> injectModels adds real 3D bodies -> kicad-cli DRC must come back CLEAN.
+    console.log('\n── quality route: freerouting 2.2.4 → splice → 3D bodies → kicad-cli 10 DRC (manufacturable stamp)');
+    const freeroute = makeFreeroutingRunner({ workDir: outRoot });
+    const toDocker = (p) => p.replace(/\\/g, '/');
+    for (const [name, circuit] of cases) {
+        const dir = join(outRoot, name);
+        if (!existsSync(dir)) mkdirSync(dir, { recursive: true });
+        let q;
+        try {
+            q = await layoutCircuit(circuit, { router: 'quality', freeroute });
+        } catch (e) {
+            fail(`${name}: quality layoutCircuit threw — ${String(e).slice(0, 200)}`);
+            continue;
+        }
+        if (!q.ok || !q.outputs) {
+            fail(`${name}: quality route not ok — ${q.diagnostics.filter((d) => d.severity === 'error').map((d) => d.code).join(',')}`);
+            continue;
+        }
+        const applied = q.diagnostics.find((d) => d.code === 'PCB030' && d.message.includes('applied'));
+        if (!applied) {
+            fail(`${name}: quality route did NOT apply (freerouting not engaged)`);
+            continue;
+        }
+        ok(`${name}: ${applied.message}`);
+
+        // real 3D bodies for every footprint
+        const injectResult = injectModels(q.outputs.kicadPcb);
+        writeFileSync(join(dir, 'board_quality.kicad_pcb'), q.outputs.kicadPcb);
+        writeFileSync(join(dir, 'board_quality_bodies.kicad_pcb'), injectResult.kicadPcb);
+        writeFileSync(join(dir, 'board_quality.kicad_pro'), q.outputs.kicadPro);
+        if (injectResult.unmatched.length) {
+            fail(`${name}: ${injectResult.unmatched.length} footprint(s) with no 3D body — ${injectResult.unmatched.map((u) => u.id).join(', ')}`);
+        } else if (injectResult.injected === 0) {
+            // Vacuous-pass guard: zero unmatched AND zero injected means the regex matched nothing (e.g. the
+            // converter changed footprint formatting) — a silent "all bodied" that bodied nothing.
+            fail(`${name}: injectModels matched 0 footprints — 3D-body injection is broken (footprint format changed?)`);
+        } else {
+            ok(`${name}: 3D bodies injected for all ${injectResult.injected} footprint(s)`);
+        }
+
+        // DRC now EXPECTS clean — this is the stamp, not a report
+        rmSync(join(dir, 'drc_quality.json'), { force: true });
+        try {
+            execFileSync(
+                'docker',
+                ['run', '--rm', '-v', `${toDocker(dir)}:/work`, KICAD_IMAGE, 'kicad-cli', 'pcb', 'drc',
+                    '--refill-zones', '--exit-code-violations', '--severity-error', '--format', 'json',
+                    '--output', '/work/drc_quality.json', '/work/board_quality.kicad_pcb'],
+                { stdio: 'pipe', timeout: 300000, env: { ...process.env, MSYS_NO_PATHCONV: '1' } },
+            );
+            ok(`${name}: quality DRC CLEAN — manufacturable stamp ✔✔ (traces=${q.stats.traces} vias=${q.stats.vias})`);
+        } catch (e) {
+            if (e.status !== 5) {
+                fail(`${name}: quality kicad-cli failed (exit ${e.status ?? '?'}) — ${String(e.stderr ?? e).slice(0, 200)}`);
+                continue;
+            }
+            // The stamp requires BOTH zero rule violations AND zero unconnected nets (an unrouted net is a
+            // real defect, reported separately from `violations` in the DRC JSON).
+            const report = existsSync(join(dir, 'drc_quality.json')) ? JSON.parse(readFileSync(join(dir, 'drc_quality.json'), 'utf8')) : null;
+            const viols = report?.violations ?? [];
+            const unconnected = report?.unconnected_items ?? [];
+            const byType = {};
+            for (const v of viols) byType[v.type] = (byType[v.type] ?? 0) + 1;
+            const parts = [];
+            if (viols.length) parts.push(`${viols.length} violation(s): ${Object.entries(byType).map(([t, n]) => `${t}×${n}`).join(', ')}`);
+            if (unconnected.length) parts.push(`${unconnected.length} unrouted net(s)`);
+            fail(`${name}: quality DRC NOT clean — ${parts.join(' + ')}`);
+        }
+
+        // Prove the injected bodies actually RESOLVE (not just that a GLB exists — board geometry alone can
+        // be large). DIFFERENTIAL check: export the bare board and the bodied board with identical flags;
+        // the bodied GLB must be materially larger, which only happens if --subst-models embedded the models.
+        if (name === 'opamp-mixed') {
+            const exportGlb = (src, out) => {
+                rmSync(join(dir, out), { force: true });
+                execFileSync(
+                    'docker',
+                    ['run', '--rm', '-v', `${toDocker(dir)}:/work`, KICAD_IMAGE, 'kicad-cli', 'pcb', 'export', 'glb',
+                        '--include-tracks', '--include-pads', '--include-zones', '--include-silkscreen', '--include-soldermask',
+                        '--subst-models', '--output', `/work/${out}`, `/work/${src}`],
+                    { stdio: 'pipe', timeout: 300000, env: { ...process.env, MSYS_NO_PATHCONV: '1' } },
+                );
+                return statSync(join(dir, out)).size;
+            };
+            try {
+                const bareBytes = exportGlb('board_quality.kicad_pcb', 'board_quality.glb'); // same flags, no (model ...) refs
+                const bodiedBytes = exportGlb('board_quality_bodies.kicad_pcb', 'board_quality_bodies.glb');
+                const ratio = bodiedBytes / Math.max(bareBytes, 1);
+                if (ratio >= 1.3) ok(`${name}: GLB bodies resolved — bodied ${Math.round(bodiedBytes / 1024)} KB vs bare ${Math.round(bareBytes / 1024)} KB (${ratio.toFixed(1)}×)`);
+                else fail(`${name}: --subst-models did NOT add body geometry — bodied ${Math.round(bodiedBytes / 1024)} KB vs bare ${Math.round(bareBytes / 1024)} KB (${ratio.toFixed(2)}×, expected ≥1.3×)`);
+            } catch (e) {
+                fail(`${name}: glb export failed — ${String(e.stderr ?? e).slice(0, 200)}`);
+            }
+        }
+    }
+}
+
 // ---------------------------------------------------------------- freerouting bridge (golden fixtures)
 
 console.log('\n── freerouting bridge (golden fixtures from the real 2 Tem 2026 run)');
@@ -242,10 +356,12 @@ try {
     if (dsn.length > 1000 && dsn.includes('(pcb')) ok(`exportDsn: ${dsn.length} bytes of DSN from the stripped golden board`);
     else fail(`exportDsn produced implausible output (${dsn.length} bytes)`);
 
-    const merged = await mergeSes(readFileSync(join(fixtures, 'dense.dsn'), 'utf8'), readFileSync(join(fixtures, 'dense.ses'), 'utf8'));
+    const merged = await mergeSes(denseCj, readFileSync(join(fixtures, 'dense.dsn'), 'utf8'), readFileSync(join(fixtures, 'dense.ses'), 'utf8'));
     const traces = merged.filter((e) => e.type === 'pcb_trace').length;
-    if (traces > 0) ok(`mergeSes: golden SES yields ${traces} routed traces`);
-    else fail('mergeSes: golden SES produced no pcb_trace elements');
+    const components = merged.filter((e) => e.type === 'pcb_component').length;
+    // The splice must PRESERVE the placed board (components/pads), not reconstruct a loose-trace shell.
+    if (traces > 0 && components > 0) ok(`mergeSes: golden SES spliced onto the full board — ${traces} traces + ${components} components preserved`);
+    else fail(`mergeSes: expected traces AND preserved components, got traces=${traces} components=${components}`);
 } catch (e) {
     fail(`freerouting bridge: ${String(e).slice(0, 300)}`);
 }
