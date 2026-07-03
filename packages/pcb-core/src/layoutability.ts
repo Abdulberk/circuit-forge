@@ -12,7 +12,7 @@
  *  - footprint pins beyond the mapped ports are declared NC explicitly (info), never silently.
  */
 import type { CircuitJson, Component } from '@circuit-forge/eda-core';
-import { resolveFootprint, isLedDiode, soicForPinCount, type FootprintResolution } from './footprints';
+import { resolveFootprint, isLedDiode, soicForPinCount, footprintPadCount, type FootprintResolution } from './footprints';
 
 export type LayoutRole = 'direct' | 'chip-fallback' | 'connectorized' | 'net-only' | 'excluded';
 
@@ -73,9 +73,6 @@ const SIM_PRIMITIVE_TYPES = new Set([
     'tristate',
 ]);
 
-/** SOIC ladder pin counts for the NC computation. */
-const SOIC_PINS: Record<string, number> = { soic8: 8, soic14: 14, soic16: 16, dip8: 8, dip14: 14, dip16: 16 };
-
 export function classifyCircuit(circuit: CircuitJson, opts: LayoutabilityOptions = {}): LayoutabilityResult {
     const plans: ComponentPlan[] = [];
     const diagnostics: LayoutDiagnostic[] = [];
@@ -112,6 +109,37 @@ function classifyComponent(
         return { component, role: 'net-only' };
     }
 
+    // A physical component with ZERO pins would count as layoutable, route vacuously and ship a board
+    // nothing ever verified — corrupt input, always an error (never downgraded by allowPartial).
+    if (component.pins.length === 0 && !SIM_PRIMITIVE_TYPES.has(type)) {
+        diagnostics.push({
+            code: 'PCB011',
+            severity: 'error',
+            componentId: id,
+            message: `${designator} (${type}) has no pins — nothing to connect or verify; refusing to place it.`,
+        });
+        return { component, role: 'excluded' };
+    }
+
+    // MOSFET bulk on a DIFFERENT net than source cannot be expressed on a SOT-23 — that omission
+    // CHANGES connectivity vs the simulated circuit, so it fails by default like any load-bearing
+    // exclusion (allowPartial downgrades to a warning; the adapter then skips the pin silently).
+    if (type === 'mosfet') {
+        const bulkNet = component.pins.find((p) => p.pinId === 'b')?.netId;
+        const sourceNet = component.pins.find((p) => p.pinId === 's')?.netId;
+        if (bulkNet !== undefined && bulkNet !== sourceNet) {
+            diagnostics.push({
+                code: 'PCB010',
+                severity: excludedSeverity,
+                componentId: id,
+                message:
+                    `${designator}: MOSFET bulk is on a different net than source — the SOT-23 mapping cannot ` +
+                    `express it, so the board would differ from the simulated circuit. Pass allowPartial:true ` +
+                    `to accept the omission.`,
+            });
+        }
+    }
+
     if (SIM_PRIMITIVE_TYPES.has(type)) {
         diagnostics.push({
             code: 'PCB002',
@@ -146,11 +174,13 @@ function classifyComponent(
             });
             return { component, role: 'excluded' };
         }
+        const footprint = resolveFootprint(component)!;
         return {
             component,
             role: 'chip-fallback',
             element: 'chip',
-            footprint: resolveFootprint(component) ?? undefined,
+            footprint,
+            ncPinCount: declareNc(component, footprint.footprint, diagnostics),
         };
     }
 
@@ -169,22 +199,45 @@ function classifyComponent(
 
     // subckt + jfet -> chip fallback; everything else has a direct tscircuit element.
     if (type === 'subckt' || type === 'jfet') {
-        const footprintPins = SOIC_PINS[footprint.footprint] ?? (type === 'jfet' ? 3 : component.pins.length);
-        const nc = Math.max(0, footprintPins - component.pins.length);
-        if (nc > 0) {
-            // Approval condition 3: unmapped footprint pins are DECLARED, never silent (the ideal
-            // op-amp case: 5 ports on a SOIC-8 -> 3 NC pins).
-            diagnostics.push({
-                code: 'PCB006',
-                severity: 'info',
-                componentId: id,
-                message: `${designator}: ${nc} footprint pin(s) beyond the mapped ports are NC (not connected).`,
-            });
-        }
-        return { component, role: 'chip-fallback', element: 'chip', footprint, ncPinCount: nc };
+        return {
+            component,
+            role: 'chip-fallback',
+            element: 'chip',
+            footprint,
+            ncPinCount: declareNc(component, footprint.footprint, diagnostics),
+        };
     }
 
     return { component, role: 'direct', element: directElement(component), footprint };
+}
+
+/**
+ * NC declaration (approval condition 3): footprint pads beyond the mapped pins are DECLARED, never
+ * silent — including "unknowable": an override footprint outside the pad-count vocabulary gets an
+ * explicit "NC count unknowable" note instead of a silently-assumed zero. Applies to EVERY
+ * chip-fallback (subckt, jfet AND generic catalog parts).
+ */
+function declareNc(component: Component, footprint: string, diagnostics: LayoutDiagnostic[]): number | undefined {
+    const pads = footprintPadCount(footprint);
+    if (pads === null) {
+        diagnostics.push({
+            code: 'PCB006',
+            severity: 'info',
+            componentId: component.id,
+            message: `${component.designator}: pad count of footprint "${footprint}" is outside the curated vocabulary — NC pin count unknowable (pins mapped positionally; verify the package).`,
+        });
+        return undefined;
+    }
+    const nc = Math.max(0, pads - component.pins.length);
+    if (nc > 0) {
+        diagnostics.push({
+            code: 'PCB006',
+            severity: 'info',
+            componentId: component.id,
+            message: `${component.designator}: ${nc} footprint pin(s) beyond the mapped ports are NC (not connected).`,
+        });
+    }
+    return nc;
 }
 
 /** tscircuit element for the directly-supported types (empirically probed catalogue, 2 Tem 2026). */

@@ -49,6 +49,32 @@ describe('sanitizeName / buildNetNames', () => {
         expect(names.n).toBe('N123');
         expect(names.a).not.toBe(names.b); // OUT_ collision -> uniquified
     });
+
+    it('MULTIPLE isGround nets merge onto ONE "GND" (SPICE node-0 semantics — no ground islands)', () => {
+        const names = buildNetNames({
+            version: '1',
+            components: [],
+            nets: [
+                { id: 'g1', name: 'gnd', isGround: true },
+                { id: 'g2', name: 'agnd', isGround: true },
+            ],
+        });
+        expect(names.g1).toBe('GND');
+        expect(names.g2).toBe('GND'); // merged, never GND_2
+    });
+
+    it('"GND" is RESERVED: a signal net named gnd cannot steal it from (or without) a real ground', () => {
+        const names = buildNetNames({
+            version: '1',
+            components: [],
+            nets: [
+                { id: 'fake', name: 'GND' }, // signal net, listed FIRST
+                { id: 'real', name: 'earth', isGround: true },
+            ],
+        });
+        expect(names.real).toBe('GND');
+        expect(names.fake).not.toBe('GND'); // pour/per-net rules can never attach to the signal net
+    });
 });
 
 describe('generateTscircuitCode', () => {
@@ -123,26 +149,24 @@ describe('generateTscircuitCode', () => {
         expect(exp['vcc']).toBe('.U1 > .pin4');
     });
 
-    it('mosfet bulk on the SOURCE net is silently implicit; on a DIFFERENT net it warns (PCB010)', () => {
-        const mos = (bulkNet: string) =>
-            comp({
-                designator: 'M1',
-                type: 'mosfet',
-                model: 'NMOSGEN',
-                value: undefined,
-                pins: [
-                    { pinId: 'd', netId: 'vin' },
-                    { pinId: 'g', netId: 'gnd' },
-                    { pinId: 's', netId: 'gnd' },
-                    { pinId: 'b', netId: bulkNet },
-                ],
-            });
-        const same = generate(baseCircuit([mos('gnd')]));
-        expect(same.diagnostics.some((d) => d.code === 'PCB010')).toBe(false);
-        const diff = generate(baseCircuit([mos('vin')]));
-        expect(diff.diagnostics.some((d) => d.code === 'PCB010')).toBe(true);
-        // bulk never produces a trace/expectation either way (no physical pin on sot23)
-        expect(same.expectations.filter((e) => e.name === 'M1')).toHaveLength(3);
+    it('mosfet bulk pin never emits a trace/expectation (no SOT-23 pad); the diff-net POLICY lives in layoutability', () => {
+        const mos = comp({
+            designator: 'M1',
+            type: 'mosfet',
+            model: 'NMOSGEN',
+            value: undefined,
+            pins: [
+                { pinId: 'd', netId: 'vin' },
+                { pinId: 'g', netId: 'gnd' },
+                { pinId: 's', netId: 'gnd' },
+                { pinId: 'b', netId: 'gnd' },
+            ],
+        });
+        const r = generate(baseCircuit([mos]));
+        expect(r.expectations.filter((e) => e.name === 'M1')).toHaveLength(3); // d/g/s only
+        expect(r.code).not.toContain('.M1 > .b'); // bulk emits nothing
+        // policy diagnostic (PCB010, error-by-default) is layoutability's job now — see its spec
+        expect(r.diagnostics.some((d) => d.code === 'PCB010')).toBe(false);
     });
 
     it('unparseable passive value -> PCB008 warning and NO value prop (never a guessed number)', () => {
@@ -173,5 +197,57 @@ describe('generateTscircuitCode', () => {
         const r = generate(baseCircuit([comp({ id: 'a', designator: 'R1' }), comp({ id: 'b', designator: 'R1' })]));
         expect(r.code).toContain('name="R1"');
         expect(r.code).toContain('name="R1_2"');
+    });
+
+    it('generic catalog part with ALL-NUMERIC pinIds maps pinId -> PHYSICAL pad (pinN), not array position', () => {
+        // sparse, out-of-order: pin "7" first, pin "3" second — positional mapping would miswire both
+        const r = generate(
+            baseCircuit([
+                comp({
+                    designator: 'U9',
+                    type: 'generic',
+                    footprint: 'SOIC-8',
+                    value: undefined,
+                    pins: [
+                        { pinId: '7', netId: 'vin' },
+                        { pinId: '3', netId: 'gnd' },
+                    ],
+                }),
+                comp({}),
+            ]),
+        );
+        const exp = Object.fromEntries(r.expectations.filter((e) => e.name === 'U9').map((e) => [e.pinId, e.selector]));
+        expect(exp['7']).toBe('.U9 > .pin7'); // NOT pin1
+        expect(exp['3']).toBe('.U9 > .pin3'); // NOT pin2
+    });
+
+    it('DIRECT_PIN_MAPS anchors: per-element port tokens are UNIQUE (a c->b style typo cannot pass silently)', () => {
+        // structural guard for the parity shared-fate residue: each map's values must be distinct.
+        const r = generate(
+            baseCircuit([
+                comp({ designator: 'Q1', type: 'bjt', model: 'Q', value: undefined, pins: [{ pinId: 'c', netId: 'vin' }, { pinId: 'b', netId: 'gnd' }, { pinId: 'e', netId: 'vin' }] }),
+            ]),
+        );
+        const selectors = r.expectations.filter((e) => e.name === 'Q1').map((e) => e.selector);
+        expect(new Set(selectors).size).toBe(selectors.length);
+    });
+
+    it('degenerate UiJson (all positions identical) falls back to the grid — never stacks parts', () => {
+        const circuit = baseCircuit([comp({ designator: 'R1' }), comp({ designator: 'R2', pins: [{ pinId: '1', netId: 'vin' }, { pinId: '2', netId: 'gnd' }] })]);
+        const ui: UiJson = { positions: { R1: { x: 50, y: 50 }, R2: { x: 50, y: 50 } } };
+        const r = generateTscircuitCode(circuit, ui, classifyCircuit(circuit), {});
+        const xs = [...r.code.matchAll(/pcbX=\{([-\d.]+)\}/g)].map((m) => Number(m[1]));
+        expect(new Set(xs).size).toBeGreaterThan(1); // grid spread, not a single stacked point
+    });
+
+    it('explicit small board dims shrink the grid pitch (parts stay inside the outline)', () => {
+        const many = Array.from({ length: 9 }, (_, i) =>
+            comp({ id: `r${i}`, designator: `R${i + 1}`, pins: [{ pinId: '1', netId: 'vin' }, { pinId: '2', netId: 'gnd' }] }),
+        );
+        const circuit = baseCircuit(many);
+        const r = generateTscircuitCode(circuit, undefined, classifyCircuit(circuit), { boardWidthMm: 20, boardHeightMm: 20 });
+        const coords = [...r.code.matchAll(/pcb[XY]=\{([-\d.]+)\}/g)].map((m) => Math.abs(Number(m[1])));
+        // 3x3 grid on a 20mm board with 4mm margins: every coordinate within ±6mm
+        expect(Math.max(...coords)).toBeLessThanOrEqual(6.01);
     });
 });

@@ -30,6 +30,12 @@ const EXPECT: PinExpectation[] = [
 ];
 
 describe('checkConnectivityParity (approval condition 1)', () => {
+    it('REFUSES a vacuous pass: zero expectations -> PCB026 error, never ok (review finding)', () => {
+        const r = checkConnectivityParity(board({ traces: [] }), []);
+        expect(r.ok).toBe(false);
+        expect(r.diagnostics.some((d) => d.code === 'PCB026')).toBe(true);
+    });
+
     it('passes a correctly wired board — semantic hints (anode) resolve ports independent of the pin map', () => {
         const r = checkConnectivityParity(
             board({
