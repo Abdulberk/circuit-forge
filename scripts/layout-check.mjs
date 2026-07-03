@@ -15,6 +15,7 @@ import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { execFileSync } from 'node:child_process';
 import { makeFreeroutingRunner } from './lib/freerouting.mjs';
+import { makeKicadDrcRunner } from './lib/kicad-drc.mjs';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const pkgRoot = join(__dirname, '..', 'packages', 'pcb-core');
@@ -252,13 +253,14 @@ if (frOk) {
     // the FULL placed board -> injectModels adds real 3D bodies -> kicad-cli DRC must come back CLEAN.
     console.log('\n── quality route: freerouting 2.2.4 → splice → 3D bodies → kicad-cli 10 DRC (manufacturable stamp)');
     const freeroute = makeFreeroutingRunner({ workDir: outRoot });
+    const notaryDrc = makeKicadDrcRunner({ workDir: outRoot }); // Lever 1: DRC-oracle margin retry + local fallback
     const toDocker = (p) => p.replace(/\\/g, '/');
     for (const [name, circuit] of cases) {
         const dir = join(outRoot, name);
         if (!existsSync(dir)) mkdirSync(dir, { recursive: true });
         let q;
         try {
-            q = await layoutCircuit(circuit, { router: 'quality', freeroute });
+            q = await layoutCircuit(circuit, { router: 'quality', freeroute, notaryDrc });
         } catch (e) {
             fail(`${name}: quality layoutCircuit threw — ${String(e).slice(0, 200)}`);
             continue;
