@@ -27,6 +27,13 @@ export interface LayoutOptions {
     /** DSN -> SES freerouting executor, injected by the harness/worker (keeps pcb-core pure). Required
      *  for `router:'quality'`; absent, quality gracefully degrades to the fast local route. */
     freeroute?: FreeroutingRunner;
+    /** Injected DRC oracle (kicadPcb, kicadPro) -> true iff DRC-clean (0 violations AND 0 unconnected).
+     *  When provided, the quality margin-retry uses REAL DRC as the completeness+cleanliness oracle (the
+     *  only reliable one — freerouting's SES doesn't preserve per-connection routedness), and if no margin
+     *  is DRC-clean the board falls back to the fully-connected local route (guaranteeing zero open nets).
+     *  Absent: the cheap net-presence oracle is used (fully-dropped nets only). Lives in the worker/harness
+     *  (Docker); the library stays pure. */
+    notaryDrc?: (kicadPcb: string, kicadPro: string) => Promise<boolean>;
     /** Routing headroom (mm/side) added to the board before a quality route so freerouting can complete
      *  tight auto-sized boards. Default 6. Set 0 to route within the exact auto-size outline. */
     routingMarginMm?: number;
@@ -133,32 +140,14 @@ export async function layoutCircuit(circuit: CircuitJson, opts: LayoutOptions = 
 
     // 6) production outputs (fab profile downstream: .kicad_pro rules + optional GND pour)
     const gerbers = await generateGerbers(routedBoard);
-    let kicadPcb = await generateKicadPcb(routedBoard);
-    if (profile.gndPour) {
-        const zone = injectZone(kicadPcb, 'GND', 'B.Cu');
-        if (zone.kind === 'ok') {
-            kicadPcb = zone.kicadPcb;
-            diagnostics.push({
-                code: 'PCB032',
-                severity: 'info',
-                message: 'GND pour injected on B.Cu — the notary fills it via --refill-zones (KiCad 10).',
-            });
-        } else if (zone.kind === 'unsafe-unnetted-copper') {
-            diagnostics.push({
-                code: 'PCB033',
-                severity: 'info',
-                message:
-                    'GND pour skipped: the kicad converter emits copper segments without net assignment ' +
-                    '(upstream gap) — a fill against un-netted copper would false-short. Pour returns when ' +
-                    'segments carry nets (upstream fix or Phase-2 notary-side netting).',
-            });
-        } else {
-            diagnostics.push({
-                code: 'PCB033',
-                severity: 'info',
-                message: 'gndPour requested but no GND net exists on the board — pour skipped.',
-            });
-        }
+    const assembled = await assembleKicadPcb(routedBoard, profile);
+    const kicadPcb = assembled.kicadPcb;
+    if (assembled.pour === 'ok') {
+        diagnostics.push({ code: 'PCB032', severity: 'info', message: 'GND pour injected on B.Cu — the notary fills it via --refill-zones (KiCad 10).' });
+    } else if (assembled.pour === 'unsafe-unnetted-copper') {
+        diagnostics.push({ code: 'PCB033', severity: 'info', message: 'GND pour skipped: kicad converter emits copper segments without net assignment — a fill against un-netted copper would false-short.' });
+    } else if (assembled.pour === 'no-net') {
+        diagnostics.push({ code: 'PCB033', severity: 'info', message: 'gndPour requested but no GND net exists on the board — pour skipped.' });
     }
 
     return {
@@ -177,6 +166,15 @@ export async function layoutCircuit(circuit: CircuitJson, opts: LayoutOptions = 
         },
         stats: stats(routedBoard, routeErrors.length, started),
     };
+}
+
+/** Build the manufacturable .kicad_pcb (traces + optional GND pour) — shared by the final output and the
+ *  DRC-oracle retry so the notary judges exactly what ships. */
+async function assembleKicadPcb(board: TscElement[], profile: FabProfile): Promise<{ kicadPcb: string; pour: 'ok' | 'unsafe-unnetted-copper' | 'no-net' | 'off' }> {
+    const raw = await generateKicadPcb(board);
+    if (!profile.gndPour) return { kicadPcb: raw, pour: 'off' };
+    const zone = injectZone(raw, 'GND', 'B.Cu');
+    return zone.kind === 'ok' ? { kicadPcb: zone.kicadPcb, pour: 'ok' } : { kicadPcb: raw, pour: zone.kind };
 }
 
 /**
@@ -254,32 +252,29 @@ async function applyQualityRoute(
         return { routedBoard: evaluated, qualityApplied: false };
     }
     try {
-        // freerouting completion on a tight auto-sized board is non-monotonic in the routing margin
-        // (proven live 3 Tem 2026: margin 5 & 12 complete, 8 leaves a net unrouted). So try a spread of
-        // margins and keep the first that routes EVERY net (SES-level oracle, no Docker); fall to the
-        // best partial otherwise. The enlarged board is the splice base, so its outline stays consistent.
+        // Margin-retry: freerouting completion is non-monotonic in the routing margin, so try a spread and
+        // accept the first margin whose board passes the oracle. With an injected notaryDrc the oracle is
+        // REAL DRC (0 violations AND 0 unconnected — the only reliable completeness check); otherwise it's
+        // the cheap net-presence pre-check (fully-dropped nets only). No accepted margin -> fall back to the
+        // fully-connected local route (never an open net).
         const best = await routeBestMargin(evaluated, opts, profile, perNetWidthMm);
-        if (best.unrouted.length > 0) {
-            // freerouting dropped a whole net (electrically broken) — worse than the fast route, which is
-            // fully connected (only its via geometry trips DRC). Ship the fast board and say so honestly;
-            // the notary flags its vias, never a silent open.
+        if (!best.accepted) {
             diagnostics.push({
                 code: 'PCB036',
                 severity: 'warning',
-                message: `quality route left ${best.unrouted.length} net(s) fully unrouted (${best.unrouted.slice(0, 4).join(', ')}) after ${best.tried} margin attempt(s) — using the fully-routed local route instead (a manual board-size/placement hint may let freerouting complete it).`,
+                message: `no ${best.mode === 'drc' ? 'DRC-clean' : 'fully-routed'} quality route across ${best.tried} margin attempt(s) — using the fully-connected local route instead (the notary flags its via geometry, never an open net).`,
             });
             return { routedBoard: evaluated, qualityApplied: false };
         }
-        const traces = best.routedBoard.filter((e) => e.type === 'pcb_trace').length;
-        const vias = best.routedBoard.filter((e) => e.type === 'pcb_via').length;
-        // "no fully-dropped net" is all the library can verify without DRC; the notary's unconnected_items
-        // check is the authority on per-connection completeness (see findFullyUnroutedNets).
+        const traces = best.routedBoard!.filter((e) => e.type === 'pcb_trace').length;
+        const vias = best.routedBoard!.filter((e) => e.type === 'pcb_via').length;
         diagnostics.push({
             code: 'PCB030',
             severity: 'info',
-            message: `quality route (freerouting) applied — ${traces} trace(s), ${vias} via(s) at margin ${best.marginMm}mm; the notary confirms full connectivity.`,
+            message: `quality route (freerouting) applied — ${traces} trace(s), ${vias} via(s) at margin ${best.marginMm}mm` +
+                (best.mode === 'drc' ? ' — DRC-clean confirmed by the notary oracle.' : '; the notary confirms full connectivity.'),
         });
-        return { routedBoard: best.routedBoard, qualityApplied: true };
+        return { routedBoard: best.routedBoard!, qualityApplied: true };
     } catch (e) {
         diagnostics.push({
             code: 'PCB035',
@@ -290,34 +285,37 @@ async function applyQualityRoute(
     }
 }
 
-/** Try a spread of routing margins; return the first fully-routed result, else the least-unrouted one. */
+/**
+ * Try a spread of routing margins; return the first margin whose board passes the oracle.
+ * Oracle = injected notaryDrc (real KiCad DRC: 0 violations AND 0 unconnected — the reliable one) when
+ * present, else the cheap net-presence pre-check. `accepted:false` means no margin passed (caller falls
+ * back to the local route). An explicit routingMarginMm is a binding single-margin cap.
+ */
 async function routeBestMargin(
     evaluated: TscElement[],
     opts: LayoutOptions,
     profile: FabProfile,
     perNetWidthMm: Record<string, number>,
-): Promise<{ routedBoard: TscElement[]; unrouted: string[]; marginMm: number; tried: number }> {
+): Promise<{ routedBoard: TscElement[] | null; accepted: boolean; marginMm: number; tried: number; mode: 'drc' | 'presence' }> {
     const freeroute = opts.freeroute!;
-    // An EXPLICIT routingMarginMm is a binding cap: try only that size (no auto-growth), honouring the
-    // LayoutOptions contract ("Set 0 to route within the exact auto-size outline"). When unset, sweep a
-    // spread — freerouting completion is non-monotonic in the margin, so more candidates route more boards.
+    const notaryDrc = opts.notaryDrc;
+    const mode = notaryDrc ? 'drc' : 'presence';
     const margins = opts.routingMarginMm !== undefined ? [opts.routingMarginMm] : [6, 4, 10, 2, 8, 12];
-    // Only the winning (fully-routed) margin is spliced; partial attempts keep just their unrouted metadata
-    // (the caller falls back to the fast board when none complete), so mergeSes runs at most once.
-    let fewest: { unrouted: string[]; marginMm: number } | null = null;
     let tried = 0;
     for (const marginMm of margins) {
         tried++;
         const routingBase = enlargeBoard(evaluated, marginMm);
         const dsn = await exportDsn(stripRouting(routingBase), profile, perNetWidthMm);
         const ses = await freeroute(dsn);
-        const unrouted = findFullyUnroutedNets(dsn, ses);
-        if (unrouted.length === 0) {
-            return { routedBoard: await mergeSes(routingBase, dsn, ses), unrouted, marginMm, tried };
+        if (notaryDrc) {
+            const routed = await mergeSes(routingBase, dsn, ses);
+            const { kicadPcb } = await assembleKicadPcb(routed, profile);
+            if (await notaryDrc(kicadPcb, kicadProjectJson(profile))) return { routedBoard: routed, accepted: true, marginMm, tried, mode };
+        } else if (findFullyUnroutedNets(dsn, ses).length === 0) {
+            return { routedBoard: await mergeSes(routingBase, dsn, ses), accepted: true, marginMm, tried, mode };
         }
-        if (!fewest || unrouted.length < fewest.unrouted.length) fewest = { unrouted, marginMm };
     }
-    return { routedBoard: evaluated, unrouted: fewest!.unrouted, marginMm: fewest!.marginMm, tried };
+    return { routedBoard: null, accepted: false, marginMm: 0, tried, mode };
 }
 
 /** Report vias below the fab profile on the final copper (never mutate — enlarging manufactures shorts). */
