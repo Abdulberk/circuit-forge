@@ -5,6 +5,7 @@
     "description": "AI Circuit Generator & Simulator - Backend",
     "scripts": {
         "dev": "turbo run dev",
+        "pre-frontend": "pnpm -C apps/pcb-viewer dev",
         "build": "turbo run build",
         "test": "turbo run test",
         "test:cov": "turbo run test:cov",

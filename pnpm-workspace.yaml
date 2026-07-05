@@ -1,3 +1,8 @@
 packages:
   - "apps/*"
   - "packages/*"
+  # pcb-viewer is a standalone Next.js/React-18 app; it is intentionally EXCLUDED from the pnpm
+  # workspace so its React 18 never collides with the React 19 that @tscircuit/eval (pcb-core)
+  # requires — two React majors in one store breaks tscircuit's reconciler ("multiple copies of
+  # react"). Install it on its own: `cd apps/pcb-viewer && pnpm install --ignore-workspace`.
+  - "!apps/pcb-viewer"
