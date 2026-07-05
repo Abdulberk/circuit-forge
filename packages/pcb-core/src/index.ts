@@ -8,9 +8,11 @@
  */
 import type { CircuitJson, UiJson } from '@circuit-forge/eda-core';
 import { classifyCircuit, type LayoutabilityResult, type LayoutDiagnostic } from './layoutability';
-import { generateTscircuitCode } from './adapter';
+import { generateTscircuitCode, type AdapterResult } from './adapter';
 import { evaluateTscircuit } from './evaluate';
 import { checkConnectivityParity, type ParityResult, type TscElement } from './parity';
+import { placeParts, computeHpwl } from './placement';
+import { extractPlacementParts, gridPositions, buildNetWeights, deriveExtraEdges } from './placement-bridge';
 import { boardExtraProps, reportViaCompliance, injectZone, kicadProjectJson, JLC_FAB_PROFILE, type FabProfile } from './fab-profile';
 import { generateGerbers, generateKicadPcb, buildBomCsv, buildPnpCsv, type GerberOutputs } from './outputs';
 import { exportDsn, mergeSes, stripRouting, enlargeBoard, findFullyUnroutedNets, type FreeroutingRunner } from './route';
@@ -43,6 +45,11 @@ export interface LayoutOptions {
     netCurrentsA?: Record<string, number>;
     boardWidthMm?: number;
     boardHeightMm?: number;
+    /** Placement engine (Lever 2, PLACEMENT_PLAN.md). 'grid' = the deterministic connectivity-blind
+     *  grid (today's default). 'auto' = two-pass connectivity-aware placement: the grid pass is the
+     *  baseline, the force-directed placement must beat it on HPWL AND re-pass eval+parity, else the
+     *  board keeps the grid (quality can never regress — floor guarantee, plan §4.7). */
+    placer?: 'grid' | 'auto';
 }
 
 export interface LayoutStats {
@@ -93,18 +100,12 @@ export async function layoutCircuit(circuit: CircuitJson, opts: LayoutOptions = 
 
     // 3) headless eval + local autoroute (always: parity checks the placement, and the local route is
     //    the base board the quality router splices into)
-    const evaluated = await evaluateTscircuit(adapted.code);
+    let evaluated = await evaluateTscircuit(adapted.code);
     const routeErrors = evaluated.filter((e) => e.type.endsWith('_error'));
-    for (const err of routeErrors) {
-        diagnostics.push({
-            code: 'PCB031',
-            severity: 'error',
-            message: `tscircuit: ${err.type}${'message' in err ? ` — ${String((err as { message?: unknown }).message)}` : ''}`,
-        });
-    }
+    for (const err of routeErrors) diagnostics.push(passThroughError(err, 'tscircuit'));
 
     // 4) connectivity parity — OUR netlist vs the evaluated board (condition 1)
-    const parity = checkConnectivityParity(evaluated, adapted.expectations);
+    let parity = checkConnectivityParity(evaluated, adapted.expectations);
     diagnostics.push(...parity.diagnostics);
 
     const ok = parity.ok && !diagnostics.some((d) => d.severity === 'error');
@@ -121,6 +122,23 @@ export async function layoutCircuit(circuit: CircuitJson, opts: LayoutOptions = 
         };
     }
 
+    // 4.5) Lever 2 — connectivity-aware placement (two-pass, plan §4). The VALID grid board above is
+    //      the baseline; auto must beat it on HPWL and re-pass eval+parity, or the grid stays. When a
+    //      DRC oracle is available the routing acceptance happens in 5b (channel ladder).
+    let codeActive = adapted.code;
+    const gridEvaluated = evaluated;
+    const canLadder = opts.placer === 'auto' && opts.router === 'quality' && !!opts.freeroute && !!opts.notaryDrc;
+    if (opts.placer === 'auto' && !canLadder) {
+        // no routing oracle (fast router / no notary): single attempt, HPWL-gated adoption
+        const auto = await attemptAutoPlacement(circuit, opts, layout, adapted, evaluated, profile, undefined);
+        diagnostics.push(...auto.diagnostics);
+        if (auto.adopted && auto.code && auto.evaluated && auto.parity) {
+            codeActive = auto.code;
+            evaluated = auto.evaluated;
+            parity = auto.parity;
+        }
+    }
+
     // 5a) IPC-2221 per-net trace widths from supplied net currents (a power/ground net must be wider than
     //     a signal net — deterministic, no LLM). Merges with any explicit profile.perNetMinWidthMm.
     const perNetWidthMm = computeIpcWidths(opts.netCurrentsA, profile, diagnostics);
@@ -128,7 +146,33 @@ export async function layoutCircuit(circuit: CircuitJson, opts: LayoutOptions = 
     // 5b) quality route (freerouting), applied only when a runner is injected. Reroute from placement,
     //     then splice the SES copper back onto the full board — components/pads/bodies preserved.
     //     Proven live 3 Tem 2026: this flow comes back DRC-CLEAN where the local route needs the notary.
-    const { routedBoard, qualityApplied } = await applyQualityRoute(evaluated, opts, profile, perNetWidthMm, diagnostics);
+    //
+    //     Lever-2 channel LADDER (plan §4.7): freerouting's DRC-clean success is non-monotonic in the
+    //     inter-part channel width, so an adopted auto placement that fails to route clean is retried
+    //     with wider channels before reverting to the grid — the shipped board is never worse than today.
+    let route: Awaited<ReturnType<typeof applyQualityRoute>> | null = null;
+    if (canLadder) {
+        for (const spacingMm of [undefined, 3.6] as Array<number | undefined>) {
+            const auto = await attemptAutoPlacement(circuit, opts, layout, adapted, gridEvaluated, profile, spacingMm);
+            diagnostics.push(...auto.diagnostics);
+            if (!auto.adopted || !auto.code || !auto.evaluated || !auto.parity) break; // wider channels can't fix an HPWL/overlap rejection
+            const attempt = await applyQualityRoute(auto.evaluated, opts, profile, perNetWidthMm, diagnostics);
+            if (attempt.clean) {
+                codeActive = auto.code;
+                evaluated = auto.evaluated;
+                parity = auto.parity;
+                route = attempt;
+                break;
+            }
+            diagnostics.push({
+                code: 'PCB051',
+                severity: spacingMm === undefined ? 'info' : 'warning',
+                message: `auto-placement (channel ${spacingMm ?? 2.4}mm) did not route DRC-clean — ${spacingMm === undefined ? 'retrying with wider channels' : 'reverting to the grid placement (floor guarantee)'}.`,
+            });
+        }
+    }
+    if (!route) route = await applyQualityRoute(evaluated, opts, profile, perNetWidthMm, diagnostics);
+    const { routedBoard, qualityApplied } = route;
 
     // Confirm the widened nets actually routed at their IPC width (freerouting honoured the per-net class).
     if (qualityApplied) verifyPerNetWidths(routedBoard, perNetWidthMm, diagnostics);
@@ -154,7 +198,7 @@ export async function layoutCircuit(circuit: CircuitJson, opts: LayoutOptions = 
         ok,
         completeness: layout.completeness,
         diagnostics,
-        code: adapted.code,
+        code: codeActive,
         evaluated: routedBoard,
         parity,
         outputs: {
@@ -166,6 +210,118 @@ export async function layoutCircuit(circuit: CircuitJson, opts: LayoutOptions = 
         },
         stats: stats(routedBoard, routeErrors.length, started),
     };
+}
+
+/**
+ * Structured pass-through of a tool's error element (tscircuit/KiCad/freerouting) WITHOUT hand-mapping:
+ * the tool's own `type` is the errorType, its message/description is forwarded verbatim, and any id-like
+ * fields are collected as refs generically. Unknown/new error types flow through unchanged — nothing is
+ * dropped and there is no per-error table to maintain (handles ALL errors by construction).
+ */
+function errText(err: Record<string, unknown>): string {
+    if (typeof err.message === 'string') return err.message;
+    if (typeof err.error === 'string') return err.error;
+    return String(err.type);
+}
+/** Collect id-like values from any *_id / *_ids field (generic — no per-error-type knowledge). */
+function errRefs(err: Record<string, unknown>): string[] {
+    const refs: string[] = [];
+    for (const [k, v] of Object.entries(err)) {
+        if (!/_id$|_ids$/.test(k)) continue;
+        for (const x of Array.isArray(v) ? v : [v]) if (typeof x === 'string') refs.push(x);
+    }
+    return refs;
+}
+function passThroughError(err: { type: string; [k: string]: unknown }, tool: string): LayoutDiagnostic {
+    const refs = errRefs(err);
+    return { code: 'PCB031', severity: 'error', message: `${tool}: ${errText(err)}`, errorType: err.type, refs: refs.length ? refs : undefined };
+}
+
+/** Result of the Lever-2 auto-placement attempt (adopted:false ⇒ the grid pass stays untouched). */
+interface AutoPlacementAttempt {
+    adopted: boolean;
+    diagnostics: LayoutDiagnostic[];
+    code?: string;
+    evaluated?: TscElement[];
+    parity?: ParityResult;
+}
+
+/**
+ * Two-pass connectivity-aware placement (PLACEMENT_PLAN.md §4). Extract REAL geometry from the valid
+ * grid pass, run the pure engine, and adopt ONLY if HPWL improved AND the re-generated board passes
+ * eval + parity again. Every decision lands in diagnostics (PCB050 adopted/info, PCB051 not adopted).
+ */
+async function attemptAutoPlacement(
+    circuit: CircuitJson,
+    opts: LayoutOptions,
+    layout: LayoutabilityResult,
+    adapted: AdapterResult,
+    gridEvaluated: TscElement[],
+    profile: FabProfile,
+    spacingMm: number | undefined,
+): Promise<AutoPlacementAttempt> {
+    const diags: LayoutDiagnostic[] = [];
+    const keepGrid = (why: string, severity: 'info' | 'warning' = 'info'): AutoPlacementAttempt => {
+        diags.push({ code: 'PCB051', severity, message: `auto-placement not adopted — ${why} (grid placement kept; floor guarantee).` });
+        return { adopted: false, diagnostics: diags };
+    };
+
+    const { parts, missing } = extractPlacementParts(gridEvaluated, adapted.namesById, layout);
+    if (missing.length) {
+        diags.push({ code: 'PCB050', severity: 'info', message: `auto-placement: ${missing.length} part(s) without resolvable geometry keep their grid spot (${missing.join(', ')}).` });
+    }
+    if (parts.length < 2) return keepGrid('fewer than 2 parts with resolvable geometry');
+
+    const netWeights = buildNetWeights(circuit, adapted.netNameById);
+    const extraEdges = deriveExtraEdges(circuit, adapted.namesById);
+    const gridPos = gridPositions(gridEvaluated, parts.map((p) => p.id));
+    const hpwlGrid = computeHpwl(parts, gridPos);
+
+    const placed = placeParts({
+        parts,
+        netWeights,
+        extraEdges,
+        boardW: adapted.boardWidthMm,
+        boardH: adapted.boardHeightMm,
+        gridMm: profile.placementGridMm ?? 0.5,
+        marginMm: profile.placementMarginMm ?? 4,
+        spacingMm,
+    });
+    for (const note of placed.notes) diags.push({ code: 'PCB050', severity: 'info', message: `auto-placement: ${note}` });
+    if (!placed.ok) return keepGrid('legalization failed even after board growth', 'warning');
+    if (placed.hpwl >= hpwlGrid) return keepGrid(`HPWL did not improve (auto ${placed.hpwl.toFixed(1)}mm vs grid ${hpwlGrid.toFixed(1)}mm)`);
+
+    // pass 2: regenerate with verbatim mm placements + the fitted board, then re-verify EVERYTHING
+    const adapted2 = generateTscircuitCode(circuit, opts.ui, layout, {
+        boardWidthMm: placed.boardW,
+        boardHeightMm: placed.boardH,
+        boardExtraProps: boardExtraProps(profile),
+        placementsById: placed.positions,
+    });
+    let evaluated2 = await evaluateTscircuit(adapted2.code);
+    const errors2 = evaluated2.filter((e) => e.type.endsWith('_error'));
+    // With the quality router, the LOCAL route is scaffolding — freerouting strips and re-routes the
+    // copper, and the DRC oracle judges completeness. So local ROUTE-class errors on the denser auto
+    // board are tolerated (stripped); geometry errors (courtyard overlap, ...) stay blocking.
+    const routeTolerated = opts.router === 'quality' && !!opts.freeroute;
+    const isRouteClass = (t: string) => /trace|rout/i.test(t);
+    const blocking = errors2.filter((e) => !(routeTolerated && isRouteClass(e.type)));
+    if (blocking.length > 0) {
+        return keepGrid(`pass-2 eval reported ${blocking.length} blocking error(s), first: ${blocking[0]!.type}`, 'warning');
+    }
+    if (errors2.length > 0) {
+        diags.push({ code: 'PCB050', severity: 'info', message: `auto-placement: pass-2 local route incomplete (${errors2.length} route error(s)) — freerouting re-routes; the DRC oracle decides.` });
+        evaluated2 = evaluated2.filter((e) => !e.type.endsWith('_error'));
+    }
+    const parity2 = checkConnectivityParity(evaluated2, adapted2.expectations);
+    if (!parity2.ok) return keepGrid('pass-2 connectivity parity failed', 'warning');
+
+    diags.push({
+        code: 'PCB050',
+        severity: 'info',
+        message: `auto-placement ADOPTED — HPWL ${hpwlGrid.toFixed(1)} → ${placed.hpwl.toFixed(1)}mm (${(100 * (1 - placed.hpwl / hpwlGrid)).toFixed(0)}% shorter), board ${placed.boardW}×${placed.boardH}mm.`,
+    });
+    return { adopted: true, diagnostics: diags, code: adapted2.code, evaluated: evaluated2, parity: parity2 };
 }
 
 /** Build the manufacturable .kicad_pcb (traces + optional GND pour) — shared by the final output and the
@@ -241,15 +397,15 @@ async function applyQualityRoute(
     profile: FabProfile,
     perNetWidthMm: Record<string, number>,
     diagnostics: LayoutDiagnostic[],
-): Promise<{ routedBoard: TscElement[]; qualityApplied: boolean }> {
-    if (opts.router !== 'quality') return { routedBoard: evaluated, qualityApplied: false };
+): Promise<{ routedBoard: TscElement[]; qualityApplied: boolean; clean: boolean }> {
+    if (opts.router !== 'quality') return { routedBoard: evaluated, qualityApplied: false, clean: false };
     if (!opts.freeroute) {
         diagnostics.push({
             code: 'PCB030',
             severity: 'info',
             message: "router:'quality' requested but no freeroute runner was injected — using the local fast route.",
         });
-        return { routedBoard: evaluated, qualityApplied: false };
+        return { routedBoard: evaluated, qualityApplied: false, clean: false };
     }
     try {
         // Margin-retry: freerouting completion is non-monotonic in the routing margin, so try a spread and
@@ -264,7 +420,7 @@ async function applyQualityRoute(
                 severity: 'warning',
                 message: `no ${best.mode === 'drc' ? 'DRC-clean' : 'fully-routed'} quality route across ${best.tried} margin attempt(s) — using the fully-connected local route instead (the notary flags its via geometry, never an open net).`,
             });
-            return { routedBoard: evaluated, qualityApplied: false };
+            return { routedBoard: evaluated, qualityApplied: false, clean: false };
         }
         const traces = best.routedBoard!.filter((e) => e.type === 'pcb_trace').length;
         const vias = best.routedBoard!.filter((e) => e.type === 'pcb_via').length;
@@ -274,14 +430,14 @@ async function applyQualityRoute(
             message: `quality route (freerouting) applied — ${traces} trace(s), ${vias} via(s) at margin ${best.marginMm}mm` +
                 (best.mode === 'drc' ? ' — DRC-clean confirmed by the notary oracle.' : '; the notary confirms full connectivity.'),
         });
-        return { routedBoard: best.routedBoard!, qualityApplied: true };
+        return { routedBoard: best.routedBoard!, qualityApplied: true, clean: best.mode === 'drc' };
     } catch (e) {
         diagnostics.push({
             code: 'PCB035',
             severity: 'warning',
             message: `quality route failed (${String(e).slice(0, 160)}) — falling back to the local fast route.`,
         });
-        return { routedBoard: evaluated, qualityApplied: false };
+        return { routedBoard: evaluated, qualityApplied: false, clean: false };
     }
 }
 

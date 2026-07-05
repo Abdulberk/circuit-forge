@@ -32,6 +32,9 @@ export interface AdapterResult {
     expectations: PinExpectation[];
     /** our netId -> emitted net name (GND-normalized, sanitized, uniquified). */
     netNameById: Record<string, string>;
+    /** our componentId -> emitted (sanitized, uniquified) name — deterministic across passes, so a
+     *  placement computed against pass-1 names re-applies exactly on pass 2 (Lever 2 two-pass flow). */
+    namesById: Record<string, string>;
     diagnostics: LayoutDiagnostic[];
     boardWidthMm: number;
     boardHeightMm: number;
@@ -42,6 +45,10 @@ export interface AdapterOptions {
     boardHeightMm?: number;
     /** Extra attributes injected into the <board> tag (fab profile / autorouter config). */
     boardExtraProps?: string;
+    /** Lever 2 direct-mm placement override, keyed by EMITTED name: coordinates are used VERBATIM
+     *  (board-center mm) — unlike UiJson positions, which are schematic-space and get scaled/centered
+     *  to fill the board. Parts absent from the map fall back to the normal placement path. */
+    placementsById?: Record<string, { x: number; y: number; rotation?: number }>;
 }
 
 const MARGIN_MM = 4;
@@ -224,6 +231,7 @@ export function generateTscircuitCode(
 
     const placements = computePlacements(physical, ui, boardW, boardH);
     const usedNames = new Set<string>();
+    const namesById: Record<string, string> = {};
     const elementLines: string[] = [];
     const traceLines: string[] = [];
     const expectations: PinExpectation[] = [];
@@ -234,8 +242,10 @@ export function generateTscircuitCode(
         let n = 2;
         while (usedNames.has(name)) name = `${sanitizeName(c.designator)}_${n++}`;
         usedNames.add(name);
+        namesById[c.id] = name;
 
-        const pos = placements.get(c.id)!;
+        // Lever 2 direct-mm override (by emitted name): verbatim coordinates, no scaling/centering.
+        const pos: Placement = opts.placementsById?.[name] ?? placements.get(c.id)!;
         const attrs: string[] = [`name="${name}"`];
         const element = plan.element!;
 
@@ -280,7 +290,7 @@ export function generateTscircuitCode(
         ')',
     ].join('\n');
 
-    return { code, expectations, netNameById, diagnostics, boardWidthMm: boardW, boardHeightMm: boardH };
+    return { code, expectations, netNameById, namesById, diagnostics, boardWidthMm: boardW, boardHeightMm: boardH };
 }
 
 /** Value props for the passive elements — numeric (SI base units) so unit-spelling can never drift. */
