@@ -1,0 +1,5 @@
+node_modules/
+.next/
+next-env.d.ts
+# source HDRI archive — we commit the extracted public/env.exr, not the 3MB zip
+*.zip

@@ -39,6 +39,11 @@ export interface FabProfile {
     perNetMinWidthMm?: Record<string, number>;
     /** Pour the ground plane (bottom layer) when a GND net exists. */
     gndPour?: boolean;
+    /** Lever 2 placement grid (mm) — the SAME value must drive FE snapping and BE legalization
+     *  (single-source geometry contract, PLACEMENT_PLAN.md §7.3). Default 0.5. */
+    placementGridMm?: number;
+    /** Lever 2 keep-back from the board edge for part courtyards (mm). Default 4. */
+    placementMarginMm?: number;
 }
 
 /**

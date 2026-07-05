@@ -21,6 +21,11 @@ export interface LayoutDiagnostic {
     severity: 'error' | 'warning' | 'info';
     message: string;
     componentId?: string;
+    /** For diagnostics PASSED THROUGH from a tool (tscircuit/KiCad/freerouting): the tool's own error
+     *  type verbatim (e.g. 'pcb_courtyard_overlap_error'). Structured pass-through — no hand-mapping. */
+    errorType?: string;
+    /** Element/component/net ids the tool attached to the error (extracted generically, as-is). */
+    refs?: string[];
 }
 
 export interface ComponentPlan {

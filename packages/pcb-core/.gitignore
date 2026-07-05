@@ -1,3 +1,5 @@
 .layout-check/
 coverage/
 dist/
+.gallery/
+.placement-ab/
