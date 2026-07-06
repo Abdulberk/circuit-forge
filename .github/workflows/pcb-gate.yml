@@ -42,7 +42,11 @@ jobs:
 
       - uses: actions/setup-node@v4
         with:
-          node-version: 20
+          # Node 22, NOT 20: tscircuit's local autorouter (@tscircuit/capacity-autorouter)
+          # calls `.entries().map()` — an iterator-helper method that only exists in Node 22+.
+          # On Node 20 the eval crashes with "o.entries(...).map is not a function", so the whole
+          # PCB pipeline requires Node 22+ wherever it runs (this gate, and the future worker).
+          node-version: 22
 
       - name: Install pnpm (pinned to package.json "packageManager")
         run: npm install -g pnpm@8.14.1
