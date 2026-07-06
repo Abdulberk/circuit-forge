@@ -31,6 +31,11 @@ const fail = (msg) => {
 };
 const ok = (msg) => console.log(`  ✓ ${msg}`);
 
+// PCB_GATE_STRICT=1 (set by the CI quality gate): a MISSING Docker image is a FAILURE, not a silent
+// skip. Locally the Docker tiers self-skip so `pnpm test:layout` still runs without Docker; in CI the
+// gate exists precisely to run them, so "couldn't run" must never masquerade as green.
+const STRICT = process.env.PCB_GATE_STRICT === '1';
+
 // ---------------------------------------------------------------- fixtures (OUR CircuitJson)
 
 const gnd = (netId) => ({ id: 'gnd1', type: 'ground', designator: 'GND1', pins: [{ pinId: '1', netId }] });
@@ -200,6 +205,7 @@ try {
 } catch {
     console.log(`\n(kicad notary skipped — ${KICAD_IMAGE} not available locally)`);
 }
+if (!dockerOk && STRICT) fail(`PCB_GATE_STRICT: ${KICAD_IMAGE} not available — the DRC gate cannot run (refusing a silent green).`);
 
 if (dockerOk) {
     // NOTARY POLICY (Phase 1): the DRC verdict is REPORTED as the manufacturable-stamp status, not a
@@ -246,6 +252,7 @@ if (dockerOk) {
         console.log(`\n(quality tier skipped — ${FR_IMAGE} not available locally)`);
     }
 }
+if (!frOk && STRICT) fail(`PCB_GATE_STRICT: ${FR_IMAGE} not available — the quality-route DRC-clean gate cannot run.`);
 
 if (frOk) {
     // Unlike the Phase-1 notary above (report-only, fast router), the quality route IS the pass/fail
