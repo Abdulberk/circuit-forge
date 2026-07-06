@@ -1,0 +1,70 @@
+# PCB quality gate — the Docker-backed manufacturability check for pcb-core.
+#
+# Separate from ci.yml ON PURPOSE:
+#   • it only runs when PCB code actually changes (native `paths:` filter — no third-party action,
+#     honouring the "actions/* only" policy), so ordinary PRs are never slowed by the ~2-3GB KiCad pull;
+#   • it needs Docker (freerouting 2.2.4 + kicad-cli 10 images) that the main test/matrix jobs don't.
+#
+# What it proves: `pnpm test:layout` routes the fixture circuits through the freerouting quality tier
+# and the KiCad-10 DRC notary and comes back CLEAN. PCB_GATE_STRICT=1 turns a MISSING Docker image
+# into a failure — in this gate "couldn't run" must never pass as green (the exact silent-green trap).
+name: PCB quality gate
+
+on:
+  pull_request:
+    paths:
+      - 'packages/pcb-core/**'
+      - 'scripts/layout-check.mjs'
+      - 'scripts/lib/**'
+      - '.github/workflows/pcb-gate.yml'
+  push:
+    branches: [main]
+    paths:
+      - 'packages/pcb-core/**'
+      - 'scripts/layout-check.mjs'
+      - 'scripts/lib/**'
+      - '.github/workflows/pcb-gate.yml'
+
+concurrency:
+  group: pcb-gate-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  layout:
+    name: freerouting + KiCad-10 DRC (real Docker)
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      KICAD_IMAGE: kicad/kicad:10.0-full
+      FR_IMAGE: ghcr.io/freerouting/freerouting:2.2.4
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Install pnpm (pinned to package.json "packageManager")
+        run: npm install -g pnpm@8.14.1
+
+      - name: Install
+        run: pnpm install --frozen-lockfile
+
+      # pcb-core imports @circuit-forge/eda-core at build AND runtime, so its dist must exist first.
+      - name: Build eda-core (pcb-core dependency)
+        run: pnpm --filter @circuit-forge/eda-core build
+
+      # Pull the PINNED images up front so a registry hiccup fails here with a clear message rather
+      # than mid-harness. Both are public (Docker Hub / GHCR) — no login needed.
+      - name: Pull pinned EDA images
+        run: |
+          docker pull "$KICAD_IMAGE"
+          docker pull "$FR_IMAGE"
+
+      # test:layout builds pcb-core then runs scripts/layout-check.mjs. STRICT makes an absent image
+      # or a not-DRC-clean quality route a hard failure.
+      - name: PCB layout gate (quality route + DRC notary, strict)
+        env:
+          PCB_GATE_STRICT: '1'
+          MSYS_NO_PATHCONV: '1'
+        run: pnpm test:layout
