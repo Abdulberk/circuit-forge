@@ -137,12 +137,14 @@ her iki Dockerfile `packages/`'ı kopyalıyor; pcb-worker'ın Node-22 base'i + k
 |---|---|---|
 | M1 | Kontrat tipleri + pcb-core `shapeLayoutResult(soup)` (join'ler: net/designator/footprint, eleman-id'leri, courtyard normalize, outline sentez, THT pad, trace-segment) — SAF + unit test | soup→kontrat testleri yeşil |
 | M1b | **notary seam genişlet**: `notaryDrc` boolean yerine parsed `{clean, unconnected_items[], violations[]}` döndürsün (kicad-drc.mjs) → airwires + kategorize DRC türetilir | airwire/DRC birim testleri yeşil; mevcut çağıranlar uyarlandı |
-| M2 | **native runner'lar** (freerouting.jar + kicad-cli, Docker'sız) + GLB export adımı | yerelde native runner'la layoutCircuit DRC-temiz + GLB üretir |
-| M3 | **pcb-worker servisi**: Dockerfile (kicad:10.0-full + Node22 + Java21 + jar) + kırpılmış BullMQ bootstrap + S3 blob + Prisma durum | worker imajı build olur, job'ı uçtan uca koşar |
+| M2 ✅ | **native runner'lar** (freerouting.jar + kicad-cli, Docker'sız) + GLB export + `pcb-runtime` imajı | native runner'lar gerçek imajda golden fixture'lara karşı doğrulandı |
+| M3 | **pcb-worker servisi**: `pcb-runtime` tabanına pcb-core+deps bake + kırpılmış BullMQ bootstrap + S3 blob + Prisma durum | worker imajı build olur, **native layoutCircuit(quality) uçtan uca DRC-temiz+GLB** koşar |
 | M4 | API: `POST /layouts` (enqueue) + `GET /layouts/:id` + entegrasyon testi | API→kuyruk→worker→S3/Prisma→fetch e2e yeşil |
 | M5 (FE ile) | airwire ratsnest render, keepouts, lockedTraces, overrides, birleşik Library | FE geldiğinde |
 
 **M1–M2 LLM'siz + Docker'lı-yerel** (bugün başlanabilir). **M3–M4 infra** (imaj + S3 + deploy).
+
+**M2 durum (7 Tem 2026):** `scripts/lib/{freerouting,kicad}-native.mjs` (Docker `run` sarmalayıcısı yok, binary doğrudan; mevcut Docker-runner'larla birebir argüman-paritesi) + `docker/pcb-runtime/Dockerfile` (kicad:10.0-full **digest-pinli** + Temurin-25 JRE **+ jar ikisi de pinlenmiş freerouting imajından `COPY --from`** → jar↔JRE versiyon-eşleşme garantisi; Node 22 nodesource) + `scripts/verify-native-pipeline.mjs`. Gerçek imajda doğrulandı: freerouting native → 54 wire/20 net (golden ile birebir), notaryDrc temiz→true / kirli→false (exit-5 reject dalı), drcReport temiz 0/0 / kirli 11-ihlal, exportGlb geçerli GLB gövde-çözümü 1.5×. 3-lens adversarial review (17 bulgu→doğrulananlar) → verify harness sertleştirildi (gerçek-bakır floor, zorunlu+fatal anti-rubber-stamp differential, reject-path). **Tam native `layoutCircuit(quality)` uçtan uca kanıtı M3'e ait** (worker imajı pcb-core+deps bake edince; Windows-pnpm-symlink Linux'ta çözülmüyor).
 
 ---
 
