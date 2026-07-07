@@ -76,6 +76,10 @@ export interface LayoutResult {
         pnpCsv: string;
     } | null;
     stats: LayoutStats;
+    /** OUR componentId -> emitted (sanitized) name; and netId -> emitted net name. The LayoutJob
+     *  contract shaper (shapeLayoutResult) needs these to cross-probe geometry back to the design. */
+    namesById: Record<string, string>;
+    netNameById: Record<string, string>;
 }
 
 export async function layoutCircuit(circuit: CircuitJson, opts: LayoutOptions = {}): Promise<LayoutResult> {
@@ -119,6 +123,8 @@ export async function layoutCircuit(circuit: CircuitJson, opts: LayoutOptions = 
             parity,
             outputs: null, // never emit a "manufacturable package" for a board that failed parity/route
             stats: stats(evaluated, routeErrors.length, started),
+            namesById: adapted.namesById,
+            netNameById: adapted.netNameById,
         };
     }
 
@@ -209,6 +215,8 @@ export async function layoutCircuit(circuit: CircuitJson, opts: LayoutOptions = 
             pnpCsv: buildPnpCsv(routedBoard),
         },
         stats: stats(routedBoard, routeErrors.length, started),
+        namesById: adapted.namesById,
+        netNameById: adapted.netNameById,
     };
 }
 
@@ -514,6 +522,8 @@ function failed(layout: LayoutabilityResult, diagnostics: LayoutDiagnostic[], st
         parity: { ok: false, diagnostics: [], checkedPins: 0, expectedPins: 0 },
         outputs: null,
         stats: { traces: 0, vias: 0, errors: 0, durationMs: Date.now() - started },
+        namesById: {},
+        netNameById: {},
     };
 }
 
@@ -537,3 +547,7 @@ export { ipc2221WidthMm } from './ipc2221';
 export type { IpcWidthInput, IpcWidthResult } from './ipc2221';
 export { resolveModel, injectModels, KICAD_3DMODEL_BASE } from './models3d';
 export type { InjectModelsResult } from './models3d';
+export { shapeLayoutResult } from './layout-result';
+export type { LayoutGeometry, LayoutComponent, LayoutPad, LayoutTrace, LayoutVia, Pt } from './layout-result';
+export { parseDrcReport, drcCategory, drcToChecks, airwiresFromDrc } from './drc';
+export type { ParsedDrc, DrcEntry, DrcItem, DrcCheck, Airwire } from './drc';
