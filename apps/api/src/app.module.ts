@@ -17,6 +17,7 @@ import { TemplatesModule } from './templates/templates.module';
 import { AssetsModule } from './assets/assets.module';
 import { SimulationModule } from './simulation/simulation.module';
 import { GenerationModule } from './generation/generation.module';
+import { LayoutModule } from './layout/layout.module';
 import { PartsModule } from './parts/parts.module';
 import { NetlistModule } from './netlist/netlist.module';
 import { UsageModule } from './usage/usage.module';
@@ -66,6 +67,7 @@ import { AdminModule } from './admin/admin.module';
         AssetsModule,
         SimulationModule,
         GenerationModule,
+        LayoutModule,
         PartsModule,
         NetlistModule,
         UsageModule,

@@ -109,6 +109,7 @@ model Organization {
   assets         Asset[]
   simulationJobs SimulationJob[]
   designJobs     DesignJob[]
+  layoutJobs     LayoutJob[]
   auditLogs      AuditLog[]
   quotaOverride  OrgQuotaOverride?
 
@@ -328,6 +329,45 @@ model DesignJob {
 }
 
 enum DesignJobStatus {
+  QUEUED
+  RUNNING
+  SUCCEEDED
+  FAILED
+  CANCELED
+}
+
+// Async PCB layout job (the LRO behind /layouts). The pcb-worker runs pcb-core's quality pipeline
+// (freerouting + kicad-cli) and writes the outcome here; the client polls the row. Mirrors DesignJob's
+// shape/indexing. Heavy blobs (GLB, Gerbers/BOM/PnP) go to S3 — glbKey/gerbersKey hold their object keys;
+// `result` keeps only the bounded metadata (shaped geometry + DRC checks + airwires + stats + the keys).
+model LayoutJob {
+  id             String          @id @default(uuid())
+  orgId          String
+  userId         String
+  status         LayoutJobStatus @default(QUEUED)
+  // Input: OUR CircuitJson (topology) + optional layout options (placer/fabProfile/netCurrentsA).
+  circuit        Json
+  options        Json?
+  // Output — bounded metadata (LayoutGeometry + checks + airwires + stats); null until finished.
+  result         Json?
+  // S3 object keys for the heavy artifacts (the API presigns these for the client).
+  glbKey         String?
+  gerbersKey     String?
+  errorMessage   String?
+  // Cooperative-cancel flag (parity with DesignJob; the worker checks it before/where applicable).
+  abortRequested Boolean         @default(false)
+  createdAt      DateTime        @default(now())
+  startedAt      DateTime?
+  finishedAt     DateTime?
+
+  org Organization @relation(fields: [orgId], references: [id], onDelete: Cascade)
+
+  @@index([orgId, createdAt])
+  @@index([status])
+  @@map("layout_jobs")
+}
+
+enum LayoutJobStatus {
   QUEUED
   RUNNING
   SUCCEEDED
