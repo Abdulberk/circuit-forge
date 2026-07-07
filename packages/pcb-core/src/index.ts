@@ -549,3 +549,5 @@ export { resolveModel, injectModels, KICAD_3DMODEL_BASE } from './models3d';
 export type { InjectModelsResult } from './models3d';
 export { shapeLayoutResult } from './layout-result';
 export type { LayoutGeometry, LayoutComponent, LayoutPad, LayoutTrace, LayoutVia, Pt } from './layout-result';
+export { parseDrcReport, drcCategory, drcToChecks, airwiresFromDrc } from './drc';
+export type { ParsedDrc, DrcEntry, DrcItem, DrcCheck, Airwire } from './drc';

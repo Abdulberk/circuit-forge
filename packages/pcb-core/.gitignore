@@ -3,3 +3,4 @@ coverage/
 dist/
 .gallery/
 .placement-ab/
+.drc-capture/
