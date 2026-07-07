@@ -187,6 +187,34 @@ services:
       - /app/node_modules
       - /app/apps/worker-sim/node_modules
 
+  # PCB layout worker — consumes the 'pcb-layout' queue and runs pcb-core's quality pipeline natively
+  # (freerouting + kicad-cli, baked into the image). NO source volume mounts: the image is a self-contained
+  # `pnpm deploy` bundle; mounting the workspace over it would shadow the baked node_modules + toolchain.
+  pcb-worker:
+    build:
+      context: .
+      dockerfile: docker/pcb-worker/Dockerfile
+    container_name: circuitforge-pcb-worker
+    environment:
+      DATABASE_URL: postgresql://postgres:postgres@postgres:5432/circuitforge
+      REDIS_URL: redis://redis:6379
+      S3_ENDPOINT: http://minio:9000
+      S3_ACCESS_KEY: minioadmin
+      S3_SECRET_KEY: minioadmin
+      S3_BUCKET: circuitforge
+      S3_REGION: us-east-1
+      S3_FORCE_PATH_STYLE: "true"
+      PCB_QUEUE_NAME: pcb-layout
+      PCB_CONCURRENCY: "1"
+      NODE_ENV: production
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      minio:
+        condition: service_healthy
+
   # Observability viewer (OPT-IN): Grafana + Tempo (traces) + Prometheus/Mimir (metrics), all-in-one.
   # Behind a compose profile so the default `docker compose up` stays lean. Start it with:
   #   docker compose --profile observability up -d otel-lgtm
