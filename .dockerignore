@@ -1,0 +1,18 @@
+# Keep Docker build contexts lean and CORRECT: never ship host (Windows) node_modules or build
+# artifacts into a Linux image — pnpm reinstalls fresh inside the builder stage. Also keeps the
+# multi-GB pcb-viewer + generated PCB outputs out of the context.
+**/node_modules
+.git
+**/dist
+# TypeScript incremental cache lives at package ROOT (packages/*/tsconfig.tsbuildinfo), NOT in dist/,
+# so `**/dist` alone does NOT catch it. A host (Windows) .tsbuildinfo copied into a fresh image makes
+# the composite `tsc` believe dist is already emitted and SKIP it → eda-core ships no index.js/.d.ts →
+# pcb-core fails with TS2307 + an implicit-any cascade. Never let stale incremental state into the build.
+**/*.tsbuildinfo
+**/.turbo
+**/coverage
+**/.layout-check
+**/*.glb
+apps/pcb-viewer
+**/*.log
+scratchpad
