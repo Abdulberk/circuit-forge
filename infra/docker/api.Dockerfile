@@ -19,32 +19,26 @@ COPY pnpm-lock.yaml* ./
 COPY turbo.json ./
 COPY tsconfig.base.json ./
 
-# Copy package directories
+# Copy package directories — only the shared packages + api itself (the same partial-workspace layout
+# worker-sim.Dockerfile uses; a plain frozen install links api's full dependency tree from the lockfile).
 COPY packages/ ./packages/
 COPY apps/api/ ./apps/api/
-# Complete the workspace MANIFEST set (the other apps' package.json — packages/* already copied above) so
-# `pnpm install` resolves the IDENTICAL dependency graph as a local full-workspace install. With a PARTIAL
-# workspace (only api present), pnpm picks different peer-resolved variants of some type-only deps, and the
-# container's tsc then widens them to `any` → `nest start --watch` reports phantom TS7006 errors a local
-# build never sees AND leaves @opentelemetry/sdk-logs unlinked (runtime MODULE_NOT_FOUND). Manifests only —
-# no source — since install just needs them for the graph (neither app has a prepare/postinstall script).
-COPY apps/worker-sim/package.json ./apps/worker-sim/
-COPY apps/pcb-worker/package.json ./apps/pcb-worker/
 
-# Install dependencies (full graph → matches local exactly).
+# Install dependencies (partial workspace + frozen lockfile — identical shape to worker-sim.Dockerfile).
 RUN pnpm install --frozen-lockfile
 
-# Build the workspace PACKAGES so their dist (*.js + *.d.ts) exists IN THE IMAGE. The .dockerignore excludes
-# **/dist, so only package SOURCE is copied — without a build, @circuit-forge/eda-core has no dist, so its
-# types resolve to `any` (tsc cascade) and `require('zod')` from its dist fails at runtime. Baking the built
-# packages also lets the compose service DROP the ./packages bind-mount: a Windows-host mount brings pnpm's
-# junction symlinks, which don't resolve inside the Linux container (the root cause of the dev-container break).
-RUN pnpm -r --filter "./packages/*" run build
+# Build api's WORKSPACE DEPENDENCIES so their dist (*.js + *.d.ts) exists in the image. The .dockerignore
+# excludes **/dist, so only source is copied; without a build @circuit-forge/eda-core has no dist → its
+# types resolve to `any` and `require('zod')` from its dist fails at runtime. Only api's ACTUAL deps are
+# built (eda-core + llm-core), NOT ./packages/* — that would also build pcb-core's heavy tscircuit/React
+# toolchain, which api never imports. Baking these lets the compose service drop the ./packages bind-mount,
+# whose pnpm junction symlinks (Windows host) don't resolve in the Linux container — the break's root cause.
+RUN pnpm --filter @circuit-forge/eda-core --filter @circuitforge/llm-core run build
 
-# Generate the Prisma client IN BASE so every downstream stage has it. This was the load-bearing bug:
-# generate lived only in the prod stage AFTER the build, so the `builder` stage's `nest build` (and dev's
-# `nest start --watch`) compiled against an ungenerated @prisma/client → "@prisma/client did not initialize"
-# / dozens of phantom "has no exported member" errors → `docker compose build api` failed outright.
+# Generate the Prisma client IN BASE so every downstream stage has it (this was the load-bearing bug:
+# generate lived only in the prod stage, AFTER the builder's `nest build` had already compiled against an
+# ungenerated @prisma/client → "did not initialize" / "has no exported member" → build failed outright).
+# Matches worker-sim.Dockerfile, which likewise generates in its base stage before the builder.
 RUN pnpm --filter api exec prisma generate
 
 # Development stage

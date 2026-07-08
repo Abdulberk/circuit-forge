@@ -6,5 +6,7 @@
 # error rather than the entrypoint masking it. WORKDIR is /app/apps/api (set in the Dockerfile).
 set -e
 echo "[api-dev-entrypoint] prisma generate (sync client to current schema)…"
-pnpm exec prisma generate || echo "[api-dev-entrypoint] WARN prisma generate failed — continuing"
+# Fail fast (set -e) — a broken schema surfaces HERE with the real Prisma error, instead of being swallowed
+# and re-appearing later as a confusing nest bootstrap failure.
+pnpm exec prisma generate
 exec "$@"
