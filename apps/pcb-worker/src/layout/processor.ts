@@ -37,7 +37,11 @@ export function createLayoutWorker(): Worker<LayoutJobPayload> {
     const worker = new Worker<LayoutJobPayload>(
         config.PCB_QUEUE_NAME,
         async (job: Job<LayoutJobPayload>) => processLayoutJob(job),
-        { connection, concurrency: config.PCB_CONCURRENCY },
+        // The freerouting/kicad-cli calls are async (execFile) so the loop stays free and BullMQ renews the
+        // lock across the multi-minute pipeline. lockDuration is still raised well above the default 30s
+        // because pcb-core's tscircuit eval + DSN/SES/DRC file I/O run synchronously on this thread and can
+        // block renewal for tens of seconds on dense boards; 300s (= the per-tool timeout) covers that.
+        { connection, concurrency: config.PCB_CONCURRENCY, lockDuration: 300_000 },
     );
     worker.on('completed', (job) => logger.info({ jobId: job.data.jobId }, 'Layout job completed'));
     worker.on('failed', (job, err) => logger.error({ jobId: job?.data.jobId, error: err.message }, 'Layout job failed'));

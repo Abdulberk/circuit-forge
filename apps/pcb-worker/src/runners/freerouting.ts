@@ -3,10 +3,16 @@
  * `java -jar $FREEROUTING_JAR` headless; no docker-in-docker (the worker IS the container). Matches
  * pcb-core's FreeroutingRunner type: (dsn) => Promise<ses>.
  */
-import { execFileSync } from 'node:child_process';
+import { execFile } from 'node:child_process';
 import { writeFileSync, readFileSync, mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { promisify } from 'node:util';
+
+const execFileAsync = promisify(execFile);
+/** freerouting logs progress to stdout/stderr which we never read (the result is the SES file); a long
+ *  route can far exceed execFile's 1 MiB default and be killed with ENOBUFS mid-route, so budget generously. */
+const MAX_BUFFER = 64 * 1024 * 1024;
 
 export interface FreeroutingOpts {
     jar?: string;
@@ -30,9 +36,11 @@ export function makeNativeFreeroutingRunner(opts: FreeroutingOpts = {}): (dsn: s
             const dsnPath = join(dir, 'board.dsn');
             const sesPath = join(dir, 'board.ses');
             writeFileSync(dsnPath, dsn);
-            execFileSync(java, ['-jar', jar, '--gui.enabled=false', '-de', dsnPath, '-do', sesPath, '-mp', String(passes)], {
-                stdio: 'pipe',
+            // Async execFile: the child runs off-thread so the event loop stays live (BullMQ lock renewal,
+            // health, graceful shutdown) for the whole 10-300s route instead of freezing the single JS thread.
+            await execFileAsync(java, ['-jar', jar, '--gui.enabled=false', '-de', dsnPath, '-do', sesPath, '-mp', String(passes)], {
                 timeout: timeoutMs,
+                maxBuffer: MAX_BUFFER,
             });
             const ses = readFileSync(sesPath, 'utf8');
             if (!ses.includes('(session')) throw new Error('freerouting produced no SES session');
