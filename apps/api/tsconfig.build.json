@@ -1,0 +1,5 @@
+{
+  "extends": "./tsconfig.json",
+  "// note": "Build/serve config for nest (build + start --watch). Excludes test files — they are NOT part of the app and are type-checked/compiled by jest (jest.config.js) instead. Without this, `nest start --watch` compiles *.spec.ts into the same program, and on Linux/CI their type resolution differs enough to surface phantom TS7006 errors that BLOCK the dev server from starting (a local Windows build never sees them). tsconfig.json stays spec-inclusive for the IDE / typecheck.",
+  "exclude": ["node_modules", "dist", "test", "**/*.spec.ts", "**/*.test.ts", "**/__live__/**", "**/__tests__/**", "**/__mocks__/**"]
+}
