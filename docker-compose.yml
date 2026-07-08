@@ -67,6 +67,10 @@ services:
     build:
       context: .
       dockerfile: infra/docker/api.Dockerfile
+      # DEV target: source is bind-mounted below + the CMD is `pnpm run dev` (nest --watch). Without an
+      # explicit target, compose builds the final (production) stage, whose `node dist/main.js` CMD does
+      # not match the mounted-source dev flow — and its builder stage runs a full type-check build here.
+      target: development
     container_name: circuitforge-api
     environment:
       DATABASE_URL: postgresql://postgres:postgres@postgres:5432/circuitforge
@@ -96,7 +100,10 @@ services:
         condition: service_healthy
     volumes:
       - ./apps/api:/app/apps/api
-      - ./packages:/app/packages
+      # NOTE: ./packages is intentionally NOT bind-mounted. On a Windows host the mount would shadow the
+      # image's Linux node_modules with pnpm's host junction symlinks (which don't resolve in the container
+      # → eda-core can't require('zod'), tsc widens its types to any). The image bakes BUILT packages
+      # instead; editing a shared package during api dev therefore needs an image rebuild (they change rarely).
       - /app/node_modules
       - /app/apps/api/node_modules
 
