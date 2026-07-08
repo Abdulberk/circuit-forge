@@ -150,7 +150,12 @@ services:
       S3_FORCE_PATH_STYLE: "true"
       SIM_TIMEOUT_MS: 10000
       SIM_MAX_OUTPUT_BYTES: 5242880
-      NODE_ENV: development
+      # This service runs the HARDENED PRODUCTION image (no build target → the final stage: non-root ngsim,
+      # read_only root, cap_drop ALL — the untrusted-ngspice isolation below). So it runs production and must
+      # SAY production: the image bakes NODE_ENV=production, and the old `development` override here silently
+      # flipped it back (dev logging/behaviour on a prod-hardened container). No source mounts either — a
+      # dev-watch flow would need the dev stage + relaxed security, which is deliberately NOT what this tier is.
+      NODE_ENV: production
       # AI DESIGN LOOP: when an LLM key is present the worker ALSO hosts the agentic 'design' queue (it runs
       # the same llm-core runDesignLoop the API does, with ngspice local — see apps/worker-sim/src/main.ts).
       # Without a key the worker processes simulations ONLY (the design worker is not started). LLM_API_KEY is
@@ -188,11 +193,10 @@ services:
         condition: service_healthy
       minio:
         condition: service_healthy
-    volumes:
-      - ./apps/worker-sim:/app/apps/worker-sim
-      - ./packages:/app/packages
-      - /app/node_modules
-      - /app/apps/worker-sim/node_modules
+    # No volumes: this runs the self-contained hardened production image (baked dist + node_modules). The
+    # previous ./apps/worker-sim + ./packages source mounts were vestigial — production runs `node dist/main.js`
+    # and ignores them — and on a Windows host their pnpm junction symlinks don't resolve in the Linux
+    # container anyway. (A real worker-sim dev-watch flow would be a separate dev service with the dev target.)
 
   # PCB layout worker — consumes the 'pcb-layout' queue and runs pcb-core's quality pipeline natively
   # (freerouting + kicad-cli, baked into the image). NO source volume mounts: the image is a self-contained
