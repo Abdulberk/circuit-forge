@@ -105,12 +105,36 @@ export async function layoutCircuit(circuit: CircuitJson, opts: LayoutOptions = 
     // 3) headless eval + local autoroute (always: parity checks the placement, and the local route is
     //    the base board the quality router splices into)
     let evaluated = await evaluateTscircuit(adapted.code);
-    const routeErrors = evaluated.filter((e) => e.type.endsWith('_error'));
+    let routeErrors = evaluated.filter((e) => e.type.endsWith('_error'));
     for (const err of routeErrors) diagnostics.push(passThroughError(err, 'tscircuit'));
 
     // 4) connectivity parity — OUR netlist vs the evaluated board (condition 1)
     let parity = checkConnectivityParity(evaluated, adapted.expectations);
     diagnostics.push(...parity.diagnostics);
+
+    // 4.25) COURTYARD-OVERLAP RESCUE. The size-blind grid can pack a physically large part (e.g. a 14mm
+    //       6-pin header) into a cell smaller than its courtyard; tscircuit then rejects the WHOLE board
+    //       with pcb_courtyard_overlap_error. But the failed eval still carries every part's REAL geometry,
+    //       so re-run the courtyard-aware placement engine off it and re-evaluate, adopting ANY valid result
+    //       (there is no valid grid baseline to beat on HPWL). Turns dense boards that used to hard-fail
+    //       (MCU + ICSP header, …) into producible layouts. Guarded: only when parity is otherwise ok and
+    //       EVERY error is a courtyard overlap — a pure placement-geometry fault that a re-place can fix.
+    let rescuedCode: string | null = null;
+    const errsNow = () => diagnostics.filter((d) => d.severity === 'error');
+    if (parity.ok && errsNow().length > 0 && errsNow().every((d) => d.errorType === 'pcb_courtyard_overlap_error')) {
+        const rescue = await attemptAutoPlacement(circuit, opts, layout, adapted, evaluated, profile, undefined, true);
+        diagnostics.push(...rescue.diagnostics);
+        if (rescue.adopted && rescue.code && rescue.evaluated && rescue.parity) {
+            // the courtyard errors belonged to the DISCARDED grid placement — drop them; the board was re-placed
+            for (let k = diagnostics.length - 1; k >= 0; k--) {
+                if (diagnostics[k]!.errorType === 'pcb_courtyard_overlap_error') diagnostics.splice(k, 1);
+            }
+            evaluated = rescue.evaluated;
+            parity = rescue.parity;
+            routeErrors = evaluated.filter((e) => e.type.endsWith('_error'));
+            rescuedCode = rescue.code;
+        }
+    }
 
     const ok = parity.ok && !diagnostics.some((d) => d.severity === 'error');
     if (!ok) {
@@ -118,7 +142,7 @@ export async function layoutCircuit(circuit: CircuitJson, opts: LayoutOptions = 
             ok,
             completeness: layout.completeness,
             diagnostics,
-            code: adapted.code,
+            code: rescuedCode ?? adapted.code,
             evaluated,
             parity,
             outputs: null, // never emit a "manufacturable package" for a board that failed parity/route
@@ -131,7 +155,7 @@ export async function layoutCircuit(circuit: CircuitJson, opts: LayoutOptions = 
     // 4.5) Lever 2 — connectivity-aware placement (two-pass, plan §4). The VALID grid board above is
     //      the baseline; auto must beat it on HPWL and re-pass eval+parity, or the grid stays. When a
     //      DRC oracle is available the routing acceptance happens in 5b (channel ladder).
-    let codeActive = adapted.code;
+    let codeActive = rescuedCode ?? adapted.code;
     const gridEvaluated = evaluated;
     const canLadder = opts.placer === 'auto' && opts.router === 'quality' && !!opts.freeroute && !!opts.notaryDrc;
     if (opts.placer === 'auto' && !canLadder) {
@@ -267,6 +291,9 @@ async function attemptAutoPlacement(
     gridEvaluated: TscElement[],
     profile: FabProfile,
     spacingMm: number | undefined,
+    /** RESCUE mode: the grid baseline is INVALID (it overlapped a courtyard), so there is no valid HPWL to
+     *  beat — adopt ANY placement that re-evaluates valid. Off = normal HPWL-gated improvement. */
+    adoptOnValidity = false,
 ): Promise<AutoPlacementAttempt> {
     const diags: LayoutDiagnostic[] = [];
     const keepGrid = (why: string, severity: 'info' | 'warning' = 'info'): AutoPlacementAttempt => {
@@ -297,7 +324,7 @@ async function attemptAutoPlacement(
     });
     for (const note of placed.notes) diags.push({ code: 'PCB050', severity: 'info', message: `auto-placement: ${note}` });
     if (!placed.ok) return keepGrid('legalization failed even after board growth', 'warning');
-    if (placed.hpwl >= hpwlGrid) return keepGrid(`HPWL did not improve (auto ${placed.hpwl.toFixed(1)}mm vs grid ${hpwlGrid.toFixed(1)}mm)`);
+    if (!adoptOnValidity && placed.hpwl >= hpwlGrid) return keepGrid(`HPWL did not improve (auto ${placed.hpwl.toFixed(1)}mm vs grid ${hpwlGrid.toFixed(1)}mm)`);
 
     // pass 2: regenerate with verbatim mm placements + the fitted board, then re-verify EVERYTHING
     const adapted2 = generateTscircuitCode(circuit, opts.ui, layout, {
@@ -327,7 +354,9 @@ async function attemptAutoPlacement(
     diags.push({
         code: 'PCB050',
         severity: 'info',
-        message: `auto-placement ADOPTED — HPWL ${hpwlGrid.toFixed(1)} → ${placed.hpwl.toFixed(1)}mm (${(100 * (1 - placed.hpwl / hpwlGrid)).toFixed(0)}% shorter), board ${placed.boardW}×${placed.boardH}mm.`,
+        message: adoptOnValidity
+            ? `auto-placement ADOPTED (courtyard-overlap rescue — the size-blind grid packed a part into a cell smaller than its courtyard) — board ${placed.boardW}×${placed.boardH}mm.`
+            : `auto-placement ADOPTED — HPWL ${hpwlGrid.toFixed(1)} → ${placed.hpwl.toFixed(1)}mm (${(100 * (1 - placed.hpwl / hpwlGrid)).toFixed(0)}% shorter), board ${placed.boardW}×${placed.boardH}mm.`,
     });
     return { adopted: true, diagnostics: diags, code: adapted2.code, evaluated: evaluated2, parity: parity2 };
 }
