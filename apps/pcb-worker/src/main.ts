@@ -4,12 +4,14 @@
  * connect Prisma → start the worker → drain in-flight work on SIGTERM/SIGINT.
  */
 import { createLayoutWorker } from './layout/processor';
+import { startLayoutReaper } from './layout/reaper';
 import { prisma, disconnectPrisma } from './prisma/client';
 import { logger } from './logger';
 import { config } from './config';
 import type { Worker } from 'bullmq';
 
 let worker: Worker | null = null;
+let reaper: { stop: () => Promise<void> } | null = null;
 
 async function shutdown(signal: string): Promise<void> {
     logger.info({ signal }, 'Received shutdown signal');
@@ -18,6 +20,10 @@ async function shutdown(signal: string): Promise<void> {
             // BullMQ waits for the active handler — a mid-route PCB job drains + lands its terminal row.
             await worker.close();
             logger.info('Layout worker closed');
+        }
+        if (reaper) {
+            await reaper.stop();
+            logger.info('Layout reaper stopped');
         }
         await disconnectPrisma();
         logger.info('Shutdown complete');
@@ -39,6 +45,9 @@ async function main(): Promise<void> {
     }
 
     worker = createLayoutWorker();
+    // Recovers layout jobs orphaned by a worker death (rolling-deploy SIGKILL) or the API's insert↔enqueue
+    // gap. Idempotent + conditional, so running it on every worker instance is safe.
+    reaper = startLayoutReaper();
 
     process.on('SIGTERM', () => shutdown('SIGTERM'));
     process.on('SIGINT', () => shutdown('SIGINT'));
