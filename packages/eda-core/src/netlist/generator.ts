@@ -282,6 +282,25 @@ export function generateNetlist(
             }
         }
         componentLines.push(...emitted); // a composite device (e.g. transformer) emits several lines
+
+        // A transformer's synthesized winding-midpoint nodes (_wp/_ws) are NOT net-derived, so the net
+        // collision guard above never saw them. Register them (only when the transformer actually emitted)
+        // so a net whose sanitized node case-insensitively equals one is caught LOUD here instead of being
+        // SILENTLY merged by ngspice into the winding midpoint (e.g. transformer 'N1' → node 'N1_wp' vs a
+        // net that sanitizes to 'n1_wp' — a wrong netlist).
+        if (component.type === 'transformer' && emitted.length > 0 && component.designator) {
+            const { pMid, sMid } = transformerMidNodes(component.designator);
+            for (const mid of [pMid, sMid]) {
+                const key = mid.toLowerCase();
+                const prev = nodeOwner.get(key);
+                if (prev !== undefined) {
+                    throw new Error(
+                        `Node-name collision: transformer '${component.designator}' internal node '${mid}' clashes with net '${prev}' (ngspice node names are case-insensitive). Rename the net or the transformer.`,
+                    );
+                }
+                nodeOwner.set(key, component.designator);
+            }
+        }
     }
     // Synthesized mixed-signal devices: analog<->digital bridges + the constant digital rail (empty for
     // analog-only). Appended so they go through the same duplicate-device-name guard below.
@@ -420,7 +439,11 @@ export function generateNetlist(
     // analysisToSpice has no circuit context, so rewrite it here and pass a cloned config. (The noise input
     // source must carry an AC magnitude for a meaningful result — that is the caller's responsibility.)
     if (effectiveAnalysis.type === 'noise' || effectiveAnalysis.type === 'sens') {
-        const out = rewriteProbeNodeRefs(rewriteProbeDeviceRefs(effectiveAnalysis.output, designatorToInstance), netRefToNode).trim();
+        // keepGroundFirstSingleEnded: a .noise/.sens output is a magnitude/PSD (sign irrelevant) and MUST
+        // resolve to a real node, so a ground-first differential v(0,X) is kept as the sanitized single-ended
+        // v(x_X) rather than dropped — otherwise `out` would be '' and the `|| raw` fallback below would emit
+        // an unsanitized net id that ngspice can't resolve.
+        const out = rewriteProbeNodeRefs(rewriteProbeDeviceRefs(effectiveAnalysis.output, designatorToInstance), netRefToNode, true).trim();
         lines.push(analysisToSpice({ ...effectiveAnalysis, output: out || effectiveAnalysis.output }));
     } else {
         lines.push(analysisToSpice(effectiveAnalysis));
@@ -631,7 +654,7 @@ function rewriteCurrentProbeVector(probe: string, emitted: Set<string>, analysis
  * id AND net name (id wins on collision). Each comma-separated arg is mapped independently; an arg that is
  * already a sanitized node (or otherwise unknown) is left as-is, so default/correct probes are untouched.
  */
-function rewriteProbeNodeRefs(probe: string, map: Map<string, string>): string {
+export function rewriteProbeNodeRefs(probe: string, map: Map<string, string>, keepGroundFirstSingleEnded = false): string {
     return probe.replace(/\bv\s*\(\s*([^)]+?)\s*\)/gi, (whole, inner: string) => {
         const parts = inner.split(',').map((p) => p.trim());
         const mapped = parts.map((p) => map.get(p.toLowerCase()) ?? p);
@@ -639,6 +662,14 @@ function rewriteProbeNodeRefs(probe: string, map: Map<string, string>): string {
         // single-ended v(node), and a pure-ground probe v(gnd)/v(0) is meaningless — emitting either
         // v(0) or v(node,0) errors with "no such vector 0" and aborts the WHOLE wrdata, killing every
         // other probe on the line. So drop ground args; a probe that reduces to nothing is dropped.
+        //
+        // Dropping ground is only sign-SAFE when ground is the SUBTRAHEND: v(a,0) = v(a) - 0 = v(a). When
+        // ground is the FIRST operand, v(0,b) = 0 - v(b) = -v(b) — for a wrdata probe (sign matters) we DROP
+        // it rather than emit the sign-FLIPPED v(b) (which would corrupt an acceptance criterion). For a
+        // .noise/.sens OUTPUT the sign is irrelevant (a PSD/sensitivity magnitude) AND the card must resolve
+        // to a real node or the whole analysis fails — so those callers pass keepGroundFirstSingleEnded to
+        // keep the sanitized single-ended v(b) instead of dropping.
+        if (!keepGroundFirstSingleEnded && mapped.length === 2 && mapped[0] === '0') return ''; // v(0,b)=-v(b) → drop
         const nonGround = mapped.filter((a) => a !== '0');
         const unchanged = nonGround.length === parts.length && nonGround.every((a, i) => a === parts[i]);
         if (unchanged) return whole; // no remap and no ground arg — preserve the original text verbatim
@@ -658,6 +689,14 @@ function normalizeProbe(probe: string): string {
     const t = probe.trim();
     if (!t || t.includes('(') || t.includes('@')) return t;
     return `v(${t})`;
+}
+
+/**
+ * A transformer's two synthesized internal winding-midpoint nodes (the L→R series junctions). Deterministic
+ * from the designator so the emitter and the case-insensitive node-collision guard agree on the exact names.
+ */
+export function transformerMidNodes(designator: string): { pMid: string; sMid: string } {
+    return { pMid: `${designator}_wp`, sMid: `${designator}_ws` };
 }
 
 /**
@@ -696,8 +735,7 @@ function componentToSpice(
         // huge, so a turn-on DC flux barely decays in-window — set the `windingResistance` property to a
         // realistic ohmic value for faithful settling. Internal nodes carry the L->R series connection.
         const RSER = tp.dcr ?? '1m';
-        const pMid = `${designator}_wp`;
-        const sMid = `${designator}_ws`;
+        const { pMid, sMid } = transformerMidNodes(designator);
         const out = [
             `${lPri} ${pp} ${pMid} ${tp.lp}`,
             `R${designator}P ${pMid} ${pn} ${RSER}`,
