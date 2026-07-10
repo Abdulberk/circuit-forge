@@ -426,12 +426,23 @@ async function inconclusive(
     };
 }
 
+/**
+ * Poll backoff (ms) for the synchronous /design-circuit sim wait. A fast sim resolves on the first ~150ms
+ * check (the old fixed-1s loop FLOORED every sim's observed latency at 1s), then exponential growth capped at
+ * 2s so a long transient is not hammered with ~1 status query/second (the old loop issued up to hundreds of
+ * findUnique per design request). Monotonic non-decreasing. Exported for unit testing.
+ */
+export function pollBackoffMs(attempt: number): number {
+    return Math.min(2000, 150 * 2 ** attempt); // 150, 300, 600, 1200, 2000, 2000, …
+}
+
 async function pollJob(deps: DesignDeps, jobId: string): Promise<{ status: string; metrics?: unknown }> {
     const start = Date.now();
+    let attempt = 0;
     while (Date.now() - start < deps.pollTimeoutMs) {
         const s = (await deps.runSim.getStatus(jobId, deps.userId)) as { status: string; metrics?: unknown };
         if (s.status === 'SUCCEEDED' || s.status === 'FAILED' || s.status === 'TIMED_OUT' || s.status === 'CANCELED') return s;
-        await new Promise((r) => setTimeout(r, 1000));
+        await new Promise((r) => setTimeout(r, pollBackoffMs(attempt++)));
     }
     return { status: 'POLL_TIMEOUT' };
 }
