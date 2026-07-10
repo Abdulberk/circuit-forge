@@ -40,6 +40,11 @@ export interface OrgUsage {
         concurrent: number; // QUEUED + RUNNING right now (not period-scoped)
         limits: { jobsPerMonth: number | null; concurrent: number | null };
     };
+    layout: {
+        jobs: number; // PCB layout jobs created this month
+        concurrent: number; // QUEUED + RUNNING right now (not period-scoped)
+        limits: { jobsPerMonth: number | null; concurrent: number | null };
+    };
     storage: {
         assetBytes: number;
         resultBytes: number;
@@ -76,6 +81,7 @@ export interface AdminOrgUsage {
     period: string;
     sim: OrgUsage['sim'];
     design: OrgUsage['design'];
+    layout: OrgUsage['layout'];
     storage: OrgUsage['storage'];
     override: QuotaOverrideView | null;
 }
@@ -297,6 +303,74 @@ export class UsageService {
         });
     }
 
+    // ---------------------------------------------------------------- PCB layout jobs
+
+    /**
+     * One PCB layout job (freerouting + kicad-cli, CPU/memory-heavy, minutes long) is the admission unit,
+     * mirroring the design model. Env-only quotas for now — there is no per-org OrgQuotaOverride column for
+     * layout yet (that would be an additive migration + admin-DTO change; a clean follow-up), so a layout
+     * limit is configured globally via QUOTA_LAYOUT_* and enforced identically for every org.
+     */
+    hasLayoutQuota(): boolean {
+        return (
+            this.limit('QUOTA_LAYOUT_CONCURRENT_PER_ORG') !== null ||
+            this.limit('QUOTA_LAYOUT_JOBS_PER_MONTH') !== null
+        );
+    }
+
+    /** Layout jobs the org created this month — drift-free COUNT from the source table (no counter row). */
+    private async layoutJobsThisMonth(orgId: string, db: Db = this.prisma): Promise<number> {
+        const { start, end } = this.monthRange();
+        return db.layoutJob.count({ where: { orgId, createdAt: { gte: start, lt: end } } });
+    }
+
+    /** The org's in-flight (QUEUED+RUNNING) layout jobs right now — the noisy-neighbor guard for an expensive
+     *  freerouting+DRC pipeline. Stale (crashed-worker) rows drop out of this count via the staleness window,
+     *  same as sims (and once merged, the LayoutJob reaper flips them terminal so they never linger). */
+    private async layoutConcurrent(orgId: string, db: Db = this.prisma): Promise<number> {
+        return db.layoutJob.count({
+            where: {
+                orgId,
+                status: { in: ['QUEUED', 'RUNNING'] },
+                createdAt: { gte: new Date(Date.now() - CONCURRENT_STALENESS_MS) },
+            },
+        });
+    }
+
+    /**
+     * Gate a new layout enqueue (each check skipped when its limit is unset):
+     *  - QUOTA_LAYOUT_CONCURRENT_PER_ORG — in-flight (QUEUED+RUNNING) cap; the primary abuse guard.
+     *  - QUOTA_LAYOUT_JOBS_PER_MONTH    — layout jobs created this month.
+     * Pass a tx client to run inside the advisory-locked tx (see createLayoutGuarded).
+     */
+    async assertLayoutQuota(orgId: string, db: Db = this.prisma): Promise<void> {
+        const concurrentLimit = this.limit('QUOTA_LAYOUT_CONCURRENT_PER_ORG');
+        const jobsLimit = this.limit('QUOTA_LAYOUT_JOBS_PER_MONTH');
+        const [inFlight, monthly] = await Promise.all([
+            concurrentLimit !== null ? this.layoutConcurrent(orgId, db) : null,
+            jobsLimit !== null ? this.layoutJobsThisMonth(orgId, db) : null,
+        ]);
+        if (inFlight !== null) this.enforce('layout_concurrent', inFlight, concurrentLimit);
+        if (monthly !== null) this.enforce('layout_jobs', monthly, jobsLimit);
+    }
+
+    /**
+     * Authoritative layout-enqueue path. Mirrors createDesignGuarded: SUSPENSION is enforced for every
+     * enqueue (a suspended org cannot start a PCB job — the gate every other job type had but /layouts was
+     * bypassing); when a QUOTA_LAYOUT_* limit is set, the quota is RE-CHECKED under a per-org advisory lock
+     * so concurrent same-org enqueues can't race past the cap. When unset, a plain create with ZERO added
+     * cost. Keep `create(tx)` to the LayoutJob insert only (the BullMQ add happens AFTER the lock releases —
+     * never hold a lock over Redis).
+     */
+    async createLayoutGuarded<T>(orgId: string, create: (tx: Db) => Promise<T>): Promise<T> {
+        this.throwIfSuspended(await this.loadOrgGate(orgId));
+        if (!this.hasLayoutQuota()) return create(this.prisma);
+        return this.withOrgLock('layout', orgId, async (tx) => {
+            await this.assertLayoutQuota(orgId, tx);
+            return create(tx);
+        });
+    }
+
     // ---------------------------------------------------------------- storage
 
     /** Uploaded model assets + spilled result payloads (job metrics.outputSizeBytes), org-wide. */
@@ -412,11 +486,13 @@ export class UsageService {
     /** The usage snapshot for an org (+ the requesting user's parts calls). Membership checked by the caller. */
     async getOrgUsage(orgId: string, userId: string): Promise<OrgUsage> {
         const period = this.period();
-        const [sim, concurrent, designJobs, designConcurrent, storage, partsRow] = await Promise.all([
+        const [sim, concurrent, designJobs, designConcurrent, layoutJobs, layoutConcurrent, storage, partsRow] = await Promise.all([
             this.simUsageThisMonth(orgId),
             this.simConcurrent(orgId),
             this.designJobsThisMonth(orgId),
             this.designConcurrent(orgId),
+            this.layoutJobsThisMonth(orgId),
+            this.layoutConcurrent(orgId),
             this.storageBytes(orgId),
             this.prisma.usageRecord.findUnique({
                 where: { scope_scopeId_metric_period: this.partsKey(userId, period) },
@@ -440,6 +516,14 @@ export class UsageService {
                 limits: {
                     jobsPerMonth: this.limit('QUOTA_DESIGN_JOBS_PER_MONTH'),
                     concurrent: this.limit('QUOTA_DESIGN_CONCURRENT_PER_ORG'),
+                },
+            },
+            layout: {
+                jobs: layoutJobs,
+                concurrent: layoutConcurrent,
+                limits: {
+                    jobsPerMonth: this.limit('QUOTA_LAYOUT_JOBS_PER_MONTH'),
+                    concurrent: this.limit('QUOTA_LAYOUT_CONCURRENT_PER_ORG'),
                 },
             },
             storage: {
@@ -527,11 +611,13 @@ export class UsageService {
      *  user-scoped parts count. Not membership-gated (the admin guard authorizes the caller). */
     async getOrgUsageForAdmin(orgId: string): Promise<AdminOrgUsage> {
         const period = this.period();
-        const [sim, concurrent, designJobs, designConcurrent, storage, override] = await Promise.all([
+        const [sim, concurrent, designJobs, designConcurrent, layoutJobs, layoutConcurrent, storage, override] = await Promise.all([
             this.simUsageThisMonth(orgId),
             this.simConcurrent(orgId),
             this.designJobsThisMonth(orgId),
             this.designConcurrent(orgId),
+            this.layoutJobsThisMonth(orgId),
+            this.layoutConcurrent(orgId),
             this.storageBytes(orgId),
             this.loadOverride(orgId),
         ]);
@@ -554,6 +640,16 @@ export class UsageService {
                 limits: {
                     jobsPerMonth: this.effective('QUOTA_DESIGN_JOBS_PER_MONTH', override?.designJobsPerMonth),
                     concurrent: this.effective('QUOTA_DESIGN_CONCURRENT_PER_ORG', override?.designConcurrent),
+                },
+            },
+            layout: {
+                jobs: layoutJobs,
+                concurrent: layoutConcurrent,
+                // Env-only limits — there is no per-org OrgQuotaOverride column for layout yet (a clean
+                // additive-migration follow-up), so the admin snapshot shows the global QUOTA_LAYOUT_* values.
+                limits: {
+                    jobsPerMonth: this.limit('QUOTA_LAYOUT_JOBS_PER_MONTH'),
+                    concurrent: this.limit('QUOTA_LAYOUT_CONCURRENT_PER_ORG'),
                 },
             },
             storage: {
