@@ -373,14 +373,20 @@ export class UsageService {
 
     // ---------------------------------------------------------------- storage
 
-    /** Uploaded model assets + spilled result payloads (job metrics.outputSizeBytes), org-wide. */
+    /** Uploaded model assets + spilled result payloads (the ACTUAL persisted bytes), org-wide. */
     private async storageBytes(orgId: string, db: Db = this.prisma): Promise<{ assetBytes: number; resultBytes: number }> {
         const [assets, results] = await Promise.all([
             db.asset.aggregate({ where: { orgId }, _sum: { sizeBytes: true } }),
-            // Only S3-spilled results occupy object storage; outputSizeBytes is what the worker measured.
+            // Only S3-spilled results occupy object storage. Count metrics.storedResultBytes — the downsampled +
+            // serialized bytes ACTUALLY written to S3 — not outputSizeBytes (the raw ngspice size, which is many×
+            // larger before the WORKER_MAX_POINTS downsample and would wrongly reject legit uploads). Fall back to
+            // outputSizeBytes for rows written before storedResultBytes existed (over-estimate, but no worse than
+            // the old behavior). See the worker's handleSuccess.
             db.$queryRaw<Array<{ bytes: number }>>`
-                SELECT COALESCE(SUM(CASE WHEN jsonb_typeof(metrics -> 'outputSizeBytes') = 'number'
-                                         THEN (metrics ->> 'outputSizeBytes')::float ELSE 0 END), 0)::float AS "bytes"
+                SELECT COALESCE(SUM(
+                    CASE WHEN jsonb_typeof(metrics -> 'storedResultBytes') = 'number' THEN (metrics ->> 'storedResultBytes')::float
+                         WHEN jsonb_typeof(metrics -> 'outputSizeBytes') = 'number'  THEN (metrics ->> 'outputSizeBytes')::float
+                         ELSE 0 END), 0)::float AS "bytes"
                 FROM simulation_jobs
                 WHERE "orgId" = ${orgId} AND "resultS3Key" IS NOT NULL`,
         ]);
