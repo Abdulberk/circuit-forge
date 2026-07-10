@@ -13,6 +13,7 @@ import { AuditService } from '../common/audit/audit.service';
 import { UsageService, toQuotaOverrideView } from '../usage/usage.service';
 import { ReadinessService } from '../health/readiness.service';
 import { AdminQueueService } from './admin-queue.service';
+import { AdminStorageService } from './admin-storage.service';
 import { paginated, type Paginated } from '../common/dto/pagination.dto';
 import { PlatformActor } from './decorators/platform-actor.decorator';
 import { PLATFORM_ROLE_RANK } from './platform-role.util';
@@ -27,6 +28,7 @@ import {
     SetQuotaOverrideDto,
     ActionReasonDto,
     PurgeQueueDto,
+    SweepOrphanModelsDto,
 } from './dto';
 
 /** Far-future timestamp used for an "indefinite" account lock (no natural expiry). */
@@ -49,6 +51,7 @@ export class AdminService {
         private readonly audit: AuditService,
         private readonly usage: UsageService,
         private readonly queues: AdminQueueService,
+        private readonly storage: AdminStorageService,
         private readonly readiness: ReadinessService,
     ) {}
 
@@ -359,6 +362,25 @@ export class AdminService {
             adminActorEmail: actor.email,
             reason: dto.reason,
             after: { status: dto.status, removed: result.removed },
+        });
+        return result;
+    }
+
+    /** S3 orphan-model sweep (ops lever, like purge): delete never-committed / historically-leaked model
+     *  objects that no Asset row references and that are past the grace window. Audited with the tally. */
+    async sweepOrphanModels(dto: SweepOrphanModelsDto, actor: PlatformActor) {
+        const result = await this.storage.sweepOrphanModelAssets({
+            olderThanDays: dto.olderThanDays ?? 7,
+            dryRun: dto.dryRun ?? false,
+        });
+        await this.audit.record({
+            action: 'admin.storage.sweep_orphan_models',
+            entityType: 'Storage',
+            entityId: 'orphan-model-sweep',
+            adminActorId: actor.id,
+            adminActorEmail: actor.email,
+            reason: dto.reason,
+            after: result as unknown as Record<string, unknown>,
         });
         return result;
     }

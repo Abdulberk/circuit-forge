@@ -2,12 +2,13 @@
  * Assets Service
  * Handles presigned URL generation and asset management
  */
-import { Injectable, NotFoundException, BadRequestException } from '@nestjs/common';
+import { Injectable, NotFoundException, BadRequestException, Logger } from '@nestjs/common';
 import {
     S3Client,
     PutObjectCommand,
     GetObjectCommand,
     HeadObjectCommand,
+    DeleteObjectCommand,
 } from '@aws-sdk/client-s3';
 import { getSignedUrl } from '@aws-sdk/s3-request-presigner';
 import { PrismaService } from '../prisma/prisma.service';
@@ -19,6 +20,7 @@ import { randomUUID } from 'crypto';
 
 @Injectable()
 export class AssetsService {
+    private readonly logger = new Logger(AssetsService.name);
     private readonly s3: S3Client;
     private readonly bucket: string;
 
@@ -102,7 +104,7 @@ export class AssetsService {
         // tightened, oversized upload). When QUOTA_STORAGE_BYTES_PER_ORG is set, the check + insert
         // run under a per-org advisory lock so concurrent commits can't collectively overshoot the
         // cap; when unset, this is a plain create with no added overhead.
-        return this.usageService.createAssetGuarded(orgId, actualSizeBytes, (tx) =>
+        const created = await this.usageService.createAssetGuarded(orgId, actualSizeBytes, (tx) =>
             tx.asset.create({
                 data: {
                     orgId,
@@ -115,6 +117,25 @@ export class AssetsService {
                 },
             }),
         );
+
+        // Compensating check (deliberately OUTSIDE the guarded create — never hold the advisory lock over
+        // S3): the key is client-supplied, so a concurrent deleteAsset or admin orphan-sweep can remove the
+        // object between the HeadObject above and the row insert. Re-verify; if the object vanished, roll
+        // the row back and fail LOUDLY instead of leaving a live row whose download 404s forever.
+        try {
+            await this.s3.send(new HeadObjectCommand({ Bucket: this.bucket, Key: dto.s3Key }));
+        } catch (e) {
+            // Roll back ONLY on a genuine not-found (the object was concurrently deleted). A transient
+            // 5xx/timeout/throttle must NOT destroy a valid commit — the object is almost certainly still
+            // there; fail-open (keep the row) and let the orphan sweep reclaim it in the rare true-orphan case.
+            const status = (e as { $metadata?: { httpStatusCode?: number } }).$metadata?.httpStatusCode;
+            const name = (e as { name?: string }).name;
+            const notFound = status === 404 || name === 'NotFound' || name === 'NoSuchKey';
+            if (!notFound) return created;
+            await this.prisma.asset.delete({ where: { id: created.id } }).catch(() => undefined);
+            throw new BadRequestException('Asset object disappeared during commit (deleted concurrently). Re-upload and commit again.');
+        }
+        return created;
     }
 
     /**
@@ -181,11 +202,29 @@ export class AssetsService {
             throw new BadRequestException('Only admins can delete assets');
         }
 
-        // Note: We don't delete from S3 to prevent accidental data loss
-        // A cleanup job can be added later for orphaned files
+        // Row first (authoritative — the quota and every read aggregate rows), then the object.
+        // NOTE (semantics): a QUEUED simulation enqueued before this delete carries the resolved s3Key in its
+        // BullMQ payload and downloads lazily — deleting the asset makes that job fail LOUDLY at model
+        // download. Self-inflicted (the org deleted its own in-use asset) and visible, so accepted.
         await this.prisma.asset.delete({
             where: { id: assetId },
         });
+
+        // Delete the S3 object too — leaving it made every deleted asset an invisible, forever-orphan
+        // (unmetered bucket growth). Guard: only when NO other row still references the same key (commit
+        // is client-supplied, so two rows CAN share one key). EVERYTHING after the row delete is
+        // best-effort: the row delete is the source of truth, so neither the count read nor the S3 call
+        // may 500 an already-successful delete — on any failure we warn and the orphan sweep reclaims it.
+        try {
+            const stillReferenced = await this.prisma.asset.count({ where: { s3Key: asset.s3Key } });
+            if (stillReferenced === 0) {
+                await this.s3.send(new DeleteObjectCommand({ Bucket: this.bucket, Key: asset.s3Key }));
+            }
+        } catch (e) {
+            this.logger.warn(
+                `asset ${assetId} row deleted but S3 object ${asset.s3Key} could not be removed (the orphan sweep will reclaim it): ${e instanceof Error ? e.message : String(e)}`,
+            );
+        }
 
         return { deleted: true };
     }
