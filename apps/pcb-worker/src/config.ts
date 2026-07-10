@@ -28,6 +28,18 @@ const ConfigSchema = z.object({
     // Routing headroom (mm/side) for the quality route; matches pcb-core's default. 0 = exact outline.
     PCB_ROUTING_MARGIN_MM: z.string().transform(Number).default('6'),
 
+    // Orphan reaper (mirrors worker-sim's design reaper) — recovers layout jobs a dead/redeployed worker left
+    // stuck RUNNING, or the API's insert↔enqueue gap left QUEUED. It reconciles such rows against the queue's
+    // ground truth (getJob state) and FAILs the genuine orphans; runs in this worker (boot sweep + interval).
+    REAPER_INTERVAL_MS: z.string().transform(Number).default('60000'),
+    // Don't examine a row younger than this — avoids racing a row whose enqueue hasn't settled yet.
+    PCB_REAP_GRACE_MS: z.string().transform(Number).default('60000'),
+    // Absolute cap for a job BullMQ still reports 'active': beyond this the worker is hung. A quality PCB job
+    // (freerouting + kicad DRC, possibly a placer:'auto' ladder) can legitimately run several minutes, so this
+    // is generous — it ONLY governs the rare hung-but-active case; a DEAD worker's row (missing/failed queue
+    // job) is reaped right after the grace, independent of this deadline.
+    PCB_REAP_RUNNING_DEADLINE_MS: z.string().transform(Number).default('3600000'),
+
     // Native toolchain — set by the pcb-runtime image; defaults let a locally-installed toolchain work too.
     FREEROUTING_JAR: z.string().default('/app/freerouting-executable.jar'),
     JAVA_BIN: z.string().default('java'),
