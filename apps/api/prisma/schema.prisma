@@ -396,7 +396,10 @@ model AuditLog {
   meta         Json? // { requestId, before, after, adminActorEmail, reason, ... }
   createdAt    DateTime @default(now())
 
-  org        Organization? @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  // onDelete: SetNull (NOT Cascade) — the audit trail OUTLIVES its subject org, same as userId/adminActor
+  // above. Deleting an org (a future org-erase / GDPR path) must ANONYMIZE the org reference (orgId → null),
+  // never DELETE the security-evidence rows written under it (suspend, quota_override, member changes).
+  org        Organization? @relation(fields: [orgId], references: [id], onDelete: SetNull)
   user       User?         @relation("AuditSubject", fields: [userId], references: [id], onDelete: SetNull)
   adminActor User?         @relation("AdminActor", fields: [adminActorId], references: [id], onDelete: SetNull)
 
