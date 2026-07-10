@@ -19,6 +19,8 @@ export interface KicadOpts {
     timeoutMs?: number;
     workDir?: string;
     keep?: boolean;
+    /** Optional logger — used only to note when drcReport is served from the notary memo (ops visibility). */
+    log?: { info: (obj: unknown, msg?: string) => void };
 }
 
 /** Shape of kicad-cli's DRC json, parsed by pcb-core's parseDrcReport. */
@@ -39,6 +41,12 @@ export function makeNativeKicad(opts: KicadOpts = {}): NativeKicad {
     const timeoutMs = opts.timeoutMs ?? 300_000;
     const baseDir = opts.workDir ?? tmpdir();
 
+    // kicad DRC is deterministic per (board, project). notaryDrc already runs a FULL kicad-cli DRC and writes
+    // the report; memoize it so drcReport on the SAME board — the happy path, where routeBestMargin accepts a
+    // board via notaryDrc and the processor then reports on that byte-identical board — reuses it instead of
+    // spawning a second, identical kicad-cli DRC. A miss (different board) just re-runs: always correct.
+    let lastDrc: { board: string; pro: string | undefined; report: KicadDrcJson } | null = null;
+
     // async + `await fn(dir)` is load-bearing: without the await the finally would rmSync the temp dir while
     // kicad-cli is still writing into it (the child now runs off-thread via execFileAsync).
     const withBoard = async <T>(kicadPcb: string, kicadPro: string | undefined, fn: (dir: string) => Promise<T>): Promise<T> => {
@@ -54,30 +62,49 @@ export function makeNativeKicad(opts: KicadOpts = {}): NativeKicad {
 
     const notaryDrc = async (kicadPcb: string, kicadPro?: string): Promise<boolean> =>
         withBoard(kicadPcb, kicadPro, async (dir) => {
+            const out = join(dir, 'd.json');
+            let clean: boolean;
             try {
                 await execFileAsync(
                     cli,
-                    ['pcb', 'drc', '--refill-zones', '--exit-code-violations', '--severity-error', '--format', 'json', '--output', join(dir, 'd.json'), join(dir, 'b.kicad_pcb')],
+                    ['pcb', 'drc', '--refill-zones', '--exit-code-violations', '--severity-error', '--format', 'json', '--output', out, join(dir, 'b.kicad_pcb')],
                     { timeout: timeoutMs, maxBuffer: MAX_BUFFER },
                 );
-                return true;
+                clean = true;
             } catch (e) {
                 // `--exit-code-violations` makes kicad exit 5 on DRC violations. Async execFile surfaces the
                 // exit code on `.code` (NOT `.status`, which is execFileSync's field) — 5 ⇒ dirty (accept-reject).
-                if ((e as { code?: number }).code === 5) return false;
-                throw e;
+                if ((e as { code?: number }).code === 5) clean = false;
+                else throw e;
             }
+            // The DRC run wrote `out` for BOTH exit codes (0 clean / 5 violations), and the JSON is byte-identical
+            // to drcReport's (only --exit-code-violations differs, which sets the exit code, not the output). Cache
+            // it best-effort so drcReport can skip a redundant run — a parse failure must NEVER flip the verdict.
+            try {
+                if (existsSync(out)) lastDrc = { board: kicadPcb, pro: kicadPro, report: JSON.parse(readFileSync(out, 'utf8')) as KicadDrcJson };
+            } catch {
+                lastDrc = null;
+            }
+            return clean;
         });
 
-    const drcReport = async (kicadPcb: string, kicadPro?: string): Promise<KicadDrcJson> =>
-        withBoard(kicadPcb, kicadPro, async (dir) => {
+    const drcReport = async (kicadPcb: string, kicadPro?: string): Promise<KicadDrcJson> => {
+        // Happy path: the notary already DRC'd this exact board → reuse its report, no second kicad-cli run.
+        if (lastDrc && lastDrc.board === kicadPcb && lastDrc.pro === kicadPro) {
+            opts.log?.info({}, 'DRC report served from the notary memo (skipped a redundant kicad-cli DRC)');
+            return lastDrc.report;
+        }
+        return withBoard(kicadPcb, kicadPro, async (dir) => {
             const out = join(dir, 'd.json');
             await execFileAsync(cli, ['pcb', 'drc', '--refill-zones', '--severity-error', '--format', 'json', '--output', out, join(dir, 'b.kicad_pcb')], {
                 timeout: timeoutMs,
                 maxBuffer: MAX_BUFFER,
             });
-            return existsSync(out) ? (JSON.parse(readFileSync(out, 'utf8')) as KicadDrcJson) : { violations: [], unconnected_items: [] };
+            const report = existsSync(out) ? (JSON.parse(readFileSync(out, 'utf8')) as KicadDrcJson) : { violations: [], unconnected_items: [] };
+            lastDrc = { board: kicadPcb, pro: kicadPro, report };
+            return report;
         });
+    };
 
     const exportGlb = async (kicadPcb: string): Promise<Buffer> =>
         withBoard(kicadPcb, undefined, async (dir) => {

@@ -99,7 +99,7 @@ async function processLayoutJob(job: Job<LayoutJobPayload>): Promise<void> {
         const options = (row.options ?? {}) as any;
 
         const freeroute = makeNativeFreeroutingRunner();
-        const kicad = makeNativeKicad();
+        const kicad = makeNativeKicad({ log: logger });
 
         const q = await layoutCircuit(circuit, {
             router: 'quality',
