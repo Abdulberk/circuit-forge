@@ -410,7 +410,11 @@ async function handleSuccess(jobId: string, result: SimulationJobResult): Promis
             finishedAt: new Date(),
             metrics: {
                 runtimeMs,
-                outputSizeBytes,
+                outputSizeBytes, // RAW ngspice output size (the SIM_MAX_OUTPUT_BYTES guard's unit) — a diagnostic
+                // The bytes ACTUALLY persisted (downsampled + serialized) = the S3 object size when spilled. The
+                // storage quota must count THIS, not the raw ngspice size (which can be many× larger before the
+                // WORKER_MAX_POINTS downsample), so it doesn't reject legitimate uploads early. See UsageService.
+                storedResultBytes: resultSize,
                 pointsCount: originalPointsCount, // the TRUE simulated resolution, not the stored cap
                 // Present when the Convergence Doctor's remedy ladder rescued an initial non-convergence
                 // (recovered:true + the remedy that worked). The API surfaces it on the verify evidence.
