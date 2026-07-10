@@ -12,7 +12,8 @@
  *
  * COORDINATE FRAME: DRC positions are in KiCad page space (board placed at a +offset), NOT the
  * board-centered soup frame the shaped geometry uses. So airwires are drawn between OUR pad
- * coordinates (matched by designator+net), never the raw DRC pos — frame-mismatch-proof.
+ * coordinates (matched by designator+pad, with designator+net as fallback), never the raw DRC pos —
+ * frame-mismatch-proof.
  */
 import type { LayoutGeometry, Pt } from './layout-result';
 
@@ -86,10 +87,13 @@ export function drcCategory(type: string): string {
     return CATEGORY[type] ?? 'other';
 }
 
-/** Parse "Pad 1 [A] of LED1 on F.Cu" → { net, designator }. net is '' when the pad has no net ([]). */
-function parseItemDesc(description: string): { net: string; designator: string } | null {
+/** Parse "Pad 1 [A] of LED1 on F.Cu" → { pad, net, designator }. `pad` is the KiCad pad name/number, present
+ *  only for pad items (absent for e.g. "Track [B] of R2"); net is '' when the pad has no net ([]). */
+function parseItemDesc(description: string): { pad?: string; net: string; designator: string } | null {
     const m = /\[([^\]]*)\]\s+of\s+(\S+)/.exec(description);
-    return m ? { net: m[1] ?? '', designator: m[2] ?? '' } : null;
+    if (!m) return null;
+    const padM = /\bPad\s+(\S+)\s+\[/.exec(description);
+    return { pad: padM?.[1], net: m[1] ?? '', designator: m[2] ?? '' };
 }
 
 /** Categorized checks for the contract's `checks.drc[]` (violations only; unconnected surfaces as airwires). */
@@ -113,19 +117,30 @@ export function drcToChecks(report: ParsedDrc): DrcCheck[] {
  */
 export function airwiresFromDrc(report: ParsedDrc, geo: LayoutGeometry): { airwires: Airwire[]; unmatched: number } {
     const designatorByCompId = new Map(geo.components.map((c) => [c.id, c.designator]));
+    // Two indexes: designator|pad uniquely identifies a pad (so a part with 2+ pads on ONE net resolves to the
+    // exact pad the DRC named); designator|net is the fallback (correct when the part has a single pad on that
+    // net, and it also covers pad-name↔pin mismatches — e.g. KiCad "Pad 1" vs a semantic pin "anode").
+    const padByDesigPin = new Map<string, Pt>();
     const padByDesigNet = new Map<string, Pt>();
     for (const p of geo.pads) {
         const d = designatorByCompId.get(p.componentId);
-        if (d && p.net) padByDesigNet.set(`${d}|${p.net}`, { x: p.x, y: p.y });
+        if (!d) continue;
+        if (p.pin) padByDesigPin.set(`${d}|${p.pin}`, { x: p.x, y: p.y });
+        if (p.net) padByDesigNet.set(`${d}|${p.net}`, { x: p.x, y: p.y }); // last-wins — fallback only
     }
+    // Prefer the exact pad the DRC names ("Pad N"); fall back to designator|net when the pad name doesn't match
+    // a pin (or is absent). `net` is the entry's shared unconnected net (both endpoints are on it).
+    const locate = (item: { pad?: string; designator: string }, net: string): Pt | undefined =>
+        (item.pad !== undefined ? padByDesigPin.get(`${item.designator}|${item.pad}`) : undefined) ??
+        padByDesigNet.get(`${item.designator}|${net}`);
     const airwires: Airwire[] = [];
     let unmatched = 0;
     for (const entry of report.unconnected) {
         const parsed = entry.items.map((it) => parseItemDesc(it.description));
         const net = parsed.find((p) => p?.net)?.net ?? '';
         if (!net || parsed.length < 2 || !parsed[0] || !parsed[1]) { unmatched++; continue; }
-        const from = padByDesigNet.get(`${parsed[0].designator}|${net}`);
-        const to = padByDesigNet.get(`${parsed[1].designator}|${net}`);
+        const from = locate(parsed[0], net);
+        const to = locate(parsed[1], net);
         if (from && to) airwires.push({ net, from, to });
         else unmatched++;
     }

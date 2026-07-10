@@ -93,4 +93,36 @@ describe('airwiresFromDrc — ratsnest from unconnected_items, drawn on OUR pad 
         expect(airwires).toEqual([]);
         expect(unmatched).toBe(1);
     });
+
+    it('resolves a part with 2+ pads on ONE net to the EXACT pad the DRC names (Pad N), not the last same-net pad', () => {
+        // U1 has pin 1 @ (0,0) AND pin 4 @ (5,0), both on GND (e.g. an IC with two ground pins). R1 pin 1 @ (10,0)
+        // on GND. Keyed only by designator|net, the U1|GND entry is overwritten to whichever pad is inserted last
+        // (pin 4 @ (5,0)) — the WRONG endpoint for a "Pad 1 of U1" ratsnest. Keyed by designator|pin, it picks pin 1.
+        const multi: LayoutGeometry = {
+            board: { widthMm: 20, heightMm: 20, outline: [] },
+            layers: [{ name: 'top' }],
+            components: [
+                { id: 'u1', designator: 'U1', x: 0, y: 0, rotation: 0, footprint: 'soic8', bodyWmm: 4, bodyHmm: 4, heightMm: 1, courtyard: [], layer: 'top' },
+                { id: 'r1', designator: 'R1', x: 10, y: 0, rotation: 0, footprint: 'res0603', bodyWmm: 1.6, bodyHmm: 0.8, heightMm: 0.5, courtyard: [], layer: 'top' },
+            ],
+            pads: [
+                { id: 'u1p1', componentId: 'u1', pin: '1', net: 'GND', x: 0, y: 0, layers: ['top'], shape: 'rect', wMm: 1, hMm: 0.6, drillMm: null },
+                { id: 'u1p4', componentId: 'u1', pin: '4', net: 'GND', x: 5, y: 0, layers: ['top'], shape: 'rect', wMm: 1, hMm: 0.6, drillMm: null }, // inserted last → would win the net-only key
+                { id: 'r1p1', componentId: 'r1', pin: '1', net: 'GND', x: 10, y: 0, layers: ['top'], shape: 'rect', wMm: 1, hMm: 0.6, drillMm: null },
+            ],
+            traces: [],
+            vias: [],
+        };
+        const entry = {
+            type: 'unconnected_items', severity: 'error', description: 'Missing connection between items',
+            items: [
+                { description: 'Pad 1 [GND] of U1 on F.Cu', pos: { x: 0, y: 0 } },
+                { description: 'Pad 1 [GND] of R1 on F.Cu', pos: { x: 0, y: 0 } },
+            ],
+        };
+        const { airwires, unmatched } = airwiresFromDrc(parseDrcReport({ unconnected_items: [entry] }), multi);
+        expect(unmatched).toBe(0);
+        // from = U1 pin 1 @ (0,0) — the EXACT named pad — NOT the last-inserted U1|GND pad (pin 4 @ (5,0)).
+        expect(airwires).toEqual([{ net: 'GND', from: { x: 0, y: 0 }, to: { x: 10, y: 0 } }]);
+    });
 });
