@@ -24,6 +24,7 @@ function prismaStub(over: Partial<Record<string, unknown>> = {}) {
         $executeRaw: jest.fn().mockResolvedValue(1),
         simulationJob: { count: jest.fn().mockResolvedValue(1) },
         designJob: { count: jest.fn().mockResolvedValue(2) },
+        layoutJob: { count: jest.fn().mockResolvedValue(2) },
         asset: { aggregate: jest.fn().mockResolvedValue({ _sum: { sizeBytes: 5000 } }) },
         usageRecord: {
             findUnique: jest.fn().mockResolvedValue({ amount: 7 }),
@@ -65,10 +66,16 @@ describe('UsageService', () => {
         // and in-flight).
         expect(u.design.jobs).toBe(2);
         expect(u.design.concurrent).toBe(2);
+        // layout jobs aggregated drift-free from the layout_jobs table (count mock = 2 for both this-month
+        // and in-flight), same parity as design.
+        expect(u.layout.jobs).toBe(2);
+        expect(u.layout.concurrent).toBe(2);
         // no env limits configured → everything unlimited (null)
         expect(u.sim.limits.jobsPerMonth).toBeNull();
         expect(u.design.limits.jobsPerMonth).toBeNull();
         expect(u.design.limits.concurrent).toBeNull();
+        expect(u.layout.limits.jobsPerMonth).toBeNull();
+        expect(u.layout.limits.concurrent).toBeNull();
         expect(u.storage.limits.bytes).toBeNull();
     });
 
@@ -196,6 +203,48 @@ describe('UsageService', () => {
         await expect(svc2.createDesignGuarded('org1', async () => ({ id: 'd2' }))).resolves.toEqual({ id: 'd2' });
         expect(rec(quota).$transaction).toHaveBeenCalledTimes(1);
         expect((rec(quota).$executeRaw.mock.calls[0][0] as TemplateStringsArray).join('?')).toMatch(/pg_advisory_xact_lock/);
+    });
+
+    // ---------------------------------------------------------------- PCB layout quota (parity with design)
+
+    it('layout quota: 429s on the concurrent (in-flight) cap — the noisy-neighbor guard for the freerouting+DRC pipeline', async () => {
+        const count = jest.fn().mockResolvedValue(2);
+        const prisma = prismaStub({ layoutJob: { count } });
+        const svc = new UsageService(prisma, cfg({ QUOTA_LAYOUT_CONCURRENT_PER_ORG: '2' }));
+        const err = await svc.assertLayoutQuota('org1').catch((e) => e);
+        expect(err).toBeInstanceOf(HttpException);
+        expect((err as HttpException).getResponse()).toMatchObject({ code: 'QUOTA_EXCEEDED', metric: 'layout_concurrent', used: 2, limit: 2 });
+    });
+
+    it('layout quota: enforces the monthly job ceiling and passes under it', async () => {
+        const svc = new UsageService(prismaStub({ layoutJob: { count: jest.fn().mockResolvedValue(5) } }), cfg({ QUOTA_LAYOUT_JOBS_PER_MONTH: '5' }));
+        await expect(svc.assertLayoutQuota('org1')).rejects.toMatchObject({ response: { metric: 'layout_jobs' } });
+        const svc2 = new UsageService(prismaStub({ layoutJob: { count: jest.fn().mockResolvedValue(2) } }), cfg({ QUOTA_LAYOUT_JOBS_PER_MONTH: '10' }));
+        await expect(svc2.assertLayoutQuota('org1')).resolves.toBeUndefined();
+    });
+
+    it('createLayoutGuarded: zero overhead when no quota; advisory-locked re-check (domain "layout") when set', async () => {
+        const noQuota = prismaStub();
+        const svc = new UsageService(noQuota, cfg({}));
+        await expect(svc.createLayoutGuarded('org1', async () => ({ id: 'l1' }))).resolves.toEqual({ id: 'l1' });
+        expect(rec(noQuota).$transaction).not.toHaveBeenCalled();
+
+        const quota = prismaStub({ layoutJob: { count: jest.fn().mockResolvedValue(0) } });
+        const svc2 = new UsageService(quota, cfg({ QUOTA_LAYOUT_CONCURRENT_PER_ORG: '5' }));
+        await expect(svc2.createLayoutGuarded('org1', async () => ({ id: 'l2' }))).resolves.toEqual({ id: 'l2' });
+        expect(rec(quota).$transaction).toHaveBeenCalledTimes(1);
+        expect((rec(quota).$executeRaw.mock.calls[0][0] as TemplateStringsArray).join('?')).toMatch(/pg_advisory_xact_lock/);
+    });
+
+    it('createLayoutGuarded: rejects ORG_SUSPENDED before running the create (the /layouts write-gate that was bypassed)', async () => {
+        const prisma = prismaStub({
+            organization: { findUnique: jest.fn().mockResolvedValue({ suspendedAt: new Date(), suspendReason: 'abuse', quotaOverride: null }) },
+        });
+        const svc = new UsageService(prisma, cfg({}));
+        const create = jest.fn();
+        await expect(svc.createLayoutGuarded('org1', create as never)).rejects.toMatchObject({ response: { code: 'ORG_SUSPENDED' } });
+        expect(create).not.toHaveBeenCalled();
+        expect(rec(prisma).$transaction).not.toHaveBeenCalled();
     });
 
     it('createAssetGuarded: locked re-check rejects when the projected total exceeds the cap', async () => {

@@ -9,10 +9,12 @@ import { ConfigModule, ConfigService } from '@nestjs/config';
 import { LayoutController } from './layout.controller';
 import { LayoutService } from './layout.service';
 import { OrgsModule } from '../orgs/orgs.module';
+import { UsageModule } from '../usage/usage.module';
 
 @Module({
     imports: [
         OrgsModule,
+        UsageModule,
         BullModule.registerQueueAsync({
             imports: [ConfigModule],
             name: 'pcb-layout',

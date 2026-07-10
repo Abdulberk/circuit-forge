@@ -13,6 +13,7 @@ import { S3Client, GetObjectCommand } from '@aws-sdk/client-s3';
 import { getSignedUrl } from '@aws-sdk/s3-request-presigner';
 import { PrismaService } from '../prisma/prisma.service';
 import { OrgsService } from '../orgs/orgs.service';
+import { UsageService } from '../usage/usage.service';
 import { CreateLayoutDto } from './dto';
 
 function otelCarrier(): Record<string, string> {
@@ -30,6 +31,7 @@ export class LayoutService {
     constructor(
         private readonly prisma: PrismaService,
         private readonly orgs: OrgsService,
+        private readonly usage: UsageService,
         @InjectQueue('pcb-layout') private readonly layoutQueue: Queue,
     ) {
         this.bucket = process.env.S3_BUCKET || 'circuitforge';
@@ -60,16 +62,22 @@ export class LayoutService {
             ...(dto.netCurrentsA ? { netCurrentsA: dto.netCurrentsA } : {}),
         };
 
-        const job = await this.prisma.layoutJob.create({
-            data: {
-                orgId,
-                userId,
-                status: 'QUEUED',
-                circuit: dto.circuit as object,
-                options: Object.keys(options).length ? (options as object) : undefined,
-            },
-            select: { id: true, status: true },
-        });
+        // Admission control (parity with sim/design): SUSPENSION is enforced for every enqueue, and any
+        // configured QUOTA_LAYOUT_* limit is re-checked under a per-org advisory lock. A plain insert until a
+        // limit is set — so this changes nothing until layout quotas are configured. Keep the closure to the
+        // insert ONLY; the BullMQ add happens after the lock releases (never hold a lock over Redis).
+        const job = await this.usage.createLayoutGuarded(orgId, (tx) =>
+            tx.layoutJob.create({
+                data: {
+                    orgId,
+                    userId,
+                    status: 'QUEUED',
+                    circuit: dto.circuit as object,
+                    options: Object.keys(options).length ? (options as object) : undefined,
+                },
+                select: { id: true, status: true },
+            }),
+        );
 
         try {
             await this.layoutQueue.add('layout', { jobId: job.id, otel: otelCarrier() }, { jobId: job.id });
