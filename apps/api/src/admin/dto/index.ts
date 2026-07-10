@@ -196,3 +196,21 @@ export class PurgeQueueDto extends ReasonDto {
     @IsIn(PURGEABLE_STATUSES as unknown as string[])
     status!: PurgeableStatus;
 }
+
+/**
+ * S3 orphan-model sweep. Deletes objects under `orgs/…/models/…` that have NO Asset row and are older
+ * than the grace window (protects uploads whose commit is still in flight). dryRun reports the tally
+ * without deleting anything.
+ */
+export class SweepOrphanModelsDto extends ReasonDto {
+    @ApiPropertyOptional({ default: 7, description: 'Grace window: only unreferenced objects OLDER than this many days are swept' })
+    @IsOptional()
+    @IsInt()
+    @Min(0)
+    olderThanDays?: number;
+
+    @ApiPropertyOptional({ default: false, description: 'Report what would be swept without deleting' })
+    @IsOptional()
+    @IsBoolean()
+    dryRun?: boolean;
+}

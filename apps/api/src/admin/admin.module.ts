@@ -16,6 +16,7 @@ import { HealthModule } from '../health/health.module';
 import { AdminController } from './admin.controller';
 import { AdminService } from './admin.service';
 import { AdminQueueService } from './admin-queue.service';
+import { AdminStorageService } from './admin-storage.service';
 import { PlatformAdminGuard } from './guards/platform-admin.guard';
 
 @Module({
@@ -39,6 +40,6 @@ import { PlatformAdminGuard } from './guards/platform-admin.guard';
         ),
     ],
     controllers: [AdminController],
-    providers: [AdminService, AdminQueueService, PlatformAdminGuard],
+    providers: [AdminService, AdminQueueService, AdminStorageService, PlatformAdminGuard],
 })
 export class AdminModule {}

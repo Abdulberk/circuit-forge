@@ -32,6 +32,7 @@ import {
     SetQuotaOverrideDto,
     ActionReasonDto,
     PurgeQueueDto,
+    SweepOrphanModelsDto,
 } from './dto';
 import { PaginationQueryDto } from '../common/dto/pagination.dto';
 
@@ -271,5 +272,15 @@ export class AdminController {
     @ApiOperation({ summary: 'Purge terminal job-record cruft (completed|failed) from a queue' })
     purgeQueue(@Param('name') name: string, @Body() dto: PurgeQueueDto, @CurrentPlatformActor() actor: PlatformActor) {
         return this.adminService.purgeQueue(name, dto, actor);
+    }
+
+    // ---------------------------------------------------------------- storage (Phase 3 ops levers)
+
+    @Post('storage/sweep-orphan-models')
+    @HttpCode(HttpStatus.OK)
+    @PlatformRoles(PlatformRole.ADMIN)
+    @ApiOperation({ summary: 'Delete S3 model objects with no Asset row, older than the grace window (dryRun supported)' })
+    sweepOrphanModels(@Body() dto: SweepOrphanModelsDto, @CurrentPlatformActor() actor: PlatformActor) {
+        return this.adminService.sweepOrphanModels(dto, actor);
     }
 }
