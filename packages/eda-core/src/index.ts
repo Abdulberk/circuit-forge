@@ -206,6 +206,7 @@ export {
 // Analysis — measurement distillation + assertion evaluation (shared by the API AND the Monte-Carlo worker,
 // which is why they live here and not in the API).
 export { summarizeSeries, type SimMeasurement } from './analysis/measurements';
+export { assessTransientCompleteness, TRANSIENT_COMPLETE_FRACTION, type TransientCompleteness } from './analysis/transient-completeness';
 export { cutoffFrequency, isAcMagnitudeSeries, type FreqMagPoint } from './analysis/ac-measurements';
 export { parseFourierLog } from './analysis/fourier';
 export { parseMeasurements } from './analysis/measure';

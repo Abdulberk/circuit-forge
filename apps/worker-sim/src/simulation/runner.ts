@@ -17,6 +17,7 @@ import {
     sanitizeNetlist,
     extractProbes,
     parseSpiceValue,
+    assessTransientCompleteness,
     diagnoseConvergence,
     convergenceRemedyLadder,
     applySolverOptions,
@@ -307,23 +308,17 @@ async function runOneAttempt(
     // treats it as a remediable timestep collapse. stopTime is read from the netlist's .tran card.
     if (input.analysisType === 'tran') {
         const tranMatch = netlistText.match(/^\s*\.tran\s+\S+\s+(\S+)/im);
-        let want = 0;
-        if (tranMatch && tranMatch[1]) {
-            const parsedStop = parseSpiceValue(tranMatch[1]);
-            if (parsedStop.isValid) want = parsedStop.value;
-        }
-        const lastT = Math.max(
-            0,
-            ...result.series.map((s) => (s.points.length ? s.points[s.points.length - 1]!.x : 0)),
-        );
-        if (want > 0 && lastT > 0 && lastT < 0.9 * want) {
+        const parsedStop = tranMatch?.[1] ? parseSpiceValue(tranMatch[1]) : undefined;
+        const want = parsedStop?.isValid ? parsedStop.value : 0;
+        const { endedEarly, lastTime } = assessTransientCompleteness(result.series, want);
+        if (endedEarly) {
             return {
                 success: false,
                 stdout,
                 stderr,
                 runtimeMs: Date.now() - startTime,
                 outputSizeBytes,
-                error: `Transient ended early at t=${lastT.toExponential(2)}s of ${tranMatch![1]} (timestep collapse / non-convergence — often a floating node or missing DC path to ground)`,
+                error: `Transient ended early at t=${lastTime.toExponential(2)}s of ${tranMatch![1]} (timestep collapse / non-convergence — often a floating node or missing DC path to ground)`,
             };
         }
     }
