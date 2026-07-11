@@ -26,6 +26,8 @@ import {
     parseTransferFunction,
     attachTransferFunction,
     summarizeSeries,
+    assessTransientCompleteness,
+    parseSpiceValue,
     type CircuitJson,
     type AnalysisConfig,
     type SimMeasurement,
@@ -77,6 +79,15 @@ export function makeVariantRunner(
 
         const probes = extractProbes(netlist);
         const result = parseSimulationOutput(csv, probes, analysis.type);
+        // COMPLETENESS GUARD: a variant whose transient SILENTLY TRUNCATED (adaptive timestep collapse — a
+        // marginal perturbation can tip a variant into non-convergence even when nominal ran fully) would
+        // otherwise be measured over a CLIPPED waveform → a wrong per-variant pass/fail that corrupts the
+        // yield/passAllCorners number. Treat it like any other unrunnable variant: return null = ERRORED
+        // (excluded from the denominator), the SAME completeness rule the nominal runner FAILS a run on.
+        if (analysis.type === 'tran') {
+            const stop = parseSpiceValue(analysis.stopTime);
+            if (assessTransientCompleteness(result.series, stop.isValid ? stop.value : 0).endedEarly) return null;
+        }
         // OOM-GUARD: collapse to scalar measurements now; `result.series` is dropped when this returns.
         const measurements = result.series.map((s) => summarizeSeries(s, analysis.type));
         // ROBUST scalar metrics (THD from fourier, gain from tf) live in the LISTING, not the CSV — fold them

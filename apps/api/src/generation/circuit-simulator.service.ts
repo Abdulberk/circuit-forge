@@ -27,6 +27,7 @@ import {
     extractProbes,
     parseSimulationOutput,
     parseSpiceValue,
+    assessTransientCompleteness,
     diagnoseConvergence,
     convergenceRemedyLadder,
     summarizeSeries,
@@ -209,13 +210,9 @@ export class CircuitSimulatorService {
             // adaptive timestep collapses (floating node / too-hard a switching edge). Reporting that partial
             // run as "ok" would mislead the model — treat ending well short of stopTime as a failure.
             if (an.type === 'tran') {
-                const lastT = Math.max(
-                    0,
-                    ...result.series.map((s) => (s.points.length ? s.points[s.points.length - 1]!.x : 0)),
-                );
                 const parsedStop = parseSpiceValue(an.stopTime);
-                const want = parsedStop.isValid ? parsedStop.value : 0;
-                if (want > 0 && lastT > 0 && lastT < 0.9 * want) {
+                const { endedEarly, lastTime } = assessTransientCompleteness(result.series, parsedStop.isValid ? parsedStop.value : 0);
+                if (endedEarly) {
                     return {
                         simStatus: 'failed',
                         ercErrors,
@@ -223,7 +220,7 @@ export class CircuitSimulatorService {
                         measurements: [],
                         nodeCount: result.series.length,
                         analysisType: an.type,
-                        runError: `simulation ended early at t=${lastT.toExponential(2)}s of ${an.stopTime} (timestep collapse / non-convergence — often a floating node, a missing DC path to ground, or too-hard a switching edge)`,
+                        runError: `simulation ended early at t=${lastTime.toExponential(2)}s of ${an.stopTime} (timestep collapse / non-convergence — often a floating node, a missing DC path to ground, or too-hard a switching edge)`,
                     };
                 }
             }

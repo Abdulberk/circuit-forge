@@ -25,6 +25,8 @@ jest.mock('@circuit-forge/eda-core', () => ({
     parseTransferFunction: jest.fn(),
     attachTransferFunction: jest.fn(),
     summarizeSeries: jest.fn(),
+    parseSpiceValue: jest.fn(),
+    assessTransientCompleteness: jest.fn(),
 }));
 
 import * as fs from 'fs/promises';
@@ -50,6 +52,8 @@ beforeEach(() => {
     mock(eda.summarizeSeries).mockImplementation((s: { name: string }) => ({ node: s.name, max: 1 } as unknown as SimMeasurement));
     mock(eda.parseFourierLog).mockReturnValue([{ probe: 'v(out)', thd: 1.5 }]);
     mock(eda.parseTransferFunction).mockReturnValue({ outputNode: 'out', gain: 10 });
+    mock(eda.parseSpiceValue).mockReturnValue({ value: 0.01, isValid: true });
+    mock(eda.assessTransientCompleteness).mockReturnValue({ endedEarly: false, lastTime: 0.01 }); // complete by default
     mock(executeNgspice).mockResolvedValue(OK);
     mock(fs.rm).mockResolvedValue(undefined);
     mock(fs.writeFile).mockResolvedValue(undefined);
@@ -127,6 +131,32 @@ describe('makeVariantRunner — criterion probes (branch currents) unioned into 
         const run = makeVariantRunner(JOB, { type: 'op' } as never);
         await run(variant);
         expect(eda.generateNetlist).toHaveBeenCalledWith(variant, { type: 'op' }, {});
+    });
+});
+
+describe('makeVariantRunner — a silently-truncated transient variant is ERRORED, never measured (debt #3)', () => {
+    it('tran variant whose run ended early → null (excluded from the denominator), not a clipped measurement', async () => {
+        mock(eda.assessTransientCompleteness).mockReturnValueOnce({ endedEarly: true, lastTime: 1e-3 });
+        const run = makeVariantRunner(JOB, { type: 'tran', stopTime: '10m' } as never);
+        expect(await run(variant)).toBeNull();
+        // The completeness rule is consulted with the parsed stopTime, and we bail BEFORE reducing to measurements.
+        expect(eda.assessTransientCompleteness).toHaveBeenCalledWith(
+            [{ name: 'out', points: [{ x: 0, y: 1 }] }],
+            0.01,
+        );
+        expect(eda.summarizeSeries).not.toHaveBeenCalled();
+    });
+
+    it('a COMPLETE tran variant proceeds to measurements (guard consulted, passes)', async () => {
+        const run = makeVariantRunner(JOB, { type: 'tran', stopTime: '10m' } as never);
+        expect(await run(variant)).toEqual([{ node: 'out', max: 1 }]);
+        expect(eda.assessTransientCompleteness).toHaveBeenCalled();
+    });
+
+    it('a NON-tran analysis (op) never consults the transient guard', async () => {
+        const run = makeVariantRunner(JOB, { type: 'op' } as never);
+        await run(variant);
+        expect(eda.assessTransientCompleteness).not.toHaveBeenCalled();
     });
 });
 
