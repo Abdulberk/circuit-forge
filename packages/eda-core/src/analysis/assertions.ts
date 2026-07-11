@@ -91,6 +91,19 @@ export function isObservableCurrentProbe(probe: string): boolean {
     return dev !== null && OBSERVABLE_CURRENT_DEVICE.test(dev);
 }
 
+/**
+ * The probes a criteria set needs UNIONed into the netlist beyond the generator's default node-voltage sweep.
+ * Today that is EXACTLY the branch-CURRENT criteria (`i(R1)` / `@r1[i]`): the generator auto-probes every node
+ * VOLTAGE but never a branch current, so a current criterion must have its probe added via generateNetlist's
+ * `extraProbes` or it reads "probe not found". Voltage criteria need nothing (auto-probed); a frequency (`cutoff`),
+ * `thd`, or `gain` criterion rides on the ANALYSIS request (ac / fourier / tf), not on a probe. This is the ONE
+ * place the criterion→extra-probe seam is derived, shared by the nominal verify path AND every variant batch
+ * (Monte-Carlo / corner / sweep) so those paths can't measure a different set and silently diverge.
+ */
+export function extraProbesForCriteria(criteria: { probe: string }[]): string[] {
+    return criteria.filter((c) => isCurrentProbe(c.probe)).map((c) => c.probe);
+}
+
 /** Namespaced match key: a current probe keys by its device (`i:r1`), a voltage probe by its node
  *  (`v:<nodeKey>`). Keeps the two kinds from colliding AND bridges `i(R1)` ↔ the measured `@r1[i]`. */
 function matchKey(probeOrNode: string): string {

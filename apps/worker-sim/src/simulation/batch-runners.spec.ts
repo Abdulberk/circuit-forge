@@ -12,16 +12,24 @@ jest.mock('../logger', () => ({ logger: { info: jest.fn() } }));
 const runMonteCarlo = jest.fn();
 const runParametricSweep = jest.fn();
 const runWorstCase = jest.fn();
+// Keep the REAL eda-core so `extraProbesForCriteria` (the criterion→probe derivation the batch runners now call) is
+// exercised for real, not re-mocked — a hand-mirrored copy here would defeat the whole point of centralizing it.
+// Override ONLY the three heavy orchestrators whose return values this suite drives.
 jest.mock('@circuit-forge/eda-core', () => ({
+    ...jest.requireActual('@circuit-forge/eda-core'),
     runMonteCarlo: (...a: unknown[]) => runMonteCarlo(...a),
     runParametricSweep: (...a: unknown[]) => runParametricSweep(...a),
     runWorstCase: (...a: unknown[]) => runWorstCase(...a),
 }));
-// The job-dir helper is unit-tested separately (job-dir.spec.ts) — here it just runs the body with a fake runner.
+// The job-dir helper is unit-tested separately (job-dir.spec.ts) — here it RECORDS its args (so we can assert the
+// criterion probes were derived + forwarded at index 3) and runs the body with a fake runner.
 const fakeRunner = jest.fn();
+const jobDirCalls: unknown[][] = [];
 jest.mock('./job-dir', () => ({
-    withVariantJobDir: (_j: string, _s: string, _a: unknown, _m: unknown, fn: (rv: unknown, dir: string) => unknown) =>
-        fn(fakeRunner, 'dir'),
+    withVariantJobDir: (...args: unknown[]) => {
+        jobDirCalls.push(args);
+        return (args[5] as (rv: unknown, dir: string) => unknown)(fakeRunner, 'dir');
+    },
 }));
 
 import { config } from '../config';
@@ -33,6 +41,7 @@ const input = { jobId: 'j1', circuit: {} as never, analysis: { type: 'op' } as n
 
 beforeEach(() => {
     jest.clearAllMocks();
+    jobDirCalls.length = 0;
     (config as { MC_BATCH_BUDGET_MS: number }).MC_BATCH_BUDGET_MS = 60000;
     runParametricSweep.mockResolvedValue({ parameter: 'R1', evaluated: 1, passed: 1, failed: 0, errored: 0, passAll: true });
     runWorstCase.mockResolvedValue({ componentsCornered: 2, evaluated: 4, passed: 4, failed: 0, errored: 0, passAllCorners: true, omitted: [] });
@@ -85,5 +94,33 @@ describe('runCornerBatch — passes the worst-case result through with a runtime
         expect(r.passAllCorners).toBe(true);
         expect(r.evaluated).toBe(4);
         expect(typeof r.runtimeMs).toBe('number');
+    });
+});
+
+describe('every batch derives the criterion probes (branch currents) and forwards them to the job dir', () => {
+    // The bug this locks: without the derivation the variant netlists never save @r1[i], so a current criterion
+    // reads "probe not found" and EVERY variant fails → yield/passAllCorners collapse to ~0 on a sound design.
+    const cur = { probe: 'i(R1)', metric: 'max', op: 'gt', value: 0 };
+    const volt = { probe: 'v(out)', metric: 'max', op: 'gt', value: 0 };
+    const probesArg = () => jobDirCalls[0]![3]; // withVariantJobDir(jobId, suffix, analysis, extraProbes, models, fn)
+
+    it('monte-carlo unions i(R1) (and drops the voltage probe — the default sweep already saves it)', async () => {
+        await runMonteCarloBatch({ ...input, criteria: [cur, volt] } as never);
+        expect(probesArg()).toEqual(['i(R1)']);
+    });
+
+    it('corner forwards the current probe too', async () => {
+        await runCornerBatch({ ...input, criteria: [cur], corner: { components: ['R1'] } } as never);
+        expect(probesArg()).toEqual(['i(R1)']);
+    });
+
+    it('sweep forwards the current probe too', async () => {
+        await runSweepBatch({ ...input, criteria: [cur], sweep: { component: 'R1', values: [1] } } as never);
+        expect(probesArg()).toEqual(['i(R1)']);
+    });
+
+    it('a voltage-only criteria set derives NO extra probes (default sweep already saves node voltages)', async () => {
+        await runMonteCarloBatch({ ...input, criteria: [volt] } as never);
+        expect(probesArg()).toEqual([]);
     });
 });

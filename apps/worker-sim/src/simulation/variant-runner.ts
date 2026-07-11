@@ -34,10 +34,20 @@ import { executeNgspice } from './runner';
 
 /**
  * Build the per-variant runner bound to a prepared job dir + the (fixed) analysis. Returns a function matching
- * eda-core's `VariantRunner` contract: `(variant) => measurements | null`. The caller (MC/sweep batch) creates
- * `jobDir`, writes any shared model files once, and disposes the dir afterward.
+ * eda-core's `VariantRunner` contract: `(variant) => measurements | null`. The caller (MC/sweep/corner batch)
+ * creates `jobDir`, writes any shared model files once, and disposes the dir afterward.
+ *
+ * `extraProbes` are the criterion-derived probes (branch currents like `i(R1)`) that must be UNIONed into every
+ * variant's netlist — WITHOUT them the generator's default voltage-only sweep never saves a branch current, so a
+ * current criterion reads "probe not found" and EVERY variant fails, collapsing yield/passAllCorners to ~0. This
+ * mirrors the nominal verify path (verification.service passes the SAME derived probes) so a design that verifies
+ * at nominal is measured against the identical criteria under Monte-Carlo / corner / sweep.
  */
-export function makeVariantRunner(jobDir: string, analysis: AnalysisConfig): (variant: CircuitJson) => Promise<SimMeasurement[] | null> {
+export function makeVariantRunner(
+    jobDir: string,
+    analysis: AnalysisConfig,
+    extraProbes?: string[],
+): (variant: CircuitJson) => Promise<SimMeasurement[] | null> {
     const netlistPath = path.join(jobDir, 'circuit.cir');
     const outputPath = path.join(jobDir, 'output.csv');
     const logPath = path.join(jobDir, 'stdout.log');
@@ -45,7 +55,7 @@ export function makeVariantRunner(jobDir: string, analysis: AnalysisConfig): (va
     return async (variant: CircuitJson): Promise<SimMeasurement[] | null> => {
         let netlist: string;
         try {
-            netlist = sanitizeNetlist(generateNetlist(variant, analysis), jobDir);
+            netlist = sanitizeNetlist(generateNetlist(variant, analysis, extraProbes?.length ? { extraProbes } : {}), jobDir);
         } catch {
             return null; // a variant that won't even generate/sanitize — count errored, never crash the batch
         }

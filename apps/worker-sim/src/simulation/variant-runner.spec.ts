@@ -109,6 +109,27 @@ describe('makeVariantRunner — every unrunnable variant returns null (= errored
     });
 });
 
+describe('makeVariantRunner — criterion probes (branch currents) unioned into EVERY variant', () => {
+    it('passes extraProbes to generateNetlist so a current criterion is saved per variant (not "probe not found")', async () => {
+        const run = makeVariantRunner(JOB, { type: 'op' } as never, ['i(R1)']);
+        await run(variant);
+        // WITHOUT this, the voltage-only default sweep never saves @r1[i] and every variant fails → yield ~0.
+        expect(eda.generateNetlist).toHaveBeenCalledWith(variant, { type: 'op' }, { extraProbes: ['i(R1)'] });
+    });
+
+    it('passes {} (no extraProbes) when none are derived — the default voltage sweep is unchanged', async () => {
+        const run = makeVariantRunner(JOB, { type: 'op' } as never, []);
+        await run(variant);
+        expect(eda.generateNetlist).toHaveBeenCalledWith(variant, { type: 'op' }, {});
+    });
+
+    it('omitting the arg entirely also passes {} (back-compat with a probe-less caller)', async () => {
+        const run = makeVariantRunner(JOB, { type: 'op' } as never);
+        await run(variant);
+        expect(eda.generateNetlist).toHaveBeenCalledWith(variant, { type: 'op' }, {});
+    });
+});
+
 describe('makeVariantRunner — robust scalar metrics folded PER VARIANT from the listing', () => {
     it('tran + fourier → reads the listing and folds THD onto the measurements', async () => {
         const run = makeVariantRunner(JOB, { type: 'tran', fourier: { probe: 'out' } } as never);

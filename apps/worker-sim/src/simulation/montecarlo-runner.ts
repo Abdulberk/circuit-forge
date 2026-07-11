@@ -16,6 +16,7 @@ import { config } from '../config';
 import { logger } from '../logger';
 import {
     runMonteCarlo,
+    extraProbesForCriteria,
     type CircuitJson,
     type AnalysisConfig,
     type AcceptanceCriterion,
@@ -55,8 +56,10 @@ export async function runMonteCarloBatch(
 
     // The per-variant ngspice execution (stale-CSV safety, OOM guard, THD/gain fold) + the reused job dir are
     // shared with the sweep/corner batches (see job-dir.ts + variant-runner.ts). MC only differs in HOW variants
-    // are drawn (random).
-    const summary = await withVariantJobDir(input.jobId, 'mc', input.analysis, input.modelFiles, async (runVariant) => {
+    // are drawn (random). Derive the SAME criterion probes the nominal verify path unions in, so a current
+    // criterion (i(R1)) is saved per variant instead of reading "probe not found" → yield collapsing to ~0.
+    const extraProbes = extraProbesForCriteria(input.criteria);
+    const summary = await withVariantJobDir(input.jobId, 'mc', input.analysis, extraProbes, input.modelFiles, async (runVariant) => {
         const s = await runMonteCarlo(input.circuit, input.criteria, runVariant, {
             n: input.n ?? config.MC_N_DEFAULT,
             seed: input.seed ?? 1,
