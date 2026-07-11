@@ -1,5 +1,9 @@
 # Worker Simulation Dockerfile with ngspice
-FROM node:20-alpine AS base
+# Alpine base PINNED to a minor (3.23) so the ngspice the worker ships is DETERMINISTIC — a bare `node:20-alpine`
+# floats the Alpine repo and silently changed the ngspice version under us (the repo has been burned by
+# only-in-CI ngspice drift before). alpine 3.23 ships ngspice-45.2 (KLU solver); CI's `matrix-alpine` job runs
+# the real-ngspice coverage matrix against THIS exact base, so a bump here is an explicit, matrix-verified change.
+FROM node:20-alpine3.23 AS base
 
 # ngspice + bash (the rlimit wrapper uses bash); curl for local debugging; openssl for the Prisma query
 # engine (musl needs libssl to be detectable); bubblewrap for the OPTIONAL namespace isolation of the
@@ -54,7 +58,9 @@ FROM base AS builder
 RUN pnpm run build --filter=@circuitforge/worker-sim
 
 # Production stage
-FROM node:20-alpine AS production
+# Same PINNED Alpine minor as the base stage above — the running container's ngspice must be the deterministic
+# one the coverage matrix is verified against (see the base-stage note + CI's matrix-alpine job).
+FROM node:20-alpine3.23 AS production
 
 # ngspice + bash (the rlimit wrapper uses bash); openssl for the Prisma query engine (musl libssl);
 # bubblewrap for the OPTIONAL ngspice-child namespace isolation (active only when SIM_BWRAP=1 + the host
