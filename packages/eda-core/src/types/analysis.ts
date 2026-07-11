@@ -1,6 +1,12 @@
 /**
  * Analysis configuration types for SPICE simulations
  */
+// SPICE-value parsing/formatting is the ONE tolerant implementation in utils/unit-parser (dependency-free, so no
+// import cycle). This file used to carry a SECOND, private parser that THREW on any multiplier+unit token (e.g.
+// "10ms", "1ns") — schema-valid values (SpiceValueSchema admits trailing letters) that crashed netlist generation
+// via calculateDefaultStep, and silently disabled the MAX_SIM_POINTS guard (its throw was swallowed by a catch).
+// Both paths now share the tolerant parser, so what the schema admits, the generator can always emit.
+import { parseSpiceValue, formatSpiceValue } from '../utils/unit-parser';
 
 /**
  * Union type for all analysis configurations
@@ -192,14 +198,15 @@ export const MAX_SIM_POINTS = 1_000_000;
  * already within budget, or when the values can't be parsed (let ngspice surface its own error).
  */
 function clampStepToPointBudget(start: string, stop: string, step: string): string {
-    let span: number;
-    let st: number;
-    try {
-        span = Math.abs(parseSpiceValue(stop) - parseSpiceValue(start));
-        st = parseSpiceValue(step);
-    } catch {
-        return step; // unparseable — emit as-authored
-    }
+    const pStop = parseSpiceValue(stop);
+    const pStart = parseSpiceValue(start);
+    const pStep = parseSpiceValue(step);
+    // Any value unparseable → emit as-authored and let ngspice surface its own error. (The OLD private parser
+    // THREW on a unit suffix like "1ns", so this guard was silently skipped for such values; the tolerant
+    // parser reports isValid instead, so the point-budget clamp now actually fires on unit-suffixed values.)
+    if (!pStop.isValid || !pStart.isValid || !pStep.isValid) return step;
+    const span = Math.abs(pStop.value - pStart.value);
+    const st = pStep.value;
     if (!(span > 0) || !(st > 0)) return step;
     if (span / st <= MAX_SIM_POINTS) return step;
     return formatSpiceValue(span / MAX_SIM_POINTS);
@@ -229,11 +236,11 @@ export function analysisToSpice(config: AnalysisConfig): string {
             // data with a misleading error. A degenerate log sweep over one point is `.ac lin 1 f f`.
             let samePoint = config.startFreq === config.stopFreq;
             if (!samePoint) {
-                try {
-                    samePoint = parseSpiceValue(config.startFreq) === parseSpiceValue(config.stopFreq);
-                } catch {
-                    samePoint = false; // unparseable values: emit as-authored, ngspice reports its own error
-                }
+                const pStart = parseSpiceValue(config.startFreq);
+                const pStop = parseSpiceValue(config.stopFreq);
+                // Only collapse to a single point when BOTH parse and are numerically equal; otherwise emit
+                // as-authored and let ngspice report its own error (matches the prior catch-guarded behaviour).
+                samePoint = pStart.isValid && pStop.isValid && pStart.value === pStop.value;
             }
             if (samePoint) return `.ac lin 1 ${config.startFreq} ${config.stopFreq}`;
             // Bound points-per-decade/total so an absurd count can't blow up the row count.
@@ -265,75 +272,12 @@ export function analysisToSpice(config: AnalysisConfig): string {
  * Calculate a reasonable default step time based on stop time
  */
 function calculateDefaultStep(stopTime: string): string {
-    // Parse the stop time and return 1/1000th as default step
+    // Default step = 1/1000th of the stop time. If the stop is unparseable (shouldn't happen for a
+    // SpiceValueSchema-valid value, since the tolerant parser is a superset), emit it as-authored so ngspice
+    // surfaces its own error rather than CRASHING netlist generation — which is exactly what the old throwing
+    // parser did for a value like "10ms" (it rejected the "ms" suffix the schema accepts).
     const parsed = parseSpiceValue(stopTime);
-    return formatSpiceValue(parsed / 1000);
+    if (!parsed.isValid || !(parsed.value > 0)) return stopTime;
+    return formatSpiceValue(parsed.value / 1000);
 }
 
-/**
- * Parse a SPICE value string to a number
- */
-export function parseSpiceValue(value: string): number {
-    const suffixes: Record<string, number> = {
-        T: 1e12,
-        G: 1e9,
-        MEG: 1e6,
-        K: 1e3,
-        k: 1e3,
-        M: 1e-3, // Note: M alone usually means milli in SPICE
-        m: 1e-3,
-        U: 1e-6,
-        u: 1e-6,
-        N: 1e-9,
-        n: 1e-9,
-        P: 1e-12,
-        p: 1e-12,
-        F: 1e-15,
-        f: 1e-15,
-    };
-
-    const match = value.match(/^([+-]?\d*\.?\d+(?:[eE][+-]?\d+)?)\s*([a-zA-Z]*)/);
-    if (!match) {
-        throw new Error(`Invalid SPICE value: ${value}`);
-    }
-
-    const numericPart = parseFloat(match[1] || '0');
-    const suffix = match[2] || '';
-
-    if (suffix === '') {
-        return numericPart;
-    }
-
-    // Check for MEG first (case insensitive)
-    if (suffix.toUpperCase() === 'MEG') {
-        return numericPart * 1e6;
-    }
-
-    const multiplier = suffixes[suffix] || suffixes[suffix.toUpperCase()];
-    if (multiplier === undefined) {
-        throw new Error(`Unknown SPICE suffix: ${suffix}`);
-    }
-
-    return numericPart * multiplier;
-}
-
-/**
- * Format a number as a SPICE value string
- */
-export function formatSpiceValue(value: number): string {
-    const absValue = Math.abs(value);
-    const sign = value < 0 ? '-' : '';
-
-    if (absValue >= 1e12) return `${sign}${absValue / 1e12}T`;
-    if (absValue >= 1e9) return `${sign}${absValue / 1e9}G`;
-    if (absValue >= 1e6) return `${sign}${absValue / 1e6}MEG`;
-    if (absValue >= 1e3) return `${sign}${absValue / 1e3}k`;
-    if (absValue >= 1) return `${sign}${absValue}`;
-    if (absValue >= 1e-3) return `${sign}${absValue * 1e3}m`;
-    if (absValue >= 1e-6) return `${sign}${absValue * 1e6}u`;
-    if (absValue >= 1e-9) return `${sign}${absValue * 1e9}n`;
-    if (absValue >= 1e-12) return `${sign}${absValue * 1e12}p`;
-    if (absValue >= 1e-15) return `${sign}${absValue * 1e15}f`;
-
-    return `${sign}${absValue}`;
-}

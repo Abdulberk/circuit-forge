@@ -81,13 +81,16 @@ export function parseSpiceValue(input: string): ParsedValue {
     // zero-tolerance and inflated the reported Monte-Carlo yield. (The types/analysis.ts parser already had
     // the exponent group; this aligns the two.)
     const pureNumber = parseFloat(original);
-    if (!isNaN(pureNumber) && /^-?\d*\.?\d+(?:[eE][+-]?\d+)?$/.test(original)) {
+    if (!isNaN(pureNumber) && /^[+-]?\d*\.?\d+(?:[eE][+-]?\d+)?$/.test(original)) {
         return { value: pureNumber, original, isValid: true };
     }
 
     // Regex to match value with optional suffix and unit
-    // Examples: 1K, 10MEG, 100nF, 1.5uH, 47pF
-    const regex = /^(-?\d*\.?\d+)\s*([A-Za-z]+)?$/i;
+    // Examples: 1K, 10MEG, 100nF, 1.5uH, 47pF, 1e3k. A leading '+' AND a scientific-notation mantissa
+    // are both accepted so this parser is a strict SUPERSET of SpiceValueSchema (which allows [+-]? … exponent …
+    // [a-zA-Z]*): nothing the schema admits may fall through as unparseable, else a schema-valid analysis value
+    // (e.g. a "1e-4m" step) would silently bypass the MAX_SIM_POINTS guard that reads this parser's isValid.
+    const regex = /^([+-]?\d*\.?\d+(?:[eE][+-]?\d+)?)\s*([A-Za-z]+)?$/i;
     const match = original.match(regex);
 
     if (!match) {
@@ -194,12 +197,16 @@ export function formatSpiceValue(value: number, unit?: string): string {
         scaledValue = absValue / 1e-15;
     }
 
-    // Format number to reasonable precision
+    // Format number to reasonable precision (4 sig figs). Round via toPrecision, then normalize with parseFloat
+    // so trailing zeros drop cleanly. NOTE: a naive `.replace(/\.?0+$/, '')` is WRONG when toPrecision rounds a
+    // banded mantissa UP to an integer string like "1000" (e.g. 999.99 → "1000"): it would strip the SIGNIFICANT
+    // zeros → "1", a 1000x error (and, on a clamped step, a defeated MAX_SIM_POINTS guard). parseFloat keeps the
+    // value: parseFloat("1000")=1000, parseFloat("4.700")=4.7.
     let formatted: string;
     if (Number.isInteger(scaledValue)) {
         formatted = scaledValue.toString();
     } else {
-        formatted = scaledValue.toPrecision(4).replace(/\.?0+$/, '');
+        formatted = Number.parseFloat(scaledValue.toPrecision(4)).toString();
     }
 
     return `${sign}${formatted}${suffix}${unit || ''}`;
