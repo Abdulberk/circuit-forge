@@ -155,8 +155,14 @@ export function parseSpiceValue(input: string): ParsedValue {
  * Format a number as a SPICE value string
  */
 export function formatSpiceValue(value: number, unit?: string): string {
+    // ASCII-only unit: the emitted value goes into a netlist ngspice reads AND this file's own parser re-reads
+    // (perturbCircuit / corner / sweep format a value then it is re-parsed). The Ω glyph (parseSpiceValue of a
+    // "…Ohm" value returns unit "Ω") is non-ASCII → a stricter ngspice build can choke and parseSpiceValue can't
+    // re-read it, breaking the round-trip. Map it to ASCII "Ohm" (ngspice ignores trailing unit letters, and
+    // "1kOhm" round-trips back to unit "Ω"). Ω is the ONLY non-ASCII value in UNIT_ABBREVS, so this covers it.
+    const safeUnit = unit?.replace(/Ω/g, 'Ohm');
     if (value === 0) {
-        return unit ? `0${unit}` : '0';
+        return safeUnit ? `0${safeUnit}` : '0';
     }
 
     const absValue = Math.abs(value);
@@ -209,7 +215,7 @@ export function formatSpiceValue(value: number, unit?: string): string {
         formatted = Number.parseFloat(scaledValue.toPrecision(4)).toString();
     }
 
-    return `${sign}${formatted}${suffix}${unit || ''}`;
+    return `${sign}${formatted}${suffix}${safeUnit || ''}`;
 }
 
 /**

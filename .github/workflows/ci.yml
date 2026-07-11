@@ -134,6 +134,18 @@ jobs:
         # build chain (llm-core + a generated Prisma client) which this lean matrix job deliberately avoids.
         # Verified manually on ngspice-41 (host) and ngspice-42 (apt) — 5/5 — for the QA-hardening pass.
 
+      # Deterministic (seeded) real-ngspice regression harnesses — were runnable only locally (pnpm test:sweep /
+      # test:fuzz); wired here so a CircuitJson→SPICE regression they'd catch can't merge. ~9s + ~24s locally.
+      - name: Pairwise sweep (real ngspice — 200 deterministic parameter × name-edge combinations)
+        env:
+          NGSPICE_PATH: ngspice
+        run: node scripts/pairwise-sweep.mjs
+
+      - name: "Seeded fuzz (real ngspice — safety invariant: no crash / no silent-wrong on random circuits)"
+        env:
+          NGSPICE_PATH: ngspice
+        run: node scripts/fuzz-circuits.mjs
+
   matrix-alpine:
     name: ngspice coverage matrix (Alpine/musl — the PROD binary)
     # The apt matrix above tests ngspice-42; PRODUCTION runs the Alpine/musl ngspice from

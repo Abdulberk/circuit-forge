@@ -216,6 +216,18 @@ export function evaluateAssertions(
                 measured = src[a.metric];
             }
         }
+        // No FINITE value → the probe matched a series with no usable samples (empty / all-NaN — summarizeSeries
+        // returns NaN, never 0). A 0 here would silently SATISFY specs like "v(x) < 1"; treat it as unmeasurable
+        // (actual = null), never a pass. (cutoff/thd/gain already returned null above when absent.)
+        if (!Number.isFinite(measured)) {
+            return {
+                ...base,
+                actual: null,
+                distance: null,
+                pass: false,
+                detail: `${a.metric}(${a.probe}) not measurable — the probe's series had no finite samples (empty / all-NaN)`,
+            };
+        }
         // Verdict on the full-precision `measured`; round ONLY for display (audit #8). A cutoff is a frequency
         // already reported at full precision, so it is shown as-is (matches prior behaviour).
         const pass = compareAssertion(measured, a.op, a.value, a.tol);

@@ -145,3 +145,19 @@ describe('extraProbesForCriteria — the ONE criterion→extra-probe seam (share
         expect(extraProbesForCriteria([crit({ probe: 'v(n1)', metric: 'final', op: 'gte', value: 3 })])).toEqual([]);
     });
 });
+
+describe('evaluateAssertions — a no-data (empty / all-NaN) series is UNMEASURABLE, never a silent pass (debt #8)', () => {
+    it('an EMPTY series → summarizeSeries NaN → assertion actual:null (a 0 would have passed "v(out) < 1")', () => {
+        const m = summarizeSeries({ name: 'out', points: [] });
+        const [r] = evaluateAssertions([m], [crit({ probe: 'out', metric: 'final', op: 'lt', value: 1 })]);
+        expect(r!.pass).toBe(false);
+        expect(r!.actual).toBeNull();
+    });
+
+    it('an ALL-NaN series (points present, none finite) is likewise unmeasurable, not a 0-pass', () => {
+        const m = summarizeSeries({ name: 'out', points: [{ x: 0, y: Number.NaN }, { x: 1, y: Number.NaN }] });
+        const [r] = evaluateAssertions([m], [crit({ probe: 'out', metric: 'max', op: 'gte', value: 0 })]);
+        expect(r!.pass).toBe(false);
+        expect(r!.actual).toBeNull();
+    });
+});
