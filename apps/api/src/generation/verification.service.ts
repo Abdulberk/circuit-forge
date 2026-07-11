@@ -17,7 +17,7 @@ import { attachGenericModels } from './model-resolution';
 import { computeResistorPower, type PowerReport } from './power-analysis';
 import { SimulationService } from '../simulation/simulation.service';
 import type { AssertionDto } from './dto';
-import { evaluateAssertions, attachFourierThd, attachTransferFunction, isCurrentProbe, type AssertionResult } from './assertions';
+import { evaluateAssertions, attachFourierThd, attachTransferFunction, extraProbesForCriteria, type AssertionResult } from './assertions';
 
 // Assertion evaluation now lives in the shared, pure ./assertions module (used by the AI design loop too).
 // Re-export so existing importers (controllers, specs) keep their './verification.service' path unchanged.
@@ -93,7 +93,7 @@ export class VerificationService {
     ): Promise<DesignEvidence> {
         // Branch-current assertions (i(R1)) need their probe UNIONed into the netlist — the voltage-only
         // defaults never save it, so without this a current assertion would always read "probe not found".
-        const currentProbes = assertions.filter((a) => isCurrentProbe(a.probe)).map((a) => a.probe);
+        const currentProbes = extraProbesForCriteria(assertions);
         const sim = await this.runSimulation(circuit, analysisConfig, userId, currentProbes);
         const assertionResults = evaluateAssertions(sim.measurements, assertions, sim.simStatus === 'ok');
 

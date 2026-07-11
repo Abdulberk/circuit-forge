@@ -8,6 +8,7 @@
 import { logger } from '../logger';
 import {
     runParametricSweep,
+    extraProbesForCriteria,
     type CircuitJson,
     type AnalysisConfig,
     type AcceptanceCriterion,
@@ -55,7 +56,10 @@ export async function runSweepBatch(input: SweepBatchInput): Promise<SweepBatchR
     const { spec, clamped } = clampSpec(input.sweep);
 
     // Reused job dir + shared per-variant runner (stale-CSV safety, OOM guard) — see job-dir.ts / variant-runner.ts.
-    const result = await withVariantJobDir(input.jobId, 'sweep', input.analysis, input.modelFiles, async (runVariant) => {
+    // Union the SAME criterion probes the nominal verify path saves (branch currents), so a current criterion is
+    // measured at every swept point instead of reading "probe not found".
+    const extraProbes = extraProbesForCriteria(input.criteria);
+    const result = await withVariantJobDir(input.jobId, 'sweep', input.analysis, extraProbes, input.modelFiles, async (runVariant) => {
         const r = await runParametricSweep(input.circuit, input.criteria, spec, runVariant);
         logger.info(
             { jobId: input.jobId, parameter: r.parameter, evaluated: r.evaluated, passed: r.passed, passAll: r.passAll, clamped },

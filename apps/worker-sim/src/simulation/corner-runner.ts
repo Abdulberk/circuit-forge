@@ -11,6 +11,7 @@
 import { logger } from '../logger';
 import {
     runWorstCase,
+    extraProbesForCriteria,
     type CircuitJson,
     type AnalysisConfig,
     type AcceptanceCriterion,
@@ -41,7 +42,10 @@ export async function runCornerBatch(input: CornerBatchInput): Promise<CornerBat
     const startTime = Date.now();
 
     // Reused job dir + shared per-variant runner (stale-CSV safety, OOM guard) — see job-dir.ts / variant-runner.ts.
-    const result = await withVariantJobDir(input.jobId, 'corner', input.analysis, input.modelFiles, async (runVariant) => {
+    // Union the SAME criterion probes the nominal verify path saves (branch currents), so a current criterion is
+    // measured at every corner instead of reading "probe not found" → every corner falsely failing.
+    const extraProbes = extraProbesForCriteria(input.criteria);
+    const result = await withVariantJobDir(input.jobId, 'corner', input.analysis, extraProbes, input.modelFiles, async (runVariant) => {
         const r = await runWorstCase(input.circuit, input.criteria, input.corner, runVariant);
         logger.info(
             { jobId: input.jobId, cornered: r.componentsCornered, evaluated: r.evaluated, passAllCorners: r.passAllCorners, omitted: r.omitted.length },

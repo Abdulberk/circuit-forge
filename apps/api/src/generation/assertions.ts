@@ -9,6 +9,7 @@ export {
     isCurrentProbe,
     currentKey,
     isObservableCurrentProbe,
+    extraProbesForCriteria,
     compareAssertion,
     evaluateAssertions,
     attachFourierThd,

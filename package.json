@@ -17,6 +17,7 @@
         "test:runner": "pnpm --filter @circuit-forge/eda-core build && pnpm --filter @circuitforge/worker-sim build && node scripts/runner-analyses-check.mjs",
         "test:e2e-dry-run": "node scripts/e2e-dry-run.mjs",
         "test:layout": "pnpm --filter @circuit-forge/pcb-core build && node scripts/layout-check.mjs",
+        "test:robustness": "pnpm --filter @circuit-forge/eda-core build && node scripts/robustness-current-check.mjs",
         "lint": "turbo run lint",
         "lint:fix": "turbo run lint:fix",
         "format": "prettier --write \"**/*.{ts,tsx,js,jsx,json,md}\"",

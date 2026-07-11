@@ -6,7 +6,7 @@
  *        must not flip a marginal relational check.
  * Plus summarizeSeries now carries the full-precision `raw` the evaluator reads.
  */
-import { evaluateAssertions, type AcceptanceCriterion } from '../src/analysis/assertions';
+import { evaluateAssertions, extraProbesForCriteria, type AcceptanceCriterion } from '../src/analysis/assertions';
 import { summarizeSeries, type SimMeasurement } from '../src/analysis/measurements';
 
 const crit = (c: Partial<AcceptanceCriterion> & Pick<AcceptanceCriterion, 'probe' | 'metric' | 'op' | 'value'>): AcceptanceCriterion => c;
@@ -118,5 +118,30 @@ describe('evaluateAssertions — avg / rms metrics', () => {
     it('a current rms spec compares magnitude (sign-agnostic)', () => {
         const m: SimMeasurement = { node: '@r1[i]', min: -0.01, max: 0.01, final: 0, pp: 0.02, avg: 0, rms: 0.00707, raw: { min: -0.01, max: 0.01, final: 0, pp: 0.02, avg: 0, rms: 0.00707 } };
         expect(evaluateAssertions([m], [crit({ probe: 'i(R1)', metric: 'rms', op: 'approx', value: 0.00707, tol: 1e-4 })])[0]!.pass).toBe(true);
+    });
+});
+
+describe('extraProbesForCriteria — the ONE criterion→extra-probe seam (shared by nominal + MC/corner/sweep)', () => {
+    it('returns exactly the branch-CURRENT probes (the default sweep never saves a current)', () => {
+        const criteria = [
+            crit({ probe: 'v(out)', metric: 'max', op: 'gt', value: 4 }), // voltage → auto-probed, no extra
+            crit({ probe: 'i(R1)', metric: 'max', op: 'lt', value: 0.1 }), // current → MUST be unioned in
+            crit({ probe: '@r1[i]', metric: 'rms', op: 'approx', value: 0.01 }), // measured-form current too
+        ];
+        expect(extraProbesForCriteria(criteria)).toEqual(['i(R1)', '@r1[i]']);
+    });
+
+    it('a frequency (cutoff) / thd / gain criterion needs NO extra probe (it rides on the analysis request)', () => {
+        const criteria = [
+            crit({ probe: 'out', metric: 'cutoff', op: 'approx', value: 1000 }),
+            crit({ probe: 'out', metric: 'thd', op: 'lt', value: 5 }),
+            crit({ probe: 'out', metric: 'gain', op: 'gt', value: 10 }),
+        ];
+        expect(extraProbesForCriteria(criteria)).toEqual([]);
+    });
+
+    it('empty / voltage-only criteria yield an empty probe set', () => {
+        expect(extraProbesForCriteria([])).toEqual([]);
+        expect(extraProbesForCriteria([crit({ probe: 'v(n1)', metric: 'final', op: 'gte', value: 3 })])).toEqual([]);
     });
 });

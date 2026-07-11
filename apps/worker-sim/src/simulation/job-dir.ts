@@ -17,11 +17,14 @@ export type VariantRunner = ReturnType<typeof makeVariantRunner>;
 /**
  * Run `fn` with a prepared, reused ngspice job dir and a per-variant runner bound to it, disposing the dir
  * afterward no matter what. `suffix` (mc/sweep/corner) distinguishes the concurrent batch kinds under SIM_TEMP_DIR.
+ * `extraProbes` are the criterion-derived branch-current probes (see makeVariantRunner) that must be saved in
+ * every variant's netlist so a current/`@dev[i]` criterion is actually measured — forwarded to the runner here.
  */
 export async function withVariantJobDir<T>(
     jobId: string,
     suffix: string,
     analysis: AnalysisConfig,
+    extraProbes: string[] | undefined,
     modelFiles: Array<{ name: string; content: Buffer }> | undefined,
     fn: (runVariant: VariantRunner, jobDir: string) => Promise<T>,
 ): Promise<T> {
@@ -36,7 +39,7 @@ export async function withVariantJobDir<T>(
         for (const m of modelFiles) await fs.writeFile(path.join(jobDir, m.name), m.content);
     }
 
-    const runVariant = makeVariantRunner(jobDir, analysis);
+    const runVariant = makeVariantRunner(jobDir, analysis, extraProbes);
     try {
         return await fn(runVariant, jobDir);
     } finally {
