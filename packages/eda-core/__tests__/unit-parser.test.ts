@@ -82,3 +82,17 @@ describe('formatSpiceValue — never drops significant digits when rounding land
         }
     });
 });
+
+describe('formatSpiceValue — emits ASCII-only units (arch-review debt #8)', () => {
+    it('maps the Ω glyph to ASCII "Ohm" so the netlist value is ngspice-safe AND round-trips', () => {
+        const out = formatSpiceValue(1050, 'Ω'); // unit "Ω" comes from parseSpiceValue of e.g. "1kOhm"
+        expect(out).not.toContain('Ω'); // no non-ASCII in a value ngspice / our own parser must read
+        expect(parseSpiceValue(out).value).toBeCloseTo(1050); // value preserved
+        expect(parseSpiceValue(out).unit).toBe('Ω'); // "…Ohm" round-trips back to the Ω unit
+    });
+
+    it('leaves ASCII units unchanged', () => {
+        expect(formatSpiceValue(4.7e-6, 'F')).toBe('4.7uF');
+        expect(formatSpiceValue(1000, 'Hz')).toBe('1KHz');
+    });
+});

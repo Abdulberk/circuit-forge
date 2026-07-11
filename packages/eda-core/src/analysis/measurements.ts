@@ -94,7 +94,11 @@ export function summarizeSeries(s: DataSeries, analysisType?: string): SimMeasur
     // time/DC stats. Result is `null` when not determinable.
     const ac = analysisType === 'ac' && isAcMagnitudeSeries(s.name);
     if (count === 0) {
-        return { node: s.name, min: 0, max: 0, final: 0, pp: 0, avg: 0, rms: 0, raw: { min: 0, max: 0, final: 0, pp: 0, avg: 0, rms: 0 }, ...(ac ? { cutoff: null } : {}) };
+        // NO finite samples (empty series, or every point NaN — e.g. a degenerate/undefined ngspice column).
+        // Return NaN, NOT 0: a 0 would silently SATISFY a spec (e.g. "v(x) < 1" passes on 0) on data we never
+        // actually measured. NaN makes the evaluator treat the probe as unmeasurable (actual = null), never a pass.
+        const n = Number.NaN;
+        return { node: s.name, min: n, max: n, final: n, pp: n, avg: n, rms: n, raw: { min: n, max: n, final: n, pp: n, avg: n, rms: n }, ...(ac ? { cutoff: null } : {}) };
     }
     const round = (n: number) => Number(n.toPrecision(4));
     const rawPp = max - min;
