@@ -91,17 +91,21 @@ export class VerificationService {
         userId?: string,
         robustness?: { corner?: boolean; maxCorners?: number },
     ): Promise<DesignEvidence> {
+        // Validate ONCE up front and reuse: the nets let evaluateAssertions resolve a criterion that names a
+        // net ("v(out)") to the node the generator emitted from that net's ID — so the check still matches when
+        // a net's id differs from its name (universal once the frontend mints UUID ids). Also feeds power below.
+        const validCircuit = safeValidateCircuitJson(circuit);
+        const nets = validCircuit.success ? (validCircuit.data as CircuitJson).nets : undefined;
         // Branch-current assertions (i(R1)) need their probe UNIONed into the netlist — the voltage-only
         // defaults never save it, so without this a current assertion would always read "probe not found".
         const currentProbes = extraProbesForCriteria(assertions);
         const sim = await this.runSimulation(circuit, analysisConfig, userId, currentProbes);
-        const assertionResults = evaluateAssertions(sim.measurements, assertions, sim.simStatus === 'ok');
+        const assertionResults = evaluateAssertions(sim.measurements, assertions, sim.simStatus === 'ok', nets);
 
         // Power-dissipation review (resistors): only meaningful once we have real node voltages.
         let power: PowerReport | undefined;
-        if (sim.simStatus === 'ok' && sim.measurements.length > 0) {
-            const valid = safeValidateCircuitJson(circuit);
-            if (valid.success) power = computeResistorPower(valid.data as CircuitJson, sim.measurements, sim.analysisType);
+        if (sim.simStatus === 'ok' && sim.measurements.length > 0 && validCircuit.success) {
+            power = computeResistorPower(validCircuit.data as CircuitJson, sim.measurements, sim.analysisType);
         }
 
         const ercErrorCount = sim.ercErrors.length;

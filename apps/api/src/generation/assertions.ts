@@ -6,6 +6,7 @@
  */
 export {
     nodeKey,
+    netIdByRef,
     isCurrentProbe,
     currentKey,
     isObservableCurrentProbe,

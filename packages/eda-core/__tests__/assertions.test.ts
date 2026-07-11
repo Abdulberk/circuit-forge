@@ -6,7 +6,7 @@
  *        must not flip a marginal relational check.
  * Plus summarizeSeries now carries the full-precision `raw` the evaluator reads.
  */
-import { evaluateAssertions, extraProbesForCriteria, type AcceptanceCriterion } from '../src/analysis/assertions';
+import { evaluateAssertions, extraProbesForCriteria, netIdByRef, type AcceptanceCriterion } from '../src/analysis/assertions';
 import { summarizeSeries, type SimMeasurement } from '../src/analysis/measurements';
 
 const crit = (c: Partial<AcceptanceCriterion> & Pick<AcceptanceCriterion, 'probe' | 'metric' | 'op' | 'value'>): AcceptanceCriterion => c;
@@ -143,5 +143,56 @@ describe('extraProbesForCriteria — the ONE criterion→extra-probe seam (share
     it('empty / voltage-only criteria yield an empty probe set', () => {
         expect(extraProbesForCriteria([])).toEqual([]);
         expect(extraProbesForCriteria([crit({ probe: 'v(n1)', metric: 'final', op: 'gte', value: 3 })])).toEqual([]);
+    });
+});
+
+describe('evaluateAssertions — resolves a NAME-based criterion to the id-derived node (arch-review debt #6)', () => {
+    // A net whose ID ("n_mid") differs from its NAME ("out"): the generator keys the SPICE node off the ID, so
+    // the measurement carries node "n_mid", while the user's criterion names the net — "v(out)". Legal today,
+    // universal once the frontend mints UUID ids. Without net context the name can't reach the id-derived node.
+    const meas: SimMeasurement = { node: 'n_mid', min: 2.5, max: 2.5, final: 2.5, pp: 0, avg: 2.5, rms: 2.5, raw: { min: 2.5, max: 2.5, final: 2.5, pp: 0, avg: 2.5, rms: 2.5 } };
+    const nets = [{ id: 'n_mid', name: 'out' }];
+    const cOut = crit({ probe: 'v(out)', metric: 'final', op: 'approx', value: 2.5, tol: 0.05 });
+
+    it('WITHOUT nets: a name-based probe cannot reach the id-derived node → "probe not found" (the latent bug)', () => {
+        const [r] = evaluateAssertions([meas], [cOut]);
+        expect(r!.pass).toBe(false);
+        expect(r!.actual).toBeNull();
+    });
+
+    it('WITH nets: the name resolves to the net id → matches the measurement', () => {
+        const [r] = evaluateAssertions([meas], [cOut], true, nets);
+        expect(r!.pass).toBe(true);
+        expect(r!.actual).toBe(2.5);
+    });
+
+    it('a probe given by the raw net ID matches too (with nets)', () => {
+        expect(evaluateAssertions([meas], [crit({ probe: 'v(n_mid)', metric: 'final', op: 'approx', value: 2.5, tol: 0.05 })], true, nets)[0]!.pass).toBe(true);
+    });
+
+    it('id === name (today) is unaffected — passing nets never breaks the current path', () => {
+        const m: SimMeasurement = { node: 'out', min: 2.5, max: 2.5, final: 2.5, pp: 0, avg: 2.5, rms: 2.5, raw: { min: 2.5, max: 2.5, final: 2.5, pp: 0, avg: 2.5, rms: 2.5 } };
+        expect(evaluateAssertions([m], [cOut], true, [{ id: 'out', name: 'out' }])[0]!.pass).toBe(true);
+        expect(evaluateAssertions([m], [cOut])[0]!.pass).toBe(true); // no nets → still matches (id===name)
+    });
+
+    it('a current criterion is unaffected by net resolution (keyed by device, not node)', () => {
+        const im: SimMeasurement = { node: '@r1[i]', min: 0.01, max: 0.01, final: 0.01, pp: 0, avg: 0.01, rms: 0.01, raw: { min: 0.01, max: 0.01, final: 0.01, pp: 0, avg: 0.01, rms: 0.01 } };
+        expect(evaluateAssertions([im], [crit({ probe: 'i(R1)', metric: 'final', op: 'approx', value: 0.01, tol: 1e-3 })], true, nets)[0]!.pass).toBe(true);
+    });
+});
+
+describe('netIdByRef — {net reference → canonical id}, ids authoritative', () => {
+    it('maps name→id and id→id', () => {
+        const m = netIdByRef([{ id: 'n_mid', name: 'out' }, { id: '0', name: 'gnd' }]);
+        expect(m.get('out')).toBe('n_mid');
+        expect(m.get('n_mid')).toBe('n_mid');
+        expect(m.get('gnd')).toBe('0');
+    });
+
+    it('an ID wins when another net NAME collides with it (ids are unique + authoritative)', () => {
+        // net A id="x" name="y"; net B id="y". A ref "y" must resolve to B's id "y", not A (via name "y"→"x").
+        const m = netIdByRef([{ id: 'x', name: 'y' }, { id: 'y', name: 'z' }]);
+        expect(m.get('y')).toBe('y');
     });
 });
