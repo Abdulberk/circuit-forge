@@ -130,7 +130,7 @@ export async function runParametricSweep(
             points.push({ value, numeric, outcome: 'errored' });
             continue;
         }
-        const results = evaluateAssertions(measurements, criteria);
+        const results = evaluateAssertions(measurements, criteria, true, circuit.nets);
         const pass = results.length > 0 && results.every((r) => r.pass);
         points.push({ value, numeric, outcome: pass ? 'pass' : 'fail' });
     }

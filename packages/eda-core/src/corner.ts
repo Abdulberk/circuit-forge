@@ -139,7 +139,7 @@ export async function runWorstCase(
             points.push({ corner, outcome: 'errored' });
             continue;
         }
-        const results = evaluateAssertions(measurements, criteria);
+        const results = evaluateAssertions(measurements, criteria, true, circuit.nets);
         const pass = results.length > 0 && results.every((r) => r.pass);
         points.push({ corner, outcome: pass ? 'pass' : 'fail' });
     }
