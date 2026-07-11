@@ -89,8 +89,12 @@ jobs:
         run: pnpm test
 
   matrix:
-    name: ngspice coverage matrix
-    runs-on: ubuntu-latest
+    name: ngspice coverage matrix (apt / Ubuntu 24.04)
+    # Runner PINNED (not ubuntu-latest) so the apt ngspice is DETERMINISTIC: ubuntu-24.04 ships ngspice-42.
+    # A silent runner bump would swap the ngspice version under us (the repo has been burned by only-in-CI
+    # ngspice drift), so the version is asserted below — a surprising major fails LOUDLY instead of being
+    # quietly absorbed by the matrix cells' (deliberately version-tolerant) assertions.
+    runs-on: ubuntu-24.04
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
@@ -102,11 +106,13 @@ jobs:
       - name: Install pnpm
         run: npm install -g pnpm@8.14.1
 
-      - name: Install ngspice
+      - name: Install ngspice (pinned runner → ngspice-42; assert the major so drift is loud)
         run: |
           sudo apt-get update -q
           sudo apt-get install -y -q ngspice
           ngspice --version | head -2
+          ngspice --version | grep -qE 'ngspice-4[0-9]' \
+            || { echo "::error::apt ngspice major drifted off 4x on ubuntu-24.04 — re-verify the matrix and update this guard"; exit 1; }
 
       - name: Install
         run: pnpm install --frozen-lockfile
@@ -127,3 +133,46 @@ jobs:
         # real ngspice) is a MANUAL QA tool — `pnpm test:runner` — NOT wired here: it needs the full worker-sim
         # build chain (llm-core + a generated Prisma client) which this lean matrix job deliberately avoids.
         # Verified manually on ngspice-41 (host) and ngspice-42 (apt) — 5/5 — for the QA-hardening pass.
+
+  matrix-alpine:
+    name: ngspice coverage matrix (Alpine/musl — the PROD binary)
+    # The apt matrix above tests ngspice-42; PRODUCTION runs the Alpine/musl ngspice from
+    # infra/docker/worker-sim.Dockerfile (node:20-alpine3.23 → ngspice-45.2, KLU solver). That binary was
+    # NEVER exercised by CI, so a musl/version-specific regression could ship. This job runs the SAME 83-cell
+    # matrix + edge battery against the EXACT prod ngspice, in a container built from the same pinned base.
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Install pnpm
+        run: npm install -g pnpm@8.14.1
+
+      - name: Install + build eda-core (host — the dist is pure JS, runs unchanged on musl)
+        # Full install (mirrors the apt matrix job) so tsc + all build deps resolve; then build eda-core only.
+        run: |
+          pnpm install --frozen-lockfile
+          pnpm --filter @circuit-forge/eda-core build
+
+      - name: Coverage matrix + edge battery on the PROD Alpine ngspice
+        # Run the real-ngspice harnesses INSIDE the exact prod base image (must match worker-sim.Dockerfile).
+        # eda-core's only runtime dep is zod (pure JS) → installed fresh in the container; the built dist +
+        # scripts are copied in read-only from the checkout. NGSPICE_PATH=ngspice = the apk console binary.
+        run: |
+          docker run --rm -v "$PWD:/repo:ro" node:20-alpine3.23 sh -c '
+            set -e
+            apk add --no-cache ngspice >/dev/null
+            echo "PROD ngspice: $(ngspice --version | grep -oE "ngspice-[0-9.]+" | head -1)"
+            ngspice --version | grep -qE "ngspice-(4[5-9]|[5-9][0-9])" \
+              || { echo "PROD Alpine ngspice major drifted below 45 — re-verify the matrix and update worker-sim.Dockerfile + this guard"; exit 1; }
+            mkdir -p /tmp/w/packages/eda-core /tmp/w/scripts
+            cp -r /repo/packages/eda-core/dist /tmp/w/packages/eda-core/dist
+            cp -r /repo/scripts/. /tmp/w/scripts/
+            cd /tmp/w && npm install zod@3 --no-save --silent >/dev/null 2>&1
+            NODE_PATH=/tmp/w/node_modules NGSPICE_PATH=ngspice node scripts/coverage-matrix.mjs
+            NODE_PATH=/tmp/w/node_modules NGSPICE_PATH=ngspice node scripts/edge-cases.mjs
+          '
