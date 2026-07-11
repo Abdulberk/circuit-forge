@@ -26,13 +26,15 @@ import type { DesignRunSim } from '@circuitforge/llm-core';
 import { config } from '../config';
 import { runSimulation } from '../simulation/runner';
 import { runMonteCarloBatch } from '../simulation/montecarlo-runner';
+import { deriveFailureStatus } from '../simulation/outcome';
 import { ngspiceSem } from './pools';
 
 /** A finished local run, shaped to answer the loop's getStatus + getResult from memory. */
 interface StoredOutcome {
     /** SUCCEEDED | FAILED | TIMED_OUT — the loop branches on this exactly as on a queue job's status. */
     status: string;
-    /** What getStatus returns as `.metrics` (pointsCount / failureClass / convergence). */
+    /** What getStatus returns as `.metrics`. Heterogeneous across sim / Monte-Carlo / corner outcomes, so it
+     *  stays a loose record; the sim-failure subset is decided via the shared outcome helpers (deriveFailureStatus). */
     statusMetrics: Record<string, unknown>;
     /** The full object getResult returns: { result: SimulationResult, metrics: {pointsCount}, error? }. */
     resultPayload: Record<string, unknown>;
@@ -67,10 +69,11 @@ export function makeLocalSim(): DesignRunSim {
                     resultPayload: { status: 'SUCCEEDED', result: bounded, metrics: { pointsCount } },
                 });
             } else {
-                // Same classification as handleFailure: a genuine wall-clock timeout is TIMED_OUT; an infra
-                // failure (ngspice never launched / fs error) is FAILED + failureClass:'infra' (→ the loop
-                // reports "inconclusive", never a design failure); any other ngspice fault is FAILED + 'sim'.
-                const status = !r.infra && r.error?.includes('timed out') ? 'TIMED_OUT' : 'FAILED';
+                // Same classification as handleFailure (shared decision): a genuine wall-clock timeout is
+                // TIMED_OUT from the runner's TYPED timedOut flag (not an error-string match); an infra failure
+                // (ngspice never launched / fs error) is FAILED + failureClass:'infra' (→ the loop reports
+                // "inconclusive", never a design failure); any other ngspice fault is FAILED + 'sim'.
+                const status = deriveFailureStatus(r);
                 store.set(jobId, {
                     status,
                     statusMetrics: {

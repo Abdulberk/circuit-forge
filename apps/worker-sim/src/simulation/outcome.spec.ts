@@ -1,4 +1,4 @@
-import { classifyJobOutcome, isFinalAttempt, type OutcomeInput } from './outcome';
+import { classifyJobOutcome, isFinalAttempt, deriveFailureStatus, buildFailureMetrics, buildSuccessMetrics, type OutcomeInput } from './outcome';
 
 describe('isFinalAttempt', () => {
     it('treats a single-attempt job (attempts=1) as final on the first run', () => {
@@ -73,5 +73,62 @@ describe('classifyJobOutcome', () => {
         const attempts = 3;
         const actions = [0, 1, 2].map((made) => classifyJobOutcome(fault, isFinalAttempt(made, attempts)).type);
         expect(actions).toEqual(['fault', 'fault', 'fault']);
+    });
+});
+
+describe('deriveFailureStatus — TIMED_OUT from the TYPED flag, not an error-string match (debt #4)', () => {
+    it('a genuine wall-clock timeout (timedOut:true) → TIMED_OUT', () => {
+        expect(deriveFailureStatus({ timedOut: true })).toBe('TIMED_OUT');
+        expect(deriveFailureStatus({ timedOut: true, error: 'Simulation timed out' })).toBe('TIMED_OUT');
+    });
+
+    it('any other genuine sim fault (no timedOut) → FAILED', () => {
+        expect(deriveFailureStatus({})).toBe('FAILED');
+        expect(deriveFailureStatus({ error: 'singular matrix' })).toBe('FAILED');
+        expect(deriveFailureStatus({ timedOut: false })).toBe('FAILED');
+    });
+
+    it('an INFRA failure is FAILED even if it timed out (re-tagged via metrics.failureClass, not the enum)', () => {
+        expect(deriveFailureStatus({ infra: true, timedOut: true })).toBe('FAILED');
+    });
+
+    it('THE FRAGILITY FIX: a real fault whose error text happens to contain "timed out" is NOT misread as TIMED_OUT', () => {
+        // The old `error.includes('timed out')` would wrongly return TIMED_OUT here; the typed flag does not.
+        expect(deriveFailureStatus({ timedOut: false, error: 'model note: the driver timed out earlier; matrix singular' })).toBe('FAILED');
+    });
+
+    it('robust to a reworded timeout message: still TIMED_OUT via the flag even if the string changes', () => {
+        expect(deriveFailureStatus({ timedOut: true, error: 'wall-clock budget exceeded' })).toBe('TIMED_OUT');
+    });
+});
+
+describe('buildFailureMetrics — the failure subset of the metrics contract', () => {
+    it('tags failureClass=sim for a circuit fault and carries runtimeMs + error', () => {
+        expect(buildFailureMetrics({ runtimeMs: 42, error: 'boom', infra: false }))
+            .toEqual({ runtimeMs: 42, error: 'boom', failureClass: 'sim' });
+    });
+
+    it('tags failureClass=infra when ngspice never ran', () => {
+        expect(buildFailureMetrics({ runtimeMs: 1, infra: true }).failureClass).toBe('infra');
+    });
+
+    it('includes the convergence report only when present', () => {
+        const conv = { recovered: false, kind: 'timestep', diagnosis: 'x', attempts: 3 } as never;
+        expect(buildFailureMetrics({ infra: false, convergence: conv }).convergence).toBe(conv);
+        expect('convergence' in buildFailureMetrics({ infra: false })).toBe(false);
+    });
+});
+
+describe('buildSuccessMetrics — the success subset (storedResultBytes is the storage-quota unit)', () => {
+    it('carries runtimeMs, storedResultBytes, and the optional fields when present', () => {
+        expect(buildSuccessMetrics({ runtimeMs: 10, outputSizeBytes: 5000, storedResultBytes: 800, pointsCount: 1000 }))
+            .toEqual({ runtimeMs: 10, outputSizeBytes: 5000, storedResultBytes: 800, pointsCount: 1000 });
+    });
+
+    it('omits pointsCount / outputSizeBytes / convergence when not provided (JSON-drops-undefined parity)', () => {
+        const m = buildSuccessMetrics({ runtimeMs: 10, storedResultBytes: 800 });
+        expect(m).toEqual({ runtimeMs: 10, storedResultBytes: 800 });
+        expect('pointsCount' in m).toBe(false);
+        expect('convergence' in m).toBe(false);
     });
 });

@@ -10,7 +10,7 @@ import { logger } from '../logger';
 import { runSimulation, type SimulationJobResult } from './runner';
 import { runMonteCarloBatch } from './montecarlo-runner';
 import { runCornerBatch } from './corner-runner';
-import { classifyJobOutcome, isFinalAttempt } from './outcome';
+import { classifyJobOutcome, isFinalAttempt, deriveFailureStatus, buildFailureMetrics, buildSuccessMetrics } from './outcome';
 import { downloadFile, uploadJsonResult } from '../storage/s3-client';
 import { downsampleResult } from '@circuit-forge/eda-core';
 import type { CircuitJson, AnalysisConfig, AcceptanceCriterion, CornerSpec } from '@circuit-forge/eda-core';
@@ -408,18 +408,16 @@ async function handleSuccess(jobId: string, result: SimulationJobResult): Promis
             resultJson: storedResult ? (storedResult as unknown as Prisma.InputJsonValue) : Prisma.JsonNull,
             resultS3Key,
             finishedAt: new Date(),
-            metrics: {
+            // storedResultBytes = the bytes ACTUALLY persisted (downsampled+serialized / S3 object size), NOT the
+            // raw ngspice size — the storage quota counts this so it doesn't reject legitimate uploads early (see
+            // UsageService). convergence rides along when the remedy ladder rescued the run. Shape owned by outcome.ts.
+            metrics: buildSuccessMetrics({
                 runtimeMs,
-                outputSizeBytes, // RAW ngspice output size (the SIM_MAX_OUTPUT_BYTES guard's unit) — a diagnostic
-                // The bytes ACTUALLY persisted (downsampled + serialized) = the S3 object size when spilled. The
-                // storage quota must count THIS, not the raw ngspice size (which can be many× larger before the
-                // WORKER_MAX_POINTS downsample), so it doesn't reject legitimate uploads early. See UsageService.
+                outputSizeBytes,
                 storedResultBytes: resultSize,
-                pointsCount: originalPointsCount, // the TRUE simulated resolution, not the stored cap
-                // Present when the Convergence Doctor's remedy ladder rescued an initial non-convergence
-                // (recovered:true + the remedy that worked). The API surfaces it on the verify evidence.
-                ...(result.convergence ? { convergence: result.convergence as unknown as Prisma.InputJsonValue } : {}),
-            },
+                pointsCount: originalPointsCount,
+                convergence: result.convergence,
+            }) as unknown as Prisma.InputJsonValue,
         },
     });
 }
@@ -428,13 +426,14 @@ async function handleSuccess(jobId: string, result: SimulationJobResult): Promis
  * Handle failed simulation
  */
 async function handleFailure(jobId: string, result: SimulationJobResult): Promise<void> {
-    const { stdout, stderr, runtimeMs, error, infra } = result;
+    const { stdout, stderr, runtimeMs, error } = result;
 
     // INFRA failures (ngspice couldn't be launched, fs/setup) are NOT a circuit fault. The SimJobStatus
     // enum has no operational value, so we persist FAILED but tag metrics.failureClass='infra'; the API
-    // reads that and reports the verify verdict as 'inconclusive', never a design 'fail'. A genuine
-    // ngspice wall-clock timeout stays TIMED_OUT; any other genuine ngspice failure is FAILED + 'sim'.
-    const status = !infra && error?.includes('timed out') ? 'TIMED_OUT' : 'FAILED';
+    // reads that and reports the verify verdict as 'inconclusive', never a design 'fail'. A genuine ngspice
+    // wall-clock timeout stays TIMED_OUT — decided from the runner's TYPED timedOut flag, not a fragile
+    // error-string match (see deriveFailureStatus). Metrics shape/failureClass owned by buildFailureMetrics.
+    const status = deriveFailureStatus(result);
 
     recordSim({ status: status === 'TIMED_OUT' ? 'timed_out' : 'failed', durationMs: runtimeMs });
 
@@ -445,15 +444,7 @@ async function handleFailure(jobId: string, result: SimulationJobResult): Promis
             stdout: stdout.substring(0, 10000),
             stderr: (stderr + '\n' + (error || '')).substring(0, 10000),
             finishedAt: new Date(),
-            metrics: {
-                runtimeMs,
-                error,
-                failureClass: infra ? 'infra' : 'sim',
-                // A convergence-class failure where the remedy ladder was walked but NONE recovered the run
-                // (recovered:false + every remedy tried) — surfaced so the user/AI sees it was a genuine,
-                // remedy-resistant non-convergence, not an un-diagnosed crash.
-                ...(result.convergence ? { convergence: result.convergence as unknown as Prisma.InputJsonValue } : {}),
-            },
+            metrics: buildFailureMetrics(result) as unknown as Prisma.InputJsonValue,
         },
     });
 }
