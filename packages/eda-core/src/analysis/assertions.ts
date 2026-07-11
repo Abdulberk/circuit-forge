@@ -49,14 +49,35 @@ export interface AssertionResult {
 
 /**
  * Map a user-facing probe to the SPICE node the simulator actually reports. The user thinks in NET names
- * ("out"); the netlist generator runs each net id through sanitizeNodeName. We apply the SAME transform to
- * both the probe and the measured node (after stripping a v() wrapper) so "out" / "v(out)" / "V(OUT)" all
- * resolve to the one node the measurement carries. Lowercased (ngspice emits lower-case node names).
+ * ("out"); the netlist generator emits each net's node from its ID run through sanitizeNodeName. We apply the
+ * SAME transform (after stripping a v() wrapper) so "out" / "v(out)" / "V(OUT)" all resolve to the one node the
+ * measurement carries. Lowercased (ngspice emits lower-case node names).
+ *
+ * `refToId` bridges the case where a net's ID differs from its NAME: the generator keys the SPICE node off the
+ * net ID, but a criterion usually names the net ("v(out)"). Passing the {name→id, id→id} map (built from the
+ * circuit's nets — see netIdByRef) resolves the reference to its canonical ID *before* sanitizing, so a
+ * name-based probe still matches. Today net.id === net.name so it is a no-op; once the frontend mints UUID ids
+ * (id !== name), it is the difference between "verified" and a permanent "probe not found". Mirrors the
+ * generator's netRefToNode precedence (name first, id authoritative).
  */
-export function nodeKey(probe: string): string {
+export function nodeKey(probe: string, refToId?: Map<string, string>): string {
     const m = probe.trim().match(/^v\(([^)]+)\)$/i);
-    const bare = m ? m[1]! : probe.trim();
-    return sanitizeNodeName(bare).toLowerCase();
+    const bare = (m ? m[1]! : probe.trim()).trim();
+    const canonical = refToId?.get(bare.toLowerCase()) ?? bare;
+    return sanitizeNodeName(canonical).toLowerCase();
+}
+
+/**
+ * Build the {net reference → canonical net ID} lookup a criterion's probe is resolved through (see nodeKey).
+ * Names are seeded first and IDs overwrite on collision — IDs are unique + authoritative — mirroring exactly
+ * the precedence of the generator's netRefToNode, so the assertion evaluator resolves a net reference to the
+ * SAME node the generator emitted it as.
+ */
+export function netIdByRef(nets: ReadonlyArray<{ id: string; name?: string }>): Map<string, string> {
+    const map = new Map<string, string>();
+    for (const n of nets) if (n.name) map.set(n.name.trim().toLowerCase(), n.id);
+    for (const n of nets) map.set(n.id.trim().toLowerCase(), n.id);
+    return map;
 }
 
 /** A current/power probe (i(R1), @r1[i]) — NOT a node voltage. */
@@ -105,12 +126,14 @@ export function extraProbesForCriteria(criteria: { probe: string }[]): string[] 
 }
 
 /** Namespaced match key: a current probe keys by its device (`i:r1`), a voltage probe by its node
- *  (`v:<nodeKey>`). Keeps the two kinds from colliding AND bridges `i(R1)` ↔ the measured `@r1[i]`. */
-function matchKey(probeOrNode: string): string {
+ *  (`v:<nodeKey>`). Keeps the two kinds from colliding AND bridges `i(R1)` ↔ the measured `@r1[i]`.
+ *  `refToId` (net reference → canonical id) is applied only to VOLTAGE keys, to resolve a name-based probe to
+ *  its id-derived node (see nodeKey); the measured node is already a SPICE node so it is keyed with no map. */
+function matchKey(probeOrNode: string, refToId?: Map<string, string>): string {
     if (isCurrentProbe(probeOrNode)) {
         return `i:${currentKey(probeOrNode) ?? probeOrNode.trim().toLowerCase()}`;
     }
-    return `v:${nodeKey(probeOrNode)}`;
+    return `v:${nodeKey(probeOrNode, refToId)}`;
 }
 
 export function compareAssertion(actual: number, op: AcceptanceCriterion['op'], target: number, tol?: number): boolean {
@@ -134,17 +157,26 @@ export function compareAssertion(actual: number, op: AcceptanceCriterion['op'], 
 /**
  * Evaluate each assertion against the measurements. When the sim didn't run (simOk=false) every assertion
  * is unmet (actual=null) — you can't certify a spec you couldn't measure.
+ *
+ * `nets` (the circuit's nets) is OPTIONAL but should be passed whenever available: it lets a criterion that
+ * names a net ("v(out)") resolve to the SPICE node the generator emitted from that net's ID, so the check still
+ * matches when the net's id differs from its name (universal once the frontend mints UUID ids). Omitted → the
+ * probe is matched by its sanitized text exactly as before (correct while id === name).
  */
 export function evaluateAssertions(
     measurements: SimMeasurement[],
     assertions: AcceptanceCriterion[],
     simOk = true,
+    nets?: ReadonlyArray<{ id: string; name?: string }>,
 ): AssertionResult[] {
+    const refToId = nets?.length ? netIdByRef(nets) : undefined;
+    // Measured nodes are ALREADY sanitized SPICE nodes → keyed with no ref map; only the user-facing criterion
+    // probe is resolved through refToId (net name/id → canonical id → node).
     const byKey = new Map(measurements.map((m) => [matchKey(m.node), m]));
     return assertions.map((a) => {
         const label = a.label ?? `${a.probe} ${a.metric} ${a.op} ${a.value}`;
         const base = { label, probe: a.probe, metric: a.metric, op: a.op, target: a.value, tol: a.tol };
-        const m = simOk ? byKey.get(matchKey(a.probe)) : undefined;
+        const m = simOk ? byKey.get(matchKey(a.probe, refToId)) : undefined;
         if (!m) {
             return {
                 ...base,

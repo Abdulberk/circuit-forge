@@ -156,7 +156,7 @@ export async function runMonteCarlo(
             outcomes.push('errored');
             continue;
         }
-        const results = evaluateAssertions(measurements, criteria);
+        const results = evaluateAssertions(measurements, criteria, true, circuit.nets);
         outcomes.push(results.length > 0 && results.every((r) => r.pass) ? 'pass' : 'fail');
         opts.onProgress?.(outcomes.length); // checkpoint hook (worker persists partial progress)
 

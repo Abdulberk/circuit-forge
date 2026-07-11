@@ -214,6 +214,7 @@ export { parseNoise, parseNoiseTotals } from './analysis/noise';
 export { parseSensitivity } from './analysis/sens';
 export {
     nodeKey,
+    netIdByRef,
     isCurrentProbe,
     currentKey,
     isObservableCurrentProbe,

@@ -247,7 +247,7 @@ export async function runDesignLoop(input: DesignLoopInput, deps: DesignDeps): P
             // Fold THD (from a fourier request) onto the measurements so a `thd` criterion gates like any other.
             attachFourierThd(measurements, result.result?.fourier);
             attachTransferFunction(measurements, result.result?.transferFunction);
-            lastAssertions = evaluateAssertions(measurements, criteria);
+            lastAssertions = evaluateAssertions(measurements, criteria, true, circuit.nets);
         }
         const specsMet = lastAssertions.every((a) => a.pass);
         const uncovered = simHealthy && specsMet ? uncoveredRequiredDimensions(input.prompt, criteria) : [];
@@ -669,7 +669,7 @@ export async function screenCandidate(input: DesignLoopInput, deps: DesignDeps):
             const measurements = (result.result?.series ?? []).map((s) => summarizeSeries(s, analysis.type));
             attachFourierThd(measurements, result.result?.fourier);
             attachTransferFunction(measurements, result.result?.transferFunction);
-            assertions = evaluateAssertions(measurements, criteria);
+            assertions = evaluateAssertions(measurements, criteria, true, circuit.nets);
         }
     } catch {
         // a screen sim/infra failure → not healthy; closeness Infinity → this candidate sorts last.
