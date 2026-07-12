@@ -36,12 +36,14 @@ describe('summarizeSeries', () => {
         expect(r.pp).toBe(4);
     });
 
-    it('degrades to zeros for an all-empty / all-non-finite series', () => {
-        // `raw` (full-precision values the verdict reads) is part of the shape since the audit's #8 fix, and
-        // avg/rms (time-weighted) since the metric expansion — for an empty series all mirror the rounded
-        // zeros. Assert the COMPLETE shape so a future drift is caught.
-        const zeros = { node: 'v(x)', min: 0, max: 0, final: 0, pp: 0, avg: 0, rms: 0, raw: { min: 0, max: 0, final: 0, pp: 0, avg: 0, rms: 0 } };
-        expect(summarizeSeries({ name: 'v(x)', points: [] } as DataSeries)).toEqual(zeros);
-        expect(summarizeSeries({ name: 'v(x)', points: [{ x: 0, y: NaN }] } as DataSeries)).toEqual(zeros);
+    it('yields NaN (NOT zeros) for an all-empty / all-non-finite series — a 0 would silently satisfy specs', () => {
+        // A series with NO finite samples returns NaN, not 0 (arch-review debt #8): a 0 would SATISFY a spec
+        // like "v(x) < 1" on data we never measured, so the assertion evaluator's finite-guard turns NaN into an
+        // UNMEASURABLE verdict (actual:null) instead of a silent pass. Assert the COMPLETE shape (Jest toEqual
+        // treats NaN as equal to NaN) so a future drift back to 0 is caught.
+        const n = Number.NaN;
+        const noData = { node: 'v(x)', min: n, max: n, final: n, pp: n, avg: n, rms: n, raw: { min: n, max: n, final: n, pp: n, avg: n, rms: n } };
+        expect(summarizeSeries({ name: 'v(x)', points: [] } as DataSeries)).toEqual(noData);
+        expect(summarizeSeries({ name: 'v(x)', points: [{ x: 0, y: Number.NaN }] } as DataSeries)).toEqual(noData);
     });
 });
