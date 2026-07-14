@@ -8,6 +8,7 @@ Every verdict is backed by measured evidence — never by a model's say-so.
 [![CI](https://github.com/Abdulberk/circuit-forge/actions/workflows/ci.yml/badge.svg)](https://github.com/Abdulberk/circuit-forge/actions/workflows/ci.yml)
 [![PCB quality gate](https://github.com/Abdulberk/circuit-forge/actions/workflows/pcb-gate.yml/badge.svg)](https://github.com/Abdulberk/circuit-forge/actions/workflows/pcb-gate.yml)
 [![Release](https://img.shields.io/github/v/release/Abdulberk/circuit-forge?include_prereleases&label=release)](https://github.com/Abdulberk/circuit-forge/releases)
+[![npm](https://img.shields.io/npm/v/%40circuit-forge%2Feda-core?label=eda-core&logo=npm&color=CB3837)](https://www.npmjs.com/package/@circuit-forge/eda-core)
 ![Node](https://img.shields.io/badge/node-%E2%89%A5%2020-5FA04E?logo=node.js&logoColor=white)
 ![pnpm](https://img.shields.io/badge/pnpm-8-F69220?logo=pnpm&logoColor=white)
 ![TypeScript](https://img.shields.io/badge/TypeScript-strict-3178C6?logo=typescript&logoColor=white)
@@ -195,6 +196,7 @@ APIs may change before 1.0.
 
 ## 📄 License
 
-[`@circuit-forge/eda-core`](packages/eda-core/LICENSE) is **MIT**. The remaining packages and
-applications are **not yet licensed** (all rights reserved) while the project is pre-release —
-licensing will be finalized before 1.0.
+[`@circuit-forge/eda-core`](packages/eda-core/LICENSE) is **MIT** and published on
+[npm](https://www.npmjs.com/package/@circuit-forge/eda-core) (from this monorepo — see
+`packages/eda-core`). The remaining packages and applications are **not yet licensed**
+(all rights reserved) while the project is pre-release — licensing will be finalized before 1.0.
