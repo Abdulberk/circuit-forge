@@ -1,328 +1,200 @@
-# Circuit Forge — AI Circuit Generator & Simulator (Backend)
+<div align="center">
 
-A backend system for AI-assisted circuit design and **SPICE-based simulation**. This pnpm + Turborepo monorepo contains the REST API, the simulation worker, and the core EDA libraries (circuit modeling, netlist generation, SPICE sanitization, ERC, result parsing).
+# ⚡ Circuit Forge
 
-> **Heads up — this repo is pnpm-only.** Internal packages use the `workspace:*` protocol, which `npm install` cannot parse. Always use `pnpm`. See [LOCAL_SETUP.md](LOCAL_SETUP.md).
+**AI-assisted circuit design, verified by real SPICE.**
+Every verdict is backed by measured evidence — never by a model's say-so.
+
+[![CI](https://github.com/Abdulberk/circuit-forge/actions/workflows/ci.yml/badge.svg)](https://github.com/Abdulberk/circuit-forge/actions/workflows/ci.yml)
+[![PCB quality gate](https://github.com/Abdulberk/circuit-forge/actions/workflows/pcb-gate.yml/badge.svg)](https://github.com/Abdulberk/circuit-forge/actions/workflows/pcb-gate.yml)
+[![Release](https://img.shields.io/github/v/release/Abdulberk/circuit-forge?include_prereleases&label=release)](https://github.com/Abdulberk/circuit-forge/releases)
+![Node](https://img.shields.io/badge/node-%E2%89%A5%2020-5FA04E?logo=node.js&logoColor=white)
+![pnpm](https://img.shields.io/badge/pnpm-8-F69220?logo=pnpm&logoColor=white)
+![TypeScript](https://img.shields.io/badge/TypeScript-strict-3178C6?logo=typescript&logoColor=white)
+
+[Quick start](#-quick-start) · [What it does](#-what-it-does) · [Architecture](#%EF%B8%8F-architecture) · [Quality](#-tested-against-real-ngspice--in-ci) · [Docs](#-documentation) · [Status](#%EF%B8%8F-status--roadmap)
+
+</div>
 
 ---
 
-## ✨ Features
+Most AI tools *tell* you a circuit works. **Circuit Forge proves it.** A design is only called
+**verified** after real **ngspice** simulates it and every stated acceptance criterion is checked
+against *measured* values — voltages, branch currents, cutoff frequency, THD, gain. What you get
+back is not "looks good": it is an evidence pack.
 
-- **Multi-tenant REST API** (NestJS) — organizations, projects, versioned circuits, templates, model assets, and simulations, secured with JWT + RBAC.
-- **Async simulation pipeline** — API enqueues jobs on a BullMQ/Redis queue; a dedicated worker runs **ngspice** in an isolated, sandboxed per-job directory and stores results in Postgres or S3/MinIO. Simulation jobs retry with backoff and clean themselves up on completion/failure; jobs are capped by a sim timeout and output-size/point limits.
-- **Durable AI design queue** — the AI design loop runs on its own durable BullMQ queue (not an in-process detached runner), with graceful shutdown (workers close → orphan reaper stops → DB disconnects → telemetry flushes, on both API and worker `SIGTERM`/`SIGINT`) and an orphan-design reaper that reconciles rows stuck `QUEUED`/`RUNNING` against the queue's real state after a crash.
-- **EDA core library** (`@circuit-forge/eda-core`):
-  - Circuit-JSON → SPICE **netlist generation** for a broad device set — R/L/C, transformers & lossless transmission lines, independent + controlled (E/G) + arbitrary behavioral (B) sources, diodes/Zener, BJT/MOSFET/JFET, voltage-controlled switches, thyristors/SCR, IGBTs, and op-amp/IC `.subckt` macromodels — backed by a curated generic **model library**, plus control block and probes.
-  - **SPICE security/sanitization** — reserved-word & node-name sanitization, shell-metacharacter rejection, `.include` path whitelisting.
-  - **ERC** (Electrical Rule Check) with coded findings.
-  - **Result parsing** — ngspice CSV / raw ASCII → typed series, plus five report-only ngspice-native analyses: `.four`/THD (Fourier), `.meas` measurements, `.tf` DC transfer function, `.noise`, and `.sens` DC sensitivity.
-  - **Zod schemas** for circuit and analysis config (transient / AC / DC / operating point), including per-analysis `fourier`/`measurements` (transient) and `tf` (operating point) config plus dedicated noise/sensitivity analysis types.
-- **LLM core** (`@circuitforge/llm-core`) — AI circuit generation via Claude using a native **tool-use loop grounded in the live parts catalog** (the model searches/inspects real parts before specifying components, so outputs carry real MPNs + sourcing), plus a simulate-in-the-loop design endpoint that runs ngspice and self-repairs until the circuit verifies.
-- **Verdict-gating spec assertions** — the AssertionDto metric enum (`min | max | final | pp | avg | rms | cutoff | thd | gain`) lets a spec gate the "verified" verdict on THD and small-signal gain, not just raw voltage/current levels; both are also evaluated for robustness across component-tolerance variants via the Monte-Carlo yield engine (informally "robust-THD"/"robust-gain" — pass at nominal AND across tolerance draws, not nominal alone).
-- **Live component catalog** (`parts`) — TME-backed search over 1.3M+ real manufacturer parts (stock, pricing tiers, datasheets), structured classification, and CircuitJson component mapping; OAuth tokens + responses cached. Feeds AI grounding and per-version **BOM** export.
-- **SPICE netlist interchange** (`netlist`) — import/export standard SPICE decks (LTspice/KiCad round-trip), covering both analog and digital/XSPICE (flip-flops, latches, gates, tristate) circuits, with generic model bodies inlined on export.
-- **Usage metering & quotas** (`usage`) — always-on metering with default-unlimited quotas (per `QUOTA_*` env): multi-tenant simulation fairness (concurrent/monthly), per-user catalog-call ceilings, and per-org storage caps; drift-free on-demand aggregation, structured `429 QUOTA_EXCEEDED`.
-- **Auth & security** — Argon2 password hashing, JWT access + refresh token rotation, login brute-force lockout, email verification + password reset, per-org roles (OWNER/ADMIN/MEMBER), `class-validator` + Zod input validation, global rate limiting, CORS allowlist, security headers.
-- **Production robustness** — a `/health/ready` readiness probe pings DB + Redis + S3 concurrently and reports 503 on degradation; LLM calls carry a per-call timeout, a token budget, and retry-on-timeout; simulation jobs are capped by output-size and point limits (see the durable-queue bullet above for retry/cleanup).
-- **Local infra via Docker Compose** — Postgres, Redis, MinIO (+ auto bucket creation).
-- **Demo seed** — ready-to-use user, org, 10 circuit templates, and a sample project.
+```jsonc
+// POST /generation/verify-design → DesignEvidence (truncated)
+{
+  "verdict": "pass",
+  "summary": "Simulation OK — 3/3 checks passed",
+  "assertions": [
+    {
+      "label": "LED current ≈ 10 mA",
+      "probe": "i(R1)", "metric": "final", "op": "approx",
+      "target": 0.01, "actual": 0.0091, "pass": true,
+      "detail": "final(i(R1)) = 0.0091 ✓ approx 0.01"
+    }
+    // …every criterion, with the measured value and its signed distance to target
+  ],
+  "measurements": [ { "node": "@r1[i]", "min": 0.0091, "max": 0.0091, "final": 0.0091 } /* … */ ],
+  "robustness": {
+    "worstCase": { "componentsCornered": ["R1"], "evaluated": 2, "passed": 2, "passAllCorners": true }
+  }
+}
+```
+
+> **Heads up — this repo is pnpm-only.** Internal packages use the `workspace:*` protocol, which
+> `npm install` cannot parse. Always use `pnpm`. See [LOCAL_SETUP.md](LOCAL_SETUP.md).
+
+---
+
+## ✨ What it does
+
+| | Capability |
+|---|---|
+| 🧠 **AI design loop** | Describe intent → the LLM designs against a **live parts catalog** (real MPNs + sourcing), simulates, reads the measured failures, and self-repairs until the spec is met — or honestly reports why not. |
+| ✅ **Deterministic verification** | Circuit JSON → generated SPICE netlist → sandboxed ngspice → typed results → pass/fail per acceptance criterion (`min · max · final · pp · avg · rms · cutoff · thd · gain`). |
+| 🎲 **Robustness, not just nominal** | Monte-Carlo yield with confidence interval, worst-case ±tolerance **corner analysis** (2ᵏ extremes), and parametric sweeps — a design that only works at nominal isn't a design. |
+| 📈 **Broad analysis coverage** | Operating point, transient, AC, DC sweep, noise, DC sensitivity — plus Fourier/THD, `.meas` measurements, and small-signal transfer function. |
+| 🔀 **Mixed-signal** | Digital XSPICE devices (gates, flip-flops, latches, tristate) auto-bridged to the analog domain. |
+| 🔁 **SPICE interchange** | Import/export standard SPICE decks (LTspice/KiCad round-trip), analog and digital. |
+| 🧩 **Real components** | TME-backed catalog search over 1.3M+ manufacturer parts (stock, pricing, datasheets), E-series (IEC 60063) value snapping, per-version **BOM** export. |
+| 🖨️ **PCB pipeline** | Autorouted layout, KiCad-based DRC, Gerber / BOM / pick-and-place export, and a 3D board model (GLB) — as an async job queue. |
+| 🏢 **Multi-tenant platform** | Orgs & RBAC, JWT auth, usage metering + quotas, platform-admin API with audit trail, OpenTelemetry observability (opt-in), readiness probes. |
 
 ---
 
 ## 🏗️ Architecture
 
-Two deployable Node services — the **API** (NestJS) and **worker-sim** (BullMQ consumer) — over
-PostgreSQL / Redis / S3, sharing two pure libraries (**eda-core**, **llm-core**), and talking to
-Anthropic (LLM), the TME parts catalog, and SMTP. OpenTelemetry spans both tiers.
+The heart of the system is a **closed feedback cycle**: design → simulate → measure → repair.
+Untrusted netlists never execute inside the API — simulation happens in a dedicated worker, in a
+**sandboxed subprocess** (non-root, resource-limited, no network, hard timeout), so a hostile or
+degenerate circuit can burn only its own cage.
 
 ```mermaid
-flowchart TB
-    client(["Web / API client<br/>JWT + RBAC"])
-
-    subgraph api["API — NestJS (apps/api)"]
-        api_ai["Circuit AI<br/>generate · edit · explain · design · design-jobs · verify-design"]
-        api_sim["Simulation<br/>quick + versioned jobs"]
-        api_cat["Catalog & interchange<br/>parts · netlist import/export · versions/BOM"]
-        api_ten["Tenancy & CRUD<br/>auth · orgs · projects · templates · assets"]
-        api_ops["Ops<br/>usage/quotas · health/readiness · email"]
-    end
-
-    subgraph pkg["Shared pure libraries (packages)"]
-        eda["eda-core<br/>netlist gen/parse · ERC · 5 analyses · Monte-Carlo · Convergence Doctor"]
-        llm["llm-core<br/>generate/edit/fix/explain · runDesignLoop · timeout+budget"]
-    end
-
-    subgraph data["Stateful backing services"]
-        pg[("PostgreSQL<br/>Prisma ×2 (api + worker)")]
-        redis[("Redis · BullMQ<br/>queues: simulations + design")]
-        s3[("MinIO / S3<br/>assets · models · large results")]
-    end
-
-    subgraph worker["worker-sim (apps/worker-sim)"]
-        simw["Simulation worker<br/>ngspice -b (sandboxed) · Monte-Carlo batch"]
-        designw["Design worker<br/>runDesignLoop · multi-candidate · local-sim · orphan reaper"]
-    end
-
-    subgraph ext["External services"]
-        anthropic{{"Anthropic API<br/>Claude tool-use"}}
-        tme{{"TME v2 catalog<br/>real parts + sourcing (OAuth)"}}
-        smtp{{"SMTP / SES<br/>verify + reset email"}}
-        otel{{"OTLP collector<br/>traces + metrics (gated)"}}
-    end
-
-    client -->|HTTPS| api
-    api --> eda
-    api_ai --> llm
-    llm --> anthropic
-    api_ai -->|parts grounding| tme
-    api_cat -->|catalog| tme
-    api_ten -->|email| smtp
-    api -->|Prisma| pg
-    api_ai -->|enqueue design| redis
-    api_sim -->|enqueue sims| redis
-    api_ten -->|presign| s3
-
-    redis -->|consume simulations| simw
-    redis -->|consume design| designw
-    worker --> eda
-    designw --> llm
-    simw -->|models + results| s3
-    simw -->|job rows| pg
-    designw -->|DesignJob rows| pg
-    designw -.->|reconcile orphans| redis
-
-    api -.->|traces| otel
-    worker -.->|traces| otel
+flowchart LR
+    U["Circuit JSON<br/>+ acceptance criteria"] --> API["API<br/>(NestJS)"]
+    P["Design prompt"] -.-> LLM["AI design loop<br/>(parts-grounded)"]
+    LLM -.->|"proposes circuit"| API
+    API -->|"enqueue"| Q[("BullMQ<br/>queue")]
+    Q --> W["Simulation worker"]
+    W --> NG["ngspice<br/>sandboxed subprocess"]
+    NG --> W
+    W --> DB[("Postgres / S3")]
+    API -->|"poll"| DB
+    API --> EV["Evidence pack:<br/>verdict · measurements · robustness"]
+    EV -.->|"measured failures feed back"| LLM
 ```
 
-**How the pieces talk**
+Monorepo layout (pnpm + Turborepo):
 
-- The **API** owns HTTP, auth (JWT access + refresh-token rotation, brute-force lockout), RBAC, quota
-  admission, CRUD, and Swagger — but runs **no ngspice itself**; it enqueues work and polls.
-- **worker-sim** consumes two BullMQ queues: `simulations` (deterministic ngspice, sandboxed with
-  rlimit + optional bubblewrap) and `design` (the agentic loop). An **orphan reaper** reconciles jobs
-  stuck after a crash; both workers drain on `SIGTERM` before telemetry flushes.
-- Both tiers share **eda-core** (netlist gen/parse + SPICE round-trip import, ERC, the five ngspice
-  analyses, Monte-Carlo yield, the Convergence Doctor) and **llm-core** (`generateCircuit`/`editCircuit`/
-  `fixCircuit`/`explainCircuit` + the framework-free `runDesignLoop`).
-- `/health/ready` gates traffic on DB + Redis + S3; usage metering enforces per-org quotas at enqueue;
-  telemetry exports to an OTLP collector when `OTEL_*` is configured (inert otherwise).
-
-### The closed-loop design + verify flow (the moat)
-
-The differentiator: the AI doesn't just emit a circuit — the worker **simulates it, checks it against the
-spec, and self-repairs until it verifies**, then stress-tests robustness across component tolerances.
-
-```mermaid
-sequenceDiagram
-    autonumber
-    actor C as Client
-    participant A as API (design-jobs)
-    participant Q as Redis (design queue)
-    participant W as Design worker
-    participant L as Anthropic (llm-core)
-    participant N as ngspice (in-process)
-    participant DB as PostgreSQL
-
-    C->>A: POST /design-jobs {prompt, constraints}
-    A->>DB: insert DesignJob (QUEUED)
-    A->>Q: enqueue design job
-    A-->>C: 202 {jobId}
-    Q->>W: consume job
-    W->>DB: claim QUEUED → RUNNING
-    loop each round (≤ maxRounds)
-        W->>L: generate / fix circuit (tool-use)
-        L-->>W: CircuitJson
-        W->>N: simulate locally (no re-enqueue → no deadlock)
-        N-->>W: measurements
-        W->>W: evaluateAssertions (+ THD / gain gate)
-    end
-    W->>N: Monte-Carlo on the winner (yield + Wilson CI)
-    N-->>W: robustness tier
-    W->>DB: terminal DesignJob (SUCCEEDED + result)
-    C->>A: GET /design-jobs/:id (poll)
-    A->>DB: read status / result
-    A-->>C: {SUCCEEDED, circuit, assertions, yield, BOM}
+```
+apps/
+  api/          NestJS REST API — auth, orgs, projects, simulation, AI generation, parts, usage
+  worker-sim/   Simulation worker — sandboxed ngspice, Monte-Carlo / corner / sweep batch runners
+  pcb-worker/   PCB worker — layout, DRC, Gerber/BOM/PnP, 3D model jobs
+  pcb-viewer/   Dev tool — 3D board preview
+packages/
+  eda-core/     The EDA brain — circuit model, netlist generation, SPICE sanitization, ERC,
+                result parsing, assertions, Monte-Carlo/corner/sweep engines  (MIT)
+  llm-core/     AI design loop — parts-grounded tool use, simulate-in-the-loop self-repair
+  pcb-core/     PCB contracts — fab profiles, DRC oracle, Gerber/BOM/PnP writers
 ```
 
-Full details — services, queues, sandbox, shutdown ordering, verify-design worker delegation — in
+Deep dive — services, queues, sandbox model, graceful shutdown, environment variables:
 [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
 
 ---
 
-## 📂 Project Structure
+## 🔬 Tested against real ngspice — in CI
 
-```
-circuit-forge/
-├─ apps/
-│  ├─ api/                         # NestJS REST API
-│  │  ├─ __tests__/                # integration + e2e smoke tests
-│  │  ├─ prisma/
-│  │  │  ├─ migrations/            # SQL migrations (init → template cfg → usage → auth lifecycle → refresh rotation → design jobs)
-│  │  │  ├─ schema.prisma          # data model
-│  │  │  └─ seed.ts                # demo data seeder
-│  │  └─ src/
-│  │     ├─ auth/                  # JWT + local strategies, guards, decorators
-│  │     ├─ orgs/                  # organizations + membership/RBAC
-│  │     ├─ projects/              # projects (org-scoped)
-│  │     ├─ versions/              # versioned circuit snapshots + BOM (sourcing)
-│  │     ├─ templates/             # public/org circuit templates
-│  │     ├─ assets/                # S3 model-file upload (presign/commit)
-│  │     ├─ simulation/            # enqueue & query simulations (+ downsampling)
-│  │     ├─ generation/            # AI circuit generate/edit/explain/design (catalog-grounded)
-│  │     ├─ parts/                 # TME component catalog (search, detail, mapping, cache)
-│  │     ├─ netlist/               # SPICE deck import / export (LTspice/KiCad interchange)
-│  │     ├─ usage/                 # usage metering + quota gates (sim, parts, storage)
-│  │     ├─ health/                # health / ready / live (DB+Redis+S3 readiness)
-│  │     ├─ email/                 # transactional email (verification / password reset)
-│  │     ├─ observability/         # OpenTelemetry instrumentation + telemetry
-│  │     ├─ common/                # shared DTOs + exception filters
-│  │     ├─ config/                # env validation (zod)
-│  │     ├─ prisma/                # PrismaService module
-│  │     ├─ app.module.ts
-│  │     └─ main.ts                # bootstrap (reads PORT, Swagger /docs)
-│  └─ worker-sim/                  # BullMQ worker — simulation + AI design queues
-│     └─ src/
-│        ├─ simulation/            # processor (queue) + runner (ngspice) + montecarlo-runner (yield)
-│        ├─ design/                # AI design-loop worker: processor + orphan reaper + multi-candidate + local-sim
-│        ├─ storage/               # S3 client (download models / upload results)
-│        ├─ observability/         # OpenTelemetry instrumentation + telemetry
-│        ├─ prisma/                # Prisma client
-│        ├─ util/                  # async semaphore (concurrency bound)
-│        ├─ config.ts              # zod-validated env config
-│        ├─ logger.ts
-│        └─ main.ts                # boots sim + design workers + reaper; graceful shutdown
-├─ packages/
-│  ├─ eda-core/                    # circuit & netlist library
-│  │  ├─ __tests__/                # unit + coverage-matrix / sweep / fuzz harnesses (live ngspice)
-│  │  └─ src/
-│  │     ├─ netlist/               # generator.ts + sanitizer.ts (security)
-│  │     ├─ models/                # curated generic SPICE model library (diodes, BJT/FET, digital, …)
-│  │     ├─ parser/                # csv-parser.ts + netlist-parser.ts (SPICE round-trip import)
-│  │     ├─ analysis/              # measurement distillation + assertions + fourier/meas/tf/noise/sens parsers
-│  │     ├─ erc/                   # checker.ts + codes.ts (rule checks)
-│  │     ├─ schemas/               # analysis.schema.ts + circuit.schema.ts (zod)
-│  │     ├─ types/                 # circuit / analysis / erc / simulation
-│  │     ├─ utils/                 # unit-parser, E-series snapping, downsample, seeded PRNG
-│  │     ├─ montecarlo.ts          # tolerance/yield engine (Monte-Carlo + Wilson CI)
-│  │     └─ index.ts               # public API surface
-│  └─ llm-core/                    # AI generation (Claude tool-use + catalog grounding)
-│     └─ src/                      # index.ts (generate/edit/fix/explain) + design-core.ts (runDesignLoop) + policy.ts (timeout/budget)
-├─ infra/
-│  └─ docker/                      # api.Dockerfile + worker-sim.Dockerfile
-├─ docs/                           # ← detailed documentation (see index below)
-├─ plans/
-│  └─ IMPLEMENTATION_PLAN.md       # original implementation plan (historical)
-├─ .env / .env.example             # environment variables
-├─ docker-compose.yml              # local infra (postgres, redis, minio, …)
-├─ turbo.json                      # Turborepo pipeline
-├─ pnpm-workspace.yaml             # workspaces: apps/*, packages/*
-├─ tsconfig.base.json
-├─ LOCAL_SETUP.md                  # ← verified local setup & troubleshooting
-└─ README.md                       # this file
-```
+Unit tests alone are not enough for an EDA tool: the bugs live at the **circuit-to-SPICE
+boundary** and in **simulator version drift**. So besides the per-package unit and integration
+suites, every PR runs a real-ngspice regression battery:
+
+| Harness | What it locks down |
+|---|---|
+| **Coverage matrix** — 83 cells | Every device × analysis × probe-form combination, checked against analytic expectations |
+| **Edge battery** — 51 cases | Numeric limits, convergence, safety invariants, physics sanity |
+| **Pairwise sweep** — 200 combos | Parameter × hostile-name interactions |
+| **Seeded fuzz** | Random circuits must fail *loudly* or produce finite data — never silently wrong |
+
+The engine itself is **pinned and drift-guarded**: CI asserts the runner's ngspice major, and a
+dedicated job runs the same battery against the **exact Alpine binary production ships** — so an
+engine upgrade is an explicit, matrix-verified decision, never a silent change.
 
 ---
 
-## 🧰 Tech Stack
+## 🚀 Quick start
 
-| Layer | Technology |
-|-------|-----------|
-| API framework | NestJS 10, Express |
-| ORM / DB | Prisma 5, PostgreSQL 15 |
-| Queue | BullMQ 5 on Redis 7 (ioredis) |
-| Object storage | AWS S3 SDK → MinIO |
-| Simulation | ngspice (batch mode) |
-| Validation | Zod, class-validator / class-transformer |
-| Auth | JWT (`@nestjs/jwt`, passport), Argon2 |
-| Logging | pino / pino-http / pino-pretty |
-| Tooling | pnpm 8, Turborepo, TypeScript 5, tsx, Jest, ESLint, Prettier |
-
----
-
-## 🚀 Quick Start
-
-> Verified, step-by-step instructions (incl. Windows specifics and port-conflict handling) live in **[LOCAL_SETUP.md](LOCAL_SETUP.md)**.
+> Verified step-by-step instructions (incl. Windows specifics and port-conflict handling) live in
+> **[LOCAL_SETUP.md](LOCAL_SETUP.md)**.
 
 ```powershell
 pnpm install                                # never `npm install`
 docker compose up -d postgres redis minio   # Postgres 5432 / Redis 6379 / MinIO 9000
-pnpm db:migrate:dev                          # apply schema  (first run creates it)
-pnpm db:seed                                 # demo data (optional)
-pnpm dev                                     # start all 4 packages
+pnpm db:migrate:dev                         # apply schema (first run creates it)
+pnpm db:seed                                # demo data (optional)
+pnpm dev                                    # start all apps in watch mode
 ```
 
-- **API:** http://localhost:3001  · **Swagger:** http://localhost:3001/docs
+- **API:** http://localhost:3001 · **Swagger:** http://localhost:3001/docs
 - **MinIO console:** http://localhost:9001 (`minioadmin` / `minioadmin`)
 - **Demo login:** `demo@circuitforge.io` / `demo123456`
 
-> The API port is set by `PORT` in `.env` (default 3000; this repo uses **3001** locally). The `API_PORT` variable is currently **not read** by the code — see [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md#environment-variables).
-
-### ngspice (required for simulation results)
-
-Without ngspice the pipeline runs end-to-end but jobs fail with `ngspice exited with code 1`. Install it:
+**ngspice** (required for actual simulation results):
 
 ```powershell
-# Windows (run in an Administrator PowerShell)
+# Windows (Administrator PowerShell)
 choco install ngspice -y
 # Linux:  sudo apt-get install ngspice     |     macOS:  brew install ngspice
 ```
 
-See [docs/SIMULATION.md](docs/SIMULATION.md) for the full pipeline and a known result-parsing quirk.
-
----
-
-## 📡 API Summary
-
-JWT-protected REST API (base `http://localhost:3001`, interactive docs at `/docs`). Modules: **auth, orgs, projects, versions, templates, assets, simulation, generation (AI), parts (catalog), netlist (import/export), usage (metering/quotas), health**.
-
-Full per-endpoint reference (methods, paths, auth, request/response): **[docs/API.md](docs/API.md)**.
-
----
-
-## 🛠️ Scripts (root)
+<details>
+<summary><b>Root scripts</b></summary>
 
 | Script | Purpose |
-|--------|---------|
-| `pnpm dev` | Start all apps/packages in watch mode (Turbo) |
-| `pnpm build` | Build all packages and apps |
-| `pnpm test` / `pnpm test:cov` / `pnpm test:e2e` | Run tests / with coverage / e2e |
-| `pnpm lint` / `pnpm lint:fix` | ESLint |
-| `pnpm format` / `pnpm format:check` | Prettier |
-| `pnpm typecheck` | TypeScript type-check |
-| `pnpm db:migrate` / `db:migrate:dev` | Apply migrations (deploy / dev) |
-| `pnpm db:generate` | Generate Prisma client |
-| `pnpm db:seed` | Seed demo data |
-| `pnpm db:studio` | Open Prisma Studio |
-| `pnpm clean` | Clean build artifacts |
+|---|---|
+| `pnpm dev` / `pnpm build` | Watch mode / build all (Turbo) |
+| `pnpm test` / `test:cov` / `test:e2e` | Unit + integration suites |
+| `pnpm test:matrix` / `test:edge` / `test:sweep` / `test:fuzz` | Real-ngspice regression battery |
+| `pnpm test:robustness` | Monte-Carlo/corner current-criteria proof (real ngspice) |
+| `pnpm test:layout` | PCB layout + DRC eval harness |
+| `pnpm typecheck` / `lint` / `format` | Static checks |
+| `pnpm db:migrate` / `db:generate` / `db:seed` / `db:studio` | Database workflows |
+
+</details>
 
 ---
 
 ## 📚 Documentation
 
 | Doc | Contents |
-|-----|----------|
-| [LOCAL_SETUP.md](LOCAL_SETUP.md) | Verified local setup, daily run, port conflicts, troubleshooting |
-| [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) | System architecture, data flow, infra, Turbo pipeline, **all env vars** |
-| [docs/API.md](docs/API.md) | Complete REST API reference (every endpoint) |
-| [docs/DATA_MODEL.md](docs/DATA_MODEL.md) | Prisma schema — every model, enum, relation (ER diagram) |
-| [docs/EDA_CORE.md](docs/EDA_CORE.md) | `eda-core` & `llm-core`: circuit JSON, netlist gen, sanitizer, ERC, parsers, schemas |
-| [docs/SIMULATION.md](docs/SIMULATION.md) | Worker pipeline, ngspice execution, result storage, known quirks |
-| [docs/SECURITY.md](docs/SECURITY.md) | Auth, RBAC, validation, rate limiting, simulation sandboxing |
-| [docs/OBSERVABILITY.md](docs/OBSERVABILITY.md) | OpenTelemetry traces + metrics, enabling it, custom sim metrics, recommended alerts |
-| [docs/ASSUMPTIONS.md](docs/ASSUMPTIONS.md) | Design decisions & assumptions (historical) |
-| [plans/IMPLEMENTATION_PLAN.md](plans/IMPLEMENTATION_PLAN.md) | Original implementation plan (historical) |
+|---|---|
+| [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) | System design, environment variables, queues, sandbox |
+| [docs/API.md](docs/API.md) | Full endpoint reference |
+| [docs/EDA_CORE.md](docs/EDA_CORE.md) | Circuit model, netlist generation, analyses |
+| [docs/OBSERVABILITY.md](docs/OBSERVABILITY.md) | OpenTelemetry setup (opt-in, inert by default) |
+| [VERIFICATION.md](VERIFICATION.md) | What "verified" means here, and how it is enforced |
+| [LOCAL_SETUP.md](LOCAL_SETUP.md) | Verified local setup, Windows gotchas |
 
 ---
 
-## 🧪 Demo Data
+## 🗺️ Status & roadmap
 
-`pnpm db:seed` creates:
-- **User:** `demo@circuitforge.io` / `demo123456`
-- **Organization:** "Demo Organization"
-- **10 templates:** RC Low-Pass Filter, Voltage Divider, Diode Rectifier, LC Oscillator, RC Integrator, Buck Converter, Sallen-Key Low-Pass, 555-style Astable, Class-AB Push-Pull, R-2R Ladder DAC
-- **Project:** "My First Circuit" (version 1)
+**Current: [v0.1.0](https://github.com/Abdulberk/circuit-forge/releases) (pre-release).** This is
+the backend milestone — honest about what it is:
 
----
+- ✅ Simulation, verification, robustness, AI loop, PCB pipeline, multi-tenant platform — built and tested
+- 🚧 Web frontend — in progress (this repo is backend + API today)
+- 🚧 Security hardening for hostile multi-tenant traffic — deferred, tracked
+- 🚧 Load testing & production deployment — not yet
 
-Built with NestJS, Prisma, BullMQ, ngspice, and Turborepo.
+APIs may change before 1.0.
+
+## 📄 License
+
+[`@circuit-forge/eda-core`](packages/eda-core/LICENSE) is **MIT**. The remaining packages and
+applications are **not yet licensed** (all rights reserved) while the project is pre-release —
+licensing will be finalized before 1.0.
