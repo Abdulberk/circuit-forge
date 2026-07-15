@@ -45,12 +45,14 @@ model User {
   platformRole PlatformRole @default(NONE)
 
   // Relations
-  memberships      OrgMembership[]
-  projectVersions  ProjectVersion[]
-  workingCopyEdits ProjectWorkingCopy[]
-  auditLogs        AuditLog[]           @relation("AuditSubject")
-  adminAuditLogs   AuditLog[]           @relation("AdminActor")
-  refreshTokens    RefreshToken[]
+  memberships         OrgMembership[]
+  invitationsSent     OrgInvitation[]      @relation("InvitationsSent")
+  invitationsAccepted OrgInvitation[]      @relation("InvitationsAccepted")
+  projectVersions     ProjectVersion[]
+  workingCopyEdits    ProjectWorkingCopy[]
+  auditLogs           AuditLog[]           @relation("AuditSubject")
+  adminAuditLogs      AuditLog[]           @relation("AdminActor")
+  refreshTokens       RefreshToken[]
 
   @@map("users")
 }
@@ -105,6 +107,7 @@ model Organization {
 
   // Relations
   memberships    OrgMembership[]
+  invitations    OrgInvitation[]
   projects       Project[]
   templates      Template[]
   assets         Asset[]
@@ -156,6 +159,39 @@ enum OrgRole {
   OWNER
   ADMIN
   MEMBER
+}
+
+// A pending invitation for someone to join an org (self-serve team growth). The raw token travels only in
+// the emailed link; we store its sha256 hash and match by hashing the presented token (same recipe as the
+// email-verify / password-reset tokens). One live invite per (org, email) — a re-invite refreshes the row.
+model OrgInvitation {
+  id               String              @id @default(uuid())
+  orgId            String
+  email            String // normalized (trim + lowercase) — the address the invite was sent to
+  role             OrgRole             @default(MEMBER)
+  tokenHash        String // sha256 of the emailed token; the raw token is never stored
+  status           OrgInvitationStatus @default(PENDING)
+  invitedByUserId  String
+  expiresAt        DateTime
+  acceptedAt       DateTime?
+  acceptedByUserId String?
+  createdAt        DateTime            @default(now())
+  updatedAt        DateTime            @updatedAt
+
+  org        Organization @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  invitedBy  User         @relation("InvitationsSent", fields: [invitedByUserId], references: [id])
+  acceptedBy User?        @relation("InvitationsAccepted", fields: [acceptedByUserId], references: [id], onDelete: SetNull)
+
+  @@unique([orgId, email]) // one invite per email per org; re-inviting UPSERTS (fresh token + expiry)
+  @@index([tokenHash])
+  @@map("org_invitations")
+}
+
+enum OrgInvitationStatus {
+  PENDING
+  ACCEPTED
+  REVOKED
+  EXPIRED
 }
 
 // ============================================================================

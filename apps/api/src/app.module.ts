@@ -14,6 +14,7 @@ import { OrgsModule } from './orgs/orgs.module';
 import { ProjectsModule } from './projects/projects.module';
 import { VersionsModule } from './versions/versions.module';
 import { WorkingCopyModule } from './working-copy/working-copy.module';
+import { InvitationsModule } from './invitations/invitations.module';
 import { TemplatesModule } from './templates/templates.module';
 import { AssetsModule } from './assets/assets.module';
 import { SimulationModule } from './simulation/simulation.module';
@@ -62,6 +63,7 @@ import { AdminModule } from './admin/admin.module';
         // Feature modules
         AuthModule,
         OrgsModule,
+        InvitationsModule,
         ProjectsModule,
         VersionsModule,
         WorkingCopyModule,
