@@ -1,12 +1,14 @@
 /**
  * Organizations Controller
  */
-import { Controller, Get, Post, Body, Param, Query, ParseUUIDPipe, UseGuards } from '@nestjs/common';
+import { Controller, Get, Post, Patch, Delete, Body, Param, Query, ParseUUIDPipe, UseGuards } from '@nestjs/common';
 import { ApiTags, ApiOperation, ApiBearerAuth } from '@nestjs/swagger';
+import { OrgRole } from '@prisma/client';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { CurrentUser } from '../auth/decorators/current-user.decorator';
+import { PaginationQueryDto } from '../common/dto/pagination.dto';
 import { OrgsService } from './orgs.service';
-import { CreateOrgDto, OrgAuditQueryDto } from './dto';
+import { CreateOrgDto, OrgAuditQueryDto, UpdateMemberRoleDto, RemoveMemberDto } from './dto';
 
 @ApiTags('organizations')
 @ApiBearerAuth()
@@ -49,5 +51,42 @@ export class OrgsController {
             { limit: query.limit, offset: query.offset },
             { action: query.action, entityType: query.entityType, userId: query.userId },
         );
+    }
+
+    // ---------------------------------------------------------------- self-serve team management
+
+    @Get(':orgId/members')
+    @ApiOperation({ summary: 'List org members (any member may read).' })
+    async listMembers(
+        @Param('orgId', ParseUUIDPipe) orgId: string,
+        @Query() page: PaginationQueryDto,
+        @CurrentUser() user: { id: string },
+    ) {
+        await this.orgsService.checkMembership(orgId, user.id); // any member
+        return this.orgsService.listMembers(orgId, { limit: page.limit, offset: page.offset });
+    }
+
+    @Patch(':orgId/members/:userId')
+    @ApiOperation({ summary: "Change a member's role (OWNER/ADMIN; only an OWNER may grant/revoke OWNER)." })
+    async updateMemberRole(
+        @Param('orgId', ParseUUIDPipe) orgId: string,
+        @Param('userId', ParseUUIDPipe) targetUserId: string,
+        @Body() dto: UpdateMemberRoleDto,
+        @CurrentUser() user: { id: string },
+    ) {
+        const actor = await this.orgsService.checkMembership(orgId, user.id, [OrgRole.OWNER, OrgRole.ADMIN]);
+        return this.orgsService.updateMemberRole(orgId, targetUserId, dto.role, user.id, actor.role, dto.reason);
+    }
+
+    @Delete(':orgId/members/:userId')
+    @ApiOperation({ summary: 'Remove a member (OWNER/ADMIN; the last OWNER cannot be removed).' })
+    async removeMember(
+        @Param('orgId', ParseUUIDPipe) orgId: string,
+        @Param('userId', ParseUUIDPipe) targetUserId: string,
+        @Body() dto: RemoveMemberDto,
+        @CurrentUser() user: { id: string },
+    ) {
+        const actor = await this.orgsService.checkMembership(orgId, user.id, [OrgRole.OWNER, OrgRole.ADMIN]);
+        return this.orgsService.removeMember(orgId, targetUserId, user.id, actor.role, dto.reason);
     }
 }
