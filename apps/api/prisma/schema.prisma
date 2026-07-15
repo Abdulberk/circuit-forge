@@ -45,11 +45,12 @@ model User {
   platformRole PlatformRole @default(NONE)
 
   // Relations
-  memberships     OrgMembership[]
-  projectVersions ProjectVersion[]
-  auditLogs       AuditLog[]       @relation("AuditSubject")
-  adminAuditLogs  AuditLog[]       @relation("AdminActor")
-  refreshTokens   RefreshToken[]
+  memberships      OrgMembership[]
+  projectVersions  ProjectVersion[]
+  workingCopyEdits ProjectWorkingCopy[]
+  auditLogs        AuditLog[]           @relation("AuditSubject")
+  adminAuditLogs   AuditLog[]           @relation("AdminActor")
+  refreshTokens    RefreshToken[]
 
   @@map("users")
 }
@@ -170,9 +171,10 @@ model Project {
   updatedAt   DateTime @updatedAt
 
   // Relations
-  org        Organization     @relation(fields: [orgId], references: [id], onDelete: Cascade)
-  versions   ProjectVersion[]
-  pcbLayouts LayoutJob[]
+  org         Organization        @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  versions    ProjectVersion[]
+  pcbLayouts  LayoutJob[]
+  workingCopy ProjectWorkingCopy?
 
   @@unique([orgId, name])
   @@map("projects")
@@ -188,13 +190,39 @@ model ProjectVersion {
   createdAt       DateTime @default(now())
 
   // Relations
-  project        Project         @relation(fields: [projectId], references: [id], onDelete: Cascade)
-  createdBy      User            @relation(fields: [createdByUserId], references: [id])
-  simulationJobs SimulationJob[]
-  pcbLayouts     LayoutJob[]
+  project           Project              @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  createdBy         User                 @relation(fields: [createdByUserId], references: [id])
+  simulationJobs    SimulationJob[]
+  pcbLayouts        LayoutJob[]
+  workingCopiesBase ProjectWorkingCopy[] // drafts that descend from this version (baseVersionId)
 
   @@unique([projectId, versionNumber])
   @@map("project_versions")
+}
+
+// One MUTABLE draft per project — the live "working copy" the editor autosaves to (debounced, single-
+// writer, last-writer-wins across a user's tabs/devices). Kept in its OWN table, NOT on Project, so the
+// hot + large circuit/UI blobs never widen the Project metadata row that list/read endpoints scan. This is
+// the standard "continuous autosave" split: this row is the whiteboard (overwritten in place), while
+// ProjectVersion is the immutable photo archive that "Save version" snapshots into. v1 is deliberately
+// single-writer — no CRDT/OT co-editing; if that lands later, its state slots in here.
+model ProjectWorkingCopy {
+  projectId       String   @id // 1:1 — the PK IS the project id, so a project has at most one draft
+  circuitJson     Json
+  uiJson          Json
+  // Provenance: which saved version this draft descends from (for "N unsaved changes since v3" UX). Null
+  // for a project with no versions yet. SetNull so deleting that version doesn't drop the in-progress draft.
+  baseVersionId   String?
+  updatedByUserId String
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  project     Project         @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  baseVersion ProjectVersion? @relation(fields: [baseVersionId], references: [id], onDelete: SetNull)
+  updatedBy   User            @relation(fields: [updatedByUserId], references: [id])
+
+  @@index([baseVersionId])
+  @@map("project_working_copies")
 }
 
 // ============================================================================
