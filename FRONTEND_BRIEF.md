@@ -167,6 +167,9 @@ This section enumerates every screen the v1 frontend must ship, with its purpose
 | GET | `/projects/:projectId/versions` | JWT | Project | Version summaries (no circuit JSON) — **paginated**: `?limit&offset` → `{ items, total, limit, offset, hasMore }` |
 | POST | `/projects/:projectId/versions` | JWT | Editor | Body `{ circuitJson, uiJson }` → new immutable version |
 | GET | `/versions/:versionId` | JWT | Editor | Full version + nested `project` |
+| GET | `/projects/:projectId/working-copy` | JWT | Editor | Load the autosave draft; **404 → open latest version** |
+| PUT | `/projects/:projectId/working-copy` | JWT | Editor | **Continuous autosave** — overwrites the single draft (never a version). Body `{ circuitJson, uiJson, baseVersionId? }` → light ack |
+| DELETE | `/projects/:projectId/working-copy` | JWT | Editor | Discard draft ("revert to last saved"); idempotent |
 | POST | `/versions/:versionId/simulations` | JWT | Sim Panel | Body `{ analysisConfig, probes? }` → `{ jobId }` |
 | POST | `/simulations/quick` | JWT | Sim Panel | Body `{ netlist, analysisConfig? }`; throttled 10/60s |
 | GET | `/versions/:versionId/bom` | JWT | BOM panel | Aggregated bill of materials: parts grouped by mpn (qty, designators, unit/line cost, stock, datasheet) + per-currency totals + `unsourced` flags. `?format=csv` downloads a purchase-ready CSV. Same access rules as reading the version. |
@@ -175,6 +178,9 @@ This section enumerates every screen the v1 frontend must ship, with its purpose
 | POST | `/netlist/export` | JWT | Export action | Body `{ circuitJson, analysisConfig?, probes? }` → `text/plain` self-contained `.cir` deck (generic model bodies inlined; attachment headers set). Authoring errors → 400 with the exact message. Throttled 30/60s. |
 | GET | `/simulations/:jobId` | JWT | Sim Panel | Status poll |
 | GET | `/simulations/:jobId/result` | JWT | Waveform | Result payload |
+| POST | `/layouts` | JWT | PCB editor | Start async PCB layout (**LRO**) → 202 `{ jobId, status }`; body `{ circuit, versionId?, placer?, fabProfile?, netCurrentsA? }`; 5/60s. Full PCB flow in **FRONTEND_PCB_EDITOR_BRIEF.md** |
+| GET | `/layouts` | JWT | PCB editor | List your layouts — **paginated**; `?versionId=`/`?projectId=` filters re-find a saved circuit's PCB after a reload |
+| GET | `/layouts/:id` | JWT | PCB editor | Poll: status + result geometry + presigned GLB/Gerber URLs + `projectId`/`versionId` |
 | GET | `/templates` | optional JWT | Templates | Public when no `orgId`; org list requires membership |
 | GET | `/templates/:templateId` | optional JWT | Templates | `ParseUUIDPipe` on id |
 | POST | `/templates` | JWT | Templates | Body `{ orgId?, name, tags?, circuitJson }` |
@@ -188,7 +194,10 @@ This section enumerates every screen the v1 frontend must ship, with its purpose
 | POST | `/generate-circuit` | JWT | AI dialog | Throttled 5/60s |
 | POST | `/edit-circuit` | JWT | AI dialog | Throttled 5/60s |
 | POST | `/explain-circuit` | JWT | AI dialog, Editor | Throttled 10/60s |
-| POST | `/design-circuit` | JWT | AI Design dialog | Agentic; throttled 3/60s; ~10–60s |
+| POST | `/design-circuit` | JWT | AI Design dialog | Agentic **synchronous** (blocks ~10–60s); throttled 3/60s |
+| POST | `/design-jobs` | JWT | AI Design dialog | **Durable async agentic design (LRO)** → 202 `{ jobId, status }`; 3/60s. **Preferred** over sync `/design-circuit` — survives reloads. Body `{ prompt, constraints?, maxRounds?: 1–4 (def 2) }` |
+| GET | `/design-jobs/:id` | JWT | AI Design dialog | Poll: `{ id, status, result?, error?, createdAt, startedAt, finishedAt }` |
+| DELETE | `/design-jobs/:id` | JWT | AI Design dialog | Cooperative cancel (QUEUED→CANCELED now; RUNNING→abort flag, re-poll) |
 | POST | `/verify-design` | JWT | "Verify" button / review panel | Body `{ circuit, analysisConfig?, assertions? }` → a **DesignEvidence** pack (ERC + ngspice + measured-vs-requested specs → `verdict` pass/fail/inconclusive). Deterministic, no AI. **Synchronous response, but ngspice runs on the worker queue** — under load it can take a few seconds (server-side polled, up to 90s); show a brief "verifying…" state. 10/60s. See §4 / §7. |
 | GET | `/parts/search` | JWT | Editor (part picker) | `?q=` (+ `manufacturerId?`/`categoryId?`) → real-part search; 30/60s |
 | GET | `/parts/manufacturers` | JWT | Editor (part picker) | Manufacturer facet `[{ id, name, productsCount }]`; 60/60s |
@@ -227,7 +236,7 @@ The response type is `TokensResponse` (`apps/api/src/auth/auth.service.ts:15`): 
 **Caveats:**
 - `409` on duplicate email (register); `401` with a generic `"Invalid credentials"` on bad login (no user-enumeration leak).
 - After successful auth, immediately call `GET /orgs` to seed the org switcher and pick a default active org.
-- Logout performs no server revocation — the refresh token remains technically valid until expiry. Discard both tokens client-side.
+- Logout revokes the refresh-token **family server-side** (best-effort; always returns `204`) **when you send the refresh token in the body** — so send it, then discard both tokens client-side. The **access** token is stateless/non-revocable and stays valid until its ≤15 min expiry, which is why it lives in memory only.
 
 ---
 
@@ -295,20 +304,23 @@ The response type is `TokensResponse` (`apps/api/src/auth/auth.service.ts:15`): 
 - Properties inspector for `designator` (must match `/^[A-Z][A-Z0-9]*[0-9]+$/` — must **end in a digit**, e.g. `R1`, `GND1`), `value` (SPICE strings like `10k`, `100n`, `DC 5`, `SIN(0 1 1k)`), and `model` (diodes only — and you may omit it; eda-core injects `DDEFAULT`).
 - Live ERC panel running eda-core's `runErc(circuit)` **client-side** (pure function, no secrets): renders `issues[]` with code/severity/message and highlights related component/net ids; block save on `error`-severity issues.
 - Toolbar entry points to Simulate, AI Generate/Edit/Explain, Import, Export.
-- Undo/redo (local history), multi-select, keyboard shortcuts, autosave to a **local draft** (not to the server until explicit save).
+- Undo/redo (local history), multi-select, keyboard shortcuts, and **continuous autosave to the server-side working copy** (debounced ~1.5–3 s idle → `PUT /projects/:projectId/working-copy`) so a reload/crash never loses work and the draft follows the user across devices. This is the **Figma/Docs model**: autosave overwrites one mutable draft per project — it does **not** create versions. **"Save version"** is a separate, explicit action that snapshots the working copy into an immutable `ProjectVersion` (`POST /versions`), so version history stays meaningful instead of flooding. (Autosave/version contract: §4.4.5a; state handling: §8.4.)
 
 **Endpoints used:**
 
 | Endpoint | Purpose |
 |---|---|
-| `GET /versions/:versionId` | Hydrate `circuitJson` + `uiJson` on open |
-| `POST /projects/:projectId/versions` | Persist on save → creates the next immutable version |
+| `GET /projects/:projectId/working-copy` | Hydrate the in-progress draft on open (**404 → open the latest version** via `GET /versions/:versionId`) |
+| `PUT /projects/:projectId/working-copy` | Continuous autosave of the live draft (idempotent overwrite; never creates a version) |
+| `POST /projects/:projectId/versions` | **Explicit "Save version"** → snapshots an immutable checkpoint |
+| `GET /versions/:versionId` | Hydrate `circuitJson` + `uiJson` for a specific saved version |
+| `DELETE /projects/:projectId/working-copy` | (optional) "Revert to last saved" — discard the draft |
 | `POST /explain-circuit` | (optional) Inline "Explain this circuit" → `{ explanation }` |
 | `POST /edit-circuit` | (optional) Apply a natural-language edit to the current circuit |
 
 **Caveats:**
-- Keep electrical `CircuitJson` and visual `UiJson` as one coherent store — no split-brain. Validate with `safeValidateCircuitJson` before every save; never POST an unvalidated graph.
-- There is no PATCH on versions: each save is a new version. Surface that clearly so users understand the timeline grows.
+- Keep electrical `CircuitJson` and visual `UiJson` as one coherent store — no split-brain. Validate with `safeValidateCircuitJson` before every autosave/version write; never POST an unvalidated graph.
+- **Two distinct persistence surfaces:** the *working copy* is a single mutable row per project (overwritten by autosave, last-writer-wins); *versions* are append-only immutable snapshots created only by "Save version" (there is no `PATCH` on versions). Surface both states clearly — "All changes saved to draft" vs "Saved as v*N*" — so users grasp the difference.
 - Schema limits cap at ≤1000 components and ≤1000 nets — virtualize/`memo` for large circuits.
 
 ---
@@ -362,6 +374,8 @@ Status enum (`status` field): `QUEUED \| RUNNING \| SUCCEEDED \| FAILED \| CANCE
 - Multi-trace plot with a per-series legend (toggle + color), zoom/pan (box + wheel), draggable cursors with delta readout (Δx, Δy), and measurements (min/max/pk-pk/RMS, plus frequency/rise-time where meaningful).
 - X-axis adapts to the analysis type: `tran` → time/s, `ac` → frequency/Hz (offer a log option), `dc` → sweep variable, `op` → single operating point.
 - Metrics readout (`runtimeMs`, `pointsCount`) and an error/timeout state.
+
+> **Companion feature — schematic playback animation.** The *same* `tran` `SimulationResult` also drives an on-schematic animation (node-voltage coloring + current-flow dots, scrubbed over the transient timeline) — a **replay** of the server's ngspice run, never a second in-browser solver. Its full architecture, data mapping, rendering (SVG + Canvas/WebGL), and honest limits live in **`FRONTEND_ANIMATION_ARCH.md`**. The waveform viewer and the animation share one playhead/timeline.
 
 **Data shape** (eda-core `SimulationResult`, `packages/eda-core/src/types/simulation.ts`):
 
@@ -634,19 +648,20 @@ This is the primary authoring loop. A simulation always runs against a **saved v
 
 ```ts
 // Transient (time domain) — the common default
-{ type: 'tran', stopTime: '10m', stepTime?: '10u', startTime?: '0', maxStep?: string, uic?: boolean }
+{ type: 'tran', stopTime: '10m', stepTime?: '10u', startTime?: '0', maxStep?: string, uic?: boolean,
+  initialConditions?: Record<string, number>, options?: SolverOptions /* + report-only fourier?/measurements? */ }
 
 // AC (frequency domain, small-signal)
-{ type: 'ac', variation: 'dec' | 'oct' | 'lin', points: 20, startFreq: '1', stopFreq: '1MEG' }
+{ type: 'ac', variation: 'dec' | 'oct' | 'lin', points: 20, startFreq: '1', stopFreq: '1MEG', options?: SolverOptions }
 
 // DC sweep
-{ type: 'dc', source: 'V1', startVal: '0', stopVal: '5', increment: '0.1' }
+{ type: 'dc', source: 'V1', startVal: '0', stopVal: '5', increment: '0.1', options?: SolverOptions }
 
 // Operating point (single DC solution)
-{ type: 'op' }
+{ type: 'op', options?: SolverOptions /* + report-only tf? */ }
 ```
 
-Values are SPICE-style strings with engineering suffixes (`k`, `MEG`, `m`, `u`, `n`, `p`, …). Note SPICE's `M`/`m` both mean **milli**; use `MEG` for mega.
+Values are SPICE-style strings with engineering suffixes (`k`, `MEG`, `m`, `u`, `n`, `p`, …). Note SPICE's `M`/`m` both mean **milli**; use `MEG` for mega. The full union has **six** members (also `noise` + `sens`) and every member takes an optional `options?: SolverOptions`; the exact per-member shape is in §5.6 / §6.3 — **import it from `@circuit-forge/eda-core`, never hand-redefine the subset.**
 
 #### A8/A9 — Polling strategy
 
@@ -1068,24 +1083,36 @@ Use `/health/ready` for a non-blocking "backend up?" indicator. Do not gate the 
 
 | Method | Path | Auth | Role | Request | Response |
 |---|---|---|---|---|---|
-| GET | `/projects/:projectId/versions` | JWT | membership | — | `200 [{ id, versionNumber, createdAt, createdByUserId }]` — **list omits `circuitJson`/`uiJson`** (ordered `versionNumber desc`) |
+| GET | `/projects/:projectId/versions` | JWT | membership | query `{ limit?(1..100, def 50), offset?(>=0, def 0) }` | `200 { items: [{ id, versionNumber, createdAt, createdByUserId }], total, limit, offset, hasMore }` — **paginated envelope; list omits `circuitJson`/`uiJson`** (items ordered `versionNumber desc`) |
 | POST | `/projects/:projectId/versions` | JWT | membership | `CreateVersionDto` `{ circuitJson: object, uiJson: object }` | `201 ProjectVersion` (full row) |
 | GET | `/versions/:versionId` | JWT | membership | — | `200 ProjectVersion & { project }` (full, incl. `circuitJson`/`uiJson`) |
 
-`ProjectVersion` (full) = `{ id, projectId, versionNumber, createdByUserId, circuitJson, uiJson, createdAt }`. `versionNumber` auto-increments from 1.
+`ProjectVersion` (full) = `{ id, projectId, versionNumber, createdByUserId, circuitJson, uiJson, createdAt }`. `versionNumber` auto-increments from 1. The list is the **shared pagination envelope** `{ items, total, limit, offset, hasMore }` (every list endpoint uses it — see §4.4.7 assets, §2.3).
 
 > **QUIRK:** both `circuitJson` and `uiJson` are **required** on create and validated only as generic `@IsObject()` at the API edge — the API does **not** run eda-core's `CircuitJsonSchema` here. **The frontend MUST validate `circuitJson` against eda-core's Zod schema before POSTing** (and again when reading it back), so a drifted/invalid shape is caught client-side rather than silently persisted. (`uiJson` is your editor-layout blob — own its own schema.) The full data-model contract is in the **Shared Data Model & Types** section.
+
+#### 4.4.5a Working copy — `working-copy.controller.ts` (`JwtAuthGuard`, no controller prefix)
+
+The **mutable autosave draft** — one per project — that the editor writes continuously. Distinct from immutable versions (§4.4.5): this is the "whiteboard", versions are the "photo archive". See §2.4 and §8.4 for the save model.
+
+| Method | Path | Auth | Role | Request | Response |
+|---|---|---|---|---|---|
+| PUT | `/projects/:projectId/working-copy` | JWT | membership | `{ circuitJson: object, uiJson: object, baseVersionId?: UUID }` | `200 { projectId, baseVersionId, updatedByUserId, updatedAt }` — **light ack only** (not the blobs you just sent) |
+| GET | `/projects/:projectId/working-copy` | JWT | membership | — | `200 { projectId, circuitJson, uiJson, baseVersionId, updatedByUserId, createdAt, updatedAt }` — or **`404`** when no draft exists yet (→ open the latest version) |
+| DELETE | `/projects/:projectId/working-copy` | JWT | membership | — | `200 { discarded: true }` — "revert to last saved"; idempotent (no error if none) |
+
+> **Autosave contract:** `PUT` is an idempotent **overwrite** (last-writer-wins, one row) — it never creates a version. `baseVersionId` is **sticky**: send it once (the version the draft descends from); omitting it on later PUTs leaves it unchanged, so a circuit-only autosave keeps the provenance for a "N unsaved changes since v*X*" indicator. Sending a `baseVersionId` that belongs to a **different** project → `400`. Debounce PUTs (~1.5–3 s idle); validate `circuitJson` client-side first.
 
 #### 4.4.6 Templates — `templates.controller.ts` (mixed guards; `:templateId` is **(UUID)**)
 
 | Method | Path | Auth | Role | Request / Query | Response |
 |---|---|---|---|---|---|
 | GET | `/templates` | **Optional** JWT | membership **iff** `orgId` query given | query `ListTemplatesQueryDto` `{ orgId?(UUID), tag?, limit?(>=1, def 50), offset?(>=0, def 0) }` | `200 Template[]` |
-| POST | `/templates` | JWT | membership **iff** `orgId` in body | `CreateTemplateDto` `{ orgId?(UUID), name, tags?: string[], circuitJson: object }` | `201 Template` |
+| POST | `/templates` | JWT | membership **iff** `orgId` in body | `CreateTemplateDto` `{ orgId?(UUID), name, tags?: string[], circuitJson: object, analysisConfig?: object }` | `201 Template` |
 | GET | `/templates/:templateId` (UUID) | **Optional** JWT | membership iff org-scoped | — | `200 Template` |
 | DELETE | `/templates/:templateId` (UUID) | JWT | **OWNER/ADMIN** of org | — | `200 { deleted: true }` |
 
-`Template` = `{ id, orgId, name, tags, circuitJson, createdAt, updatedAt }`. With no `orgId` query/body → only **public** templates (`orgId = null`) are returned. Anonymous request **with** an `orgId` → `403`. Public templates cannot be deleted (`403`).
+`Template` = `{ id, orgId, name, tags, circuitJson, analysisConfig?, createdAt, updatedAt }`. `analysisConfig` (optional `{ analysis: AnalysisConfig, probes?: string[] }`) is a whitelisted field — POSTing it is accepted and it round-trips on create/list/get; it lets a template carry the analysis it was validated with (incl. a tran oscillator's `initialConditions`). With no `orgId` query/body → only **public** templates (`orgId = null`) are returned. Anonymous request **with** an `orgId` → `403`. Public templates cannot be deleted (`403`).
 
 > **QUIRK (seed data):** see the UUID pitfall in §4.3. `GET/DELETE /templates/:id` with a seed id (e.g. `template-rc-low-pass-filter`) → `400` (UUID parse failure). Listing public templates (`GET /templates`, no `orgId`) works and returns the seeded set. **Do not deep-link seeded templates by id — load them via the list.**
 
@@ -1095,7 +1122,7 @@ Use `/health/ready` for a non-blocking "backend up?" indicator. Do not gate the 
 |---|---|---|---|---|---|
 | POST | `/orgs/:orgId/assets/models/presign` (UUID) | JWT | membership | `PresignUploadDto` `{ name, contentType, sizeBytes (1..10485760), sha256 }` | `201 { uploadUrl, s3Key }` |
 | POST | `/orgs/:orgId/assets/models/commit` (UUID) | JWT | membership | `CommitAssetDto` `{ s3Key, name, contentType, sizeBytes (>=1), sha256 }` | `201 Asset` |
-| GET | `/orgs/:orgId/assets/models` (UUID) | JWT | membership | query `type?` | `200 Asset[]` (ordered `createdAt desc`) |
+| GET | `/orgs/:orgId/assets/models` (UUID) | JWT | membership | query `{ type?, limit?(1..100, def 50), offset?(>=0, def 0) }` | `200 { items: Asset[], total, limit, offset, hasMore }` — **paginated envelope** (items ordered `createdAt desc`) |
 | GET | `/assets/:assetId` (UUID) | JWT | membership | — | `200 Asset` |
 | GET | `/assets/:assetId/download` (UUID) | JWT | membership | — | `200 { downloadUrl }` (presigned GET, 1h) |
 | DELETE | `/assets/:assetId` (UUID) | JWT | **OWNER/ADMIN** | — | `200 { deleted: true }` (QUIRK: role failure = **400**; deletes DB row only, leaves S3 object) |
@@ -1260,6 +1287,18 @@ Client notes:
 
 > **Documentation correctness:** these are **not** "to build" / "NEW" / "stub" work — they are live. The module is `apps/api/src/generation` (not `apps/api/src/ai`); the secret env var is `LLM_API_KEY` (not `ANTHROPIC_API_KEY`); the model is `claude-sonnet-4-6`.
 
+#### 4.4.10a Async agentic design (LRO) — `design-jobs.controller.ts` (`JwtAuthGuard`, Swagger tag `ai`)
+
+The **durable** version of `/design-circuit`: instead of blocking one HTTP request for 10–60 s, it enqueues the same generate→simulate→AI-fix loop as a BullMQ job you poll. **Prefer this** for anything non-trivial — it survives a page reload and won't die on a proxy/idle timeout. Same per-user 3/60s budget as the sync route.
+
+| Method | Path | Throttle | Request | Response |
+|---|---|---|---|---|
+| POST | `/design-jobs` | 3 / 60 s | `DesignCircuitDto` `{ prompt: 1–2000, constraints?: <=1000, maxRounds?: int 1–4 (def 2) }` | `202 { jobId, status }` (status `QUEUED`). `404` if the user has no org; `503` if enqueue fails |
+| GET | `/design-jobs/:id` (UUID) | global | — | `200 { id, status: 'QUEUED'\|'RUNNING'\|'SUCCEEDED'\|'FAILED'\|'CANCELED', result?, error?, createdAt, startedAt, finishedAt }` |
+| DELETE | `/design-jobs/:id` (UUID) | global | — | `200 { id, status }` — cooperative cancel: `QUEUED`→`CANCELED` immediately; `RUNNING`→sets an abort flag (worker flips to `CANCELED` at the next round; **re-poll** to observe); terminal→no-op |
+
+`result` (present only once finished) is the **same `DesignResult`** the sync route returns — `{ ok, circuit: CircuitJson, analysisConfig: AnalysisConfig, explanation?, rounds, history[], simulation: { jobId, status, metrics, result } }`. `error` appears only on `FAILED`. `startedAt` is null until `RUNNING`; `finishedAt` until terminal. **Poll at ~1–2 s** (bounded backoff), same state-machine discipline as a simulation job (§5.8). Validate the returned `circuit`/`analysisConfig` with eda-core before inserting.
+
 #### 4.4.11 Component catalog (parts) — `parts.controller.ts` (`JwtAuthGuard`, Swagger tag `parts`)
 
 A **built, verified** real-component catalog behind a supplier-agnostic provider (TME today; DigiKey/LCSC pluggable later). It powers a Flux-style **part picker**: search ~1.3M real manufacturer parts, filter by manufacturer/category facets, inspect parametrics + live pricing/stock + datasheet, and insert a real part as a `CircuitJson` component. Supplier credentials live in `TME_*` and are **server-side only** — the client never talks to the distributor.
@@ -1311,7 +1350,8 @@ Errors use the standard NestJS `HttpException` shape. `message` is **either a st
 | `404` | Not found, or membership-gated "not found or access denied" | Show "Not found / no access." Don't leak existence vs. forbidden. |
 | `409` | Email already registered (`/auth/register`) | Inline "An account with this email already exists." |
 | `429` | Throttle (declared on quick-sim/AI routes; may activate at/near production) | Read `Retry-After`; back off and retry once; disable the triggering button briefly. |
-| `429` + body `{ code: "QUOTA_EXCEEDED", metric, used, limit, period }` | A configured usage QUOTA was hit (sim enqueue / parts call / asset upload). Distinguish from throttling by the `code` field; `used ≥ limit` always holds. | Message depends on `metric`: **`sim_concurrent`** is an in-flight cap that clears in seconds — "Too many simulations running, try again shortly" (retry is fine). **`sim_jobs` / `sim_runtime_ms` / `parts_calls`** are monthly — "Monthly quota reached (used/limit)", resets next period, do not auto-retry. **`storage_bytes`** — "Storage limit reached" (`used` is the projected total incl. the rejected upload); clears when assets are deleted. Link all to the usage page. |
+| `429` + body `{ code: "QUOTA_EXCEEDED", metric, used, limit, period }` | A configured usage QUOTA was hit on a WRITE/enqueue path (sim / **design-job** / **PCB layout** enqueue, parts call, asset upload). Distinguish from throttling by the `code` field; `used ≥ limit` always holds. | Message depends on `metric`: **concurrent caps** (`sim_concurrent`, `design_concurrent`, `layout_concurrent`) clear in seconds — "Too many … running, try again shortly" (retry is fine). **monthly caps** (`sim_jobs` / `sim_runtime_ms` / `design_jobs` / `layout_jobs` / `parts_calls`) — "Monthly quota reached (used/limit)", resets next `period`, do **not** auto-retry. **`storage_bytes`** — "Storage limit reached" (`used` = projected total incl. the rejected upload); clears when assets are deleted. Link all to the usage page. (All limits are configurable per-org; unset in dev.) |
+| `403` + body `{ code: "ORG_SUSPENDED", message, ... }` | The org was suspended by a platform admin. Thrown on every org **write** path (sim/design/layout enqueue, asset upload); **reads still work** so members can see their data + the reason. | Show the `message` (suspension reason) as a persistent banner; disable create/upload/run actions org-wide until reinstated. Do not retry. |
 | `429` + body `{ code: "ACCOUNT_LOCKED", retryAfterSeconds, message }` | On `/auth/login`: too many consecutive failed logins (5) locked the account for 15 min. | Show the `message` and a "try again in ~`retryAfterSeconds`" hint; do NOT auto-retry. Distinct from a plain throttle 429 (which has no `code`) and from quota 429s. |
 | `5xx` / network | Server/worker/infra down | Retry idempotent GETs with backoff; for mutations show a retry affordance, never silently swallow. |
 
@@ -1338,7 +1378,7 @@ The AI services map provider/validation failures to distinct codes (`generation.
 ### 4.6 Concurrency, ordering & state hygiene
 
 - **Versions are immutable, append-only.** Editing creates a new version via `POST …/versions`; `versionNumber` auto-increments. There is no PATCH-a-version route. After save, refetch the versions list (it omits the heavy JSON — cheap).
-- **Single source of truth for server state.** Use one data-fetching layer (React Query/SWR) keyed by resource id; do not also mirror it in ad-hoc `useState`/duplicate store slices. Editor document state (the working `circuitJson` + `uiJson`) is client-owned until you POST a new version; server data (orgs/projects/versions list/sim status) is cache-owned.
+- **Single source of truth for server state.** Use one data-fetching layer (React Query/SWR) keyed by resource id; do not also mirror it in ad-hoc `useState`/duplicate store slices. Editor document state (the live `circuitJson` + `uiJson`) is client-owned and continuously **autosaved to the server working copy** (`PUT …/working-copy`); explicit "Save version" snapshots it to an immutable version. Server data (orgs/projects/versions list/working copy/sim status) is cache-owned.
 - **No member-management endpoints exist** — do not build UI for inviting/removing members or transferring ownership; there are no routes for it.
 
 ---
@@ -1651,12 +1691,24 @@ The **only** case where a `SUCCEEDED` job returns `result: null` is a storage fe
 TypeScript union (from eda-core — import it, do not retype):
 
 ```ts
+// SIX members (not four). Every member accepts an optional options?: SolverOptions.
 type AnalysisConfig =
-  | { type: 'tran'; stopTime: string; stepTime?: string; startTime?: string; maxStep?: string; uic?: boolean }
-  | { type: 'ac'; variation: 'dec' | 'oct' | 'lin'; points: number; startFreq: string; stopFreq: string }
-  | { type: 'dc'; source: string; startVal: string; stopVal: string; increment: string }
-  | { type: 'op' };
+  | { type: 'tran'; stopTime: string; stepTime?: string; startTime?: string; maxStep?: string;
+      uic?: boolean; initialConditions?: Record<string, number>;   // net-id → initial node V (emits .ic)
+      options?: SolverOptions;
+      fourier?: { fundamentalFreq: string; probes: string[] };     // REPORT-ONLY .four overlay
+      measurements?: MeasureSpec[] }                               // REPORT-ONLY .meas overlay
+  | { type: 'ac'; variation: 'dec' | 'oct' | 'lin'; points: number; startFreq: string; stopFreq: string; options?: SolverOptions }
+  | { type: 'dc'; source: string; startVal: string; stopVal: string; increment: string; options?: SolverOptions }
+  | { type: 'op'; options?: SolverOptions; tf?: { output: string; inputSource: string } }   // tf = REPORT-ONLY .tf
+  | { type: 'noise'; output: string; inputSource: string; variation: 'dec'|'oct'|'lin'; points: number; startFreq: string; stopFreq: string; options?: SolverOptions }
+  | { type: 'sens'; output: string; options?: SolverOptions };
+
+// SolverOptions = { reltol?, abstol?, vntol?, gmin?: SpiceValueString; method?: 'trap'|'gear'; itl4?: number }  — all optional; the generator silently drops invalid tokens.
+// MeasureSpec  = { name: string; type: 'max'|'min'|'pp'|'avg'|'rms'|'integ'|'when'; probe: string; value?: number; edge?: 'rise'|'fall'|'cross' }
 ```
+
+The **v1 sim form** will typically surface `tran`/`ac`/`dc`/`op`; `noise`/`sens` and the report-only overlays (`fourier`/`measurements`/`tf`) are advanced. But **import the type from eda-core** — never hand-redefine a 4-member subset (that was the drift this brief carried). `initialConditions` matters for real designs (e.g. an oscillator's startup seed) — surface it for `tran`.
 
 ---
 
@@ -1980,7 +2032,7 @@ Still NOT structured — use the escape hatch: whole **logic ICs / MCUs / comple
 
 ```ts
 // packages/eda-core/src/types/analysis.ts
-type AnalysisConfig = TranAnalysis | AcAnalysis | DcAnalysis | OpAnalysis;
+type AnalysisConfig = TranAnalysis | AcAnalysis | DcAnalysis | OpAnalysis | NoiseAnalysis | SensAnalysis; // SIX
 ```
 
 **Transient — `type: 'tran'`**
@@ -1992,6 +2044,10 @@ type AnalysisConfig = TranAnalysis | AcAnalysis | DcAnalysis | OpAnalysis;
 | `startTime` | SpiceValue string | no | default `0` |
 | `maxStep` | SpiceValue string | no | max integration step |
 | `uic` | boolean | no | appends `uic` (use initial conditions) |
+| `initialConditions` | `Record<string, number>` | no | net-id → initial node voltage; emits `.ic v(node)=v` (e.g. an oscillator's startup seed). Surface this in the tran form. |
+| `options` | `SolverOptions` | no | solver tuning — `{ reltol?, abstol?, vntol?, gmin?: SpiceValue; method?: 'trap'\|'gear'; itl4?: number }`; invalid tokens are silently dropped |
+| `fourier` | `{ fundamentalFreq: string; probes: string[] }` | no | **report-only** `.four` (THD/harmonics) overlay |
+| `measurements` | `MeasureSpec[]` | no | **report-only** `.meas` — each `{ name, type: 'max'\|'min'\|'pp'\|'avg'\|'rms'\|'integ'\|'when', probe, value?, edge? }` |
 
 **AC — `type: 'ac'`**
 
@@ -2011,13 +2067,17 @@ type AnalysisConfig = TranAnalysis | AcAnalysis | DcAnalysis | OpAnalysis;
 | `stopVal` | SpiceValue string | **yes** | sweep stop |
 | `increment` | SpiceValue string | **yes** | step size |
 
-**Operating point — `type: 'op'`** — no fields beyond `type`.
+**Operating point — `type: 'op'`** — no required fields. Optional: `options?: SolverOptions` and `tf?: { output: string; inputSource: string }` (report-only DC transfer function).
 
-> **Editor note:** `dc.source` is a *designator selector*, not a free-text box — populate it from the circuit's `voltage_source` / `current_source` designators so it always references a real device.
+**Noise — `type: 'noise'`** (report-oriented) — `{ output: string (probe), inputSource: string (source designator), variation: 'dec'|'oct'|'lin', points: number, startFreq, stopFreq, options? }`.
+
+**DC sensitivity — `type: 'sens'`** (report-oriented) — `{ output: string (probe), options? }`.
+
+> **Editor note:** `dc.source` is a *designator selector*, not a free-text box — populate it from the circuit's `voltage_source` / `current_source` designators so it always references a real device. The v1 form may surface only `tran`/`ac`/`dc`/`op`; `noise`/`sens` are advanced, but the type must still come from eda-core (all six members) so it can't drift.
 
 **Probe format (`ProbeSchema`, `analysis.schema.ts:68`):** regex `^[vi]\([a-zA-Z0-9_]+(?:,[a-zA-Z0-9_]+)?\)$` (case-insensitive). Valid: `v(out)`, `v(n1)`, `v(out,in)` (differential), `i(R1)`. Note the regex allows only `[a-zA-Z0-9_]` inside the parens — that matches the **sanitized** SPICE node name, not the raw `Net.id`/`name`. **ALWAYS send an explicit, non-empty `probes` array on a version sim** (derive node names locally from `getNodeNames(circuit)` and probe what the user pinned, or every non-ground net by default). Sending **no** probes is a documented quirk to AVOID, not a default: the worker's auto-probe is a safety net, **not** a contract (§4.4.9.4), so a no-probe run can SUCCEED with empty series / `pointsCount === 0`. Build probe strings with the server's sanitized node-name convention.
 
-**`SimulationRequest` (what gets POSTed):** `SimulationRequestSchema = { analysisConfig: AnalysisConfig, probes?: Probe[] (<= 100), modelAssets?: UUID[] (<= 10) }`. Match this exactly. The REST DTO types `analysisConfig` loosely as `Record<string, unknown>`, so the frontend should validate against the strict eda-core schemas **before** sending — a bad config is then caught client-side with a precise message instead of failing deep in the worker. See the Backend Integration Contract (§4) for the submit/poll/result flow.
+**`SimulationRequest` (what gets POSTed):** the REST DTO is `{ analysisConfig: object, probes?: string[], modelAssetIds?: string[] (<= 32) }`. ⚠️ **The request field is `modelAssetIds`** (asset-id strings — the ids from `POST …/assets/models/commit`), **not** `modelAssets`. eda-core's internal `SimulationRequestSchema` names the resolved-key field `modelAssets`, but that is the *worker* payload, not the API body — POSTing `modelAssets` is rejected `400` (unknown property). Send `modelAssetIds`. The REST DTO types `analysisConfig` loosely as `Record<string, unknown>`, so the frontend should validate against the strict eda-core schemas **before** sending — a bad config is then caught client-side with a precise message instead of failing deep in the worker. See the Backend Integration Contract (§4) for the submit/poll/result flow.
 
 ---
 
@@ -2551,7 +2611,7 @@ circuit-forge-web/                     # standalone Next.js repo (App Router)
 
   **Acceptance:** a deliberately added fake secret (e.g. `NEXT_PUBLIC_LLM_KEY=sk-ant-xxx`) in code or env must fail CI.
 
-**Token storage** (full strategy lives in the Backend Integration Contract section; the boundary rule here): the **access token stays in memory only** (the `authStore`, never `localStorage`) — it is a 15-minute, non-revocable bearer credential, so keeping it out of persistent storage removes the highest-value XSS target. The **refresh token** is kept in memory for v1 (a same-origin BFF cookie is the v2 upgrade); avoid `localStorage` for it because it is a 7-day, server-non-revocable credential. The API client (`lib/api/client.ts`) attaches `Authorization: Bearer <accessToken>` and, on `401`, transparently calls `POST /auth/refresh` once (single-flight), rotates **both** tokens, retries the original request once, and on failure clears the store and redirects to login. `POST /auth/logout` is a server no-op (no blocklist) — the client simply discards tokens.
+**Token storage** (full strategy lives in the Backend Integration Contract section; the boundary rule here): the **access token stays in memory only** (the `authStore`, never `localStorage`) — it is a 15-minute, non-revocable bearer credential, so keeping it out of persistent storage removes the highest-value XSS target. The **refresh token** is kept in memory for v1 (a same-origin BFF cookie is the v2 upgrade); avoid `localStorage` for it because it is a 7-day bearer credential and theft from storage is silent — even though it **is** now server-revocable (rotation + single-use reuse-detection + logout), a stolen one still grants access until it is used/revoked. The API client (`lib/api/client.ts`) attaches `Authorization: Bearer <accessToken>` and, on `401`, transparently calls `POST /auth/refresh` once (single-flight — refresh tokens are single-use, so two concurrent refreshes look like reuse and revoke the whole family), rotates **both** tokens, retries the original request once, and on failure clears the store and redirects to login. `POST /auth/logout` **revokes the session family server-side** when the refresh token is sent in the body (best-effort, always `204`) — send it, then discard tokens client-side.
 
 ---
 
@@ -2586,10 +2646,11 @@ The old app had **0 `React.memo`** (full-tree re-render on every change), did pe
 
 #### State, autosave & dirty handling
 
-- **Single source of truth:** the Zustand `editorStore` holds `{ circuit, ui, selection, dirty, lastSavedVersionId }`. Nothing else holds a copy of the document. Server state stays in TanStack Query. **No split-brain.**
-- **Hydrate once:** on opening a version, `GET /versions/:versionId` returns `circuitJson` + `uiJson`; validate with `CircuitJsonSchema` / `UiJsonSchema` *before* hydrating the store.
-- **Autosave = new immutable version (debounced):** mutating the document sets `dirty = true`; a debounced (~1.5–3 s idle) effect calls `POST /projects/:projectId/versions` with `{ circuitJson, uiJson }`. The backend creates a **new version** (monotonic `versionNumber`) — autosave *is* version history, not in-place mutation (there is no `PATCH` on versions). Validate `circuitJson` with `safeValidateCircuitJson` **before** POSTing (the API only checks `@IsObject()` here, so an invalid shape would otherwise persist silently).
-- **Optimistic + resilient:** local edits apply instantly; the version POST runs in the background. On success, set `lastSavedVersionId`, clear `dirty`, show "Saved vN". On failure, keep `dirty`, toast a typed error, retry with backoff, and **do not roll back** in-progress edits. Warn on `beforeunload` while `dirty`; persist an emergency local snapshot (IndexedDB/`localStorage`) keyed by project so a crash never loses work; reconcile on next successful save.
+- **Single source of truth:** the Zustand `editorStore` holds `{ circuit, ui, selection, dirty, baseVersionId, lastSavedVersionId }`. Nothing else holds a copy of the document. Server state stays in TanStack Query. **No split-brain.**
+- **Hydrate on open:** `GET /projects/:projectId/working-copy` first — if a draft exists (200) hydrate from it; on **404** (no draft yet) fall back to `GET /versions/:versionId` for the latest version. Validate with `CircuitJsonSchema` / `UiJsonSchema` *before* hydrating.
+- **Autosave = overwrite the working copy (debounced), NOT a new version:** mutating the document sets `dirty = true`; a debounced (~1.5–3 s idle) effect calls `PUT /projects/:projectId/working-copy` with `{ circuitJson, uiJson, baseVersionId? }`. This **overwrites the single mutable draft** (last-writer-wins) — it never creates a version, so history doesn't flood. Pass `baseVersionId` once (the version the draft descends from); it is *sticky* server-side, so circuit-only autosaves don't wipe the "N unsaved changes since v*X*" provenance. Validate `circuitJson` with `safeValidateCircuitJson` **before** PUTting (the API checks only `@IsObject()`, so an invalid shape would otherwise persist silently).
+- **Save version = explicit checkpoint:** a "Save version" action calls `POST /projects/:projectId/versions` with `{ circuitJson, uiJson }` → an immutable `ProjectVersion` (monotonic `versionNumber`). Set `lastSavedVersionId`, keep it as the new `baseVersionId`, show "Saved v*N*". (Optionally `DELETE …/working-copy` to "revert to last saved".)
+- **Optimistic + resilient:** local edits apply instantly; the autosave PUT runs in the background and returns a light ack (not the blobs). On success clear `dirty`, show "All changes saved to draft". On failure keep `dirty`, toast a typed error, retry with backoff, **do not roll back** in-progress edits. Warn on `beforeunload` while `dirty`; **also** persist an emergency local snapshot (IndexedDB) keyed by project as an offline belt-and-suspenders, reconciled on next successful autosave (the server working copy is the cross-device truth).
 
 #### Accessibility mandate (old app had zero a11y attributes)
 
@@ -2638,7 +2699,7 @@ WCAG 2.1 AA target. Non-negotiable baseline:
 - [ ] Error boundaries, mounted toasts, loading/empty/error states everywhere; a11y baseline (axe green).
 
 #### Phase 2
-- [ ] Asset/model manager (presign → PUT → commit, download, delete) and **wiring `modelAssets` into sim runs** (requires the API to populate the worker payload first).
+- [ ] Asset/model manager (presign → PUT → commit, download, delete) and **attaching uploaded models to sim runs via `modelAssetIds`**. The backend pipeline is already live (the API resolves each id to an org-scoped `SPICE_MODEL` asset, the worker downloads it into the job dir and `.include`s it), so this is purely frontend wiring — send `modelAssetIds` (≤32) on the sim submit.
 - [ ] AI edit/explain flows (`POST /edit-circuit`, `/explain-circuit`) integrated into the editor as inline assist.
 - [ ] Org creation UI + role-aware affordances; richer settings/preferences.
 - [ ] Version diff/compare; duplicate-into-new-project; rename/branch UX.
