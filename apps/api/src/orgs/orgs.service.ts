@@ -1,9 +1,10 @@
 /**
  * Organizations Service
  */
-import { Injectable, NotFoundException, ForbiddenException } from '@nestjs/common';
-import { Prisma } from '@prisma/client';
+import { Injectable, NotFoundException, ForbiddenException, BadRequestException } from '@nestjs/common';
+import { Prisma, OrgRole } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
+import { AuditService } from '../common/audit/audit.service';
 import { paginated, type Paginated } from '../common/dto/pagination.dto';
 
 /** The audit-row shape a TENANT may see. Deliberately omits operator PII (adminActorEmail), the internal
@@ -28,7 +29,10 @@ const SENSITIVE_META_KEYS = new Set(['updatedByAdminId', 'adminActorId', 'adminA
 
 @Injectable()
 export class OrgsService {
-    constructor(private readonly prisma: PrismaService) { }
+    constructor(
+        private readonly prisma: PrismaService,
+        private readonly audit: AuditService,
+    ) { }
 
     async findAllForUser(userId: string) {
         const memberships = await this.prisma.orgMembership.findMany({
@@ -103,6 +107,96 @@ export class OrgsService {
      */
     async requireMembership(orgId: string, userId: string, requiredRoles?: string[]) {
         return this.checkMembership(orgId, userId, requiredRoles);
+    }
+
+    // ---------------------------------------------------------------- self-serve team management
+
+    /** List the org's members (readable by any member). Paginated for consistency with every other list. */
+    async listMembers(orgId: string, page: { limit: number; offset: number }): Promise<Paginated<unknown>> {
+        const where = { orgId };
+        const [rows, total] = await Promise.all([
+            this.prisma.orgMembership.findMany({
+                where,
+                orderBy: [{ createdAt: 'asc' }, { userId: 'asc' }], // stable, deterministic
+                select: { userId: true, role: true, createdAt: true, user: { select: { email: true, name: true } } },
+                skip: page.offset,
+                take: page.limit,
+            }),
+            this.prisma.orgMembership.count({ where }),
+        ]);
+        const items = rows.map((m) => ({ userId: m.userId, email: m.user.email, name: m.user.name, role: m.role, createdAt: m.createdAt }));
+        return paginated(items, total, page.limit, page.offset);
+    }
+
+    /**
+     * Change a member's role. The acting OWNER/ADMIN is already gated at the controller; here we enforce the
+     * ROLE-level rules: only an OWNER may grant or revoke OWNER (an ADMIN can shuffle MEMBER/ADMIN but can't
+     * mint or unseat owners), and the org must never lose its last OWNER. Writes a tenant audit row (the acting
+     * user in meta.actorUserId; adminActorId stays null — this is NOT a platform-admin action).
+     */
+    async updateMemberRole(orgId: string, targetUserId: string, newRole: OrgRole, actorId: string, actorRole: OrgRole, reason?: string) {
+        const target = await this.prisma.orgMembership.findUnique({
+            where: { orgId_userId: { orgId, userId: targetUserId } },
+            select: { id: true, role: true },
+        });
+        if (!target) throw new NotFoundException('Membership not found');
+
+        if ((newRole === OrgRole.OWNER || target.role === OrgRole.OWNER) && actorRole !== OrgRole.OWNER) {
+            throw new ForbiddenException('Only an owner can grant or revoke the OWNER role.');
+        }
+        if (target.role === newRole) return { orgId, userId: targetUserId, role: newRole }; // idempotent no-op
+        if (target.role === OrgRole.OWNER && newRole !== OrgRole.OWNER) {
+            await this.assertNotLastOwner(orgId, 'demote');
+        }
+
+        await this.prisma.$transaction(async (tx) => {
+            await tx.orgMembership.update({ where: { orgId_userId: { orgId, userId: targetUserId } }, data: { role: newRole } });
+            await tx.auditLog.create({
+                data: this.audit.buildData({
+                    action: 'org.member.role_change', entityType: 'OrgMembership', entityId: target.id,
+                    orgId, userId: targetUserId, adminActorId: null, reason: reason ?? null,
+                    before: { role: target.role }, after: { role: newRole }, extra: { actorUserId: actorId },
+                }),
+            });
+        });
+        return { orgId, userId: targetUserId, role: newRole };
+    }
+
+    /**
+     * Remove a member. Removing an OWNER requires the actor to be an OWNER, and the last OWNER can never be
+     * removed (an ADMIN or a non-sole OWNER may leave; the sole OWNER is blocked — reassign OWNER first).
+     */
+    async removeMember(orgId: string, targetUserId: string, actorId: string, actorRole: OrgRole, reason?: string) {
+        const target = await this.prisma.orgMembership.findUnique({
+            where: { orgId_userId: { orgId, userId: targetUserId } },
+            select: { id: true, role: true },
+        });
+        if (!target) throw new NotFoundException('Membership not found');
+
+        if (target.role === OrgRole.OWNER && actorRole !== OrgRole.OWNER) {
+            throw new ForbiddenException('Only an owner can remove an owner.');
+        }
+        if (target.role === OrgRole.OWNER) {
+            await this.assertNotLastOwner(orgId, 'remove');
+        }
+
+        await this.prisma.$transaction(async (tx) => {
+            await tx.orgMembership.delete({ where: { orgId_userId: { orgId, userId: targetUserId } } });
+            await tx.auditLog.create({
+                data: this.audit.buildData({
+                    action: 'org.member.remove', entityType: 'OrgMembership', entityId: target.id,
+                    orgId, userId: targetUserId, adminActorId: null, reason: reason ?? null,
+                    before: { role: target.role }, after: null, extra: { actorUserId: actorId },
+                }),
+            });
+        });
+        return { orgId, userId: targetUserId, removed: true };
+    }
+
+    /** An org must always retain at least one OWNER — block removing/demoting the last one. */
+    private async assertNotLastOwner(orgId: string, action: string): Promise<void> {
+        const owners = await this.prisma.orgMembership.count({ where: { orgId, role: OrgRole.OWNER } });
+        if (owners <= 1) throw new BadRequestException(`Cannot ${action} the last owner of the organization.`);
     }
 
     /**

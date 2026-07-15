@@ -49,6 +49,19 @@ export class EmailService {
         );
     }
 
+    /** Absolute link the invitee clicks to accept an org invitation. */
+    inviteLink(token: string): string {
+        return `${this.appUrl}/accept-invite?token=${encodeURIComponent(token)}`;
+    }
+
+    async sendOrgInviteEmail(to: string, token: string, orgName: string, inviterName: string): Promise<void> {
+        await this.send(
+            to,
+            `You've been invited to join ${orgName} on Circuit Forge`,
+            `${inviterName} invited you to join the "${orgName}" organization on Circuit Forge.\nAccept the invitation:\n${this.inviteLink(token)}\n(This link expires in 7 days. If you weren't expecting this, you can safely ignore this email.)`,
+        );
+    }
+
     /**
      * Deliver a message via the configured transport. Best-effort: a transport failure is logged and
      * swallowed so the calling auth flow (register / forgot-password) still completes — the security

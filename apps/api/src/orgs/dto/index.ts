@@ -1,8 +1,9 @@
 /**
  * Organizations DTOs
  */
-import { IsString, IsOptional, IsUUID, MinLength, MaxLength } from 'class-validator';
+import { IsString, IsOptional, IsUUID, IsEnum, MinLength, MaxLength } from 'class-validator';
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
+import { OrgRole } from '@prisma/client';
 import { PaginationQueryDto } from '../../common/dto/pagination.dto';
 
 export class CreateOrgDto {
@@ -11,6 +12,28 @@ export class CreateOrgDto {
     @MinLength(1)
     @MaxLength(100)
     name!: string;
+}
+
+/** Change an existing member's role (self-serve, by an org OWNER/ADMIN). */
+export class UpdateMemberRoleDto {
+    @ApiProperty({ enum: OrgRole, example: 'ADMIN' })
+    @IsEnum(OrgRole)
+    role!: OrgRole;
+
+    @ApiPropertyOptional({ description: "Optional note recorded in the org's audit trail", maxLength: 500 })
+    @IsOptional()
+    @IsString()
+    @MaxLength(500)
+    reason?: string;
+}
+
+/** Optional reason note for a member removal, recorded in the audit trail. */
+export class RemoveMemberDto {
+    @ApiPropertyOptional({ description: "Optional note recorded in the org's audit trail", maxLength: 500 })
+    @IsOptional()
+    @IsString()
+    @MaxLength(500)
+    reason?: string;
 }
 
 /**
