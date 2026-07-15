@@ -14,6 +14,7 @@ import { getSignedUrl } from '@aws-sdk/s3-request-presigner';
 import { PrismaService } from '../prisma/prisma.service';
 import { OrgsService } from '../orgs/orgs.service';
 import { UsageService } from '../usage/usage.service';
+import { paginated, type Paginated } from '../common/dto/pagination.dto';
 import { CreateLayoutDto } from './dto';
 
 function otelCarrier(): Record<string, string> {
@@ -52,9 +53,29 @@ export class LayoutService {
      * so we never clobber a worker that already dequeued+advanced it — see DesignJobService for the rationale).
      */
     async create(userId: string, dto: CreateLayoutDto): Promise<{ id: string; status: LayoutJobStatus }> {
-        const orgList = await this.orgs.findAllForUser(userId);
-        const orgId = orgList[0]?.id;
-        if (!orgId) throw new NotFoundException('No organization found for user');
+        // Resolve the org this layout belongs to. When the client tags a saved version, the layout is
+        // authoritatively scoped to THAT version's org (and we derive its project) after verifying the
+        // caller is a member — the client can't spoof a project/version it can't access. Only the ad-hoc
+        // (no versionId) path falls back to the user's first org.
+        let orgId: string;
+        let projectId: string | undefined;
+        let versionId: string | undefined;
+        if (dto.versionId) {
+            const version = await this.prisma.projectVersion.findUnique({
+                where: { id: dto.versionId },
+                select: { id: true, projectId: true, project: { select: { orgId: true } } },
+            });
+            if (!version) throw new NotFoundException('Version not found');
+            await this.orgs.checkMembership(version.project.orgId, userId);
+            orgId = version.project.orgId;
+            projectId = version.projectId;
+            versionId = version.id;
+        } else {
+            const orgList = await this.orgs.findAllForUser(userId);
+            const first = orgList[0]?.id;
+            if (!first) throw new NotFoundException('No organization found for user');
+            orgId = first;
+        }
 
         const options = {
             ...(dto.placer ? { placer: dto.placer } : {}),
@@ -71,6 +92,8 @@ export class LayoutService {
                 data: {
                     orgId,
                     userId,
+                    projectId,
+                    versionId,
                     status: 'QUEUED',
                     circuit: dto.circuit as object,
                     options: Object.keys(options).length ? (options as object) : undefined,
@@ -100,7 +123,7 @@ export class LayoutService {
         const job = await this.prisma.layoutJob.findUnique({
             where: { id: jobId },
             select: {
-                id: true, orgId: true, status: true, result: true, errorMessage: true,
+                id: true, orgId: true, projectId: true, versionId: true, status: true, result: true, errorMessage: true,
                 glbKey: true, gerbersKey: true, createdAt: true, startedAt: true, finishedAt: true,
             },
         });
@@ -112,6 +135,8 @@ export class LayoutService {
 
         return {
             id: job.id,
+            projectId: job.projectId,
+            versionId: job.versionId,
             status: job.status,
             result: job.result ?? null,
             errorMessage: job.errorMessage ?? null,
@@ -121,5 +146,43 @@ export class LayoutService {
             startedAt: job.startedAt,
             finishedAt: job.finishedAt,
         };
+    }
+
+    /**
+     * List the caller's layout jobs (across every org they belong to), newest first, optionally narrowed to
+     * one version or project. This is how the client re-hydrates the PCB tab after a page reload: it holds the
+     * versionId (durable) rather than the jobId (browser-memory-only), and asks `?versionId=` for the layouts.
+     * Bounded by the shared pagination envelope; light rows only (no S3 presign) — the detail view presigns.
+     */
+    async findAllForUser(
+        userId: string,
+        page: { limit: number; offset: number },
+        filter: { versionId?: string; projectId?: string } = {},
+    ): Promise<Paginated<unknown>> {
+        const orgList = await this.orgs.findAllForUser(userId);
+        const orgIds = orgList.map((o) => o.id);
+        if (orgIds.length === 0) return paginated([], 0, page.limit, page.offset);
+
+        const where = {
+            orgId: { in: orgIds },
+            ...(filter.versionId ? { versionId: filter.versionId } : {}),
+            ...(filter.projectId ? { projectId: filter.projectId } : {}),
+        };
+        const [items, total] = await Promise.all([
+            this.prisma.layoutJob.findMany({
+                where,
+                // id tiebreaker → a TOTAL order so skip/take paging can't skip/duplicate a row when two jobs
+                // share a createdAt (matches ProjectsService / AssetsService / AdminService list convention).
+                orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
+                select: {
+                    id: true, projectId: true, versionId: true, status: true,
+                    errorMessage: true, createdAt: true, startedAt: true, finishedAt: true,
+                },
+                skip: page.offset,
+                take: page.limit,
+            }),
+            this.prisma.layoutJob.count({ where }),
+        ]);
+        return paginated(items, total, page.limit, page.offset);
     }
 }

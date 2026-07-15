@@ -1,5 +1,6 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
-import { IsObject, IsOptional, IsIn } from 'class-validator';
+import { IsObject, IsOptional, IsIn, IsUUID } from 'class-validator';
+import { PaginationQueryDto } from '../../common/dto/pagination.dto';
 
 /**
  * Start a PCB layout job. `circuit` is OUR CircuitJson (topology: components + nets) — the same shape
@@ -9,6 +10,16 @@ export class CreateLayoutDto {
     @ApiProperty({ description: 'OUR CircuitJson (components + nets) to lay out', type: 'object', additionalProperties: true })
     @IsObject()
     circuit!: Record<string, unknown>;
+
+    @ApiPropertyOptional({
+        description:
+            'Tag this layout to a saved circuit version. When set, the job is created under that version\'s org, ' +
+            'stores its project + version, and can be re-found via GET /layouts?versionId= after a reload. Omit for an ad-hoc layout of an unsaved circuit.',
+        format: 'uuid',
+    })
+    @IsOptional()
+    @IsUUID()
+    versionId?: string;
 
     @ApiPropertyOptional({ description: "Placement engine: 'grid' (default) or 'auto' (connectivity-aware)", enum: ['grid', 'auto'] })
     @IsOptional()
@@ -24,4 +35,20 @@ export class CreateLayoutDto {
     @IsOptional()
     @IsObject()
     netCurrentsA?: Record<string, number>;
+}
+
+/**
+ * List layout jobs for the caller's org(s), newest first, optionally narrowed to one version or project.
+ * The client uses `?versionId=` to re-hydrate the PCB tab for a saved circuit after a page reload.
+ */
+export class ListLayoutsQueryDto extends PaginationQueryDto {
+    @ApiPropertyOptional({ description: 'Only layouts tagged to this saved circuit version', format: 'uuid' })
+    @IsOptional()
+    @IsUUID()
+    versionId?: string;
+
+    @ApiPropertyOptional({ description: 'Only layouts tagged to this project', format: 'uuid' })
+    @IsOptional()
+    @IsUUID()
+    projectId?: string;
 }

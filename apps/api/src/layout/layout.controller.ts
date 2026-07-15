@@ -3,13 +3,13 @@
  * the quality pipeline in the background; the client polls GET until a terminal status, then reads the
  * shaped result + presigned GLB/manufacturing URLs.
  */
-import { Controller, Post, Get, Body, Param, ParseUUIDPipe, HttpCode, UseGuards } from '@nestjs/common';
+import { Controller, Post, Get, Body, Param, Query, ParseUUIDPipe, HttpCode, UseGuards } from '@nestjs/common';
 import { ApiTags, ApiOperation, ApiBearerAuth } from '@nestjs/swagger';
 import { Throttle } from '@nestjs/throttler';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { CurrentUser } from '../auth/decorators/current-user.decorator';
 import { LayoutService } from './layout.service';
-import { CreateLayoutDto } from './dto';
+import { CreateLayoutDto, ListLayoutsQueryDto } from './dto';
 
 @ApiTags('pcb')
 @ApiBearerAuth()
@@ -26,6 +26,19 @@ export class LayoutController {
     async start(@Body() dto: CreateLayoutDto, @CurrentUser() user: { id: string }) {
         const job = await this.layouts.create(user.id, dto);
         return { jobId: job.id, status: job.status };
+    }
+
+    @Get()
+    @ApiOperation({
+        summary: 'List your layout jobs (newest first), optionally filtered by ?versionId= or ?projectId=. ' +
+            'Use ?versionId= to re-find the PCB(s) for a saved circuit after a page reload.',
+    })
+    async list(@Query() query: ListLayoutsQueryDto, @CurrentUser() user: { id: string }) {
+        return this.layouts.findAllForUser(
+            user.id,
+            { limit: query.limit, offset: query.offset },
+            { versionId: query.versionId, projectId: query.projectId },
+        );
     }
 
     @Get(':id')
