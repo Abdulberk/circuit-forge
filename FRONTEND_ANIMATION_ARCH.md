@@ -13,8 +13,8 @@
 |---|---|---|
 | D1 | **Playback of a completed simulation, never a second in-browser solver.** | One source of truth = server ngspice. A browser solver would be a *second* truth that disagrees — the exact failure mode we refuse. |
 | D2 | **Node-voltage coloring is the primary, always-available animation.** | Every node voltage is returned by default (≤64 nodes). Works for 100% of circuits today, zero backend change. |
-| D3 | **Current-flow dots animate only where a current was actually measured.** | ngspice (batch) can probe current on **R/C/V/L/E/H** only. Diode/transistor/op-amp branch current is *not measurable*. We do **not** fake it. |
-| D4 | **Un-measured branches are shown honestly (static/dim), never with invented flow.** | Consistent with the project's core rule: real data or no data — never a plausible lie. |
+| D3 | **Current-flow dots animate real, measured branch current — across active devices too.** | PROVEN by a real-ngspice spike (§4.2): `savecurrents` yields diode/BJT/MOSFET/JFET terminal currents (`@d1[id]`, `@q1[ic]`, `@m1[id]`…) in batch `tran`. The earlier "passives only" limit was **our generator's** allowlist, not the engine. We extend it (tested per device) so flow is real across the whole board. |
+| D4 | **Only genuinely-opaque branches (deep subckt internals) are shown static/dim — never invented flow.** | Consistent with the project's core rule: real data or an honest blank, never a plausible lie. The opaque set is now small (op-amp macromodel internals), not "every active device". |
 | D5 | **`tran` is the only true playback timeline.** | Its x-axis is time. `ac` (frequency), `dc` (sweep), `op` (point) are not time playback. |
 | D6 | **Rendering: SVG schematic + a Canvas/WebGL overlay for flow particles.** | SVG for crisp, hit-testable symbols/wires; Canvas/WebGL for hundreds of moving dots at 60 fps without DOM churn. |
 
@@ -105,30 +105,38 @@ is on that wire → tint those wire segments.
 `MAX_DEFAULT_PROBES = 64`. So voltage coloring works for essentially every circuit out of the box. Circuits
 with >64 nets: the first 64 are probed — surface a "voltage shown for N of M nets" note (rare in practice).
 
-### 4.2 Branch currents — PARTIAL, and this is a real physical limit of the engine
-`rewriteCurrentProbeVector` (`generator.ts:632-647`) can probe current on:
-- **V, L, E, H** → native `i(dev)`
-- **R, C** → `@dev[i]` (triggers `.options savecurrents`, `generator.ts:430`)
-- **Everything else — diodes (D), BJT (Q), MOSFET (M), JFET (J), subckt/op-amp (X), switches, behavioral
-  (B), digital — is DROPPED** (`generator.ts:646`). ngspice batch mode has no portable single branch-current
-  vector for these devices.
+### 4.2 Branch currents — broadly available once the generator emits them (PROVEN)
+Today `rewriteCurrentProbeVector` (`generator.ts:632-647`) only keeps **V/L/E/H** (native `i(dev)`) and
+**R/C** (`@dev[i]` under `.options savecurrents`, `generator.ts:430`); diodes/transistors/subckts are
+**dropped** (`generator.ts:646`). That was read as an engine limit — **it is not.** A real-ngspice spike
+(diode + BJT + MOSFET, `.options savecurrents`, `.tran`, console build) returned live per-timestep terminal
+currents:
+```
+@d1[id]  = 4.31 mA     @q1[ic] = 4.90 mA   @q1[ib] = 0.174 mA   @q1[ie]  (present)
+@m1[id]  (present)     @m1[is] (present)
+```
+So batch ngspice **does** expose diode/BJT/MOSFET/JFET terminal currents. The fix is a **generator
+extension**: broaden the current-probe allowlist to emit device-terminal vectors (`@d[id]`, `@q[ic|ib|ie]`,
+`@m[id|is]`, JFET analogues) under `savecurrents`, gated — per project discipline — by a **real-ngspice
+regression cell per device type** (the coverage-matrix pattern). This is a small backend addition on the
+scale of the layout/working-copy changes, and it unlocks real current-flow across the circuits that matter.
 
-**Consequence:** we can show honest current-flow through resistors, capacitors, inductors, and sources.
-We **cannot** measure current *through* a transistor, diode, or op-amp. The standard EE workaround is a
-series **sense resistor** (already advised at `generator.ts:414-419`) — current through the sense R = the
-branch current, and R *is* probeable.
+**Still genuinely opaque:** the *internal* branches of a subckt macromodel (e.g. inside an op-amp `.subckt`)
+— you see its pin nets, not its internals. And a device with no series element and no exposed vector. Those
+fall to the tiers below. The classic EE escape hatch (a series **sense resistor**, `generator.ts:414-419`)
+remains available where a user wants an explicit, guaranteed probe.
 
-### 4.3 The decision: never fake it (D3/D4)
-- Branches with a measured current → animated flow (speed/density ∝ |i|, direction from sign).
-- Branches whose current is **derivable by KCL** from measured neighbours (e.g. a device in series with a
-  probed resistor, or the sole unmeasured branch at a node where all others are known) → inferred flow,
-  because it is *physically exact*, not a guess. This inference is deterministic arithmetic on the returned
-  series, not a second simulation.
-- Everything else (e.g. current splitting inside a transistor with no series sense R) → **shown static /
-  dimmed**, with a tooltip "current not measured on this branch — add a series sense resistor to see it."
-  No invented dots.
+### 4.3 The decision: three honest tiers, never fake (D3/D4)
+1. **Measured** — a real ngspice series exists for the branch (V/L/E/H/R/C today; **+ D/Q/M/J** after the
+   §4.2 extension). Animate flow: speed/density ∝ |i|, direction from sign.
+2. **KCL-inferred** — the branch current equals an exact arithmetic combination of measured neighbours
+   (a device in series with a probed element; the sole unknown branch at a node). Deterministic on the
+   returned series — *not* a second simulation, *not* a guess.
+3. **Honest-blank** — genuinely unknowable (deep inside an opaque subckt) → shown **static/dim** with a
+   tooltip "current not measured here — add a series sense resistor to probe it." No invented dots.
 
-This keeps the project's core promise intact: real data or an honest blank, never a plausible lie.
+This keeps the core promise intact: real data or an honest blank, never a plausible lie. After the §4.2
+extension, tier 3 shrinks to a small residue (mostly op-amp macromodel internals).
 
 ### 4.4 Current direction (sign)
 ngspice current is signed by device pin order; `assertions.ts:236-246` deliberately takes *magnitudes* for
@@ -256,23 +264,35 @@ its DC current — the same mapping module, one frame.
 - Decimation to a bounded, peak-preserving ≤20k-point series.
 
 **MISSING (to build for the feature):**
+- **Generator current-probe extension** (§4.2/§12) — emit D/Q/M/J terminal-current vectors under
+  `savecurrents`, tested per device type. Small backend change; capability already proven.
 - The `buildPlaybackModel` mapping module (§8) — including current-sign resolution and KCL inference (new).
-- The "animatable run" probe-set builder (§5) — all probeable device currents (new, small).
+- The "animatable run" probe-set builder (§5) — union all probeable device currents (new, small).
 - The entire frontend: SVG schematic symbols + wire routing (shared with the editor), the voltage tint
   pass, the Canvas/WebGL flow layer, the transport/scrubber, and the frame interpolation loop.
 
-**HONEST LIMIT (engine-level, not a bug):**
-- Current *through* diodes/transistors/op-amps/subckts is not measurable in batch ngspice (§4.2). v1 shows
-  those branches static/dim with a "add a sense resistor" hint. This is a property of ngspice batch mode,
-  documented at `generator.ts:632-647`.
+**HONEST LIMIT (small, after the extension):**
+- The *internal* branches of an opaque subckt (e.g. an op-amp macromodel) are not individually probeable;
+  those show static/dim with a "add a sense resistor" hint. Everything with an exposed device vector
+  (passives, sources, diodes, transistors) animates for real.
 
 ---
 
-## 12. Optional backend extension (phase 2, not v1)
+## 12. Backend extension — device-terminal currents (recommended, capability PROVEN)
 
-If active-device current animation becomes important, the change is localized to the netlist generator's
-current-probe allowlist (`SAVECURRENTS_DEVICES` `generator.ts:619`, `rewriteCurrentProbeVector`
-`generator.ts:632-647`): emit device-terminal current vectors where ngspice *does* expose them
-(e.g. `@d1[id]`, transistor terminal currents under `savecurrents`). The code comments flag this as
-mode-dependent and requires a real-ngspice regression cell per added device type before it can be trusted —
-so it is deliberately **out of v1** and gated behind the same "real data or nothing" bar.
+Real current-flow across active devices is the difference between a flagship feature and one that stalls at
+every transistor. A real-ngspice spike (§4.2) confirms batch mode exposes `@d[id]`, `@q[ic|ib|ie]`,
+`@m[id|is]` (and JFET analogues) under `.options savecurrents`. So this is a **recommended backend
+addition**, not a risky maybe:
+
+- **Where:** the current-probe allowlist — `SAVECURRENTS_DEVICES` (`generator.ts:619`) and
+  `rewriteCurrentProbeVector` (`generator.ts:632-647`). Emit the terminal vector for each supported device
+  type (choose the animation-relevant terminal, e.g. BJT `ic`/MOSFET `id` for the main conduction path).
+- **Discipline (non-negotiable):** one **real-ngspice regression cell per added device type** in the
+  coverage matrix (`pnpm test:matrix`/`test:edge`), asserting the vector is emitted and finite — the same
+  bar every other analysis crossed. A device/model that doesn't cleanly expose a current stays dropped
+  (→ tier 2/3), never faked.
+- **Scope:** sits alongside the layout-linkage / working-copy backend additions in size. Do it as its own
+  branch + real e2e, like those.
+
+Truly opaque internals (subckt macromodel guts) remain out — handled honestly by §4.3 tiers 2–3.
