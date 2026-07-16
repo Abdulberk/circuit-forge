@@ -18,6 +18,8 @@ export interface EmailMessage {
     to: string;
     subject: string;
     text: string;
+    /** Optional HTML body. When present, providers send a multipart text+HTML message; text stays the fallback. */
+    html?: string;
 }
 
 export interface EmailTransport {
@@ -63,7 +65,10 @@ class SesTransport implements EmailTransport {
             new SendEmailCommand({
                 Source: this.from,
                 Destination: { ToAddresses: [msg.to] },
-                Message: { Subject: { Data: msg.subject }, Body: { Text: { Data: msg.text } } },
+                Message: {
+                    Subject: { Data: msg.subject },
+                    Body: { Text: { Data: msg.text }, ...(msg.html ? { Html: { Data: msg.html } } : {}) },
+                },
             }),
         );
     }
@@ -91,7 +96,7 @@ class SmtpTransport implements EmailTransport {
     }
     async send(msg: EmailMessage): Promise<void> {
         const transporter = await this.getTransporter();
-        await transporter.sendMail({ from: this.from, to: msg.to, subject: msg.subject, text: msg.text });
+        await transporter.sendMail({ from: this.from, to: msg.to, subject: msg.subject, text: msg.text, ...(msg.html ? { html: msg.html } : {}) });
     }
 }
 
