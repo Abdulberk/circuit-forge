@@ -46,6 +46,15 @@ describe('requiredDimensions — conservative current/frequency detection from t
         expect(requiredDimensions(prompt).has(want as SpecDimension)).toBe(true);
     });
 
+    it.each([
+        ['keep THD under 1%', 'thd'],
+        ['minimize total harmonic distortion', 'thd'],
+        ['a low harmonic distortion output stage', 'thd'],
+        ['THD < 0.1% at full output', 'thd'],
+    ])('detects THD/distortion in %j', (prompt, want) => {
+        expect(requiredDimensions(prompt).has(want as SpecDimension)).toBe(true);
+    });
+
     it('does NOT trip on look-alikes: a part number, a bare resistor value, or an empty prompt', () => {
         // "BD139A": the digits are preceded by a letter, so the (?<![a-z0-9.]) lookbehind blocks the "…a" unit.
         expect(dims('use a BD139A transistor')).toEqual([]);
@@ -54,10 +63,19 @@ describe('requiredDimensions — conservative current/frequency detection from t
         expect(dims('')).toEqual([]);
         // A pure voltage prompt stays empty — voltage is intentionally never inferred/gated.
         expect(dims('a 5V regulated rail')).toEqual([]);
+        // Bare "distortion" is a WANTED effect here (a guitar pedal), not a THD spec — must NOT trip 'thd'.
+        expect(dims('a warm overdrive/distortion guitar pedal')).toEqual([]);
+        // GAIN is deliberately NOT a gated dimension (a pp-swing criterion is a legitimate proxy) — a gain
+        // prompt detects nothing, so a pp-verified amplifier is never false-downgraded.
+        expect(dims('a gain of 10 non-inverting amplifier')).toEqual([]);
     });
 
     it('detects BOTH dimensions when the prompt names both', () => {
         expect(dims('draw 10mA and cut off at 1kHz')).toEqual(['current', 'frequency']);
+    });
+
+    it('detects all three enforceable dimensions when the prompt names each', () => {
+        expect(dims('draw 10mA, cut off at 1kHz, THD under 1%')).toEqual(['current', 'frequency', 'thd']);
     });
 
     it('tolerates a null/undefined prompt (?? guard)', () => {
@@ -66,11 +84,14 @@ describe('requiredDimensions — conservative current/frequency detection from t
 });
 
 describe('criterionDimension — what a single criterion actually measures', () => {
-    it('cutoff metric ⇒ frequency; i()/@[i] probe ⇒ current; any other node ⇒ voltage', () => {
+    it('cutoff ⇒ frequency; thd ⇒ thd; i()/@[i] probe ⇒ current; any other node ⇒ voltage', () => {
         expect(criterionDimension({ probe: 'out', metric: 'cutoff' })).toBe('frequency');
+        expect(criterionDimension({ probe: 'out', metric: 'thd' })).toBe('thd');
         expect(criterionDimension({ probe: 'i(R1)', metric: 'max' })).toBe('current');
         expect(criterionDimension({ probe: '@r1[i]', metric: 'rms' })).toBe('current');
         expect(criterionDimension({ probe: 'out', metric: 'final' })).toBe('voltage');
+        // A gain-metric criterion still buckets as 'voltage' (gain is not its own gated dimension).
+        expect(criterionDimension({ probe: 'out', metric: 'gain' })).toBe('voltage');
     });
 });
 
@@ -90,12 +111,32 @@ describe('uncoveredRequiredDimensions — the gate that blocks an over-claimed "
         expect(uncoveredRequiredDimensions('1kHz low-pass', [{ probe: 'out', metric: 'cutoff' }])).toEqual([]);
     });
 
+    it('flags a THD target when only a node-voltage criterion is present (distortion has no voltage proxy)', () => {
+        expect(uncoveredRequiredDimensions('THD under 1%', [{ probe: 'out', metric: 'final' }])).toEqual(['thd']);
+    });
+
+    it('passes once a thd criterion covers the distortion dimension', () => {
+        expect(uncoveredRequiredDimensions('THD under 1%', [{ probe: 'out', metric: 'thd' }])).toEqual([]);
+    });
+
+    it('never gates GAIN — a gain prompt checked by a pp-swing criterion is NOT downgraded', () => {
+        // The load-bearing case behind deferring gain: pp legitimately proxies gain when input is pinned.
+        expect(uncoveredRequiredDimensions('a gain of 10 amplifier', [{ probe: 'out', metric: 'pp' }])).toEqual([]);
+        expect(uncoveredRequiredDimensions('a gain of 10 amplifier', [{ probe: 'out', metric: 'gain' }])).toEqual([]);
+    });
+
     it('never gates VOLTAGE (it is the default and always carries a criterion)', () => {
         expect(uncoveredRequiredDimensions('a 5V rail', [{ probe: 'i(R1)', metric: 'max' }])).toEqual([]);
     });
 
     it('reports BOTH uncovered dimensions when both are required and neither is measured', () => {
         expect(uncoveredRequiredDimensions('10mA at 1kHz', [{ probe: 'out', metric: 'final' }]).sort()).toEqual(['current', 'frequency']);
+    });
+
+    it('reports all three uncovered when current + frequency + THD are named but only voltage is checked', () => {
+        expect(uncoveredRequiredDimensions('10mA, 1kHz cutoff, THD < 1%', [{ probe: 'out', metric: 'final' }]).sort()).toEqual(
+            ['current', 'frequency', 'thd'],
+        );
     });
 });
 

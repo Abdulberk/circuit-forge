@@ -320,15 +320,25 @@ export function describeFailure(r: AssertionResult): string {
  * "≈10mA" spec "verified" by checking the anode sits at ≈2V — a 3×-wrong resistor would pass). The fix is
  * a CODE-side gate (the model rationalizes past prompt suggestions): if the user named a current target,
  * a criterion MUST probe a branch current, or the design is not "verified".
+ *
+ * The same reasoning extends to THD (total harmonic distortion): a distortion target has NO node-voltage
+ * proxy — it is measurable ONLY via the fourier `thd` metric — so naming it without a `thd` criterion is a
+ * hard coverage gap. GAIN is deliberately NOT gated here: unlike current/frequency/THD, a gain target has a
+ * LEGITIMATE voltage proxy — a peak-to-peak (pp) swing criterion verifies gain when the input amplitude is
+ * pinned (gain = Vout_pp / Vin_pp). Gating gain on the `gain` metric alone would false-DOWNGRADE those valid
+ * designs, breaking this gate's invariant (a false positive must only ever downgrade an OVER-claim, never a
+ * sound design). Proper ratio-vs-swing gain checking belongs in the typed RequirementSpec layer, not here.
  * ──────────────────────────────────────────────────────────────────────────────────────────────────── */
 
-export type SpecDimension = 'voltage' | 'current' | 'frequency';
+export type SpecDimension = 'voltage' | 'current' | 'frequency' | 'thd';
 
 /** Physical quantity a single criterion actually measures. The `cutoff` metric measures a frequency (the
- *  −3 dB corner of an AC magnitude response); an i()/@…[i] probe measures a current; any other node probe
- *  measures a voltage. So a `cutoff` criterion COVERS the frequency dimension the gate requires. */
+ *  −3 dB corner of an AC magnitude response); the `thd` metric measures total harmonic distortion (from the
+ *  fourier listing); an i()/@…[i] probe measures a current; any other node probe measures a voltage. So a
+ *  `cutoff` criterion COVERS the frequency dimension, and a `thd` criterion COVERS the distortion dimension. */
 export function criterionDimension(c: { probe: string; metric?: string }): SpecDimension {
     if (c.metric === 'cutoff') return 'frequency';
+    if (c.metric === 'thd') return 'thd';
     return isCurrentProbe(c.probe) ? 'current' : 'voltage';
 }
 
@@ -338,6 +348,10 @@ const CURRENT_MAGNITUDE_RE = /(?<![a-z0-9.])\d+(?:\.\d+)?\s*(?:m|u|µ|n|k|p)?a\b
 const CURRENT_WORD_RE = /(?<![a-z0-9.])\d+(?:\.\d+)?\s*(?:milli|micro|nano|kilo)?amp(?:ere)?s?\b/i; // 10 milliamps
 const FREQUENCY_MAGNITUDE_RE = /(?<![a-z0-9.])\d+(?:\.\d+)?\s*(?:k|m|g)?hz\b/i; // 1kHz, 60 Hz
 const FREQUENCY_WORD_RE = /\b(?:cutoff|corner\s+frequenc(?:y|ies)|bandwidth|-?\s*3\s*db|passband|stopband|resonant\s+frequency)\b/i;
+// THD is word-anchored like the frequency words above (its mere naming demands measurement). Matched on the
+// precise terms ONLY — never bare "distortion", which is frequently a WANTED effect (a distortion pedal), not
+// a spec to hold under a bound. Keeping it to "THD"/"harmonic distortion" makes a false positive near-impossible.
+const THD_WORD_RE = /\bthd\b|\b(?:total\s+)?harmonic\s+distortion\b/i; // THD, (total) harmonic distortion
 
 /** Quantities the user EXPLICITLY put a numeric target on, detected conservatively from the prompt —
  *  CODE-side, NOT model-trusted (the model is what under-specifies). Voltage is intentionally never
@@ -349,20 +363,22 @@ export function requiredDimensions(prompt: string): Set<SpecDimension> {
     const p = prompt ?? '';
     if (CURRENT_MAGNITUDE_RE.test(p) || CURRENT_WORD_RE.test(p)) dims.add('current');
     if (FREQUENCY_MAGNITUDE_RE.test(p) || FREQUENCY_WORD_RE.test(p)) dims.add('frequency');
+    if (THD_WORD_RE.test(p)) dims.add('thd');
     return dims;
 }
 
 /** Required dimensions that we can ACTUALLY verify (have a metric for) yet NO criterion measures — these
- *  must block a "verified" verdict. Both 'current' (i(Rn) branch-current) and 'frequency' (the `cutoff`
- *  metric over an AC sweep) are enforceable: a current/frequency target checked only by a node-voltage
- *  proxy is a fidelity gap, not "verified". (Voltage is never gated — it is the default and almost always
- *  already carries a criterion.) */
+ *  must block a "verified" verdict. Three are enforceable: 'current' (i(Rn) branch-current), 'frequency'
+ *  (the `cutoff` metric over an AC sweep), and 'thd' (the fourier distortion metric). Each is a quantity
+ *  with NO sound voltage proxy, so a target named for it but checked only by a node-voltage criterion is a
+ *  fidelity gap, not "verified". (Voltage is never gated — it is the default and almost always already
+ *  carries a criterion; gain is never gated — a pp-swing criterion is a legitimate proxy, see above.) */
 export function uncoveredRequiredDimensions(
     prompt: string,
     criteria: { probe: string; metric?: string }[],
 ): SpecDimension[] {
     const required = requiredDimensions(prompt);
     const covered = new Set(criteria.map(criterionDimension));
-    const ENFORCEABLE: SpecDimension[] = ['current', 'frequency'];
+    const ENFORCEABLE: SpecDimension[] = ['current', 'frequency', 'thd'];
     return ENFORCEABLE.filter((d) => required.has(d) && !covered.has(d));
 }

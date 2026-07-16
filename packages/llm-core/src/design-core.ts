@@ -320,6 +320,9 @@ export async function runDesignLoop(input: DesignLoopInput, deps: DesignDeps): P
                     (uncovered.includes('frequency')
                         ? `: for a cutoff/corner frequency, switch analysisConfig to an AC sweep {"type":"ac","variation":"dec","points":20,"startFreq":"<~fc/100>","stopFreq":"<~fc*100>"} driven by a source declared "AC 1", and add {"probe":"out","metric":"cutoff","op":"approx","value":<fc in Hz>,"tol":<Hz>}`
                         : '') +
+                    (uncovered.includes('thd')
+                        ? `: for THD/harmonic distortion, use a "tran" analysisConfig that covers several full periods of the input and add a fourier request {"fourier":{"fundamentalFreq":"<source freq, e.g. 1k>","probes":["v(out)"]}}, then add {"probe":"out","metric":"thd","op":"lt","value":<percent, e.g. 1>}`
+                        : '') +
                     `. KEEP every existing criterion unchanged (do not relax or remove any).`;
             }
             await checkAbort(deps); // don't spend another LLM call if a cancel arrived
