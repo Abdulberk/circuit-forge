@@ -45,6 +45,7 @@ export class DesignService {
         };
         const llmConfig = {
             apiKey,
+            protocol: this.config.get<string>('LLM_PROTOCOL') as 'anthropic' | 'openai' | undefined,
             baseUrl: this.config.get<string>('LLM_BASE_URL'),
             model: this.config.get<string>('LLM_MODEL'),
             userAgent: this.config.get<string>('LLM_USER_AGENT'),

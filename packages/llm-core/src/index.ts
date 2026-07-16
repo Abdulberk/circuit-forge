@@ -4,20 +4,20 @@
 // analysis config, validates both with eda-core's Zod schemas (with one JSON-repair retry),
 // and exposes generateCircuit() (text -> circuit) and fixCircuit() (broken circuit + problem -> fixed).
 
-import Anthropic from '@anthropic-ai/sdk';
 import {
     safeValidateCircuitJson,
     safeValidateAnalysisConfig,
     type CircuitJson,
     type AnalysisConfig,
 } from '@circuit-forge/eda-core';
+import { DEFAULT_TIMEOUT_MS, DEFAULT_TOKEN_BUDGET, budgetExceeded } from './policy';
 import {
-    DEFAULT_TIMEOUT_MS,
-    DEFAULT_TOKEN_BUDGET,
-    isRetryableModelError,
-    tokensUsed,
-    budgetExceeded,
-} from './policy';
+    createModelClient,
+    type ModelClient,
+    type NeutralMessage,
+    type NeutralToolSchema,
+    type LlmProtocol,
+} from './model-client';
 
 /** Defaults — overridable via config / env. */
 const DEFAULT_BASE_URL = 'https://api.zentio.dev'; // SDK appends /v1/messages
@@ -81,9 +81,13 @@ export interface GenerateCircuitResult {
 }
 
 export interface GenerateCircuitConfig {
-    /** API key (sent as `x-api-key`). Server-side only — never exposed to clients. */
+    /** Wire format of the provider. 'anthropic' (default) → POST <baseUrl>/v1/messages via the Anthropic SDK;
+     *  'openai' → POST <baseUrl>/chat/completions (OpenAI-compatible gateways, e.g. Azure/GPT proxies). */
+    protocol?: LlmProtocol;
+    /** API key (sent as `x-api-key`; the OpenAI path also sends `Authorization: Bearer`). Server-side only. */
     apiKey: string;
-    /** Anthropic-compatible base URL (default `https://api.zentio.dev`). The SDK appends `/v1/messages`. */
+    /** Provider base URL. anthropic: `https://api.zentio.dev` (SDK appends `/v1/messages`). openai: the API
+     *  root that exposes `/chat/completions`, e.g. `https://asvae.com/api/v1`. */
     baseUrl?: string;
     /** Model id (default `claude-sonnet-4-6`). */
     model?: string;
@@ -141,7 +145,7 @@ export interface GroundingOptions {
 }
 
 /** Model-facing tool schemas. Execution is delegated to the injected ToolExecutor. */
-const PART_TOOLS: Anthropic.Tool[] = [
+const PART_TOOLS: NeutralToolSchema[] = [
     {
         name: 'search_parts',
         description:
@@ -149,7 +153,7 @@ const PART_TOOLS: Anthropic.Tool[] = [
             'part that fits a component you are designing (by type/value/package), e.g. "10k 0603 ' +
             'resistor", "100nF X7R capacitor", "LM7805 regulator". Returns candidates with their ' +
             'supplierId, manufacturer part number (mpn), manufacturer and description.',
-        input_schema: {
+        inputSchema: {
             type: 'object',
             properties: { query: { type: 'string', description: 'Free-text part search phrase (<=100 chars).' } },
             required: ['query'],
@@ -160,7 +164,7 @@ const PART_TOOLS: Anthropic.Tool[] = [
         description:
             'Get full details for ONE catalog part by the supplierId returned from search_parts: ' +
             'parameters, price tiers, stock, datasheet, footprint, and whether it is simulatable.',
-        input_schema: {
+        inputSchema: {
             type: 'object',
             properties: { supplierId: { type: 'string', description: 'A supplierId from a search_parts result.' } },
             required: ['supplierId'],
@@ -169,7 +173,7 @@ const PART_TOOLS: Anthropic.Tool[] = [
 ];
 
 /** Verify-and-fix tool: runs ERC + ngspice on a proposed circuit and returns a compact report. */
-const SIMULATE_TOOL: Anthropic.Tool = {
+const SIMULATE_TOOL: NeutralToolSchema = {
     name: 'simulate_circuit',
     description:
         'Verify a circuit by running ERC + an ngspice simulation and getting back a compact report: ERC ' +
@@ -177,7 +181,7 @@ const SIMULATE_TOOL: Anthropic.Tool = {
         'final/peak-to-peak). Call this with your CURRENT proposed circuit BEFORE returning the final ' +
         'answer; if it reports ERC errors, a convergence failure, or implausible measurements, FIX the ' +
         'circuit and call again. Pass the analysis you intend, or omit it for a quick DC operating-point check.',
-    input_schema: {
+    inputSchema: {
         type: 'object',
         properties: {
             circuit: {
@@ -208,8 +212,7 @@ export class CircuitGenerationError extends Error {
 }
 
 interface Resolved {
-    client: Anthropic;
-    model: string;
+    client: ModelClient;
     maxTokens: number;
     maxToolIters: number;
     tokenBudget: number;
@@ -221,21 +224,19 @@ function setup(config: GenerateCircuitConfig): Resolved {
     if (!config.apiKey) {
         throw new CircuitGenerationError('LLM provider API key is not configured.', 'config');
     }
-    const client = new Anthropic({
+    // Provider-agnostic transport: 'anthropic' (Claude gateways) or 'openai' (GPT/Azure gateways). The client
+    // owns the model id, the neutral UA (some gateways' WAFs block the SDK default), the per-call wall-clock
+    // timeout, and its single transient retry. See model-client.ts.
+    const client = createModelClient({
+        protocol: config.protocol ?? 'anthropic',
         apiKey: config.apiKey,
-        baseURL: config.baseUrl || DEFAULT_BASE_URL,
-        // Neutral UA — the gateway's WAF blocks the SDK's default "Anthropic/JS" User-Agent.
-        defaultHeaders: { 'User-Agent': config.userAgent || DEFAULT_USER_AGENT },
-        // Hard per-call wall-clock timeout so a hung/overloaded provider can't block the request
-        // indefinitely (the SDK aborts past this and throws APIConnectionTimeoutError).
-        timeout: config.timeoutMs ?? DEFAULT_TIMEOUT_MS,
-        // We own retries (createWithRetry retries ONCE on a transient/timeout error); disable the SDK's
-        // own retry so a slow call isn't silently re-attempted up to maxRetries x timeout.
-        maxRetries: 0,
+        baseUrl: config.baseUrl || DEFAULT_BASE_URL,
+        model: config.model || DEFAULT_MODEL,
+        userAgent: config.userAgent || DEFAULT_USER_AGENT,
+        timeoutMs: config.timeoutMs ?? DEFAULT_TIMEOUT_MS,
     });
     return {
         client,
-        model: config.model || DEFAULT_MODEL,
         maxTokens: config.maxTokens || DEFAULT_MAX_TOKENS,
         maxToolIters: config.maxToolIters ?? MAX_TOOL_ITERS,
         tokenBudget: config.tokenBudget ?? DEFAULT_TOKEN_BUDGET,
@@ -304,7 +305,7 @@ export async function explainCircuit(
 ): Promise<ExplainCircuitResult> {
     const r = setup(config);
     const text = await callModel(r, EXPLAIN_SYSTEM_PROMPT, [
-        { role: 'user', content: buildExplainMessage(input) },
+        { role: 'user', text: buildExplainMessage(input) },
     ]);
     return { explanation: text };
 }
@@ -316,7 +317,7 @@ async function runWithRepair(
     userContent: string,
     grounding?: GroundingOptions,
 ): Promise<GenerateCircuitResult> {
-    const baseMessages: Anthropic.MessageParam[] = [{ role: 'user', content: userContent }];
+    const baseMessages: NeutralMessage[] = [{ role: 'user', text: userContent }];
 
     // When grounded, run a tool-use loop. The host enables capabilities independently: catalog search
     // (search_parts/get_part_details) and/or simulate_circuit (verify-and-fix). A bare { toolExecutor }
@@ -337,12 +338,12 @@ async function runWithRepair(
     const first = parseAndValidate(firstText);
     if (first.ok) return { ...first.value, repaired: false };
 
-    const repairMessages: Anthropic.MessageParam[] = [
+    const repairMessages: NeutralMessage[] = [
         ...baseMessages,
-        { role: 'assistant', content: firstText.slice(0, 8000) },
+        { role: 'assistant', text: firstText.slice(0, 8000), toolCalls: [] },
         {
             role: 'user',
-            content:
+            text:
                 `Your previous output was not valid. The validator reported:\n${first.error}\n\n` +
                 `Fix every issue and return ONLY the corrected JSON object ` +
                 `({"circuit": <CircuitJson>, "analysisConfig": <AnalysisConfig>, "explanation": <string>}) — ` +
@@ -366,86 +367,60 @@ const MAX_TOOL_RESULT_CHARS = 12000;
 async function callModel(
     r: Resolved,
     system: string,
-    messages: Anthropic.MessageParam[],
-    opts?: { tools?: Anthropic.Tool[]; executor?: ToolExecutor },
+    messages: NeutralMessage[],
+    opts?: { tools?: NeutralToolSchema[]; executor?: ToolExecutor },
 ): Promise<string> {
     const useTools = !!(opts?.tools?.length && opts.executor);
-    const convo: Anthropic.MessageParam[] = [...messages];
-    // Retry ONCE on a transient error (5xx / overload / wall-clock timeout / connection drop / the zentio
-    // gateway's transient Turkish rejection) with the identical payload; never on genuine 4xx validation.
-    // See policy.isRetryableModelError. The SDK's own retry is disabled (maxRetries:0 in setup) so this is
-    // the single source of retry truth.
-    const createWithRetry = async (
-        params: Anthropic.MessageCreateParamsNonStreaming,
-        meta: { iter: number; toolsOffered: boolean },
-    ): Promise<Anthropic.Message> => {
-        // Report EVERY billed HTTP call (attempt 1, and the retry as attempt 2) so a host can count real
-        // provider requests against its invoice. Defensive: a telemetry sink must never break generation.
-        const fire = (attempt: 1 | 2) => {
-            try {
-                r.onLlmRequest?.({ iter: meta.iter, attempt, toolsOffered: meta.toolsOffered });
-            } catch {
-                /* a throwing telemetry sink must not abort the model call */
-            }
-        };
-        fire(1);
-        try {
-            return await r.client.messages.create(params);
-        } catch (e) {
-            if (!isRetryableModelError(e)) throw e;
-            await new Promise((resolve) => setTimeout(resolve, 1500));
-            fire(2); // the retry is a SEPARATE billed HTTP call — the token accounting misses it
-            return await r.client.messages.create(params); // second failure propagates
-        }
-    };
-    // Cumulative input+output tokens across this call's tool loop — a per-request cost ceiling.
+    const convo: NeutralMessage[] = [...messages];
+    // Cumulative input+output tokens across this call's tool loop — a per-request cost ceiling. The client
+    // owns the single transient retry + wall-clock timeout; it fires onLlmRequest per billed HTTP call.
     let totalTokens = 0;
     try {
         for (let iter = 0; ; iter++) {
             // Offer tools until the cap OR until the token budget is spent; either way the next iteration
             // runs tool-less to force a final text answer rather than burning another (growing) round.
             const allowTools = useTools && iter < r.maxToolIters && !budgetExceeded(totalTokens, r.tokenBudget);
-            const response = await createWithRetry({
-                model: r.model,
-                max_tokens: r.maxTokens,
-                ...(r.temperature !== undefined ? { temperature: r.temperature } : {}),
-                system: [{ type: 'text', text: system, cache_control: { type: 'ephemeral' } }],
-                messages: convo,
-                ...(allowTools ? { tools: opts!.tools } : {}),
-            }, { iter, toolsOffered: allowTools });
-            totalTokens += tokensUsed(response.usage);
+            const reply = await r.client.create(
+                {
+                    system,
+                    messages: convo,
+                    ...(allowTools ? { tools: opts!.tools } : {}),
+                    maxTokens: r.maxTokens,
+                    ...(r.temperature !== undefined ? { temperature: r.temperature } : {}),
+                },
+                (attempt) => {
+                    try {
+                        r.onLlmRequest?.({ iter, attempt, toolsOffered: allowTools });
+                    } catch {
+                        /* a throwing telemetry sink must not abort the model call */
+                    }
+                },
+            );
+            totalTokens += reply.inputTokens + reply.outputTokens;
 
-            const toolUses = allowTools
-                ? response.content.filter((b): b is Anthropic.ToolUseBlock => b.type === 'tool_use')
-                : [];
-
-            if (toolUses.length === 0) {
-                let text = '';
-                for (const block of response.content) {
-                    if (block.type === 'text') text += (text ? '\n' : '') + block.text;
-                }
-                text = text.trim();
-                if (!text) throw new CircuitGenerationError('Model returned no text content.', 'invalid_output');
-                return text;
+            if (!allowTools || reply.toolCalls.length === 0) {
+                if (!reply.text) throw new CircuitGenerationError('Model returned no text content.', 'invalid_output');
+                return reply.text;
             }
 
             // Run each tool call and feed the results back for the next turn.
-            convo.push({ role: 'assistant', content: response.content });
-            const toolResults: Anthropic.ToolResultBlockParam[] = [];
-            for (const tu of toolUses) {
+            convo.push({ role: 'assistant', text: reply.text, toolCalls: reply.toolCalls });
+            const results: { toolCallId: string; content: string }[] = [];
+            for (const tc of reply.toolCalls) {
                 let content: string;
                 try {
-                    const out = await opts!.executor!(tu.name, (tu.input ?? {}) as Record<string, unknown>);
+                    const out = await opts!.executor!(tc.name, tc.input);
                     content = JSON.stringify(out ?? null).slice(0, MAX_TOOL_RESULT_CHARS);
                 } catch (e) {
                     content = JSON.stringify({ error: e instanceof Error ? e.message : String(e) });
                 }
-                toolResults.push({ type: 'tool_result', tool_use_id: tu.id, content });
+                results.push({ toolCallId: tc.id, content });
             }
-            convo.push({ role: 'user', content: toolResults });
+            convo.push({ role: 'tool', results });
         }
     } catch (err) {
         if (err instanceof CircuitGenerationError) throw err;
+        // Both transports surface a numeric `.status` (Anthropic SDK errors + OpenAiHttpError).
         const e = err as { status?: number; message?: string };
         const status = typeof e?.status === 'number' ? e.status : undefined;
         const detail = e?.message ?? String(err);

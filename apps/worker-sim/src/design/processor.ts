@@ -41,6 +41,7 @@ export interface DesignJobPayload {
 function buildLlmConfig() {
     return {
         apiKey: config.LLM_API_KEY as string, // presence guaranteed by the caller (processor only starts with a key)
+        protocol: config.LLM_PROTOCOL as 'anthropic' | 'openai' | undefined,
         baseUrl: config.LLM_BASE_URL,
         model: config.LLM_MODEL,
         userAgent: config.LLM_USER_AGENT,
