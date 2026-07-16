@@ -48,10 +48,12 @@ describe('requiredDimensions — conservative current/frequency detection from t
 
     it.each([
         ['keep THD under 1%', 'thd'],
-        ['minimize total harmonic distortion', 'thd'],
-        ['a low harmonic distortion output stage', 'thd'],
         ['THD < 0.1% at full output', 'thd'],
-    ])('detects THD/distortion in %j', (prompt, want) => {
+        ['1% THD max', 'thd'],
+        ['total harmonic distortion below 0.5 %', 'thd'],
+        ['0.1% total harmonic distortion into 8 ohms', 'thd'],
+        ['THD better than -60 dB', 'thd'],
+    ])('detects a NUMERIC-BOUNDED THD spec in %j', (prompt, want) => {
         expect(requiredDimensions(prompt).has(want as SpecDimension)).toBe(true);
     });
 
@@ -65,6 +67,12 @@ describe('requiredDimensions — conservative current/frequency detection from t
         expect(dims('a 5V regulated rail')).toEqual([]);
         // Bare "distortion" is a WANTED effect here (a guitar pedal), not a THD spec — must NOT trip 'thd'.
         expect(dims('a warm overdrive/distortion guitar pedal')).toEqual([]);
+        // Qualitative "harmonic distortion" with NO numeric bound is a WANTED sonic effect, not a spec — the
+        // gate must not fire and false-downgrade this otherwise-sound design (adversarial-review finding).
+        expect(dims('a Class-A tube preamp with warm musical harmonic distortion when overdriven')).toEqual([]);
+        // "THD" as an unrelated abbreviation (threaded / through-hole) with no nearby %/dB bound must not trip.
+        expect(dims('add four M3 THD mounting holes to the board')).toEqual([]);
+        expect(dims('use THD resistors, output 5V')).toEqual([]);
         // GAIN is deliberately NOT a gated dimension (a pp-swing criterion is a legitimate proxy) — a gain
         // prompt detects nothing, so a pp-verified amplifier is never false-downgraded.
         expect(dims('a gain of 10 non-inverting amplifier')).toEqual([]);

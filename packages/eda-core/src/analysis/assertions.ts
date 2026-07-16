@@ -321,9 +321,10 @@ export function describeFailure(r: AssertionResult): string {
  * a CODE-side gate (the model rationalizes past prompt suggestions): if the user named a current target,
  * a criterion MUST probe a branch current, or the design is not "verified".
  *
- * The same reasoning extends to THD (total harmonic distortion): a distortion target has NO node-voltage
- * proxy — it is measurable ONLY via the fourier `thd` metric — so naming it without a `thd` criterion is a
- * hard coverage gap. GAIN is deliberately NOT gated here: unlike current/frequency/THD, a gain target has a
+ * The same reasoning extends to THD (total harmonic distortion): a numeric distortion target (e.g. "THD < 1%")
+ * has NO node-voltage proxy — it is measurable ONLY via the fourier `thd` metric — so a bounded THD target
+ * without a `thd` criterion is a hard coverage gap. (Detection requires the NUMBER: a bare "warm harmonic
+ * distortion" is a WANTED effect, not a spec, and must not trip the gate.) GAIN is deliberately NOT gated here: unlike current/frequency/THD, a gain target has a
  * LEGITIMATE voltage proxy — a peak-to-peak (pp) swing criterion verifies gain when the input amplitude is
  * pinned (gain = Vout_pp / Vin_pp). Gating gain on the `gain` metric alone would false-DOWNGRADE those valid
  * designs, breaking this gate's invariant (a false positive must only ever downgrade an OVER-claim, never a
@@ -348,10 +349,14 @@ const CURRENT_MAGNITUDE_RE = /(?<![a-z0-9.])\d+(?:\.\d+)?\s*(?:m|u|µ|n|k|p)?a\b
 const CURRENT_WORD_RE = /(?<![a-z0-9.])\d+(?:\.\d+)?\s*(?:milli|micro|nano|kilo)?amp(?:ere)?s?\b/i; // 10 milliamps
 const FREQUENCY_MAGNITUDE_RE = /(?<![a-z0-9.])\d+(?:\.\d+)?\s*(?:k|m|g)?hz\b/i; // 1kHz, 60 Hz
 const FREQUENCY_WORD_RE = /\b(?:cutoff|corner\s+frequenc(?:y|ies)|bandwidth|-?\s*3\s*db|passband|stopband|resonant\s+frequency)\b/i;
-// THD is word-anchored like the frequency words above (its mere naming demands measurement). Matched on the
-// precise terms ONLY — never bare "distortion", which is frequently a WANTED effect (a distortion pedal), not
-// a spec to hold under a bound. Keeping it to "THD"/"harmonic distortion" makes a false positive near-impossible.
-const THD_WORD_RE = /\bthd\b|\b(?:total\s+)?harmonic\s+distortion\b/i; // THD, (total) harmonic distortion
+// THD is magnitude-anchored like current/frequency above: a distortion TERM must sit next to a numeric BOUND
+// (a percent or a dB figure), in either order, within a short window. A bare mention is NOT enough — "warm
+// harmonic distortion" (a WANTED guitar/tube/tape effect), "M3 THD mounting holes" (THD = threaded), or "THD
+// resistors" (through-hole) carry no bound and must never trip the gate and false-downgrade a sound design.
+// Requiring the number keeps THD faithful to this module's contract: only a quantity the user put a NUMBER on.
+const THD_TERM = String.raw`(?:\bthd\b|\b(?:total\s+)?harmonic\s+distortion\b)`;
+const THD_BOUND = String.raw`\d+(?:\.\d+)?\s*(?:%|percent\b|db[c]?\b)`; // 1%, 0.1 %, 5 percent, -60 dB, dBc
+const THD_SPEC_RE = new RegExp(String.raw`${THD_TERM}[^.\n]{0,24}${THD_BOUND}|${THD_BOUND}[^.\n]{0,24}${THD_TERM}`, 'i');
 
 /** Quantities the user EXPLICITLY put a numeric target on, detected conservatively from the prompt —
  *  CODE-side, NOT model-trusted (the model is what under-specifies). Voltage is intentionally never
@@ -363,7 +368,7 @@ export function requiredDimensions(prompt: string): Set<SpecDimension> {
     const p = prompt ?? '';
     if (CURRENT_MAGNITUDE_RE.test(p) || CURRENT_WORD_RE.test(p)) dims.add('current');
     if (FREQUENCY_MAGNITUDE_RE.test(p) || FREQUENCY_WORD_RE.test(p)) dims.add('frequency');
-    if (THD_WORD_RE.test(p)) dims.add('thd');
+    if (THD_SPEC_RE.test(p)) dims.add('thd');
     return dims;
 }
 
@@ -379,6 +384,10 @@ export function uncoveredRequiredDimensions(
 ): SpecDimension[] {
     const required = requiredDimensions(prompt);
     const covered = new Set(criteria.map(criterionDimension));
+    // Adding a member to SpecDimension does NOT auto-enforce it — a new enforceable dimension must be wired in
+    // THREE coupled places or it silently under-enforces / gives a hint-less fix loop: (1) a detector in
+    // requiredDimensions above, (2) a metric mapping in criterionDimension, (3) this ENFORCEABLE list, and
+    // (4) a fix-loop hint in llm-core design-core.ts (the `uncovered.includes(...)` chain).
     const ENFORCEABLE: SpecDimension[] = ['current', 'frequency', 'thd'];
     return ENFORCEABLE.filter((d) => required.has(d) && !covered.has(d));
 }
