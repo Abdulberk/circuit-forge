@@ -320,3 +320,43 @@ describe('runDesignLoop — a thd criterion is measured via the seed analysis fo
         expect(a?.pass).toBe(true);  // 0.5% < 1%
     });
 });
+
+describe('runDesignLoop — ERC hard gate (SDK-free)', () => {
+    // A circuit with a hard electrical error (no ground reference → ERC001) must NEVER be verified, even when
+    // the (faked) sim would report a healthy, spec-meeting result — ngspice can gmin-step a groundless deck to
+    // a "successful" garbage solution. Mirrors the /verify-design contract: any severity==='error' ⇒ not verified.
+    const SEED_NO_GROUND: CircuitJson = {
+        version: '1.0',
+        components: [
+            { id: 'v1', type: 'voltage_source', designator: 'V1', value: 'DC 5', pins: [{ pinId: '+', netId: 'a' }, { pinId: '-', netId: 'b' }] },
+            { id: 'r1', type: 'resistor', designator: 'R1', value: '1k', pins: [{ pinId: '1', netId: 'a' }, { pinId: '2', netId: 'b' }] },
+        ],
+        nets: [{ id: 'a', name: 'a' }, { id: 'b', name: 'b' }],
+    } as unknown as CircuitJson;
+
+    it('gates BEFORE the sim: an ERC-error seed is never verified and no simulation is enqueued', async () => {
+        const runSim = {
+            // These WOULD report a healthy, spec-meeting sim — proving the ERC gate (not the sim) blocks it.
+            createQuickSim: jest.fn(async () => ({ jobId: 'j1' })),
+            getStatus: jest.fn(async () => ({ status: 'SUCCEEDED', metrics: { pointsCount: 2 } })),
+            getResult: jest.fn(async () => ({ status: 'SUCCEEDED', result: { meta: { pointsCount: 2 }, series: [{ name: 'v(a)', points: [{ x: 0, y: 5 }, { x: 1, y: 5 }] }] }, metrics: { pointsCount: 2 } })),
+            createMonteCarloJob: jest.fn(),
+        };
+        const deps = fakeDeps({ runSim: runSim as unknown as DesignDeps['runSim'] });
+        const res = await runDesignLoop(
+            {
+                prompt: 'a 5V rail',
+                seedCircuit: SEED_NO_GROUND,
+                seedAnalysisConfig: { type: 'op' } as never,
+                seedCriteria: [{ probe: 'a', metric: 'final', op: 'approx', value: 5, tol: 0.1 }] as never,
+                maxRounds: 1,
+            },
+            deps,
+        );
+        expect(res.ok).toBe(false);
+        expect(res.verified).toBeFalsy();
+        expect(runSim.createQuickSim).not.toHaveBeenCalled(); // ERC short-circuited before any sim spend
+        expect(res.history.some((h) => h.status === 'ERC_ERROR')).toBe(true);
+        expect(String(res.warning)).toMatch(/electrical rule|ERC/i);
+    });
+});
