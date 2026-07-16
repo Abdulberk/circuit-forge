@@ -44,6 +44,8 @@ const ConfigSchema = z.object({
     FREEROUTING_JAR: z.string().default('/app/freerouting-executable.jar'),
     JAVA_BIN: z.string().default('java'),
     KICAD_CLI: z.string().default('kicad-cli'),
+    RUST_PLACER_PATH: z.string().default('cf-pcb-place'),
+    RUST_PLACER_TIMEOUT_MS: z.string().transform(Number).default('30000'),
 
     LOG_LEVEL: z.enum(['trace', 'debug', 'info', 'warn', 'error', 'fatal']).default('info'),
     NODE_ENV: z.enum(['development', 'production', 'test']).default('development'),
