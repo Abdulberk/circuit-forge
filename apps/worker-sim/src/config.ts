@@ -82,6 +82,7 @@ const ConfigSchema = z.object({
     // individual design JOB terminally (clear error) rather than refusing to start. These mirror the keys
     // apps/api DesignService reads from ConfigService, so the API and the worker run the identical loop. ---
     LLM_API_KEY: optStr,
+    LLM_PROTOCOL: optStr, // 'openai' for GPT/Azure gateways; else 'anthropic' (llm-core default)
     LLM_BASE_URL: optStr,
     LLM_MODEL: optStr,
     LLM_USER_AGENT: optStr,
