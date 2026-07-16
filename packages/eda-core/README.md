@@ -1,118 +1,147 @@
+<div align="center">
+
 # @circuit-forge/eda-core
 
-Circuit manipulation, netlist generation, and SPICE parsing for the **Circuit Forge** EDA
-platform. This package is the **single source of truth** for the `CircuitJson` schema shared
-between the backend, the simulation worker, and the web frontend — reuse it instead of
-re-declaring circuit types.
+**The EDA brain of [Circuit Forge](https://github.com/Abdulberk/circuit-forge):**
+typed circuits → SPICE netlists → parsed results → *measured* pass/fail verdicts → tolerance robustness.
 
-Pure TypeScript, browser-safe (only runtime dependency is [Zod](https://zod.dev) v3).
+[![npm](https://img.shields.io/npm/v/%40circuit-forge%2Feda-core?logo=npm&color=CB3837)](https://www.npmjs.com/package/@circuit-forge/eda-core)
+[![license](https://img.shields.io/npm/l/%40circuit-forge%2Feda-core?color=blue)](https://github.com/Abdulberk/circuit-forge/blob/main/packages/eda-core/LICENSE)
+![types](https://img.shields.io/badge/types-included-3178C6?logo=typescript&logoColor=white)
+![runtime deps](https://img.shields.io/badge/runtime%20deps-zod%20only-3E67B1)
+![tested](https://img.shields.io/badge/tested-real%20ngspice%20battery-2EA44F)
 
-## Install
+</div>
+
+Pure, deterministic TypeScript. **No I/O** — no filesystem, no network, no child processes:
+you bring the ngspice binary, this library does everything around it. Browser-safe;
+the only runtime dependency is [Zod](https://zod.dev).
 
 ```bash
-npm install @circuit-forge/eda-core
-# or: pnpm add @circuit-forge/eda-core
+npm install @circuit-forge/eda-core     # or: pnpm add @circuit-forge/eda-core
 ```
 
-## What's inside
+---
 
-- **Types** — `CircuitJson`, `Component`, `Net`, `PinConnection`, `UiJson`, `AnalysisConfig`,
-  `SimulationResult`, `DataSeries`, `DataPoint`, `ErcResult`, and the constants
-  `COMPONENT_PINS` / `SPICE_PREFIXES`.
-- **Validation (Zod)** — `CircuitJsonSchema`, `UiJsonSchema`, `AnalysisConfigSchema`,
-  `SpiceValueSchema`, `ProbeSchema`, plus `validate*` (throwing) and `safeValidate*`
-  (result-returning) helpers.
-- **Netlist** — `generateNetlist(circuit, analysisConfig, opts)` and `parseNetlist(text)`.
-- **ERC** — `runErc(circuit)` returns `ErcIssue[]` (e.g. `NO_GROUND`, `MISSING_VALUE`).
-- **SPICE values** — `parseSpiceValue`, `parseTimeValue`, `parseFrequencyValue`
-  (remember: `M`/`m` = milli, `MEG` = mega).
-- **ngspice-native analyses** — six `AnalysisConfig` types (`tran`, `ac`, `dc`, `op`, `noise`, `sens`),
-  the last two (`NoiseAnalysis`, `SensAnalysis`) alongside `.four`/`.meas`/`.tf` requests riding on
-  `tran`/`op`. All are REPORT-ONLY on `SimulationResult` (the base run is unaffected) via dedicated
-  parsers and result types:
-  - `parseFourierLog` → `FourierResult[]` (`SimulationResult.fourier`) — THD % + harmonic table from a
-    `.four` request on a `tran` analysis.
-  - `parseMeasurements` → `MeasurementResult[]` (`SimulationResult.measurements`) — `.meas`
-    timing/extrema/integral results.
-  - `parseTransferFunction` → `TransferFunctionResult` (`SimulationResult.transferFunction`) — `.tf`
-    small-signal gain + input/output impedance from an `op` analysis.
-  - `parseNoise` / `parseNoiseTotals` → `NoiseResult` (`SimulationResult.noise`) — `.noise` integrated
-    output/input-referred totals (the per-frequency spectrum rides in `series`).
-  - `parseSensitivity` → `SensitivityResult` (`SimulationResult.sensitivity`) — `.sens` DC
-    sensitivity table (d(output)/d(each element)).
-- **Assertion evaluation / verdict-gating** — `evaluateAssertions(measurements, criteria, simOk?)`
-  is the ONE place a measurable spec is checked, shared by verify-design, the AI design loop, and the
-  Monte-Carlo worker. `AcceptanceCriterion` supports 9 metrics: `min | max | final | pp | avg | rms |
-  cutoff | thd | gain` (`avg`/`rms` are time-weighted/trapezoidal; `cutoff` is the −3dB AC corner; `thd`
-  and `gain` are folded onto the per-node measurement from the design's own fourier/`.tf` results via
-  `attachFourierThd` / `attachTransferFunction` before evaluation — so a `thd`/`gain` criterion is only
-  measurable, and only gates "verified", when the analysis actually requested a matching `fourier`/`tf`).
-  Also exports `compareAssertion`, `describeFailure`, `criterionDimension`, `requiredDimensions`,
-  `uncoveredRequiredDimensions`.
-- **Monte-Carlo / yield** — `perturbValue`, `perturbCircuit`, `monteCarloVariants`, `computeYield`,
-  `runMonteCarlo` (+ `TolDistribution`, `YieldSummary`, `VariantOutcome`, `VariantRunner`,
-  `MonteCarloOptions`, `MonteCarloYield`). Perturbs toleranced component values (gaussian/uniform),
-  runs N variants through an injected ngspice runner, and aggregates a yield with a Wilson 95%
-  confidence interval and adaptive-N early stop — the basis for "verified at X% yield" rather than
-  nominal-only.
-- **SPICE round-trip import** — `parseNetlist(text)` parses a netlist back to `CircuitJson`, preserving
-  `.model`/`.subckt`/`.options`/`.ic` cards, importing digital/XSPICE lines (`CFD_*` models) back to
-  their gate/flip-flop/latch/tristate component types, and re-merging mixed-signal nets the generator
-  had split for digital bridging.
-- **E-series (IEC 60063) snapping** — `nearestESeries`, `isESeriesValue`, `snapValueString`,
-  `snapCircuitToESeries` — snap AI/formula-derived component values to a standard preferred-value
-  series (E12/E24/…) so results stay sourceable.
-- **Convergence Doctor** — `diagnoseConvergence` classifies an ngspice non-convergence failure
-  (timestep collapse, singular matrix, iteration limit, …) into a plain-language explanation;
-  `convergenceRemedyLadder` returns an ordered list of solver-option remedies to retry with. Shared by
-  the inline API simulator and the worker so both retry the identical ladder.
-
-## Example
+## ⏱️ 60 seconds: circuit → verdict
 
 ```ts
-import { safeValidateCircuitJson, generateNetlist, runErc } from '@circuit-forge/eda-core';
+import {
+  safeValidateCircuitJson, runErc, generateNetlist,
+  parseSimulationOutput, extractProbes, summarizeSeries,
+  evaluateAssertions, type AcceptanceCriterion,
+} from '@circuit-forge/eda-core';
 
-const result = safeValidateCircuitJson(circuitJsonFromApi);
-if (!result.success) throw new Error('Invalid circuit');
+// 1 · A circuit is plain, typed JSON — one schema shared by API, worker, and UI
+const circuit = {
+  version: '1.0',
+  components: [
+    { id: 'v1', type: 'voltage_source', designator: 'V1', value: 'DC 5',
+      pins: [{ pinId: '+', netId: 'in' }, { pinId: '-', netId: '0' }] },
+    { id: 'r1', type: 'resistor', designator: 'R1', value: '1k',
+      pins: [{ pinId: '1', netId: 'in' }, { pinId: '2', netId: 'out' }] },
+    { id: 'r2', type: 'resistor', designator: 'R2', value: '1k',
+      pins: [{ pinId: '1', netId: 'out' }, { pinId: '2', netId: '0' }] },
+  ],
+  nets: [
+    { id: 'in', name: 'in' }, { id: 'out', name: 'out' },
+    { id: '0', name: '0', isGround: true },
+  ],
+};
 
-const issues = runErc(result.data);          // electrical-rule check
-const netlist = generateNetlist(result.data, { type: 'tran', stopTime: '5m', stepTime: '50u' });
-```
+// 2 · Validate + electrical-rule-check
+const parsed = safeValidateCircuitJson(circuit);
+if (!parsed.success) throw new Error('invalid circuit');
+runErc(parsed.data);                       // → [] (no NO_GROUND / MISSING_VALUE / … findings)
 
-Evaluating acceptance criteria against a simulation result (the same path verify-design, the AI design
-loop, and the Monte-Carlo worker all share):
+// 3 · Generate a sanitized SPICE deck
+const netlist = generateNetlist(parsed.data, { type: 'op' });
 
-```ts
-import { summarizeSeries, evaluateAssertions, type AcceptanceCriterion } from '@circuit-forge/eda-core';
+// 4 · Run it with YOUR ngspice:  `ngspice -b circuit.cir`  → output.csv
+//     (this library never spawns processes — deck in, results out)
 
-const measurements = simResult.series.map((s) => summarizeSeries(s, simResult.meta.analysisType));
-// one SimMeasurement per node: {node, min, max, final, pp, avg, rms, ...}
+// 5 · Parse → distill → judge against the stated spec
+const result = parseSimulationOutput(csv, extractProbes(netlist), 'op');
+const measurements = result.series.map((s) => summarizeSeries(s, 'op'));
+
 const criteria: AcceptanceCriterion[] = [
-    { probe: 'v(out)', metric: 'max', op: 'lte', value: 5.5 },
+  { probe: 'v(out)', metric: 'final', op: 'approx', value: 2.5, tol: 0.05, label: 'V(out) ≈ 2.5 V' },
 ];
-const results = evaluateAssertions(measurements, criteria);
-const verified = results.every((r) => r.pass);
+const verdict = evaluateAssertions(measurements, criteria, true, parsed.data.nets);
+// → [{ label: 'V(out) ≈ 2.5 V', actual: 2.5, pass: true,
+//      detail: 'final(v(out)) = 2.5 ✓ approx 2.5' }]
 ```
 
-A `thd`/`gain` criterion additionally needs the matching `.four`/`.tf` request in the `AnalysisConfig`,
-and the resulting fourier/transfer-function data folded onto the measurements first:
+Every criterion answers with the **measured value** and its signed distance to target —
+an unmeasurable probe is `actual: null` and **never** a silent pass.
+
+---
+
+## 🗺️ What's in the box
+
+| Area | Key exports | What it does |
+|---|---|---|
+| 🧩 **Types & validation** | `CircuitJson` · `AnalysisConfig` · `CircuitJsonSchema` · `safeValidate*` | One shared, Zod-validated schema for circuits and analyses |
+| ⚡ **Netlist generation** | `generateNetlist` · `applySolverOptions` | CircuitJson → SPICE deck: R/L/C, transformers, controlled & behavioral sources, diodes/Zener, BJT/MOSFET/JFET, switches, SCR, IGBT, op-amp `.subckt` macromodels, probes, `.ic` |
+| 🛡️ **SPICE safety** | `sanitizeNetlist` · `sanitizeNodeName` · `SecurityError` | Hostile-input defense: shell-metachar rejection, `.include` whitelisting, reserved-word renaming |
+| 🔍 **ERC** | `runErc` | Electrical rule check with coded findings (`NO_GROUND`, `MISSING_VALUE`, …) |
+| 📊 **Result parsing** | `parseSimulationOutput` · `parseFourierLog` · `parseMeasurements` · `parseTransferFunction` · `parseNoise` · `parseSensitivity` · `downsampleResult` | ngspice CSV / raw / log output → typed series & report metrics |
+| ⚖️ **Verdicts** | `summarizeSeries` · `evaluateAssertions` · `attachFourierThd` · `attachTransferFunction` | Distill per-node measurements, judge them against acceptance criteria (`min · max · final · pp · avg · rms · cutoff · thd · gain`) |
+| 🎲 **Robustness** | `runMonteCarlo` · `runWorstCase` · `runParametricSweep` · `perturbCircuit` | Monte-Carlo yield (Wilson CI), 2ᵏ ±tolerance corners, parameter sweeps |
+| 🩺 **Convergence** | `diagnoseConvergence` · `convergenceRemedyLadder` · `assessTransientCompleteness` | Classify a failed/truncated run and get an ordered solver-remedy ladder |
+| 🔁 **Interchange** | `parseNetlist` · `resultToCsv` · `resultToVcd` | Import standard SPICE decks (LTspice/KiCad round-trip, incl. digital/XSPICE), export results |
+| 🔧 **Value utils** | `parseSpiceValue` · `formatSpiceValue` · `snapCircuitToESeries` · `cutoffFrequency` | SPICE number grammar (`M` ≠ `MEG`!), IEC 60063 E-series snapping, −3 dB corner |
+
+---
+
+## 🎲 Robustness in three lines
+
+A design that only works at nominal isn't a design. Components carrying a `tolerance`
+field are perturbed (Monte-Carlo) or set to their ±tol extremes (worst-case). You inject
+the runner — `(variant) => measurements | null` — so *any* ngspice transport works
+(`null` counts as *errored*, never as a false fail):
 
 ```ts
-import { attachFourierThd, attachTransferFunction, evaluateAssertions } from '@circuit-forge/eda-core';
+import { runMonteCarlo, runWorstCase } from '@circuit-forge/eda-core';
 
-// analysisConfig: { type: 'tran', stopTime: '5m', fourier: { fundamentalFreq: '1k', probes: ['v(out)'] } }
-attachFourierThd(measurements, simResult.fourier);
-const results = evaluateAssertions(measurements, [
-    { probe: 'v(out)', metric: 'thd', op: 'lt', value: 5 }, // < 5% THD
-]);
+const mc = await runMonteCarlo(circuit, criteria, runVariant, { n: 200, seed: 1 });
+// → { yield: 0.985, passed: 197, failed: 3, errored: 0, evaluated: 200, … }  (Wilson-scored)
+
+const wc = await runWorstCase(circuit, criteria, {}, runVariant);
+// → { passAllCorners: true, evaluated: 4, worstCorners: [], … }              (2ᵏ corners)
 ```
 
-## Notes
+THD / gain criteria ride on the matching analysis request, then gate like any other metric:
 
-- Component `designator` must match `^[A-Z][A-Z0-9]*[0-9]+$` (must end in a digit, e.g. `R1`, `GND1`).
-- Connectivity lives only in `Component.pins[].netId` → `Net.id`; there is no flat node list.
-- Diodes should omit `model` — a built-in default (`DDEFAULT`) is supplied during netlist generation.
+```ts
+// analysis: { type: 'tran', stopTime: '5m', fourier: { fundamentalFreq: '1k', probes: ['v(out)'] } }
+attachFourierThd(measurements, simResult.fourier);
+evaluateAssertions(measurements, [{ probe: 'v(out)', metric: 'thd', op: 'lt', value: 5 }]); // < 5 % THD
+```
+
+---
+
+## 📐 Design principles
+
+- **Pure & deterministic** — same input, same output. No hidden state, no I/O; trivially testable.
+- **Built for untrusted input** — the sanitizer assumes netlists can be hostile (it powers a multi-tenant SaaS).
+- **Honest verdicts** — no-data / all-NaN / missing probe → `actual: null`; a spec is never satisfied by silence.
+- **Battle-tested** — 480+ unit tests plus a real-ngspice regression battery (83-cell device×analysis matrix,
+  edge cases, pairwise sweeps, seeded fuzz) in the monorepo CI, against a pinned, drift-guarded engine.
+
+## 📎 Good to know
+
+- `designator` must match `^[A-Z][A-Z0-9]*[0-9]+$` (ends in a digit: `R1`, `GND1`).
+- Connectivity lives only in `Component.pins[].netId` → `Net.id` — there is no flat node list.
+- SPICE numbers: `M`/`m` = **milli**, `MEG` = mega. `parseSpiceValue('1M')` → `0.001`.
+- Diodes may omit `model` — a built-in default is supplied during generation.
+
+## 📚 More
+
+- [EDA core deep-dive](https://github.com/Abdulberk/circuit-forge/blob/main/docs/EDA_CORE.md) — circuit model, netlist generation, analyses
+- [What "verified" means](https://github.com/Abdulberk/circuit-forge/blob/main/VERIFICATION.md) — the evidence contract
+- [Circuit Forge monorepo](https://github.com/Abdulberk/circuit-forge) — the platform this package powers
 
 ## License
 
-MIT
+[MIT](https://github.com/Abdulberk/circuit-forge/blob/main/packages/eda-core/LICENSE)
