@@ -260,6 +260,47 @@ describe('DesignService — spec satisfaction (#2: verified means meets-the-spec
         expect(mockCreate).toHaveBeenCalledTimes(1); // verified in one round, no fix needed
     });
 
+    it('N — a THD spec checked only by a voltage proxy is NOT verified (distortion is hard-gated)', async () => {
+        // pp swing PASSES, but the user named a THD target and no criterion measures harmonic distortion.
+        // Unlike gain, THD has NO voltage proxy — a swing check does not substantiate "THD under 1%".
+        generateOnce([{ probe: 'out', metric: 'pp', op: 'approx', value: 10, tol: 1 }]); // voltage proxy only
+        fixOnce(); // the fix round fails to add a thd criterion → the distortion gap stays open
+        const sim = makeSimSeries({ ys: [-5, 5] }); // pp = 10 → the voltage criterion itself passes
+        const r = (await makeService(sim).design({ prompt: 'a clean audio stage, THD under 1%', maxRounds: 2 } as never, 'u')) as Record<string, unknown>;
+        expect(r.ok).toBe(false);
+        expect(r.verified).toBe(false); // simulates + meets its stated criteria, but the named THD is unmeasured
+        expect((r.assertions as { pass: boolean }[]).every((a) => a.pass)).toBe(true); // the proxy itself passed
+        expect(String(r.warning)).toMatch(/thd/i);
+        expect(JSON.stringify(mockCreate.mock.calls[1]![0])).toMatch(/fourier|thd/i); // fix prompt demanded a fourier THD
+        expect(mockCreate).toHaveBeenCalledTimes(2); // gen + one fix attempt that didn't close the gap
+    });
+
+    it('O — a thd criterion over a tran+fourier verifies the named THD DIRECTLY (distortion gap closed)', async () => {
+        const node = `v(${sanitizeNodeName('out')})`;
+        mockCreate.mockResolvedValueOnce({
+            content: [{ type: 'text', text: JSON.stringify({
+                circuit: VALID_CIRCUIT, // SIN(0 5 1k) source → a real tran+fourier request is well-formed
+                analysisConfig: { type: 'tran', stopTime: '5m', stepTime: '5u', fourier: { fundamentalFreq: '1k', probes: ['v(out)'] } },
+                explanation: 'low-distortion stage',
+                acceptanceCriteria: [{ probe: 'out', metric: 'thd', op: 'lt', value: 1 }],
+            }) }],
+        });
+        const points = [-5, 5, -5, 5].map((y, i) => ({ x: i, y }));
+        const sim = {
+            createQuickSim: jest.fn(async () => ({ jobId: 'job-thd' })),
+            getStatus: jest.fn(async () => ({ status: 'SUCCEEDED', metrics: { pointsCount: points.length } })),
+            // THD is folded from result.result.fourier — exactly the shape attachFourierThd reads (probe → node key).
+            getResult: jest.fn(async () => ({ result: { meta: { pointsCount: points.length }, series: [{ name: node, points }], fourier: [{ probe: 'v(out)', fundamentalFreq: 1000, thd: 0.5, harmonics: [] }] }, metrics: { pointsCount: points.length } })),
+        } as unknown as SimulationService;
+        const r = (await makeService(sim).design({ prompt: 'a low-distortion audio stage, THD under 1%', maxRounds: 2 } as never, 'u')) as Record<string, unknown>;
+        expect(r.ok).toBe(true);
+        expect(r.verified).toBe(true);
+        const thd = (r.assertions as { metric: string; pass: boolean; actual: number }[]).find((x) => x.metric === 'thd')!;
+        expect(thd.pass).toBe(true);
+        expect(thd.actual).toBeCloseTo(0.5, 5); // measured THD folded from the fourier listing, gated directly
+        expect(mockCreate).toHaveBeenCalledTimes(1); // covered on the first pass → no fix round
+    });
+
     it('E — the worker convergence diagnosis is fed into the AI fix prompt (cheap win)', async () => {
         generateOnce();
         fixOnce();
