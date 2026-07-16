@@ -119,6 +119,12 @@ export class VerificationService {
             verdict = 'fail';
         } else if (sim.simStatus === 'skipped' || noData) {
             verdict = 'inconclusive';
+        } else if (assertionResults.length === 0) {
+            // Simulated cleanly, but NOTHING was asserted → there is nothing to certify. This must read
+            // 'inconclusive' ("simulated, no specs asserted"), NEVER 'pass' — a spec-less run is not "verified".
+            // Mirrors the design loop's verified=false-on-empty posture; the caller disambiguates via
+            // simStatus:'ok' + checks.total:0.
+            verdict = 'inconclusive';
         } else if (failedAssertions > 0) {
             verdict = 'fail';
         } else {
@@ -326,7 +332,11 @@ export class VerificationService {
                     ? `The design could not be verified: ${sim.runError}.`
                     : 'The simulation could not run on the server, so the design could not be verified.';
             }
-            return 'The simulation produced no measurable data, so the design could not be verified.';
+            if (sim.measurements.length === 0) {
+                return 'The simulation produced no measurable data, so the design could not be verified.';
+            }
+            // Simulated cleanly WITH data, but no acceptance criteria were asserted — nothing was verified.
+            return 'The circuit simulated cleanly, but no acceptance criteria were asserted — so nothing was verified. Add measurable specs to get a pass/fail.';
         }
         const parts: string[] = [];
         if (sim.simStatus === 'failed') parts.push(`simulation failed (${sim.runError ?? 'unknown error'})`);
@@ -334,9 +344,9 @@ export class VerificationService {
         const failed = results.filter((r) => !r.pass);
         if (failed.length) parts.push(`${failed.length}/${results.length} spec(s) not met`);
         if (verdict === 'pass') {
-            const passNote = results.length ? `all ${results.length} spec(s) met` : 'no specs asserted';
+            // A 'pass' now always has at least one asserted spec (an empty set is 'inconclusive' above).
             const warnNote = sim.ercWarnings.length ? ` (${sim.ercWarnings.length} ERC warning(s) to review)` : '';
-            return `Verified: simulation succeeded, no ERC errors, ${passNote}.${warnNote}`;
+            return `Verified: simulation succeeded, no ERC errors, all ${results.length} spec(s) met.${warnNote}`;
         }
         return `Not verified: ${parts.join('; ')}.`;
     }
