@@ -40,7 +40,7 @@ function loadRealEnv(): boolean {
     for (const p of [resolve(process.cwd(), '../../.env'), resolve(__dirname, '../../../../../.env')]) {
         try {
             const txt = readFileSync(p, 'utf8');
-            for (const key of ['LLM_API_KEY', 'LLM_BASE_URL', 'LLM_MODEL', 'LLM_USER_AGENT', 'TME_TOKEN', 'TME_SECRET']) {
+            for (const key of ['LLM_API_KEY', 'LLM_PROTOCOL', 'LLM_BASE_URL', 'LLM_MODEL', 'LLM_USER_AGENT', 'TME_TOKEN', 'TME_SECRET']) {
                 const m = txt.match(new RegExp(`^${key}=(.+)$`, 'm'));
                 if (m && m[1]) process.env[key] = m[1].trim();
             }
