@@ -11,6 +11,7 @@
  */
 import {
     generateNetlist,
+    runErc,
     summarizeSeries,
     resolveGenericModels,
     evaluateAssertions,
@@ -193,6 +194,30 @@ export async function runDesignLoop(input: DesignLoopInput, deps: DesignDeps): P
         deps.progress?.(round);
         await checkAbort(deps);
 
+        // ERC hard gate: a circuit with ELECTRICAL rule ERRORS (missing ground, isolated island, short,
+        // unresolved model, …) can still make ngspice "succeed" via gmin-stepping and return garbage that
+        // passes the criteria — so gate BEFORE the sim, mirroring the /verify-design contract exactly (any
+        // severity==='error' issue ⇒ not verified). The circuit is model-resolved here (attachGenericModels
+        // ran pre-loop for round 1 and inside applyFix for every fix), so ERC sees the same circuit the
+        // endpoint would. The (meaningless) sim is skipped on an ERC-error round; the round is spent fixing.
+        const ercErrors = runErc(circuit).issues.filter((i) => i.severity === 'error');
+        if (ercErrors.length > 0) {
+            history.push({ round, status: 'ERC_ERROR', pointsCount: 0, note: `${ercErrors.length} ERC error(s): ${ercErrors.map((e) => e.code).join(', ')}` });
+            if (round >= maxRounds) break;
+            const problem =
+                'The circuit fails Electrical Rule Check (ERC) with ERROR(s) that MUST be fixed before it can be verified:\n' +
+                ercErrors.map((e) => `- [${e.code}] ${e.message}`).join('\n') +
+                '\nFix every listed error (add a ground reference, connect any floating/isolated node, resolve the missing model, remove the short) and keep the parts that are already correct.';
+            await checkAbort(deps); // don't spend another LLM call if a cancel arrived
+            const fixed = await applyFix(deps, circuit, analysis, problem);
+            circuit = fixed.circuit;
+            explanation = fixed.explanation;
+            criteria = mergeCriteria(criteria, fixed.acceptanceCriteria, requiredDims);
+            analysis = preserveMetricOverlays(analysis, fixed.analysis, criteria);
+            currentProbes = criteria.filter((c) => isCurrentProbe(c.probe)).map((c) => c.probe);
+            continue;
+        }
+
         let netlist: string;
         try {
             netlist = generateNetlist(circuit, analysis, currentProbes.length ? { extraProbes: currentProbes } : {});
@@ -341,6 +366,7 @@ export async function runDesignLoop(input: DesignLoopInput, deps: DesignDeps): P
 
     if (groundingOpts) await ground.enrichSourcing(circuit);
     const last = history[history.length - 1];
+    const ercStuck = last?.status === 'ERC_ERROR';
     const lastRoundHealthy = last?.status === 'SUCCEEDED' && (last?.pointsCount ?? 0) > 0;
     const specMiss = lastRoundHealthy && lastAssertions.length > 0 && lastAssertions.some((a) => !a.pass);
     const lastUncovered = lastRoundHealthy ? uncoveredRequiredDimensions(input.prompt, criteria) : [];
@@ -356,7 +382,9 @@ export async function runDesignLoop(input: DesignLoopInput, deps: DesignDeps): P
         rounds: history.length,
         history,
         simulation: { status: last?.status ?? 'FAILED' },
-        warning: specMiss
+        warning: ercStuck
+            ? 'The circuit could not be made to pass electrical rule checks (ERC) within the round budget, so it is not verified.'
+            : specMiss
             ? 'The circuit simulates but did not meet all acceptance criteria within the round budget.'
             : coverageMiss
                 ? `The circuit simulates and meets its stated criteria, but you specified a ${lastUncovered.join('/')} target that no acceptance criterion verifies — treat it as unverified for that quantity.`

@@ -314,6 +314,26 @@ describe('DesignService — spec satisfaction (#2: verified means meets-the-spec
         expect(fixArgs).toMatch(/matrix is singular at node out/);
         expect(fixArgs).toMatch(/add gmin/);
     });
+
+    it('P — an ERC-error design (no ground) is NOT verified; the ERC error drives a fix that restores it', async () => {
+        // VALID_CIRCUIT with its ground reference stripped → ERC001 (no ground). ngspice could gmin-step this to
+        // a "successful" garbage solution, so the ERC hard gate must refuse it and feed the error into the fix.
+        const NO_GROUND = {
+            ...VALID_CIRCUIT,
+            components: VALID_CIRCUIT.components.filter((c) => c.id !== 'gnd'),
+            nets: VALID_CIRCUIT.nets.map((n) => (n.id === 'gnd' ? { id: 'gnd', name: 'GND' } : n)), // drop isGround
+        };
+        const crit = [{ probe: 'out', metric: 'final', op: 'approx', value: 5, tol: 0.1 }];
+        // Round 1 generate: the no-ground circuit (ERC-blocked before any sim). Round 2 fix: ground restored.
+        mockCreate.mockResolvedValueOnce({ content: [{ type: 'text', text: JSON.stringify({ circuit: NO_GROUND, analysisConfig: { type: 'op' }, explanation: 'no ground', acceptanceCriteria: crit }) }] });
+        mockCreate.mockResolvedValueOnce({ content: [{ type: 'text', text: JSON.stringify({ circuit: VALID_CIRCUIT, analysisConfig: { type: 'op' }, explanation: 'grounded', acceptanceCriteria: crit }) }] });
+        const r = (await makeService(makeSimSeries({ ys: [5, 5] })).design({ prompt: 'a 5V rail', maxRounds: 2 } as never, 'u')) as Record<string, unknown>;
+        expect(r.ok).toBe(true);
+        expect(r.verified).toBe(true); // verified only AFTER the ground was restored (round 2)
+        expect(mockCreate).toHaveBeenCalledTimes(2); // gen (ERC-blocked, sim skipped) + one fix that closed it
+        // the fix prompt named the ERC failure so the model knew WHAT to fix
+        expect(JSON.stringify(mockCreate.mock.calls[1]![0])).toMatch(/ERC|ground|electrical rule/i);
+    });
 });
 
 describe('DesignService — Monte-Carlo yield (informational; never flips verified)', () => {
