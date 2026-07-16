@@ -3,4 +3,5 @@ coverage/
 dist/
 .gallery/
 .placement-ab/
+.rust-layout-e2e/
 .drc-capture/
