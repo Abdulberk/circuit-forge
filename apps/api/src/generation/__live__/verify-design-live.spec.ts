@@ -85,7 +85,8 @@ const A = (probe: string, metric: AssertionDto['metric'], op: AssertionDto['op']
 
     it('POWER: reports per-resistor dissipation from the real simulation (≈25mW each on the divider)', async () => {
         const ev = await svc.verify(DIVIDER, { type: 'op' }, []);
-        expect(ev.verdict).toBe('pass');
+        // No assertions → 'inconclusive' (a spec-less run is not "verified"); the power report is independent.
+        expect(ev.verdict).toBe('inconclusive');
         expect(ev.power).toBeDefined();
         expect(ev.power!.basis).toBe('operating-point');
         const r1 = ev.power!.components.find((c) => c.designator === 'R1')!;

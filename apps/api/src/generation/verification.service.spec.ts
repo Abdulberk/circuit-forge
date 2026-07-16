@@ -76,9 +76,17 @@ describe('VerificationService', () => {
 
     it('PASS with ERC warnings noted (warnings do not fail the verdict)', async () => {
         const { svc } = makeService(okSim({ ercWarnings: [{ code: 'FLOAT_R', message: 'floating reactive node', relatedIds: ['C1'] }] }));
-        const ev = await svc.verify({}, undefined, []);
+        const ev = await svc.verify({}, undefined, [A('out', 'final', 'approx', 4.98)]); // a met spec → genuine pass
         expect(ev.verdict).toBe('pass');
         expect(ev.summary).toMatch(/warning/i);
+    });
+
+    it('INCONCLUSIVE: a clean sim with NO acceptance criteria asserted is NOT a pass (nothing to verify)', async () => {
+        const { svc } = makeService(okSim());
+        const ev = await svc.verify({}, undefined, []);
+        expect(ev.verdict).toBe('inconclusive'); // was a false 'pass' — a spec-less run is not "verified"
+        expect(ev.checks).toEqual({ total: 0, passed: 0, failed: 0 });
+        expect(ev.summary).toMatch(/no acceptance criteria|nothing was verified/i);
     });
 
     it('FAIL: simulation that failed to run is a fail, assertions become unmet (actual null)', async () => {
@@ -202,6 +210,14 @@ describe('VerificationService — worker delegation (prod path, userId present)'
         expect(ev.verdict).toBe('pass'); // out≈5V meets the spec; ERC clean on the divider
         expect(ev.measurements.find((m) => m.node === `v(${sanitizeNodeName('out')})`)!.final).toBe(5);
         expect(ev.power).toBeDefined(); // power review still runs on the worker-returned measurements
+    });
+
+    it('worker path: a clean sim with NO assertions is INCONCLUSIVE, not a false pass', async () => {
+        const { svc } = makeWorkerService(); // clean workerResult (has data), ERC-clean DIVIDER
+        const ev = await svc.verify(DIVIDER, { type: 'op' }, [], 'user-1');
+        expect(ev.verdict).toBe('inconclusive');
+        expect(ev.checks.total).toBe(0);
+        expect(ev.summary).toMatch(/no acceptance criteria|nothing was verified/i);
     });
 
     it('a failed/timed-out worker job becomes a failed verdict (no throw)', async () => {
