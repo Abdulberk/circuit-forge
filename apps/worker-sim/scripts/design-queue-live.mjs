@@ -41,21 +41,27 @@ const CANDIDATES_N = Number(process.env.DESIGN_CANDIDATES_N) || 1;
  *  with a precise reason — instead of burning the wait on a job that 300s-times-out after its first real LLM
  *  call. Spends exactly one tiny request (negligible) as liveness insurance. Aborts the whole run on failure. */
 async function preflightLlm() {
+    // Protocol-aware: match the wire format the worker will use (LLM_PROTOCOL). 'openai' → chat-completions
+    // with x-api-key; else Anthropic /v1/messages. A hardcoded Anthropic preflight falsely aborts an
+    // OpenAI-only gateway (e.g. asvae) at /v1/messages → 404.
+    const protocol = (process.env.LLM_PROTOCOL || 'anthropic').toLowerCase();
+    const isOpenAI = protocol === 'openai';
     const base = (process.env.LLM_BASE_URL || 'https://api.zentio.dev').replace(/\/$/, '');
-    const model = process.env.LLM_MODEL || 'claude-sonnet-4-6';
-    const url = `${base}/v1/messages`;
-    console.log(`\n  preflight: POST ${url}  (model=${model}, max_tokens=1) …`);
+    const model = process.env.LLM_MODEL || (isOpenAI ? 'gpt-5.6-sol' : 'claude-sonnet-4-6');
+    const ua = process.env.LLM_USER_AGENT || 'circuit-forge/1.0';
+    const key = process.env.LLM_API_KEY || '';
+    const url = isOpenAI ? `${base}/chat/completions` : `${base}/v1/messages`;
+    console.log(`\n  preflight: POST ${url}  (protocol=${protocol}, model=${model}) …`);
     let r;
     try {
         r = await fetch(url, {
             method: 'POST',
-            headers: {
-                'content-type': 'application/json',
-                'x-api-key': process.env.LLM_API_KEY || '',
-                'anthropic-version': '2023-06-01',
-                'User-Agent': process.env.LLM_USER_AGENT || 'circuit-forge/1.0',
-            },
-            body: JSON.stringify({ model, max_tokens: 1, messages: [{ role: 'user', content: 'hi' }] }),
+            headers: isOpenAI
+                ? { 'content-type': 'application/json', 'x-api-key': key, authorization: `Bearer ${key}`, 'User-Agent': ua }
+                : { 'content-type': 'application/json', 'x-api-key': key, 'anthropic-version': '2023-06-01', 'User-Agent': ua },
+            body: isOpenAI
+                ? JSON.stringify({ model, messages: [{ role: 'user', content: 'hi' }] })
+                : JSON.stringify({ model, max_tokens: 1, messages: [{ role: 'user', content: 'hi' }] }),
         });
     } catch (e) {
         console.error(`\n  ✗ provider UNREACHABLE (${e.message}). Aborting BEFORE spending the design run.\n`);
