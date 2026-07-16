@@ -122,7 +122,9 @@ class AnthropicModelClient implements ModelClient {
             if (block.type === 'text') text += (text ? '\n' : '') + block.text;
             else if (block.type === 'tool_use') toolCalls.push({ id: block.id, name: block.name, input: (block.input ?? {}) as Record<string, unknown> });
         }
-        return { text: text.trim(), toolCalls, inputTokens: response.usage.input_tokens ?? 0, outputTokens: response.usage.output_tokens ?? 0 };
+        // Guard `usage` itself: a provider (or a test stub) may omit it — the old tokensUsed() tolerated that,
+        // and the token count is only a budget signal, so a missing usage must degrade to 0, never throw.
+        return { text: text.trim(), toolCalls, inputTokens: response.usage?.input_tokens ?? 0, outputTokens: response.usage?.output_tokens ?? 0 };
     }
 }
 
