@@ -11,7 +11,8 @@ import { classifyCircuit, type LayoutabilityResult, type LayoutDiagnostic } from
 import { generateTscircuitCode, type AdapterResult } from './adapter';
 import { evaluateTscircuit } from './evaluate';
 import { checkConnectivityParity, type ParityResult, type TscElement } from './parity';
-import { placeParts, computeHpwl } from './placement';
+import { placeParts, computeHpwl, type PlacementInput, type PlacementOutput } from './placement';
+import type { PlacementRunner } from './placement-engine';
 import { extractPlacementParts, gridPositions, buildNetWeights, deriveExtraEdges } from './placement-bridge';
 import { boardExtraProps, reportViaCompliance, injectZone, kicadProjectJson, JLC_FAB_PROFILE, type FabProfile } from './fab-profile';
 import { generateGerbers, generateKicadPcb, buildBomCsv, buildPnpCsv, type GerberOutputs } from './outputs';
@@ -49,7 +50,10 @@ export interface LayoutOptions {
      *  grid (today's default). 'auto' = two-pass connectivity-aware placement: the grid pass is the
      *  baseline, the force-directed placement must beat it on HPWL AND re-pass eval+parity, else the
      *  board keeps the grid (quality can never regress — floor guarantee, plan §4.7). */
-    placer?: 'grid' | 'auto';
+    placer?: 'grid' | 'auto' | 'rust';
+    /** Out-of-process Rust placement runner. Required only for `placer:'rust'`; injected by the
+     *  worker/harness so pcb-core remains child-process-free. */
+    rustPlace?: PlacementRunner;
 }
 
 export interface LayoutStats {
@@ -157,8 +161,10 @@ export async function layoutCircuit(circuit: CircuitJson, opts: LayoutOptions = 
     //      DRC oracle is available the routing acceptance happens in 5b (channel ladder).
     let codeActive = rescuedCode ?? adapted.code;
     const gridEvaluated = evaluated;
-    const canLadder = opts.placer === 'auto' && opts.router === 'quality' && !!opts.freeroute && !!opts.notaryDrc;
-    if (opts.placer === 'auto' && !canLadder) {
+    const advancedPlacement = opts.placer === 'auto' || opts.placer === 'rust';
+    const placementRunnerReady = opts.placer !== 'rust' || !!opts.rustPlace;
+    const canLadder = advancedPlacement && placementRunnerReady && opts.router === 'quality' && !!opts.freeroute && !!opts.notaryDrc;
+    if (advancedPlacement && !canLadder) {
         // no routing oracle (fast router / no notary): single attempt, HPWL-gated adoption
         const auto = await attemptAutoPlacement(circuit, opts, layout, adapted, evaluated, profile, undefined);
         diagnostics.push(...auto.diagnostics);
@@ -296,14 +302,15 @@ async function attemptAutoPlacement(
     adoptOnValidity = false,
 ): Promise<AutoPlacementAttempt> {
     const diags: LayoutDiagnostic[] = [];
+    const placementLabel = opts.placer === 'rust' ? 'rust-placement' : 'auto-placement';
     const keepGrid = (why: string, severity: 'info' | 'warning' = 'info'): AutoPlacementAttempt => {
-        diags.push({ code: 'PCB051', severity, message: `auto-placement not adopted — ${why} (grid placement kept; floor guarantee).` });
+        diags.push({ code: 'PCB051', severity, message: `${placementLabel} not adopted — ${why} (grid placement kept; floor guarantee).` });
         return { adopted: false, diagnostics: diags };
     };
 
     const { parts, missing } = extractPlacementParts(gridEvaluated, adapted.namesById, layout);
     if (missing.length) {
-        diags.push({ code: 'PCB050', severity: 'info', message: `auto-placement: ${missing.length} part(s) without resolvable geometry keep their grid spot (${missing.join(', ')}).` });
+        diags.push({ code: 'PCB050', severity: 'info', message: `${placementLabel}: ${missing.length} part(s) without resolvable geometry keep their grid spot (${missing.join(', ')}).` });
     }
     if (parts.length < 2) return keepGrid('fewer than 2 parts with resolvable geometry');
 
@@ -312,7 +319,7 @@ async function attemptAutoPlacement(
     const gridPos = gridPositions(gridEvaluated, parts.map((p) => p.id));
     const hpwlGrid = computeHpwl(parts, gridPos);
 
-    const placed = placeParts({
+    const placementInput: PlacementInput = {
         parts,
         netWeights,
         extraEdges,
@@ -321,10 +328,23 @@ async function attemptAutoPlacement(
         gridMm: profile.placementGridMm ?? 0.5,
         marginMm: profile.placementMarginMm ?? 4,
         spacingMm,
-    });
-    for (const note of placed.notes) diags.push({ code: 'PCB050', severity: 'info', message: `auto-placement: ${note}` });
+    };
+    let placed: PlacementOutput;
+    if (opts.placer === 'rust') {
+        if (!opts.rustPlace) return keepGrid('Rust placement runner is not configured', 'warning');
+        const started = Date.now();
+        try {
+            placed = await opts.rustPlace(placementInput);
+        } catch (e) {
+            return keepGrid(`Rust placement runner failed: ${String(e).slice(0, 180)}`, 'warning');
+        }
+        diags.push({ code: 'PCB050', severity: 'info', message: `rust-placement engine completed in ${Date.now() - started}ms (process + JSON included).` });
+    } else {
+        placed = placeParts(placementInput);
+    }
+    for (const note of placed.notes) diags.push({ code: 'PCB050', severity: 'info', message: `${placementLabel}: ${note}` });
     if (!placed.ok) return keepGrid('legalization failed even after board growth', 'warning');
-    if (!adoptOnValidity && placed.hpwl >= hpwlGrid) return keepGrid(`HPWL did not improve (auto ${placed.hpwl.toFixed(1)}mm vs grid ${hpwlGrid.toFixed(1)}mm)`);
+    if (!adoptOnValidity && placed.hpwl >= hpwlGrid) return keepGrid(`HPWL did not improve (${placementLabel} ${placed.hpwl.toFixed(1)}mm vs grid ${hpwlGrid.toFixed(1)}mm)`);
 
     // pass 2: regenerate with verbatim mm placements + the fitted board, then re-verify EVERYTHING
     const adapted2 = generateTscircuitCode(circuit, opts.ui, layout, {
@@ -345,7 +365,7 @@ async function attemptAutoPlacement(
         return keepGrid(`pass-2 eval reported ${blocking.length} blocking error(s), first: ${blocking[0]!.type}`, 'warning');
     }
     if (errors2.length > 0) {
-        diags.push({ code: 'PCB050', severity: 'info', message: `auto-placement: pass-2 local route incomplete (${errors2.length} route error(s)) — freerouting re-routes; the DRC oracle decides.` });
+        diags.push({ code: 'PCB050', severity: 'info', message: `${placementLabel}: pass-2 local route incomplete (${errors2.length} route error(s)) — freerouting re-routes; the DRC oracle decides.` });
         evaluated2 = evaluated2.filter((e) => !e.type.endsWith('_error'));
     }
     const parity2 = checkConnectivityParity(evaluated2, adapted2.expectations);
@@ -355,8 +375,8 @@ async function attemptAutoPlacement(
         code: 'PCB050',
         severity: 'info',
         message: adoptOnValidity
-            ? `auto-placement ADOPTED (courtyard-overlap rescue — the size-blind grid packed a part into a cell smaller than its courtyard) — board ${placed.boardW}×${placed.boardH}mm.`
-            : `auto-placement ADOPTED — HPWL ${hpwlGrid.toFixed(1)} → ${placed.hpwl.toFixed(1)}mm (${(100 * (1 - placed.hpwl / hpwlGrid)).toFixed(0)}% shorter), board ${placed.boardW}×${placed.boardH}mm.`,
+            ? `${placementLabel} ADOPTED (courtyard-overlap rescue — the size-blind grid packed a part into a cell smaller than its courtyard) — board ${placed.boardW}×${placed.boardH}mm.`
+            : `${placementLabel} ADOPTED — HPWL ${hpwlGrid.toFixed(1)} → ${placed.hpwl.toFixed(1)}mm (${(100 * (1 - placed.hpwl / hpwlGrid)).toFixed(0)}% shorter), board ${placed.boardW}×${placed.boardH}mm.`,
     });
     return { adopted: true, diagnostics: diags, code: adapted2.code, evaluated: evaluated2, parity: parity2 };
 }
@@ -574,9 +594,12 @@ export { exportDsn, mergeSes, stripRouting, applyFabRulesToDsn, applyPerNetWidth
 export type { FreeroutingRunner } from './route';
 export { ipc2221WidthMm } from './ipc2221';
 export type { IpcWidthInput, IpcWidthResult } from './ipc2221';
+export { placeParts, computeHpwl, rot } from './placement';
+export type { PlacementInput, PlacementOutput, PlaceablePart, PlaceablePad, Rotation } from './placement';
 export { resolveModel, injectModels, KICAD_3DMODEL_BASE } from './models3d';
 export type { InjectModelsResult } from './models3d';
 export { shapeLayoutResult } from './layout-result';
 export type { LayoutGeometry, LayoutComponent, LayoutPad, LayoutTrace, LayoutVia, Pt } from './layout-result';
 export { parseDrcReport, drcCategory, drcToChecks, airwiresFromDrc } from './drc';
 export type { ParsedDrc, DrcEntry, DrcItem, DrcCheck, Airwire } from './drc';
+export type { PlacementRunner } from './placement-engine';

@@ -6,6 +6,13 @@
 # Build (context = repo root, so the pnpm workspace + lockfile + the API Prisma schema are all visible):
 #   docker build -f docker/pcb-worker/Dockerfile -t pcb-worker:local .
 
+# ---- Rust placement kernel: isolated native binary, copied into the final worker image ----
+FROM rust:1.96-slim-bookworm AS rust-placer-builder
+WORKDIR /src/crates/pcb-placement-rs
+COPY crates/pcb-placement-rs/Cargo.toml crates/pcb-placement-rs/Cargo.lock ./
+COPY crates/pcb-placement-rs/src ./src
+RUN cargo build --release --locked
+
 # ---- builder: install pcb-worker + deps, generate the Prisma client, build, then deploy self-contained ----
 FROM node:22-bookworm-slim AS builder
 # openssl: Prisma needs it to pick the query-engine libssl variant (silences the detect warning + wrong engine).
@@ -31,6 +38,7 @@ RUN pnpm --filter "@circuit-forge/eda-core" build \
 FROM pcb-runtime:local
 WORKDIR /app/pcb-worker
 COPY --from=builder /deploy /app/pcb-worker
+COPY --from=rust-placer-builder /src/crates/pcb-placement-rs/target/release/cf-pcb-place /usr/local/bin/cf-pcb-place
 # The Prisma client must be (re)generated INTO the deployed bundle: `pnpm deploy` copies @prisma/client
 # from the store WITHOUT the generated `.prisma/client` output (generate had mutated the source copy, not
 # the store) → the bundle throws "@prisma/client did not initialize". Regenerating here also produces the
@@ -40,5 +48,6 @@ COPY --from=builder /deploy /app/pcb-worker
 COPY --from=builder /src/apps/api/prisma /app/pcb-worker/prisma
 RUN npx --yes prisma@5.22.0 generate --schema=prisma/schema.prisma
 # NODE_ENV=production → pino JSON logs (no pino-pretty dep needed at runtime).
-ENV NODE_ENV=production
+ENV NODE_ENV=production \
+    RUST_PLACER_PATH=/usr/local/bin/cf-pcb-place
 CMD ["node", "dist/main.js"]

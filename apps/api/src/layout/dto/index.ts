@@ -21,10 +21,13 @@ export class CreateLayoutDto {
     @IsUUID()
     versionId?: string;
 
-    @ApiPropertyOptional({ description: "Placement engine: 'grid' (default) or 'auto' (connectivity-aware)", enum: ['grid', 'auto'] })
+    @ApiPropertyOptional({
+        description: "Placement engine: 'grid' (default), 'auto' (TypeScript connectivity-aware), or 'rust' (out-of-process optimized engine)",
+        enum: ['grid', 'auto', 'rust'],
+    })
     @IsOptional()
-    @IsIn(['grid', 'auto'])
-    placer?: 'grid' | 'auto';
+    @IsIn(['grid', 'auto', 'rust'])
+    placer?: 'grid' | 'auto' | 'rust';
 
     @ApiPropertyOptional({ description: 'Fab profile overrides (clearance/width/via tier)', type: 'object', additionalProperties: true })
     @IsOptional()

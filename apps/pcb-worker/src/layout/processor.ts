@@ -23,6 +23,7 @@ import { config } from '../config';
 import { logger } from '../logger';
 import { makeNativeFreeroutingRunner } from '../runners/freerouting';
 import { makeNativeKicad } from '../runners/kicad';
+import { makeRustPlacementRunner } from '../runners/rust-placement';
 import { uploadFile } from '../storage/s3';
 
 /** Queue payload the API enqueues. The circuit + options live on the row (they can be large); the payload
@@ -100,6 +101,9 @@ async function processLayoutJob(job: Job<LayoutJobPayload>): Promise<void> {
 
         const freeroute = makeNativeFreeroutingRunner();
         const kicad = makeNativeKicad({ log: logger });
+        const rustPlace = options.placer === 'rust'
+            ? makeRustPlacementRunner({ binary: config.RUST_PLACER_PATH, timeoutMs: config.RUST_PLACER_TIMEOUT_MS })
+            : undefined;
 
         const q = await layoutCircuit(circuit, {
             router: 'quality',
@@ -108,6 +112,7 @@ async function processLayoutJob(job: Job<LayoutJobPayload>): Promise<void> {
             fabProfile: options.fabProfile,
             netCurrentsA: options.netCurrentsA,
             placer: options.placer,
+            rustPlace,
             routingMarginMm: config.PCB_ROUTING_MARGIN_MM,
         });
 
