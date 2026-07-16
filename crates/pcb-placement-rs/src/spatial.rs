@@ -26,31 +26,48 @@ pub(crate) struct Grid {
     cols: i64,
     rows: i64,
     buckets: Vec<Vec<usize>>,
+    /// Indices of buckets that received at least one insert since the last clear. `clear()` walks ONLY
+    /// these, so a rebuild costs O(occupied cells), never O(total cells) — a huge (but legal) board span
+    /// must not make the force loop's per-step rebuild scan millions of empty buckets.
+    dirty: Vec<usize>,
 }
+
+/// Upper bound on allocated cells. A pathological span/cell ratio (a kilometre "board") must degrade
+/// gracefully — we scale the cell size UP to fit the cap instead of allocating gigabytes. Correctness is
+/// unaffected: larger cells only over-group (more candidates per query); the caller's precise clearance
+/// test still decides. 4M buckets ≈ 100MB worst case of Vec headers — bounded and safe.
+const MAX_BUCKETS: f64 = 4_000_000.0;
 
 impl Grid {
     /// Cover `[-span_x, span_x] × [-span_y, span_y]` at `cell` resolution. `span_*` should comfortably
     /// contain every coordinate the caller will insert/query (border clamping keeps it correct if not).
     pub(crate) fn new(cell: f64, span_x: f64, span_y: f64) -> Self {
-        let cell = cell.max(1e-6);
-        let cols = ((2.0 * span_x.max(cell)) / cell).ceil() as i64 + 1;
-        let rows = ((2.0 * span_y.max(cell)) / cell).ceil() as i64 + 1;
-        let cols = cols.max(1);
-        let rows = rows.max(1);
+        let mut cell = cell.max(1e-6);
+        let sx = span_x.max(cell);
+        let sy = span_y.max(cell);
+        // Enforce the bucket cap by coarsening the cell (correct, just less selective).
+        let want = ((2.0 * sx / cell) + 1.0) * ((2.0 * sy / cell) + 1.0);
+        if want > MAX_BUCKETS {
+            cell *= (want / MAX_BUCKETS).sqrt();
+        }
+        let cols = (((2.0 * sx) / cell).ceil() as i64 + 1).max(1);
+        let rows = (((2.0 * sy) / cell).ceil() as i64 + 1).max(1);
         Grid {
             cell,
-            origin_x: -span_x.max(cell),
-            origin_y: -span_y.max(cell),
+            origin_x: -sx,
+            origin_y: -sy,
             cols,
             rows,
             buckets: vec![Vec::new(); (cols * rows) as usize],
+            dirty: Vec::new(),
         }
     }
 
     pub(crate) fn clear(&mut self) {
-        for bucket in &mut self.buckets {
-            bucket.clear();
+        for &i in &self.dirty {
+            self.buckets[i].clear();
         }
+        self.dirty.clear();
     }
 
     #[inline]
@@ -74,6 +91,9 @@ impl Grid {
         for r in r0..=r1 {
             for c in c0..=c1 {
                 let i = self.idx(c, r);
+                if self.buckets[i].is_empty() {
+                    self.dirty.push(i); // first touch since clear → track for O(occupied) clears
+                }
                 self.buckets[i].push(index);
             }
         }

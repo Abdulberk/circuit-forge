@@ -37,6 +37,13 @@ const FORCE_MIN: usize = 20;
 const FORCE_MAX: usize = 1000;
 const REFINE_MAX: usize = 8;
 
+// Input-domain bounds. Boards beyond 10 m or weights beyond 1e12 are not electronics — they are caller
+// bugs, and letting them through produced real failures under probing (a 10 000 mm board once hung the
+// force loop; a 1e300 net weight overflowed positions to non-finite yet still emitted ok=true). Reject
+// loudly at the boundary instead: the worker's grid fallback handles a clean error far better than a hang.
+const MAX_BOARD_MM: f64 = 10_000.0;
+const MAX_WEIGHT: f64 = 1e12;
+
 #[derive(Clone, Copy)]
 struct Edge {
     a: usize,
@@ -288,11 +295,11 @@ fn force_loop(
     rot_order: &[usize],
     force_steps: usize,
     cell: f64,
+    spacing: f64,
+    margin: f64,
     candidate_pairs: &mut u64,
 ) {
     let n = parts.len();
-    let spacing = input.spacing_mm.unwrap_or(DEFAULT_SPACING_MM);
-    let margin = if input.margin_mm > 0.0 { input.margin_mm } else { 4.0 };
     let net_weights = &input.net_weights;
     let relax = (force_steps / 4).max(1);
     let total = force_steps + relax;
@@ -598,13 +605,13 @@ fn attempt(
     stats: &mut PlacementStats,
 ) -> Option<(State, f64, f64)> {
     let mut st = seed(parts, degree, board_w0, board_h0, start);
-    force_loop(parts, edges, &mut st, input, board_w0, board_h0, rot_order, force_steps, cell, &mut stats.spatial_candidate_pairs);
+    force_loop(parts, edges, &mut st, input, board_w0, board_h0, rot_order, force_steps, cell, spacing, margin, &mut stats.spatial_candidate_pairs);
 
     let mut board_w = board_w0;
     let mut board_h = board_h0;
     if !legalize(parts, &mut st, board_w, board_h, grid, margin, spacing, cell, &mut stats.legalizer_probes) {
-        board_w = snap(board_w * 1.4, grid);
-        board_h = snap(board_h * 1.4, grid);
+        board_w = snap(board_w * 1.4, grid).min(MAX_BOARD_MM);
+        board_h = snap(board_h * 1.4, grid).min(MAX_BOARD_MM);
         if !legalize(parts, &mut st, board_w, board_h, grid, margin, spacing, cell, &mut stats.legalizer_probes) {
             return None;
         }
@@ -616,11 +623,37 @@ pub fn place(input: &PlacementInput) -> Result<PlacementOutput, PlaceError> {
     if !input.board_w.is_finite() || !input.board_h.is_finite() {
         return Err(PlaceError::invalid("boardW/boardH must be finite"));
     }
+    if input.board_w > MAX_BOARD_MM || input.board_h > MAX_BOARD_MM {
+        return Err(PlaceError::invalid(format!("boardW/boardH exceed the {MAX_BOARD_MM}mm maximum")));
+    }
     let mut parts: Vec<Part> = input.parts.clone();
     parts.sort_by(|a, b| a.id.cmp(&b.id)); // canonical order
+    for w in parts.windows(2) {
+        if w[0].id == w[1].id {
+            // Two physical parts sharing an id would silently collapse into ONE output position (the id is
+            // the positions-map key) — the caller would stack two components. Reject instead.
+            return Err(PlaceError::invalid(format!("duplicate part id \"{}\"", w[0].id)));
+        }
+    }
     for p in &parts {
-        if !p.w.is_finite() || !p.h.is_finite() || p.w < 0.0 || p.h < 0.0 {
+        if !p.w.is_finite() || !p.h.is_finite() || p.w < 0.0 || p.h < 0.0 || p.w > MAX_BOARD_MM || p.h > MAX_BOARD_MM {
             return Err(PlaceError::invalid(format!("part {} has invalid w/h", p.id)));
+        }
+        for pad in &p.pads {
+            if !pad.x.is_finite() || !pad.y.is_finite() {
+                return Err(PlaceError::invalid(format!("part {} has a non-finite pad", p.id)));
+            }
+        }
+    }
+    // Weight sanity: a huge finite weight (1e300) overflows force accumulation to non-finite positions.
+    for (net, w) in &input.net_weights {
+        if !w.is_finite() || w.abs() > MAX_WEIGHT {
+            return Err(PlaceError::invalid(format!("net weight for \"{net}\" is not finite / exceeds {MAX_WEIGHT:e}")));
+        }
+    }
+    for e in &input.extra_edges {
+        if !e.weight.is_finite() || e.weight.abs() > MAX_WEIGHT {
+            return Err(PlaceError::invalid(format!("extra edge {}-{} weight is not finite / exceeds {MAX_WEIGHT:e}", e.a, e.b)));
         }
     }
 
@@ -629,9 +662,11 @@ pub fn place(input: &PlacementInput) -> Result<PlacementOutput, PlaceError> {
     let force_steps = opts.force_steps.clamp(FORCE_MIN, FORCE_MAX);
     let refine_passes = opts.refine_passes.min(REFINE_MAX);
 
-    let grid = if input.grid_mm > 0.0 { input.grid_mm } else { 0.5 };
-    let margin = if input.margin_mm > 0.0 { input.margin_mm } else { 4.0 };
-    let spacing = input.spacing_mm.unwrap_or(DEFAULT_SPACING_MM);
+    let grid = if input.grid_mm > 0.0 && input.grid_mm.is_finite() { input.grid_mm } else { 0.5 };
+    let margin = if input.margin_mm > 0.0 && input.margin_mm.is_finite() { input.margin_mm } else { 4.0 };
+    // A negative spacing would let courtyards overlap "legally" — clamp to 0 (touching, never overlapping).
+    let spacing = input.spacing_mm.unwrap_or(DEFAULT_SPACING_MM).max(0.0);
+    let spacing = if spacing.is_finite() { spacing } else { DEFAULT_SPACING_MM };
 
     let n = parts.len();
 
@@ -681,8 +716,8 @@ pub fn place(input: &PlacementInput) -> Result<PlacementOutput, PlaceError> {
     let usable = |bw: f64, bh: f64| (bw - 2.0 * margin) * (bh - 2.0 * margin);
     if usable(board_w, board_h) > 0.0 && area / usable(board_w, board_h) > UTIL_LIMIT {
         let k = (area / (UTIL_LIMIT * usable(board_w, board_h))).sqrt();
-        board_w = snap(board_w * k + grid, grid);
-        board_h = snap(board_h * k + grid, grid);
+        board_w = snap(board_w * k + grid, grid).min(MAX_BOARD_MM);
+        board_h = snap(board_h * k + grid, grid).min(MAX_BOARD_MM);
         notes.push(format!("board grown to {board_w}×{board_h}mm (utilization pre-check)"));
     }
 
@@ -768,6 +803,12 @@ pub fn place(input: &PlacementInput) -> Result<PlacementOutput, PlaceError> {
     board_h = board_h.min(fit_h);
 
     let positions = make_positions(&parts, &st, cx, cy);
+    // Contract guard: NEVER emit ok=true with a non-finite coordinate (serde_json would serialize it as
+    // null and the caller would see a malformed board). Input validation should make this unreachable —
+    // this is the defense-in-depth backstop.
+    if positions.values().any(|p| !p.x.is_finite() || !p.y.is_finite()) {
+        return Err(PlaceError::invalid("solver produced non-finite coordinates (numeric overflow)"));
+    }
     let hpwl = compute_hpwl(&parts, &positions, &input.net_weights, false);
     let weighted_hpwl = compute_hpwl(&parts, &positions, &input.net_weights, true);
 
@@ -1025,5 +1066,60 @@ mod tests {
         let out = place(&input).unwrap();
         assert!(out.ok);
         assert!(no_overlap(&input.parts, &out, 2.0));
+    }
+
+    // ---- input-domain hardening (each pins a probe that previously misbehaved) ----
+
+    #[test]
+    fn duplicate_part_ids_are_rejected_not_collapsed() {
+        // Previously: two parts sharing an id collapsed into ONE position and still reported ok=true.
+        let input = base_input(vec![part("R1", 2.0, 1.0, &["N1"]), part("R1", 4.0, 4.0, &["N1"])]);
+        let err = place(&input).unwrap_err();
+        assert!(err.to_string().contains("duplicate part id"));
+    }
+
+    #[test]
+    fn absurd_board_dimensions_are_rejected_cleanly() {
+        // Previously: 10 000mm hung the force loop (O(total buckets) clears); 1e6mm aborted on a 4.9TB alloc.
+        let mut input = base_input(vec![part("A", 2.0, 1.0, &["N1"]), part("B", 2.0, 1.0, &["N1"])]);
+        input.board_w = 1_000_000.0;
+        assert!(place(&input).unwrap_err().to_string().contains("maximum"));
+    }
+
+    #[test]
+    fn max_size_board_completes_instead_of_hanging() {
+        // 10 000mm is the accepted ceiling — with dirty-list clears it must complete, not hang.
+        let mut input = base_input(vec![part("A", 2.0, 1.0, &["N1"]), part("B", 2.0, 1.0, &["N1"])]);
+        input.board_w = MAX_BOARD_MM;
+        input.board_h = MAX_BOARD_MM;
+        let out = place(&input).unwrap();
+        assert!(out.ok);
+    }
+
+    #[test]
+    fn huge_net_weight_is_rejected_never_a_non_finite_output() {
+        // Previously: a 1e300 weight overflowed positions to non-finite yet the output said ok=true
+        // (serde_json serializes non-finite as null → malformed board for the caller).
+        let mut input = base_input(vec![part("A", 2.0, 1.0, &["N1"]), part("B", 2.0, 1.0, &["N1"])]);
+        input.net_weights.insert("N1".into(), 1e300);
+        assert!(place(&input).unwrap_err().to_string().contains("net weight"));
+    }
+
+    #[test]
+    fn negative_spacing_is_clamped_so_courtyards_never_overlap() {
+        let mut input = base_input(vec![part("A", 4.0, 4.0, &["N1"]), part("B", 4.0, 4.0, &["N1"])]);
+        input.spacing_mm = Some(-5.0);
+        let out = place(&input).unwrap();
+        assert!(out.ok);
+        assert!(no_overlap(&input.parts, &out, 0.0)); // clamped to 0: touching allowed, overlap never
+    }
+
+    #[test]
+    fn non_finite_pad_is_rejected() {
+        // Unreachable via strict JSON, but the lib is WASM-portable — direct callers must be safe too.
+        let mut p = part("A", 2.0, 1.0, &["N1"]);
+        p.pads[0].x = f64::NAN;
+        let input = base_input(vec![p, part("B", 2.0, 1.0, &["N1"])]);
+        assert!(place(&input).unwrap_err().to_string().contains("non-finite pad"));
     }
 }
