@@ -10,6 +10,7 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { resolveEmailTransport, type EmailTransport } from './email-transports';
+import { verificationEmail, passwordResetEmail, orgInviteEmail, type EmailContent } from './templates';
 
 @Injectable()
 export class EmailService {
@@ -34,19 +35,11 @@ export class EmailService {
     }
 
     async sendVerificationEmail(to: string, token: string): Promise<void> {
-        await this.send(
-            to,
-            'Verify your Circuit Forge email',
-            `Welcome to Circuit Forge. Confirm your email address:\n${this.verificationLink(token)}\n(This link expires in 24 hours.)`,
-        );
+        await this.send(to, verificationEmail(this.verificationLink(token)));
     }
 
     async sendPasswordResetEmail(to: string, token: string): Promise<void> {
-        await this.send(
-            to,
-            'Reset your Circuit Forge password',
-            `We received a request to reset your password. If it was you, choose a new one:\n${this.passwordResetLink(token)}\n(This link expires in 1 hour. If it wasn't you, ignore this email.)`,
-        );
+        await this.send(to, passwordResetEmail(this.passwordResetLink(token)));
     }
 
     /** Absolute link the invitee clicks to accept an org invitation. */
@@ -55,11 +48,7 @@ export class EmailService {
     }
 
     async sendOrgInviteEmail(to: string, token: string, orgName: string, inviterName: string): Promise<void> {
-        await this.send(
-            to,
-            `You've been invited to join ${orgName} on Circuit Forge`,
-            `${inviterName} invited you to join the "${orgName}" organization on Circuit Forge.\nAccept the invitation:\n${this.inviteLink(token)}\n(This link expires in 7 days. If you weren't expecting this, you can safely ignore this email.)`,
-        );
+        await this.send(to, orgInviteEmail(this.inviteLink(token), orgName, inviterName));
     }
 
     /**
@@ -67,9 +56,9 @@ export class EmailService {
      * swallowed so the calling auth flow (register / forgot-password) still completes — the security
      * token is already stored, and the user can resend or retry verification.
      */
-    private async send(to: string, subject: string, text: string): Promise<void> {
+    private async send(to: string, content: EmailContent): Promise<void> {
         try {
-            await this.transport.send({ to, subject, text });
+            await this.transport.send({ to, subject: content.subject, text: content.text, html: content.html });
         } catch (e) {
             this.logger.error(`email send failed (transport=${this.transport.name}, to=<${to}>): ${e instanceof Error ? e.message : e}`);
         }
