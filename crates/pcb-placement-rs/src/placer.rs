@@ -200,11 +200,25 @@ fn seed(parts: &[Part], degree: &[f64], board_w: f64, board_h: f64, start: usize
     let pitch_y = board_h / (rows as f64 + 1.0);
     let flip: f64 = if start % 4 == 3 { -1.0 } else { 1.0 };
 
+    // Grid cells in assignment order. Start 0 pairs its heaviest-first part order with CENTER-OUT cells
+    // (the most-connected hubs seed the middle of the board, satellites ring outward — the hub-seeding
+    // intent; row-major would park the heaviest hub in a corner). Other starts keep row-major layouts as
+    // deliberately different basins.
+    let mut cells: Vec<(usize, usize)> = (0..rows).flat_map(|r| (0..cols).map(move |c| (r, c))).collect();
+    if start % 4 == 0 {
+        let cr = (rows as f64 - 1.0) / 2.0;
+        let cc = (cols as f64 - 1.0) / 2.0;
+        cells.sort_by(|&(r1, c1), &(r2, c2)| {
+            let d1 = (r1 as f64 - cr).powi(2) + (c1 as f64 - cc).powi(2);
+            let d2 = (r2 as f64 - cr).powi(2) + (c2 as f64 - cc).powi(2);
+            d1.partial_cmp(&d2).unwrap_or(std::cmp::Ordering::Equal).then_with(|| (r1, c1).cmp(&(r2, c2)))
+        });
+    }
+
     for (k, &pi) in order.iter().enumerate() {
-        let col = (k % cols) as f64;
-        let row = (k / cols) as f64;
-        st.x[pi] = flip * (col - (cols as f64 - 1.0) / 2.0) * pitch_x;
-        st.y[pi] = (row - (rows as f64 - 1.0) / 2.0) * pitch_y;
+        let (row, col) = cells[k];
+        st.x[pi] = flip * (col as f64 - (cols as f64 - 1.0) / 2.0) * pitch_x;
+        st.y[pi] = (row as f64 - (rows as f64 - 1.0) / 2.0) * pitch_y;
     }
     st
 }
@@ -222,8 +236,29 @@ fn hash_cell(parts: &[Part], spacing: f64, grid: f64) -> f64 {
     (sum / parts.len() as f64).max(grid).max(1e-3)
 }
 
-/// One rotation sweep. Score = Σ weighted pad→net-centroid distance (own pads excluded). Net centroids are
-/// cached once per sweep from the current layout — O(total pads), vs the TS per-part recompute.
+/// Per-part contribution of ONE part's pads to each net's world-pad sum, at a given rotation.
+/// Used to exclude the WHOLE part (all its pads, mirroring the TS kernel's `j === i` skip) from the
+/// net centroid it is scored against — excluding only the scored pad leaves a self-referential pull
+/// toward the part's own sibling pads, which biases every sweep toward keeping the current rotation.
+fn own_net_sums<'a>(p: &'a Part, x: f64, y: f64, r: u16) -> BTreeMap<&'a str, (f64, f64, f64)> {
+    let mut own: BTreeMap<&str, (f64, f64, f64)> = BTreeMap::new();
+    for pad in &p.pads {
+        if pad.net.is_empty() {
+            continue;
+        }
+        let (rx, ry) = rot(r, pad.x, pad.y);
+        let e = own.entry(pad.net.as_str()).or_insert((0.0, 0.0, 0.0));
+        e.0 += x + rx;
+        e.1 += y + ry;
+        e.2 += 1.0;
+    }
+    own
+}
+
+/// One rotation sweep. Score = Σ weighted pad→net-centroid distance with the ENTIRE part excluded from
+/// each centroid. Net sums are cached once per sweep and updated INCREMENTALLY when a part commits a new
+/// rotation, so later parts always score against current geometry (a stale cache made the final sweep's
+/// errors permanent — nothing rotates after it).
 fn rotation_sweep(parts: &[Part], st: &mut State, order: &[usize], net_weights: &BTreeMap<String, f64>) {
     let mut sum_x: BTreeMap<&str, f64> = BTreeMap::new();
     let mut sum_y: BTreeMap<&str, f64> = BTreeMap::new();
@@ -244,6 +279,7 @@ fn rotation_sweep(parts: &[Part], st: &mut State, order: &[usize], net_weights: 
         if p.pads.len() < 2 {
             continue;
         }
+        let own = own_net_sums(p, st.x[i], st.y[i], st.r[i]);
         let mut best_r = st.r[i];
         let mut best_score = f64::INFINITY;
         for &r in &[0u16, 90, 180, 270] {
@@ -257,16 +293,13 @@ fn rotation_sweep(parts: &[Part], st: &mut State, order: &[usize], net_weights: 
                     continue;
                 }
                 let net = pad.net.as_str();
-                let total = cnt.get(net).copied().unwrap_or(0.0);
-                let others = total - 1.0;
+                let (osx, osy, ocnt) = own.get(net).copied().unwrap_or((0.0, 0.0, 0.0));
+                let others = cnt.get(net).copied().unwrap_or(0.0) - ocnt;
                 if others <= 0.0 {
                     continue;
                 }
-                let (crx, cry) = rot(st.r[i], pad.x, pad.y);
-                let own_x = st.x[i] + crx;
-                let own_y = st.y[i] + cry;
-                let cx = (sum_x.get(net).copied().unwrap_or(0.0) - own_x) / others;
-                let cy = (sum_y.get(net).copied().unwrap_or(0.0) - own_y) / others;
+                let cx = (sum_x.get(net).copied().unwrap_or(0.0) - osx) / others;
+                let cy = (sum_y.get(net).copied().unwrap_or(0.0) - osy) / others;
                 let (rx, ry) = rot(r, pad.x, pad.y);
                 let dx = st.x[i] + rx - cx;
                 let dy = st.y[i] + ry - cy;
@@ -277,7 +310,23 @@ fn rotation_sweep(parts: &[Part], st: &mut State, order: &[usize], net_weights: 
                 best_r = r;
             }
         }
-        st.r[i] = best_r;
+        if best_r != st.r[i] {
+            // incremental cache update: replace this part's old-rotation pad sums with the new ones
+            let new_own = own_net_sums(p, st.x[i], st.y[i], best_r);
+            for (net, (osx, osy, _)) in &own {
+                if let (Some(sx), Some(sy)) = (sum_x.get_mut(net), sum_y.get_mut(net)) {
+                    *sx -= osx;
+                    *sy -= osy;
+                }
+            }
+            for (net, (nsx, nsy, _)) in &new_own {
+                if let (Some(sx), Some(sy)) = (sum_x.get_mut(net), sum_y.get_mut(net)) {
+                    *sx += nsx;
+                    *sy += nsy;
+                }
+            }
+            st.r[i] = best_r;
+        }
     }
 }
 
@@ -444,14 +493,19 @@ fn legalize(
     let mut placed = vec![false; n];
     let mut neigh: Vec<usize> = Vec::new();
 
-    // The spiral SEARCH steps by a coarse increment (≈ one clearance channel, a multiple of the fine grid)
-    // rather than one fine cell: parts spend most of their spiral crossing already-packed regions to reach
-    // free space, and a clearance-sized step still lands legal courtyards without fine-cell waste. Positions
-    // stay grid-aligned because `step_mm` is a grid multiple and the spiral centre is grid-snapped.
-    let step_mm = {
+    // HYBRID spiral: near the force-chosen target the search steps the FINE grid (full TS-grade precision —
+    // a coarse-only lattice measurably worsened HPWL/board on dense boards), and beyond that radius it steps
+    // a coarse increment (≈ one clearance channel): crossing an already-packed region to reach open space
+    // needs no fine sampling. Positions stay grid-aligned in both phases (the centre is grid-snapped and both
+    // steps are grid multiples).
+    let coarse_mm = {
         let s = snap(spacing, grid_mm);
         if s > grid_mm { s } else { grid_mm }
     };
+    // Fine phase covers ~3 clearance channels around the target (enough for local displacement on a
+    // ROUTE_UTIL-density board); beyond that the coarse phase takes over, starting past the fine radius.
+    let fine_radius = (3.0 * coarse_mm).max(3.0 * grid_mm);
+    let fine_rings = (fine_radius / grid_mm).ceil() as i64;
 
     for &i in &order {
         let (wi, hi) = half_extents(&parts[i], st.r[i]);
@@ -463,61 +517,75 @@ fn legalize(
         let cx = snap(st.x[i], grid_mm).clamp(-max_x, max_x);
         let cy = snap(st.y[i], grid_mm).clamp(-max_y, max_y);
         let mut done = false;
-        let max_ring = (board_w.max(board_h) / step_mm).ceil() as i64;
 
-        let mut ring = 0i64;
-        while ring <= max_ring && !done {
-            let mut visit = |gx: i64, gy: i64, st: &mut State| -> bool {
-                let px = cx + gx as f64 * step_mm;
-                let py = cy + gy as f64 * step_mm;
-                if px > max_x || px < -max_x || py > max_y || py < -max_y {
+        let mut visit = |gx: i64, gy: i64, step: f64, st: &mut State| -> bool {
+            let px = cx + gx as f64 * step;
+            let py = cy + gy as f64 * step;
+            if px > max_x || px < -max_x || py > max_y || py < -max_y {
+                return false;
+            }
+            *probes += 1;
+            neigh.clear();
+            grid.neighbors(inflated_rect(px, py, wi, hi, spacing / 2.0), &mut neigh);
+            neigh.sort_unstable();
+            neigh.dedup();
+            for &j in &neigh {
+                if !placed[j] {
+                    continue;
+                }
+                let (jx, jy, jw, jh) = prect[j];
+                if overlaps(spacing, px, py, wi, hi, jx, jy, jw, jh) {
                     return false;
                 }
-                *probes += 1;
-                neigh.clear();
-                grid.neighbors(inflated_rect(px, py, wi, hi, spacing / 2.0), &mut neigh);
-                neigh.sort_unstable();
-                neigh.dedup();
-                for &j in &neigh {
-                    if !placed[j] {
-                        continue;
-                    }
-                    let (jx, jy, jw, jh) = prect[j];
-                    if overlaps(spacing, px, py, wi, hi, jx, jy, jw, jh) {
-                        return false;
-                    }
-                }
-                st.x[i] = px;
-                st.y[i] = py;
-                true
-            };
-
-            if ring == 0 {
-                done = visit(0, 0, st);
-            } else {
-                // deterministic ring walk: top row → right col → bottom row → left col
-                let mut gx = -ring;
-                while gx <= ring && !done {
-                    done = visit(gx, -ring, st);
-                    gx += 1;
-                }
-                let mut gy = -ring + 1;
-                while gy <= ring && !done {
-                    done = visit(ring, gy, st);
-                    gy += 1;
-                }
-                let mut gx = ring - 1;
-                while gx >= -ring && !done {
-                    done = visit(gx, ring, st);
-                    gx -= 1;
-                }
-                let mut gy = ring - 1;
-                while gy >= -ring + 1 && !done {
-                    done = visit(-ring, gy, st);
-                    gy -= 1;
-                }
             }
+            st.x[i] = px;
+            st.y[i] = py;
+            true
+        };
+
+        // deterministic ring walk: top row → right col → bottom row → left col
+        let mut walk_ring = |ring: i64, step: f64, st: &mut State, done: &mut bool| {
+            if ring == 0 {
+                *done = visit(0, 0, step, st);
+                return;
+            }
+            let mut gx = -ring;
+            while gx <= ring && !*done {
+                *done = visit(gx, -ring, step, st);
+                gx += 1;
+            }
+            let mut gy = -ring + 1;
+            while gy <= ring && !*done {
+                *done = visit(ring, gy, step, st);
+                gy += 1;
+            }
+            let mut gx = ring - 1;
+            while gx >= -ring && !*done {
+                *done = visit(gx, ring, step, st);
+                gx -= 1;
+            }
+            let mut gy = ring - 1;
+            while gy >= -ring + 1 && !*done {
+                *done = visit(-ring, gy, step, st);
+                gy -= 1;
+            }
+        };
+
+        // fine phase: exact-grid rings around the target
+        let mut ring = 0i64;
+        while ring <= fine_rings && !done {
+            walk_ring(ring, grid_mm, st, &mut done);
             ring += 1;
+        }
+        // coarse phase: clearance-sized rings from just past the fine radius to the board edge
+        if !done {
+            let coarse_start = (fine_radius / coarse_mm).floor() as i64 + 1;
+            let max_ring = (board_w.max(board_h) / coarse_mm).ceil() as i64;
+            let mut ring = coarse_start;
+            while ring <= max_ring && !done {
+                walk_ring(ring, coarse_mm, st, &mut done);
+                ring += 1;
+            }
         }
         if !done {
             return false;
@@ -529,8 +597,10 @@ fn legalize(
     true
 }
 
-/// HPWL from FINAL (rounded) positions — identical formula to placement.ts `computeHpwl`, so the
-/// benchmark's recompute cross-check holds. `weight_by_net` = the multistart selection metric.
+/// HPWL from FINAL (rounded) positions — the same per-net bounding-box formula as placement.ts
+/// `computeHpwl`. Summation ORDER differs (BTreeMap lexicographic vs JS insertion order), so cross-engine
+/// comparisons are tolerance-equal (the bench allows 0.02), not bit-equal. `weight_by_net` = the
+/// multistart selection metric.
 fn compute_hpwl(
     parts: &[Part],
     positions: &BTreeMap<String, Position>,
@@ -727,7 +797,7 @@ pub fn place(input: &PlacementInput) -> Result<PlacementOutput, PlaceError> {
     let cell = hash_cell(&parts, spacing, grid);
 
     // multistart: keep the best legal attempt by weighted HPWL (ties → lower raw HPWL, then lower start)
-    let mut best: Option<(State, f64, f64, f64, usize)> = None;
+    let mut best: Option<(State, f64, f64, f64, f64, usize)> = None;
     for start in 0..starts {
         let Some((st, bw, bh)) =
             attempt(&parts, &edges, input, &degree, &rot_order, start, force_steps, board_w, board_h, grid, margin, spacing, cell, &mut stats)
@@ -736,16 +806,20 @@ pub fn place(input: &PlacementInput) -> Result<PlacementOutput, PlaceError> {
         };
         let positions = make_positions(&parts, &st, 0.0, 0.0);
         let whpwl = compute_hpwl(&parts, &positions, &input.net_weights, true);
+        let raw = compute_hpwl(&parts, &positions, &input.net_weights, false);
         let better = match &best {
             None => true,
-            Some((_, _, _, best_w, _)) => whpwl < best_w - 1e-9,
+            // primary: weighted HPWL (routability intent); tie → raw HPWL (the pcb-core adoption gate's metric)
+            Some((_, _, _, best_w, best_raw, _)) => {
+                whpwl < best_w - 1e-9 || ((whpwl - best_w).abs() <= 1e-9 && raw < best_raw - 1e-9)
+            }
         };
         if better {
-            best = Some((st, bw, bh, whpwl, start));
+            best = Some((st, bw, bh, whpwl, raw, start));
         }
     }
 
-    let Some((mut st, mut board_w, mut board_h, _, selected)) = best else {
+    let Some((mut st, mut board_w, mut board_h, _, _, selected)) = best else {
         notes.push("legalization FAILED for every start even after growth".into());
         return Ok(PlacementOutput {
             positions: BTreeMap::new(),
@@ -764,12 +838,23 @@ pub fn place(input: &PlacementInput) -> Result<PlacementOutput, PlaceError> {
     stats.selected_start = selected;
     notes.push(format!("multistart: {starts} start(s), selected #{selected}"));
 
-    // refine: bounded, monotonic, legality-checked local improvement on the winner
-    for _ in 0..refine_passes {
-        let snapshot = st.clone();
-        let moved = refine_pass(&parts, &snapshot, &mut st, board_w, board_h, grid, margin, spacing, cell, &input.net_weights, &mut stats);
-        if moved == 0 {
-            break;
+    // refine: bounded, legality-checked local improvement on the winner. Its objective is pad→centroid
+    // distance (not HPWL), so guard the OUTCOME on the adoption gate's metric: if the refined layout's raw
+    // HPWL is worse than pre-refine, revert — refinement may only ever help the gate, never hurt it.
+    if refine_passes > 0 {
+        let pre_st = st.clone();
+        let pre_raw = compute_hpwl(&parts, &make_positions(&parts, &st, 0.0, 0.0), &input.net_weights, false);
+        for _ in 0..refine_passes {
+            let snapshot = st.clone();
+            let moved = refine_pass(&parts, &snapshot, &mut st, board_w, board_h, grid, margin, spacing, cell, &input.net_weights, &mut stats);
+            if moved == 0 {
+                break;
+            }
+        }
+        let post_raw = compute_hpwl(&parts, &make_positions(&parts, &st, 0.0, 0.0), &input.net_weights, false);
+        if post_raw > pre_raw + 1e-9 {
+            st = pre_st;
+            notes.push("refinement reverted (raw HPWL would have regressed)".into());
         }
     }
 
@@ -787,20 +872,31 @@ pub fn place(input: &PlacementInput) -> Result<PlacementOutput, PlaceError> {
     }
     let cx = snap((min_x + max_x) / 2.0, grid);
     let cy = snap((min_y + max_y) / 2.0, grid);
-    let mut fit_w = snap(max_x - min_x + 2.0 * margin + grid, grid).max(MIN_BOARD_MM);
-    let mut fit_h = snap(max_y - min_y + 2.0 * margin + grid, grid).max(MIN_BOARD_MM);
+    // Fit dims from the RE-CENTERED courtyard extents, CEILED to the grid. Deriving them from the raw bbox
+    // width and snapping to NEAREST let a board round DOWN while the grid-snapped centre shifted parts up to
+    // half a grid step — an edge connector then landed outside `board/2 − margin` (caught by the bench's
+    // bound invariant at n=200). Ceiling the re-centered extent makes containment arithmetic, not luck:
+    // fit/2 − margin ≥ extent ≥ every |coord| + half-extent (0.01 headroom covers the 0.01mm output rounding).
+    let extent_x = (max_x - cx).max(cx - min_x) + 0.01;
+    let extent_y = (max_y - cy).max(cy - min_y) + 0.01;
+    let ceil_snap = |v: f64| (v / grid).ceil() * grid;
+    let mut fit_w = ceil_snap(2.0 * (extent_x + margin)).max(MIN_BOARD_MM);
+    let mut fit_h = ceil_snap(2.0 * (extent_y + margin)).max(MIN_BOARD_MM);
     let fit_usable = (fit_w - 2.0 * margin) * (fit_h - 2.0 * margin);
     if fit_usable > 0.0 && area / fit_usable > ROUTE_UTIL {
         let k = (area / (ROUTE_UTIL * fit_usable)).sqrt();
-        fit_w = snap(fit_w * k + grid, grid);
-        fit_h = snap(fit_h * k + grid, grid);
+        fit_w = ceil_snap(fit_w * k);
+        fit_h = ceil_snap(fit_h * k);
         notes.push(format!("shrink limited for routing headroom (util ≤ {ROUTE_UTIL})"));
     }
+    // The fitted board is authoritative in BOTH directions: usually a shrink, but when the snapped centre
+    // shift leaves the extents needing one extra grid step, growing by that step is what keeps every part
+    // inside `board/2 − margin` (clamping back to the legalized board would recreate the violation).
     if fit_w < board_w || fit_h < board_h {
         notes.push(format!("board shrunk to fit: {}×{}mm", board_w.min(fit_w), board_h.min(fit_h)));
     }
-    board_w = board_w.min(fit_w);
-    board_h = board_h.min(fit_h);
+    board_w = fit_w;
+    board_h = fit_h;
 
     let positions = make_positions(&parts, &st, cx, cy);
     // Contract guard: NEVER emit ok=true with a non-finite coordinate (serde_json would serialize it as
@@ -828,9 +924,11 @@ pub fn place(input: &PlacementInput) -> Result<PlacementOutput, PlaceError> {
 }
 
 /// One refinement pass: each part (id order) may snap toward the grid cell that most reduces its own
-/// weighted pad→net-centroid distance, accepting ONLY a strictly-improving, legal move. Monotonic and
-/// legality-checked ⇒ can never overlap or worsen the layout. Centroids come from `snapshot` (the pre-pass
-/// layout) so a pass is order-independent and deterministic. Returns moves applied.
+/// weighted pad→net-centroid distance (the WHOLE part excluded from each centroid), accepting ONLY a
+/// strictly-improving, legal move — so legality can never break. The objective is a proxy, not HPWL:
+/// the caller guards the pass sequence with a raw-HPWL revert. Centroids come from `snapshot` (the
+/// pre-pass layout) and are deterministic; legality is checked against LIVE positions, so the pass is
+/// deterministic but not order-independent. Returns moves applied.
 #[allow(clippy::too_many_arguments)]
 fn refine_pass(
     parts: &[Part],
@@ -869,6 +967,12 @@ fn refine_pass(
         rects[i] = (st.x[i], st.y[i], hw, hh);
     }
 
+    // Whole-part exclusion (mirrors rotation_sweep): each part's own pad contribution per net, from the
+    // snapshot — excluding only the scored pad would pull a part toward its own sibling pads.
+    let own_sums: Vec<BTreeMap<&str, (f64, f64, f64)>> = (0..n)
+        .map(|i| own_net_sums(&parts[i], snapshot.x[i], snapshot.y[i], snapshot.r[i]))
+        .collect();
+
     let cost_at = |i: usize, px: f64, py: f64, r: u16| -> f64 {
         let mut c = 0.0;
         for pad in &parts[i].pads {
@@ -880,16 +984,13 @@ fn refine_pass(
                 continue;
             }
             let net = pad.net.as_str();
-            let total = cnt.get(net).copied().unwrap_or(0.0);
-            let others = total - 1.0;
+            let (osx, osy, ocnt) = own_sums[i].get(net).copied().unwrap_or((0.0, 0.0, 0.0));
+            let others = cnt.get(net).copied().unwrap_or(0.0) - ocnt;
             if others <= 0.0 {
                 continue;
             }
-            let (orx, ory) = rot(snapshot.r[i], pad.x, pad.y);
-            let own_x = snapshot.x[i] + orx;
-            let own_y = snapshot.y[i] + ory;
-            let ncx = (sum_x.get(net).copied().unwrap_or(0.0) - own_x) / others;
-            let ncy = (sum_y.get(net).copied().unwrap_or(0.0) - own_y) / others;
+            let ncx = (sum_x.get(net).copied().unwrap_or(0.0) - osx) / others;
+            let ncy = (sum_y.get(net).copied().unwrap_or(0.0) - osy) / others;
             let (rx, ry) = rot(r, pad.x, pad.y);
             let dx = px + rx - ncx;
             let dy = py + ry - ncy;
