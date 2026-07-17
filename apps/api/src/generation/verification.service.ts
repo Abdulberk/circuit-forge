@@ -11,7 +11,7 @@
  */
 import { Injectable, Optional, Logger } from '@nestjs/common';
 import { runErc, generateNetlist, type AnalysisConfig, type SimulationResult, type AcceptanceCriterion, type CornerSpec } from '@circuit-forge/eda-core';
-import { safeValidateCircuitJson, buildElectricalScope, criterionDimension, type CircuitJson, type ScopeManifest } from '@circuit-forge/eda-core';
+import { safeValidateCircuitJson, buildElectricalScope, criterionDimension, checkOrientationConsistency, type CircuitJson, type ScopeManifest, type OrientationReport } from '@circuit-forge/eda-core';
 import { CircuitSimulatorService, summarizeSeries, type SimMeasurement, type SimSummary, type ConvergenceReport } from './circuit-simulator.service';
 import { attachGenericModels } from './model-resolution';
 import { computeResistorPower, type PowerReport } from './power-analysis';
@@ -52,9 +52,12 @@ export interface DesignEvidence {
      *  'pass'. INFORMATIONAL (never changes `verdict` — same posture as `power` / Monte-Carlo robustness):
      *  reports whether the spec still holds at every ±tolerance corner, or why it couldn't be checked. */
     robustness?: WorstCaseEvidence;
-    /** Scope disclosure: which checks this verdict actually ran, and — as important — which it did NOT
-     *  (e.g. decoupling/polarity presence). Keeps the badge from over-claiming by omission. */
+    /** Scope disclosure: which checks this verdict actually ran, and — as important — which it did NOT.
+     *  Keeps the badge from over-claiming by omission. */
     scope: ScopeManifest;
+    /** Orientation ROLE-consistency (informational): diode/zener/LED that do not declare anode + cathode.
+     *  Not geometric; polarized caps/connectors not covered. Present when the circuit validated. */
+    polarity?: OrientationReport;
 }
 
 /** The worst-case corner robustness section of a DesignEvidence (see VerificationService.runCornerRobustness). */
@@ -99,6 +102,11 @@ export class VerificationService {
         // a net's id differs from its name (universal once the frontend mints UUID ids). Also feeds power below.
         const validCircuit = safeValidateCircuitJson(circuit);
         const nets = validCircuit.success ? (validCircuit.data as CircuitJson).nets : undefined;
+        // Pre-layout design-review graph check (pure, sim-independent): orientation ROLE-consistency, read
+        // from OUR validated CircuitJson (never a downstream transform). Informational — surfaces warnings,
+        // never gates the verdict; its honest scope ceiling rides in the manifest. (Decoupling presence is
+        // deferred — the model has no power-rail marking to identify a rail reliably; disclosed not-run.)
+        const polarity = validCircuit.success ? checkOrientationConsistency(validCircuit.data as CircuitJson) : undefined;
         // Branch-current assertions (i(R1)) need their probe UNIONed into the netlist — the voltage-only
         // defaults never save it, so without this a current assertion would always read "probe not found".
         const currentProbes = extraProbesForCriteria(assertions);
@@ -169,9 +177,9 @@ export class VerificationService {
             // counts as run — a skipped or failed run produced no usable simulation, so it is disclosed
             // not-run, never a false "Simulation ran"), assertion COVERAGE (which quantities the supplied
             // assertions check — coverage, not requirement satisfaction, since no prompt is threaded here),
-            // the resistor-power/derating review, and worst-case robustness — each disclosed run ONLY when it
-            // actually produced a result. decoupling/polarity presence are honestly not-run until their
-            // detectors land (next slice).
+            // the resistor-power/derating review, worst-case robustness, and orientation role-consistency —
+            // each disclosed run ONLY when it actually produced a result. Decoupling presence stays not-run
+            // (deferred: no power-rail marking to identify a rail reliably — see buildElectricalScope).
             scope: buildElectricalScope({
                 simRan: sim.simStatus === 'ok',
                 coveredDimensions: [...new Set(assertions.map(criterionDimension))],
@@ -181,7 +189,9 @@ export class VerificationService {
                 robustness: robustnessEvidence
                     ? { status: 'run', detail: 'worst-case corner robustness — informational (does not gate the verdict)' }
                     : { status: 'not-run', detail: 'tolerance robustness not requested' },
+                polarity: polarity?.manifestEntry,
             }),
+            ...(polarity ? { polarity } : {}),
         };
     }
 

@@ -247,6 +247,13 @@ export {
     type DeterminedEntry,
     type ScopeManifest,
 } from './verification/manifest';
+// Pre-layout design-review graph checks (orientation role-consistency; decoupling deferred until the
+// circuit model carries power-rail marking — see design-review.ts header)
+export {
+    checkOrientationConsistency,
+    type OrientationReport,
+    type OrientationFinding,
+} from './verification/design-review';
 
 // ERC
 export {

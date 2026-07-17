@@ -117,8 +117,12 @@ export function buildElectricalScope(input: {
             'assertion.thd': dim('thd'),
             derating: input.derating ?? { status: 'not-run', detail: 'no resistor-power data (sim not ok / no resistors)' },
             robustness: input.robustness ?? { status: 'not-run', detail: 'tolerance robustness not requested' },
-            decoupling: input.decoupling ?? { status: 'not-run', detail: 'bypass-cap presence check not yet wired' },
-            polarity: input.polarity ?? { status: 'not-run', detail: 'orientation role-consistency check not yet wired' },
+            // Decoupling presence is DEFERRED, not merely unimplemented: the circuit model has no power-rail
+            // marking, so a "rail" could only be guessed (a DC source may drive a signal/reference net), and
+            // `generic` conflates ICs with connectors — either guess produces false findings. Disclosed
+            // not-run until the schema carries an isPower net field / typed power-pin roles.
+            decoupling: input.decoupling ?? { status: 'not-run', detail: 'deferred — no power-rail marking in the model to identify a rail reliably (needs an isPower net field / power-pin roles)' },
+            polarity: input.polarity ?? { status: 'not-run', detail: 'no polarized diode/zener/LED to evaluate' },
         },
     );
 }

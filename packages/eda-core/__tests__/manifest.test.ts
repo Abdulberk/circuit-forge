@@ -45,10 +45,10 @@ describe('buildElectricalScope — the /verify-design fragment', () => {
         expect(g.get('assertion.thd')!.status).toBe('not-run');
     });
 
-    it('honestly discloses decoupling + polarity as not-run until their detectors land', () => {
+    it('discloses decoupling as not-run with the DEFERRAL reason (no power-rail marking), polarity not-run by default', () => {
         const g = byId(buildElectricalScope({ simRan: true, coveredDimensions: [] }));
         expect(g.get('decoupling')!.status).toBe('not-run');
-        expect(g.get('decoupling')!.detail).toMatch(/not yet wired/);
+        expect(g.get('decoupling')!.detail).toMatch(/deferred|power-rail marking/i);
         expect(g.get('polarity')!.status).toBe('not-run');
     });
 
