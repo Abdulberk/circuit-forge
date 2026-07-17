@@ -27,8 +27,73 @@ export async function exportDsn(
 ): Promise<string> {
     const { convertCircuitJsonToDsnString } = await import('dsn-converter');
     const raw = convertCircuitJsonToDsnString(circuitJson as never);
-    const ruled = applyFabRulesToDsn(raw, profile);
+    const rotated = fixPlaceRotations(raw, circuitJson);
+    const ruled = applyFabRulesToDsn(rotated, profile);
     return perNetWidthMm && Object.keys(perNetWidthMm).length > 0 ? applyPerNetWidths(ruled, perNetWidthMm, profile) : ruled;
+}
+
+/**
+ * Repair the `(place …)` rotations dsn-converter destroys. dsn-converter@0.0.91 emits every place with
+ * `rotation % 90` — 90/180/270 all collapse to 0, so the DSN silently loses component rotation (verified
+ * live 17 Tem 2026 on bridge-rectifier: every place said `front 0` while the board had 7 rotated parts;
+ * upstream main still has the bug).
+ *
+ * Why that shorts boards: dsn-converter groups components into a shared `(image …)` keyed by the WORLD
+ * bounding box (`WxH_mm`), and the image pins are the FIRST group member's world-frame pad offsets — so
+ * members of one image can only differ by a 180° flip (a 90° turn lands in a different `HxW` image; only
+ * square footprints can share across 90°). With the place rotation forced to 0, a member that is really
+ * 180° from its image donor keeps the donor's pad orientation: freerouting then wires each net to the
+ * EXACT position of the OPPOSITE pad. KiCad DRC sees symmetric `shorting_items` pairs + the same pads
+ * `unconnected` — precisely the forensic signature that made half the boards burn 13 route+DRC attempts
+ * (only the widest, rotation-free retry passed).
+ *
+ * The repair: for each `(component …)` block, the correct place rotation is the rotation of the member
+ * RELATIVE to the image donor (the block's first place). dsn-converter emits coordinates VERBATIM (pure
+ * scale(1e3), no y mirror — verified in the 0.0.91 dist), and tscircuit's pcb_component rotation and
+ * freerouting's place rotation both apply the SAME math-CCW operator on those raw coordinates (probed
+ * live on both, 17 Tem 2026): member pads = R(θ_member)·local and image pins = R(θ_donor)·local, so
+ * freerouting's `place + R(dsnRot)·pins` hits the member's real pads exactly when
+ * dsnRot = (θ_member − θ_donor) mod 360. (For the dominant 180° case the sign is irrelevant; it matters
+ * only for square-footprint 90° image sharing.) Back-side places are left untouched — the pipeline never
+ * emits them today, and the mirror algebra differs.
+ *
+ * Relies on dsn-converter's stable one-place-per-line output (a pinned dependency with deterministic
+ * formatting; the layout harness re-verifies on every run).
+ */
+export function fixPlaceRotations(dsn: string, circuitJson: TscElement[]): string {
+    // source_component_id → pcb rotation (degrees). The DSN refdes is `${name}_${source_component_id}`.
+    const rotById = new Map<string, number>();
+    for (const el of circuitJson) {
+        if (el.type !== 'pcb_component') continue;
+        const e = el as { source_component_id?: string; rotation?: number };
+        if (e.source_component_id) rotById.set(e.source_component_id, e.rotation ?? 0);
+    }
+    if (rotById.size === 0) return dsn;
+
+    const rotOf = (refdes: string): number => {
+        // the refdes suffix is the source_component_id (which itself contains underscores)
+        for (const [id, rot] of rotById) {
+            if (refdes.endsWith(`_${id}`)) return rot;
+        }
+        return 0;
+    };
+
+    const lines = dsn.split('\n');
+    let donorRot: number | null = null;
+    for (let i = 0; i < lines.length; i++) {
+        const line = lines[i]!;
+        if (line.includes('(component ')) {
+            donorRot = null; // new image group — its first place is the pin-frame donor
+            continue;
+        }
+        const m = /^(\s*\(place\s+)(\S+)(\s+[-\d.eE]+\s+[-\d.eE]+\s+)front(\s+)([-\d.]+)/.exec(line);
+        if (!m) continue;
+        const theta = rotOf(m[2]!);
+        donorRot ??= theta;
+        const dsnRot = ((theta - donorRot) % 360 + 360) % 360;
+        lines[i] = line.replace(m[0], `${m[1]}${m[2]}${m[3]}front${m[4]}${dsnRot}`);
+    }
+    return lines.join('\n');
 }
 
 /** Specctra clearance types that govern via spacing — freerouting under-spaces these unless told. */
