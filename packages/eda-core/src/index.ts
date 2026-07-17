@@ -233,6 +233,21 @@ export {
     type SpecDimension,
 } from './analysis/assertions';
 
+// Verification scope manifest (the disclosure primitive for an honest "verified" badge)
+export {
+    CHECK_IDS,
+    CHECK_LABELS,
+    buildManifest,
+    buildElectricalScope,
+    buildLayoutScope,
+    type CheckId,
+    type CheckStatus,
+    type CheckGradation,
+    type CheckEntry,
+    type DeterminedEntry,
+    type ScopeManifest,
+} from './verification/manifest';
+
 // ERC
 export {
     runErc,

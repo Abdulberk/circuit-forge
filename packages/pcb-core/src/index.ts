@@ -603,3 +603,7 @@ export type { LayoutGeometry, LayoutComponent, LayoutPad, LayoutTrace, LayoutVia
 export { parseDrcReport, drcCategory, drcToChecks, airwiresFromDrc } from './drc';
 export type { ParsedDrc, DrcEntry, DrcItem, DrcCheck, Airwire } from './drc';
 export type { PlacementRunner } from './placement-engine';
+// Re-export the eda-core scope manifest so the pcb-worker (which depends only on pcb-core) can emit the
+// layout verdict's disclosure fragment without a direct eda-core dependency.
+export { buildLayoutScope, buildManifest, CHECK_IDS, CHECK_LABELS } from '@circuit-forge/eda-core';
+export type { ScopeManifest, CheckId, CheckStatus, CheckGradation, CheckEntry, DeterminedEntry } from '@circuit-forge/eda-core';

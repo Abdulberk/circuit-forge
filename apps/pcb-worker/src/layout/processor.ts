@@ -17,6 +17,7 @@ import {
     parseDrcReport,
     drcToChecks,
     airwiresFromDrc,
+    buildLayoutScope,
 } from '@circuit-forge/pcb-core';
 import { prisma } from '../prisma/client';
 import { assessManufacturability } from './outcome';
@@ -145,6 +146,14 @@ async function processLayoutJob(job: Job<LayoutJobPayload>): Promise<void> {
             stats: q.stats as unknown as Prisma.InputJsonValue,
             parity: q.parity as unknown as Prisma.InputJsonValue,
             completeness: q.completeness,
+            // Scope disclosure for the layout verdict: what this endpoint checked (connectivity/DRC/
+            // manufacturability) — decoupling/polarity are the electrical endpoint's concern, absent here.
+            scope: buildLayoutScope({
+                parityPins: { checked: q.parity.checkedPins, expected: q.parity.expectedPins },
+                drcClean: parsed.clean,
+                drcViolations: parsed.violations.length,
+                manufacturable: verdict.manufacturable,
+            }) as unknown as Prisma.InputJsonValue,
         };
 
         if (!verdict.manufacturable) {

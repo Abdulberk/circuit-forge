@@ -49,6 +49,34 @@ describe('VerificationService', () => {
         expect(ev.summary).toMatch(/Verified/);
     });
 
+    it('emits a scope manifest: run for sim/erc + the covered assertion dimension, honest not-run for the rest', async () => {
+        const { svc } = makeService(okSim());
+        // a voltage spec + a current spec (i() probe) → assertion.voltage + assertion.current covered
+        const ev = await svc.verify({}, undefined, [A('out', 'final', 'approx', 4.98), A('i(R1)', 'final', 'gt', 0.001)]);
+        const s = new Map(ev.scope.checks.map((c) => [c.id, c]));
+        expect(s.get('sim')!.status).toBe('run');
+        expect(s.get('erc')!.status).toBe('run');
+        expect(s.get('assertion.voltage')!.status).toBe('run');
+        expect(s.get('assertion.current')!.status).toBe('run');
+        expect(s.get('assertion.frequency')!.status).toBe('not-run');
+        // the honesty contract: checks we do NOT yet run are disclosed, not omitted
+        expect(s.get('decoupling')!.status).toBe('not-run');
+        expect(s.get('polarity')!.status).toBe('not-run');
+    });
+
+    it('scope discloses sim as not-run when the simulation was skipped', async () => {
+        const { svc } = makeService(okSim({ simStatus: 'skipped', measurements: [] }));
+        const ev = await svc.verify({}, undefined, []);
+        expect(new Map(ev.scope.checks.map((c) => [c.id, c])).get('sim')!.status).toBe('not-run');
+    });
+
+    it('scope discloses sim as not-run when the simulation FAILED (never a false "Simulation ran")', async () => {
+        // a failed run produced no usable simulation — the manifest must not claim it ran
+        const { svc } = makeService(okSim({ simStatus: 'failed', measurements: [] }));
+        const ev = await svc.verify({}, undefined, [A('out', 'final', 'approx', 5)]);
+        expect(new Map(ev.scope.checks.map((c) => [c.id, c])).get('sim')!.status).toBe('not-run');
+    });
+
     it('matches probes with or without the v()/i() wrapper, case-insensitively', async () => {
         const { svc } = makeService(okSim());
         const ev = await svc.verify({}, undefined, [A('V(OUT)', 'final', 'approx', 4.98), A('out', 'final', 'approx', 4.98)]);
