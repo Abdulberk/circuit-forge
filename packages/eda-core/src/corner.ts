@@ -15,7 +15,7 @@
  * `runVariant` (worker supplies real ngspice; tests supply a fake), mirroring montecarlo.ts / sweep.ts.
  */
 import type { CircuitJson, Component } from './types/circuit';
-import { parseSpiceValue, formatSpiceValue } from './utils/unit-parser';
+import { parseComponentMagnitude } from './utils/unit-parser';
 import { evaluateAssertions, type AcceptanceCriterion } from './analysis/assertions';
 import type { SimMeasurement } from './analysis/measurements';
 import type { VariantRunner } from './montecarlo';
@@ -63,21 +63,23 @@ export interface WorstCaseResult {
 interface Toleranced {
     component: Component;
     nominal: number;
-    unit: string;
+    /** Re-emit a cornered magnitude in the component value's original form (keyword prefix + unit preserved). */
+    rebuild: (v: number) => string;
     tol: number;
 }
 
-/** Components that declare a positive tolerance AND a parseable positive numeric value (R/C/L/source magnitude);
- *  optionally filtered to a caller-supplied designator list. Order follows the circuit (deterministic). */
+/** Components that declare a positive tolerance AND a parseable non-zero magnitude (R/C/L value or a
+ *  `DC`/`AC` source magnitude, incl. negative rails); optionally filtered to a caller-supplied designator
+ *  list. Order follows the circuit (deterministic). */
 function tolerancedComponents(circuit: CircuitJson, only?: string[]): Toleranced[] {
     const wanted = only?.map((d) => d.toUpperCase());
     const out: Toleranced[] = [];
     for (const c of circuit.components) {
         if (!c.tolerance || c.tolerance <= 0 || !c.value) continue;
         if (wanted && !(c.designator && wanted.includes(c.designator.toUpperCase()))) continue;
-        const parsed = parseSpiceValue(c.value);
-        if (!parsed.isValid || !(parsed.value > 0)) continue;
-        out.push({ component: c, nominal: parsed.value, unit: parsed.unit || '', tol: c.tolerance });
+        const mag = parseComponentMagnitude(c.value);
+        if (!mag) continue;
+        out.push({ component: c, nominal: mag.value, rebuild: mag.rebuild, tol: c.tolerance });
     }
     return out;
 }
@@ -104,7 +106,7 @@ export function cornerVariants(circuit: CircuitJson, spec: CornerSpec = {}): { v
             const t = cornered[i]!;
             const hi = (mask & (1 << i)) !== 0;
             corner[t.component.designator!] = hi ? 'hi' : 'lo';
-            overrides.set(t.component, formatSpiceValue(t.nominal * (hi ? 1 + t.tol : 1 - t.tol), t.unit));
+            overrides.set(t.component, t.rebuild(t.nominal * (hi ? 1 + t.tol : 1 - t.tol)));
         }
         variants.push({
             corner,

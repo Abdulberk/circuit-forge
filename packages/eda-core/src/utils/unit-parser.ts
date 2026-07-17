@@ -152,6 +152,45 @@ export function parseSpiceValue(input: string): ParsedValue {
 }
 
 /**
+ * Extract the perturbable numeric MAGNITUDE of a component `value` for tolerance analysis (Monte-Carlo and
+ * worst-case corners) and return a `rebuild` that re-emits a new magnitude in the value's ORIGINAL form.
+ * Handles a bare R/C/L value AND the SPICE source forms `DC <n>` / `AC <n>` / the combined bias+stimulus
+ * `DC <bias> AC <mag> [waveform]`: the number varied is the LEADING keyword's magnitude (the DC bias — a
+ * rail; the AC amplitude when there is no DC), and everything after it — a second `AC …` token, a
+ * `SIN()`/`PULSE()` tail — is preserved VERBATIM (only a rail is a "tolerance", not the small-signal
+ * stimulus). Returns null when there is no scalar magnitude to vary (a `SIN()`/`PULSE()`/`PWL()` waveform
+ * or a model name) or the magnitude is zero/non-finite; negative magnitudes (`DC -12`) ARE allowed.
+ *
+ * WHY this exists (verified 17 Tem 2026): the tolerance paths used to call `parseSpiceValue(c.value)` directly,
+ * but `parseSpiceValue('DC 5')` is isValid:false (its regex needs a leading digit). So a supply authored the
+ * canonical `DC 5` (or `DC 12 AC 1`) with a tolerance was silently treated as ZERO-tolerance and NEVER varied
+ * — the Monte-Carlo yield came back optimistic for every rail-sensitive design, a false-"verified" on the
+ * statistical side. The old `value > 0` guard additionally dropped negative rails. This helper is the single
+ * seam both tolerance paths share.
+ */
+export interface ComponentMagnitude {
+    /** Parsed magnitude (may be negative for a rail like `DC -12`). */
+    value: number;
+    /** SPICE unit if the value carried one (Ω/F/H/V…), else ''. */
+    unit: string;
+    /** Re-emit a new magnitude in the ORIGINAL value's form — keyword + any AC/waveform tail preserved. */
+    rebuild: (v: number) => string;
+}
+export function parseComponentMagnitude(raw: string): ComponentMagnitude | null {
+    // A leading `DC `/`AC ` keyword + its number token; group 1 = the keyword prefix (kept verbatim), group 2
+    // = the magnitude token (number + optional unit letters), group 3 = the rest of the line (a second
+    // keyword and/or a waveform), preserved so only the leading magnitude is perturbed.
+    const m = /^(\s*(?:DC|AC)\s+)([+-]?\d*\.?\d+(?:[eE][+-]?\d+)?[A-Za-z]*)(.*)$/i.exec(raw);
+    const token = m ? m[2]! : raw;
+    const parsed = parseSpiceValue(token);
+    if (!parsed.isValid || !Number.isFinite(parsed.value) || parsed.value === 0) return null;
+    const unit = parsed.unit ?? '';
+    const before = m ? m[1]! : '';
+    const after = m ? m[3]! : '';
+    return { value: parsed.value, unit, rebuild: (v: number) => before + formatSpiceValue(v, unit) + after };
+}
+
+/**
  * Format a number as a SPICE value string
  */
 export function formatSpiceValue(value: number, unit?: string): string {

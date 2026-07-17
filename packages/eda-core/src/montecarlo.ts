@@ -8,7 +8,7 @@
  * evaluation happen in the caller (API/worker), which feeds the pass/fail flags back to computeYield.
  */
 import type { CircuitJson } from './types/circuit';
-import { parseSpiceValue, formatSpiceValue } from './utils/unit-parser';
+import { parseComponentMagnitude } from './utils/unit-parser';
 import { mulberry32 } from './utils/prng';
 import { evaluateAssertions, type AcceptanceCriterion } from './analysis/assertions';
 import type { SimMeasurement } from './analysis/measurements';
@@ -44,9 +44,9 @@ export function perturbValue(nominal: number, tolerance: number, rand: () => num
 export function perturbCircuit(circuit: CircuitJson, rand: () => number, dist: TolDistribution = 'gaussian'): CircuitJson {
     const components = circuit.components.map((c) => {
         if (!c.tolerance || c.tolerance <= 0 || !c.value) return c;
-        const parsed = parseSpiceValue(c.value);
-        if (!parsed.isValid || !(parsed.value > 0)) return c; // non-numeric value (SIN/PULSE/model) — leave it
-        return { ...c, value: formatSpiceValue(perturbValue(parsed.value, c.tolerance, rand, dist), parsed.unit) };
+        const mag = parseComponentMagnitude(c.value);
+        if (!mag) return c; // no scalar magnitude to vary (SIN/PULSE/model) — leave it
+        return { ...c, value: mag.rebuild(perturbValue(mag.value, c.tolerance, rand, dist)) };
     });
     return { ...circuit, components };
 }

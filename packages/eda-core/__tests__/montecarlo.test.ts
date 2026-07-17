@@ -63,6 +63,30 @@ describe('perturbCircuit', () => {
         expect(v1.value).toBe('SIN(0 5 1k)'); // toleranced but non-numeric value → untouched (can't perturb)
     });
 
+    it("perturbs a 'DC 5' toleranced SUPPLY and keeps the DC form (regression: was skipped → rail never varied)", () => {
+        // The exact false-"verified" bug: parseSpiceValue('DC 5') is invalid, so a toleranced rail was
+        // silently held at nominal across every variant → the reported yield ignored supply variation.
+        const supply: CircuitJson = {
+            version: '1.0',
+            components: [
+                { id: 'v1', type: 'voltage_source', designator: 'V1', value: 'DC 5', tolerance: 0.05, pins: [{ pinId: '+', netId: 'in' }, { pinId: '-', netId: '0' }] },
+            ],
+            nets: [{ id: 'in', name: 'in' }, { id: '0', name: '0', isGround: true }],
+        };
+        // Across many seeds the supply must actually move (and stay within ±5%), and re-emit as 'DC <x>'.
+        const seen = new Set<string>();
+        for (let s = 1; s <= 40; s++) {
+            const v1 = perturbCircuit(supply, mulberry32(s)).components[0]!;
+            expect(v1.value!.startsWith('DC ')).toBe(true); // keyword preserved (not bare '<x>')
+            const volts = parseSpiceValue(v1.value!.slice(3)).value;
+            expect(volts).toBeGreaterThanOrEqual(4.75 - 1e-6);
+            expect(volts).toBeLessThanOrEqual(5.25 + 1e-6);
+            seen.add(v1.value!);
+        }
+        expect(seen.size).toBeGreaterThan(1); // BEFORE the fix: always exactly 'DC 5' (zero variation)
+        expect(seen.has('DC 5')).toBe(false); // never left at the untouched nominal
+    });
+
     it('perturbs a SCIENTIFIC-NOTATION toleranced value (regression: was skipped → MC yield inflated)', () => {
         const sci: CircuitJson = {
             version: '1.0',
