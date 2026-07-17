@@ -11,7 +11,7 @@
  */
 import { Injectable, Optional, Logger } from '@nestjs/common';
 import { runErc, generateNetlist, type AnalysisConfig, type SimulationResult, type AcceptanceCriterion, type CornerSpec } from '@circuit-forge/eda-core';
-import { safeValidateCircuitJson, type CircuitJson } from '@circuit-forge/eda-core';
+import { safeValidateCircuitJson, buildElectricalScope, criterionDimension, type CircuitJson, type ScopeManifest } from '@circuit-forge/eda-core';
 import { CircuitSimulatorService, summarizeSeries, type SimMeasurement, type SimSummary, type ConvergenceReport } from './circuit-simulator.service';
 import { attachGenericModels } from './model-resolution';
 import { computeResistorPower, type PowerReport } from './power-analysis';
@@ -52,6 +52,9 @@ export interface DesignEvidence {
      *  'pass'. INFORMATIONAL (never changes `verdict` — same posture as `power` / Monte-Carlo robustness):
      *  reports whether the spec still holds at every ±tolerance corner, or why it couldn't be checked. */
     robustness?: WorstCaseEvidence;
+    /** Scope disclosure: which checks this verdict actually ran, and — as important — which it did NOT
+     *  (e.g. decoupling/polarity presence). Keeps the badge from over-claiming by omission. */
+    scope: ScopeManifest;
 }
 
 /** The worst-case corner robustness section of a DesignEvidence (see VerificationService.runCornerRobustness). */
@@ -162,6 +165,23 @@ export class VerificationService {
             ...(sim.convergence ? { convergence: sim.convergence } : {}),
             ...(power ? { power } : {}),
             ...(robustnessEvidence ? { robustness: robustnessEvidence } : {}),
+            // Scope disclosure fragment. Reports what THIS verdict actually ran: sim run-state (only 'ok'
+            // counts as run — a skipped or failed run produced no usable simulation, so it is disclosed
+            // not-run, never a false "Simulation ran"), assertion COVERAGE (which quantities the supplied
+            // assertions check — coverage, not requirement satisfaction, since no prompt is threaded here),
+            // the resistor-power/derating review, and worst-case robustness — each disclosed run ONLY when it
+            // actually produced a result. decoupling/polarity presence are honestly not-run until their
+            // detectors land (next slice).
+            scope: buildElectricalScope({
+                simRan: sim.simStatus === 'ok',
+                coveredDimensions: [...new Set(assertions.map(criterionDimension))],
+                derating: power
+                    ? { status: 'run', detail: 'resistor power vs rating — informational, default-rating-based; caps/semiconductors/current not covered' }
+                    : { status: 'not-run', detail: 'no resistor-power data (sim not ok / no resistors)' },
+                robustness: robustnessEvidence
+                    ? { status: 'run', detail: 'worst-case corner robustness — informational (does not gate the verdict)' }
+                    : { status: 'not-run', detail: 'tolerance robustness not requested' },
+            }),
         };
     }
 
