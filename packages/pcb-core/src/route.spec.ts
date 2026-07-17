@@ -1,4 +1,4 @@
-import { applyFabRulesToDsn, applyPerNetWidths, stripRouting, enlargeBoard, findFullyUnroutedNets } from './route';
+import { applyFabRulesToDsn, applyPerNetWidths, stripRouting, enlargeBoard, findFullyUnroutedNets, fixPlaceRotations } from './route';
 import { JLC_FAB_PROFILE } from './fab-profile';
 
 // applyFabRulesToDsn is a pure string transform (no ESM dsn-converter), so it lives in jest; exportDsn
@@ -59,6 +59,76 @@ describe('applyFabRulesToDsn — lift the DSN net class to the fab floor (freero
         const twice = applyFabRulesToDsn(once, JLC_FAB_PROFILE);
         expect(twice).toBe(once);
         expect((twice.match(/\(type via_via\)/g) ?? []).length).toBe((once.match(/\(type via_via\)/g) ?? []).length);
+    });
+});
+
+describe('fixPlaceRotations — repair dsn-converter@0.0.91 `rotation % 90` place-rotation loss', () => {
+    // The bug: dsn-converter emits EVERY place as `front 0` (rotation % 90 zeroes right angles), while
+    // grouping same-bbox footprints into ONE image whose pins come from the FIRST member. A 180°-rotated
+    // member then keeps the donor's pad frame → freerouting wires nets to the opposite pad (the 13-attempt
+    // DRC-retry root cause, verified live 17 Tem 2026). The repair writes each place's rotation RELATIVE
+    // to its image donor: dsnRot = (θ_member − θ_donor) mod 360 — dsn-converter emits coordinates verbatim
+    // (no y mirror) and tscircuit + freerouting share the same math-CCW rotation convention on them.
+    const circuit = [
+        { type: 'pcb_component', source_component_id: 'source_component_0', rotation: 0 },
+        { type: 'pcb_component', source_component_id: 'source_component_1', rotation: 180 },
+        { type: 'pcb_component', source_component_id: 'source_component_2', rotation: 90 },
+        { type: 'pcb_component', source_component_id: 'source_component_3', rotation: 270 },
+        { type: 'pcb_component', source_component_id: 'source_component_4', rotation: 90 },
+        { type: 'pcb_board' },
+    ] as never[];
+    const dsn = [
+        '(pcb x',
+        '  (placement',
+        '    (component 0402_1x2mm', // donor rot 0 + a 180° member (the dominant shorting case)
+        '      (place R1_source_component_0 10000 -20000 front 0)',
+        '      (place R2_source_component_1 30000 -20000 front 0)',
+        '    )',
+        '    (component sot23', // donor itself rotated 90 — members must land RELATIVE to it
+        '      (place Q1_source_component_2 50000 -20000 front 0)',
+        '      (place Q2_source_component_3 70000 -20000 front 0)',
+        '    )',
+        '    (component square_pad', // square-footprint 90° sharing — locks the delta SIGN
+        '      (place U1_source_component_0 90000 -20000 front 0)',
+        '      (place U2_source_component_4 110000 -20000 front 0)',
+        '    )',
+        '    (component conn',
+        '      (place J1_source_component_1 0 0 back 0)', // back side: mirror algebra differs — untouched
+        '    )',
+        '  )',
+        ')',
+    ].join('\n');
+
+    it('writes each member rotation RELATIVE to its image donor (donor → 0, 180° member → 180)', () => {
+        const out = fixPlaceRotations(dsn, circuit);
+        expect(out).toContain('(place R1_source_component_0 10000 -20000 front 0)');
+        expect(out).toContain('(place R2_source_component_1 30000 -20000 front 180)');
+    });
+
+    it('handles a rotated donor: 90° donor stays 0, its 270° partner becomes 180', () => {
+        const out = fixPlaceRotations(dsn, circuit);
+        expect(out).toContain('(place Q1_source_component_2 50000 -20000 front 0)');
+        expect(out).toContain('(place Q2_source_component_3 70000 -20000 front 180)');
+    });
+
+    it('carries a +90 donor-relative delta straight through (same math-CCW convention on both sides)', () => {
+        const out = fixPlaceRotations(dsn, circuit);
+        expect(out).toContain('(place U2_source_component_4 110000 -20000 front 90)');
+    });
+
+    it('resets the donor at every (component …) block — groups never bleed into each other', () => {
+        const out = fixPlaceRotations(dsn, circuit);
+        // If donor state leaked across blocks, Q1 (rot 90) would inherit R1's donor (rot 0) and get 270.
+        expect(out).toContain('(place Q1_source_component_2 50000 -20000 front 0)');
+    });
+
+    it('leaves back-side places untouched', () => {
+        const out = fixPlaceRotations(dsn, circuit);
+        expect(out).toContain('(place J1_source_component_1 0 0 back 0)');
+    });
+
+    it('is a no-op when the circuit has no pcb_component elements', () => {
+        expect(fixPlaceRotations(dsn, [{ type: 'pcb_board' }] as never[])).toBe(dsn);
     });
 });
 
