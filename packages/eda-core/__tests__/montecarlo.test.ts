@@ -2,7 +2,7 @@
  * Monte-Carlo / tolerance tests (Faz B-2 foundation). Pure + seeded — deterministic, no ngspice. Proves the
  * perturbation stays within tolerance, only touches toleranced numeric components, and is reproducible.
  */
-import { perturbValue, perturbCircuit, monteCarloVariants, computeYield } from '../src/montecarlo';
+import { perturbValue, perturbCircuit, monteCarloVariants, computeYield, classifyRobustness, ROBUSTNESS_PROFILES } from '../src/montecarlo';
 import { mulberry32 } from '../src/utils/prng';
 import { parseSpiceValue } from '../src/utils/unit-parser';
 import type { CircuitJson } from '../src/types/circuit';
@@ -118,6 +118,42 @@ describe('monteCarloVariants', () => {
             expect(r).toBeGreaterThanOrEqual(950 - 1e-6);
             expect(r).toBeLessThanOrEqual(1050 + 1e-6);
         }
+    });
+});
+
+describe('classifyRobustness — yield → tier on the Wilson LOWER bound', () => {
+    const rep = (yld: number, low: number, evaluated = 300) => ({ yield: yld, ci95: { low, high: 1 }, evaluated });
+
+    it("grades on ci95.low, not the point estimate: high yield but a low CI floor is NOT robust", () => {
+        // 100% observed but only 30 runs → Wilson low well under 0.99 → not robust (honest about sample size)
+        expect(classifyRobustness(rep(1.0, 0.88)).tier).toBe('at-risk');
+        expect(classifyRobustness(rep(1.0, 0.995)).tier).toBe('robust');
+    });
+
+    it('consumer bars: >=0.99 robust, 0.90-0.99 marginal, <0.90 at-risk', () => {
+        expect(classifyRobustness(rep(1, 0.99)).tier).toBe('robust');
+        expect(classifyRobustness(rep(0.97, 0.95)).tier).toBe('marginal');
+        expect(classifyRobustness(rep(0.85, 0.80)).tier).toBe('at-risk');
+    });
+
+    it('automotive/medical bars are stricter (0.999 / 0.99)', () => {
+        expect(classifyRobustness(rep(1, 0.992), 'automotive').tier).toBe('marginal'); // 0.992 < 0.999
+        expect(classifyRobustness(rep(1, 0.9995), 'automotive').tier).toBe('robust');
+        expect(ROBUSTNESS_PROFILES.automotive!.robustMin).toBe(0.999);
+    });
+
+    it("no Monte-Carlo (no ci95.low) → 'unknown', with an honest NOMINAL-only note", () => {
+        const v = classifyRobustness(undefined);
+        expect(v.tier).toBe('unknown');
+        expect(v.note).toMatch(/NOMINAL/i);
+    });
+
+    it('carries the honest disclosure fields (yieldLowerBound + evaluated + note)', () => {
+        const v = classifyRobustness(rep(0.8, 0.72, 200));
+        expect(v.tier).toBe('at-risk');
+        expect(v.yieldLowerBound).toBe(0.72);
+        expect(v.evaluated).toBe(200);
+        expect(v.note).toMatch(/at risk/i);
     });
 });
 

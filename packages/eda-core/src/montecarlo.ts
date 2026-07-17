@@ -215,3 +215,71 @@ export function computeYield(outcomes: Array<VariantOutcome | boolean>): YieldSu
         ci95: wilson95(passed, evaluated),
     };
 }
+
+// ---------------------------------------------------------------- robustness tier (yield → verdict)
+//
+// The single home for grading a Monte-Carlo yield into a robustness TIER, shared by the AI design loop
+// (llm-core re-exports this) AND the /verify-design path (apps/api imports eda-core). Lives here — the
+// lowest shared layer, beside the yield engine it grades — so no consumer needs the LLM package for pure
+// verdict math. Thresholds are DEFAULTS per domain profile; a customer/contract requirement overrides.
+// The tier is graded on the Wilson-95% LOWER bound (honest about sample count), never the point estimate.
+
+export type RobustnessTier = 'robust' | 'marginal' | 'at-risk' | 'unknown';
+
+export interface RobustnessBars {
+    /** Wilson-lower-bound yield at/above which the design is "robust" (production-ready). */
+    robustMin: number;
+    /** Wilson-lower-bound yield at/above which it is "marginal" (works but below the production bar). */
+    marginalMin: number;
+}
+
+/** Yield bars per domain — DEFAULTS, configurable; customer/contract requirements override (Cpk 1.33 vs 1.67). */
+export const ROBUSTNESS_PROFILES: Record<string, RobustnessBars> = {
+    consumer: { robustMin: 0.99, marginalMin: 0.9 }, // general electronics "capable" bar (≈ Cpk 1.33 / 4σ)
+    automotive: { robustMin: 0.999, marginalMin: 0.99 }, // safety/critical (≈ Cpk 1.67 / 5σ, AIAG PPAP / IATF 16949)
+    medical: { robustMin: 0.999, marginalMin: 0.99 },
+};
+
+export interface RobustnessVerdict {
+    tier: RobustnessTier;
+    /** Which domain profile's bars were applied. */
+    profile: string;
+    /** Point-estimate yield in [0,1], or null when no Monte-Carlo ran. */
+    yield: number | null;
+    /** Wilson-95% LOWER bound — the value the tier is graded on (honest re: sample count). */
+    yieldLowerBound: number | null;
+    /** Monte-Carlo variants actually evaluated. */
+    evaluated: number | null;
+    /** Plain-language, honest one-liner for the user / AI loop. */
+    note: string;
+}
+
+/** Classify a yield report (from runMonteCarlo/computeYield) into a robustness tier. Pure; no I/O. `unknown`
+ *  when no MC ran (no toleranced parts / capacity) — which honestly means "verified at NOMINAL values only". */
+export function classifyRobustness(
+    yieldReport: Record<string, unknown> | undefined,
+    profileName = 'consumer',
+): RobustnessVerdict {
+    const bars = ROBUSTNESS_PROFILES[profileName] ?? ROBUSTNESS_PROFILES.consumer!;
+    const yld = typeof yieldReport?.yield === 'number' ? (yieldReport.yield as number) : null;
+    const ci = yieldReport?.ci95 as { low?: number; high?: number } | undefined;
+    const lo = typeof ci?.low === 'number' ? ci.low : null;
+    const evaluated = typeof yieldReport?.evaluated === 'number' ? (yieldReport.evaluated as number) : null;
+    const pct = (x: number) => `${(x * 100).toFixed(1)}%`;
+
+    if (lo === null) {
+        return {
+            tier: 'unknown', profile: profileName, yield: yld, yieldLowerBound: null, evaluated,
+            note: 'Robustness not assessed (no toleranced parts or no Monte-Carlo) — verified at NOMINAL component values only.',
+        };
+    }
+    const tier: RobustnessTier = lo >= bars.robustMin ? 'robust' : lo >= bars.marginalMin ? 'marginal' : 'at-risk';
+    const tail = `(component-tolerance Monte-Carlo, ${evaluated ?? '?'} runs; ~${pct(lo)} is the 95% lower bound; short-term, not long-term-drift-adjusted)`;
+    const note =
+        tier === 'robust'
+            ? `Robust — at least ${pct(bars.robustMin)} of units expected to meet spec under component tolerances ${tail}.`
+            : tier === 'marginal'
+                ? `Marginal — ~${pct(lo)} expected yield, below the ${pct(bars.robustMin)} production bar. Tighten component tolerances (e.g. ±1% parts) or re-center values ${tail}.`
+                : `At risk — only ~${pct(lo)} expected yield; passes at nominal but is NOT production-robust ${tail}.`;
+    return { tier, profile: profileName, yield: yld, yieldLowerBound: lo, evaluated, note };
+}
