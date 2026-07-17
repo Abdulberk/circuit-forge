@@ -2,7 +2,7 @@
  * parseSpiceValue — the SPICE value parser used by perturbCircuit (Monte-Carlo) + value-comparison paths.
  * Locks the scientific-notation regression (sci notation used to return { value:0, isValid:false }).
  */
-import { parseSpiceValue, formatSpiceValue } from '../src/utils/unit-parser';
+import { parseSpiceValue, formatSpiceValue, parseComponentMagnitude } from '../src/utils/unit-parser';
 
 describe('parseSpiceValue — scientific notation (regression)', () => {
     it('parses 1e3 / 1.5e-6 / 2E4 / -2.2e-3 as valid numbers', () => {
@@ -14,6 +14,68 @@ describe('parseSpiceValue — scientific notation (regression)', () => {
         const neg = parseSpiceValue('-2.2e-3');
         expect(neg.isValid).toBe(true);
         expect(neg.value).toBeCloseTo(-0.0022);
+    });
+});
+
+describe('parseComponentMagnitude — the tolerance seam (DC/AC source forms + negative rails)', () => {
+    it("extracts the magnitude from a 'DC <n>' supply (the bug: parseSpiceValue('DC 5') was invalid)", () => {
+        const m = parseComponentMagnitude('DC 5');
+        expect(m).not.toBeNull();
+        expect(m!.value).toBe(5);
+    });
+
+    it("re-emits a perturbed magnitude in the SAME 'DC <n>' form (round-trip preserves the keyword)", () => {
+        const m = parseComponentMagnitude('DC 5')!;
+        expect(m.rebuild(5.25)).toBe('DC 5.25');
+        expect(m.rebuild(4.75)).toBe('DC 4.75');
+    });
+
+    it("handles 'AC <n>' and preserves a unit if present", () => {
+        expect(parseComponentMagnitude('AC 1')!.value).toBe(1);
+        expect(parseComponentMagnitude('AC 1')!.rebuild(1.1)).toBe('AC 1.1');
+        const withUnit = parseComponentMagnitude('DC 12V')!;
+        expect(withUnit.value).toBe(12);
+        expect(withUnit.rebuild(12.6)).toBe('DC 12.6V');
+    });
+
+    it('allows a NEGATIVE rail (DC -12) — the old value>0 guard dropped it', () => {
+        const m = parseComponentMagnitude('DC -12');
+        expect(m).not.toBeNull();
+        expect(m!.value).toBe(-12);
+        // −12 · 1.05 corner stays negative and keeps the form
+        expect(m!.rebuild(-12.6)).toBe('DC -12.6');
+    });
+
+    it('parses a bare number / suffix value (no keyword) unchanged', () => {
+        expect(parseComponentMagnitude('1k')!.value).toBe(1000);
+        expect(parseComponentMagnitude('1k')!.rebuild(1100)).toBe('1.1K');
+        expect(parseComponentMagnitude('100n')!.value).toBeCloseTo(1e-7);
+    });
+
+    it('perturbs ONLY the DC bias of a combined DC+AC source, preserving the AC/waveform tail verbatim', () => {
+        // 'DC 12 AC 1' is a documented idiom here (a bias supply that is ALSO the .ac stimulus). The rail
+        // (bias) is the tolerance; the AC stimulus amplitude must NOT be scaled.
+        const a = parseComponentMagnitude('DC 12 AC 1')!;
+        expect(a.value).toBe(12);
+        expect(a.rebuild(12.6)).toBe('DC 12.6 AC 1');
+        const b = parseComponentMagnitude('DC 5 AC 1 SIN(0 1 1k)')!;
+        expect(b.value).toBe(5);
+        expect(b.rebuild(4.75)).toBe('DC 4.75 AC 1 SIN(0 1 1k)');
+    });
+
+    it('returns null for the DC 0 AC 1 noise-source idiom (zero bias cannot scale; stimulus is not a rail)', () => {
+        expect(parseComponentMagnitude('DC 0 AC 1')).toBeNull();
+    });
+
+    it('returns null for a value with no scalar magnitude (waveform / model) — left unperturbed', () => {
+        expect(parseComponentMagnitude('SIN(0 5 1k)')).toBeNull();
+        expect(parseComponentMagnitude('PULSE(0 5 0 1n 1n 1u 2u)')).toBeNull();
+        expect(parseComponentMagnitude('QGENNPN')).toBeNull();
+    });
+
+    it('returns null for a zero magnitude (nothing to scale)', () => {
+        expect(parseComponentMagnitude('DC 0')).toBeNull();
+        expect(parseComponentMagnitude('0')).toBeNull();
     });
 });
 

@@ -45,6 +45,22 @@ describe('cornerVariants', () => {
         expect(variants.every((v) => valueOf(v.circuit, 'R2') === 1000)).toBe(true); // R2 untouched
     });
 
+    it("corners a toleranced 'DC <n>' SUPPLY and preserves the DC form (regression: rail was never cornered)", () => {
+        const withRail: CircuitJson = {
+            version: '1.0',
+            components: [
+                { id: 'v1', type: 'voltage_source', designator: 'V1', value: 'DC 5', tolerance: 0.1, pins: [{ pinId: '+', netId: 'in' }, { pinId: '-', netId: '0' }] },
+                { id: 'gnd', type: 'ground', designator: 'GND1', pins: [{ pinId: '1', netId: '0' }] },
+            ],
+            nets: [{ id: 'in', name: 'in' }, { id: '0', name: '0', isGround: true }],
+        } as unknown as CircuitJson;
+        const { variants, componentsCornered } = cornerVariants(withRail);
+        expect(componentsCornered).toEqual(['V1']);
+        expect(variants).toHaveLength(2); // lo / hi
+        const values = variants.map((v) => v.circuit.components.find((c) => c.designator === 'V1')!.value).sort();
+        expect(values).toEqual(['DC 4.5', 'DC 5.5']); // ±10% AND the 'DC ' keyword kept (not bare 4.5/5.5)
+    });
+
     it('honors an explicit component list', () => {
         const { componentsCornered } = cornerVariants(DIVIDER(0.1, 0.1), { components: ['R2'] });
         expect(componentsCornered).toEqual(['R2']);
