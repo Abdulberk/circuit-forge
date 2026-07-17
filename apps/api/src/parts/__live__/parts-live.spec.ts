@@ -77,6 +77,16 @@ function loadRealCreds(): boolean {
         expect(c!.mapped.simulatable).toBe(true);
     });
 
+    it('CAPTURES the real resistor tolerance from the catalog datasheet (source=catalog, not a guess)', async () => {
+        // Proves the tolerance the verified-signoff robustness tier needs comes from the sourced real part
+        // as a FACT — no LLM guess, no hardcoded default. A 1% part carries a "Tolerance ±1%" parameter.
+        const r = await classifyFirst('resistor 10k 0603 1%');
+        expect(r!.mapped.component?.type).toBe('resistor');
+        expect(r!.mapped.component?.tolerance).toBeGreaterThan(0);
+        expect(r!.mapped.component?.tolerance).toBeLessThanOrEqual(0.05);
+        expect(r!.mapped.component?.toleranceSource).toBe('catalog');
+    });
+
     it('classifies a real universal diode as simulatable (value-less, model-based)', async () => {
         const d = await classifyFirst('1N4148');
         expect(d!.mapped.component?.type).toBe('diode');

@@ -43,6 +43,10 @@ export const ComponentSchema = z.object({
     model: z.string().max(100).optional(),
     /** Fractional manufacturing tolerance (e.g. 0.05 = ±5%) for Monte-Carlo yield analysis. */
     tolerance: z.number().min(0).max(1).optional(),
+    /** Provenance of `tolerance` — a datasheet FACT from the sourced real part ('catalog') vs. one the
+     *  user/design explicitly stated ('user'). Lets the robustness verdict disclose the tolerance basis
+     *  honestly (never a silent assumption); absent = tolerance origin unspecified. */
+    toleranceSource: z.enum(['user', 'catalog']).optional(),
     pins: z.array(PinConnectionSchema).min(1).max(64), // up to wide multi-terminal subckt ICs
     properties: z.record(z.unknown()).optional(),
     // Optional real-part / catalog metadata

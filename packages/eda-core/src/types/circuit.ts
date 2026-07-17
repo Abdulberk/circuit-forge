@@ -127,6 +127,9 @@ export interface Component {
     model?: string; // For diodes, transistors - model name
     /** Fractional manufacturing tolerance (e.g. 0.05 = ±5%) used by Monte-Carlo yield analysis. */
     tolerance?: number;
+    /** Provenance of `tolerance`: 'catalog' = a datasheet fact from the sourced real part; 'user' = the
+     *  design/user stated it explicitly. Lets the robustness verdict disclose the tolerance basis honestly. */
+    toleranceSource?: 'user' | 'catalog';
     pins: PinConnection[];
     properties?: Record<string, unknown>;
     // Optional real-part / catalog metadata (added when a component is created from a parts catalog)
