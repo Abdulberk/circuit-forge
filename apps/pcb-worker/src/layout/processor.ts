@@ -19,6 +19,7 @@ import {
     airwiresFromDrc,
 } from '@circuit-forge/pcb-core';
 import { prisma } from '../prisma/client';
+import { assessManufacturability } from './outcome';
 import { config } from '../config';
 import { logger } from '../logger';
 import { makeNativeFreeroutingRunner } from '../runners/freerouting';
@@ -123,35 +124,72 @@ async function processLayoutJob(job: Job<LayoutJobPayload>): Promise<void> {
             return;
         }
 
-        // Clean frontend contract + DRC-derived airwires/checks + 3D bodies + GLB.
+        // Clean frontend contract + DRC-derived airwires/checks. The final DRC report is the manufacturability
+        // authority (see outcome.ts): only a DRC-clean board earns the fab-ready bundle.
         const geo = shapeLayoutResult(q.evaluated, { namesById: q.namesById });
         const parsed = parseDrcReport(await kicad.drcReport(q.outputs.kicadPcb, q.outputs.kicadPro));
         const checks = drcToChecks(parsed);
         const { airwires } = airwiresFromDrc(parsed, geo);
+        const verdict = assessManufacturability(parsed);
 
-        const inj = injectModels(q.outputs.kicadPcb);
-        const glb = await kicad.exportGlb(inj.kicadPcb);
-
-        // Heavy blobs → S3 (keys on the row); small metadata → inline result JSON.
-        const glbKey = `layouts/${jobId}/board.glb`;
-        await uploadFile(glbKey, glb, 'model/gltf-binary');
-        const gerbersKey = `layouts/${jobId}/manufacturing.json`;
-        await uploadFile(gerbersKey, JSON.stringify({ gerbers: q.outputs.gerbers, bomCsv: q.outputs.bomCsv, pnpCsv: q.outputs.pnpCsv }), 'application/json');
-
-        const result: Prisma.InputJsonValue = {
+        // Inspection payload — always delivered, and with a UNIFORM shape across both outcomes so consumers
+        // never special-case the blob: the 2D geometry + categorized checks + airwires are the diagnostic
+        // view, and notManufacturableReason is null exactly when manufacturable is true.
+        const inspection = {
             layout: geo as unknown as Prisma.InputJsonValue,
             checks: checks as unknown as Prisma.InputJsonValue,
             airwires: airwires as unknown as Prisma.InputJsonValue,
+            manufacturable: verdict.manufacturable,
+            notManufacturableReason: verdict.reason,
             drcClean: parsed.clean,
             stats: q.stats as unknown as Prisma.InputJsonValue,
             parity: q.parity as unknown as Prisma.InputJsonValue,
             completeness: q.completeness,
-            bodies: { injected: inj.injected, unmatched: inj.unmatched.map((u) => u.id) },
-            render: { glbKey },
+        };
+
+        if (!verdict.manufacturable) {
+            // GATE: the board failed the ordered fab rules. Do NOT spend a GLB export or ship the fab-ready
+            // bundle — there must be nothing manufacturable to download. Status stays SUCCEEDED (the analysis
+            // completed); the verdict is result.manufacturable=false with a reason, and the client shows the
+            // violations from `checks`/`airwires`. This is the false-"verified" fix: no clean bundle escapes.
+            logger.warn(
+                { jobId, ms: Date.now() - t0, violations: verdict.violations, unrouted: verdict.unrouted },
+                'Layout completed but board is NOT manufacturable — withholding fab bundle',
+            );
+            await finish(jobId, {
+                status: 'SUCCEEDED',
+                result: { ...inspection, bodies: null, render: null, manufacturing: null } as unknown as Prisma.InputJsonValue,
+            });
+            return;
+        }
+
+        // Manufacturable → deliver the fab-ready bundle FIRST: it is the manufacturable deliverable and must
+        // never be lost to a cosmetic 3D-render failure. Heavy blobs → S3 (keys on the row).
+        const gerbersKey = `layouts/${jobId}/manufacturing.json`;
+        await uploadFile(gerbersKey, JSON.stringify({ gerbers: q.outputs.gerbers, bomCsv: q.outputs.bomCsv, pnpCsv: q.outputs.pnpCsv }), 'application/json');
+
+        // 3D render is BEST-EFFORT: a GLB export failure (missing 3D model, timeout, ENOBUFS) must not sink an
+        // already-manufacturable board — deliver the gerbers with the render omitted rather than failing the job.
+        let glbKey: string | undefined;
+        let bodies: Prisma.InputJsonValue | null = null;
+        try {
+            const inj = injectModels(q.outputs.kicadPcb);
+            const glb = await kicad.exportGlb(inj.kicadPcb);
+            glbKey = `layouts/${jobId}/board.glb`;
+            await uploadFile(glbKey, glb, 'model/gltf-binary');
+            bodies = { injected: inj.injected, unmatched: inj.unmatched.map((u) => u.id) };
+        } catch (e) {
+            logger.warn({ jobId, error: e instanceof Error ? e.message : String(e) }, 'Manufacturable board: 3D GLB render failed — delivering the fab bundle without it');
+        }
+
+        const result: Prisma.InputJsonValue = {
+            ...inspection,
+            bodies,
+            render: glbKey ? { glbKey } : null,
             manufacturing: { gerbersKey },
         };
         await finish(jobId, { status: 'SUCCEEDED', result, glbKey, gerbersKey });
-        logger.info({ jobId, ms: Date.now() - t0, traces: q.stats.traces, drcClean: parsed.clean }, 'Layout job succeeded');
+        logger.info({ jobId, ms: Date.now() - t0, traces: q.stats.traces, manufacturable: true, rendered: !!glbKey }, 'Layout job succeeded (manufacturable)');
     } catch (e) {
         logger.error({ jobId, error: e instanceof Error ? e.message : String(e) }, 'Layout job threw');
         await finish(jobId, { status: 'FAILED', errorMessage: (e instanceof Error ? e.message : String(e)).slice(0, 500) });

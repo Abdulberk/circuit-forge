@@ -100,7 +100,12 @@ export function makeNativeKicad(opts: KicadOpts = {}): NativeKicad {
                 timeout: timeoutMs,
                 maxBuffer: MAX_BUFFER,
             });
-            const report = existsSync(out) ? (JSON.parse(readFileSync(out, 'utf8')) as KicadDrcJson) : { violations: [], unconnected_items: [] };
+            // FAIL-CLOSED: this report is the manufacturability gate's sole authority (drcReport runs WITHOUT
+            // --exit-code-violations, so a clean exit carries no verdict — only the file does). If kicad-cli
+            // exits 0 but writes no report, we must NOT synthesize an empty (=clean) one: that would ship the
+            // fab bundle for a board DRC never actually checked. Throw so the job fails instead of over-claiming.
+            if (!existsSync(out)) throw new Error('kicad-cli DRC produced no report file — refusing to assume the board is DRC-clean');
+            const report = JSON.parse(readFileSync(out, 'utf8')) as KicadDrcJson;
             lastDrc = { board: kicadPcb, pro: kicadPro, report };
             return report;
         });
