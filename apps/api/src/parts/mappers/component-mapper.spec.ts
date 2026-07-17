@@ -49,6 +49,38 @@ describe('ComponentMapper', () => {
         expect(r.component?.value).toBe('100n');
     });
 
+    describe('tolerance capture from the catalog (a datasheet fact, tagged source=catalog)', () => {
+        it('captures a resistor ±1% tolerance as 0.01 with source catalog', () => {
+            const r = mapper.toComponent(part({ category: 'Resistors', parameters: [{ name: 'Resistance', value: '10kΩ' }, { name: 'Tolerance', value: '±1%' }] }));
+            expect(r.component?.tolerance).toBeCloseTo(0.01);
+            expect(r.component?.toleranceSource).toBe('catalog');
+        });
+
+        it('captures a capacitor ±10% tolerance as 0.10', () => {
+            const c = mapper.toComponent(part({ category: 'Capacitors', parameters: [{ name: 'Capacitance', value: '100nF' }, { name: 'Tolerance', value: '±10%' }] }));
+            expect(c.component?.tolerance).toBeCloseTo(0.1);
+            expect(c.component?.toleranceSource).toBe('catalog');
+        });
+
+        it('leaves tolerance unset when the catalog has no Tolerance parameter', () => {
+            const r = mapper.toComponent(part({ category: 'Resistors', parameters: [{ name: 'Resistance', value: '10kΩ' }] }));
+            expect(r.component?.tolerance).toBeUndefined();
+            expect(r.component?.toleranceSource).toBeUndefined();
+        });
+
+        it('does NOT capture an asymmetric or absolute tolerance (no single fractional form)', () => {
+            const asym = mapper.toComponent(part({ category: 'Capacitors', parameters: [{ name: 'Capacitance', value: '100nF' }, { name: 'Tolerance', value: '+80/-20%' }] }));
+            expect(asym.component?.tolerance).toBeUndefined();
+            const abs = mapper.toComponent(part({ category: 'Capacitors', parameters: [{ name: 'Capacitance', value: '10pF' }, { name: 'Tolerance', value: '±0.25pF' }] }));
+            expect(abs.component?.tolerance).toBeUndefined();
+        });
+
+        it('does NOT mistake the temperature-coefficient row for tolerance', () => {
+            const r = mapper.toComponent(part({ category: 'Resistors', parameters: [{ name: 'Resistance', value: '10kΩ' }, { name: 'Temperature coefficient', value: '100ppm/°C' }] }));
+            expect(r.component?.tolerance).toBeUndefined();
+        });
+    });
+
     it('marks an IC (NE555) as a catalog-only generic component (placeable, not simulatable)', () => {
         const r = mapper.toComponent(part({ category: 'Watchdog and reset circuits', description: 'IC: RC timer' }));
         expect(r.simulatable).toBe(false);

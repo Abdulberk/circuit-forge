@@ -29,6 +29,10 @@ export interface PartialComponent {
     footprint?: string;
     mpn?: string;
     manufacturer?: string;
+    /** Fractional tolerance from the real part's datasheet (e.g. 0.01 = ±1%), captured from the catalog
+     *  parameters — a FACT, not a guess. Set only for value-bearing passives (R/L/C) where it is meaningful. */
+    tolerance?: number;
+    toleranceSource?: 'user' | 'catalog';
     sourcing?: ComponentSourcing;
 }
 
@@ -146,7 +150,28 @@ export class ComponentMapper {
                 catalog: part,
             };
         }
-        return { simulatable: true, component: { ...base, value }, catalog: part };
+        // Capture the real part's DATASHEET tolerance (a fact, not a guess) for R/L/C — the robustness
+        // verdict reads it (and its 'catalog' provenance) instead of assuming a default.
+        const tolerance = this.extractTolerance(part.parameters);
+        const withTol = tolerance !== undefined ? { tolerance, toleranceSource: 'catalog' as const } : {};
+        return { simulatable: true, component: { ...base, value, ...withTol }, catalog: part };
+    }
+
+    /**
+     * Fractional tolerance from the catalog "Tolerance" parameter (e.g. "±1%" -> 0.01, "±10%" -> 0.10).
+     * Only a symmetric ± percent is captured — an asymmetric or non-percent tolerance (e.g. "+80/-20%",
+     * "±0.25pF") has no single fractional form for the Monte-Carlo model, so it is left unset (honest:
+     * better no tolerance than a wrong one). Ignores look-alike rows (temperature coefficient) by name.
+     */
+    private extractTolerance(params: CatalogParameter[]): number | undefined {
+        const p = params.find((q) => /^\s*tolerance\s*$/i.test(q.name));
+        if (!p?.value) return undefined;
+        // Accept "±1%", "1%", "± 0.5 %"; reject asymmetric ("+80/-20%") and absolute ("±0.25pF").
+        const m = /^\s*±?\s*(\d+(?:\.\d+)?)\s*%\s*$/.exec(p.value);
+        if (!m) return undefined;
+        const pct = Number(m[1]);
+        if (!Number.isFinite(pct) || pct <= 0 || pct >= 100) return undefined;
+        return pct / 100;
     }
 
     /**
