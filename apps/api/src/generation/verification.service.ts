@@ -11,7 +11,7 @@
  */
 import { Injectable, Optional, Logger } from '@nestjs/common';
 import { runErc, generateNetlist, type AnalysisConfig, type SimulationResult, type AcceptanceCriterion, type CornerSpec } from '@circuit-forge/eda-core';
-import { safeValidateCircuitJson, buildElectricalScope, criterionDimension, checkOrientationConsistency, classifyRobustness, ROBUSTNESS_PROFILES, TEMP_CORNER_CEILING, type CircuitJson, type ScopeManifest, type OrientationReport, type YieldSummary, type RobustnessTier, type DeterminedEntry, type TempCornerSpec, type TempMetricDrift } from '@circuit-forge/eda-core';
+import { safeValidateCircuitJson, buildElectricalScope, criterionDimension, checkOrientationConsistency, classifyRobustness, ROBUSTNESS_PROFILES, TEMP_CORNER_CEILING, type CircuitJson, type ScopeManifest, type OrientationReport, type YieldSummary, type RobustnessTier, type DeterminedEntry, type TempCornerSpec, type TempMetricDrift, type SupplyCornerSpec, type RailValidation, type SupplyDrift } from '@circuit-forge/eda-core';
 import { CircuitSimulatorService, summarizeSeries, type SimMeasurement, type SimSummary, type ConvergenceReport } from './circuit-simulator.service';
 import { attachGenericModels } from './model-resolution';
 import { computeResistorPower, type PowerReport } from './power-analysis';
@@ -68,6 +68,10 @@ export interface DesignEvidence {
      *  AMBIENT-ONLY (no self-heating/Tj) — NEVER flips `verdict` in any branch. Temperature-flat circuits are
      *  disclosed not-applicable, never "passed". */
     tempcorner?: TempCornerEvidence;
+    /** Supply-voltage corner robustness (present only when requested + the nominal verdict is 'pass'): spec
+     *  re-evaluated + per-node drift when each trusted power rail's source is perturbed ±tolerance. INFORMATIONAL
+     *  — NEVER flips `verdict`. When no rail is trusted it is disclosed not-applicable (with the reason), never "passed". */
+    supplycorner?: SupplyCornerEvidence;
 }
 
 /** Provenance of the tolerances a robustness tier was computed on — disclosed with the tier, and the gate
@@ -121,6 +125,29 @@ export interface WorstCaseEvidence {
     unavailable?: string;
 }
 
+/** The SUPPLY-VOLTAGE corner section of a DesignEvidence (see VerificationService.runSupplyCorner). Perturbs each
+ *  trusted power rail's driving source ±tolerance. INFORMATIONAL — never gates. `rails` carries EVERY isPower net's
+ *  validation status (its emptiness vs. deferred entries drives the honest 3-way not-run disclosure). */
+export interface SupplyCornerEvidence {
+    supplyCorner?: {
+        /** False when NO rail is trusted (no power rail marked, or all deferred) — not-applicable, never "passed". */
+        applicable: boolean;
+        rails: RailValidation[];
+        omitted: string[];
+        tolerance: number;
+        rangeLabel?: string;
+        evaluated: number;
+        passed: number;
+        failed: number;
+        errored: number;
+        hasLimits: boolean;
+        passAllCorners: boolean;
+        drift: SupplyDrift[];
+    };
+    /** Present instead when the check couldn't be performed (infra / didn't complete). */
+    unavailable?: string;
+}
+
 /** The AMBIENT temperature-corner section of a DesignEvidence (see VerificationService.runTempCorner). Informational
  *  and AMBIENT-ONLY (self-heating / junction-temp Tj NOT modeled — see TEMP_CORNER_CEILING); never gates the verdict. */
 export interface TempCornerEvidence {
@@ -158,13 +185,34 @@ export function deriveToleranceBasis(circuit: CircuitJson): ToleranceBasis {
     return 'mixed';
 }
 
+/** The supply-corner sub-clause + whether it counts as "ran". Honest 3-way not-run: (c) NO power rail marked —
+ *  the common freeze-era case, phrased so it reads as "not yet marked" not "broken"; (b) the marked rail(s) could
+ *  not be validated (the refutation-asymmetry deferred, with the reason); or requested-but-unavailable. */
+function supplyCornerClause(supplycorner?: SupplyCornerEvidence): { clause: string; ran: boolean } | null {
+    const sc = supplycorner?.supplyCorner;
+    if (sc && !supplycorner?.unavailable) {
+        if (sc.applicable) {
+            const range = sc.rangeLabel ?? `±${(sc.tolerance * 100).toFixed(0)}%`;
+            const outcome = sc.hasLimits ? (sc.passAllCorners ? 'spec held at every supply corner' : `spec violated at ${sc.failed} supply corner(s)`) : 'drift-only (no spec limits supplied)';
+            return { clause: `supply corners (${range}) — ${outcome}; informational (does not gate)`, ran: true };
+        }
+        if (sc.rails.length === 0) {
+            return { clause: 'supply corners: not-run — no power rail marked (mark a net isPower to enable; expected until rails are marked)', ran: false };
+        }
+        const reasons = sc.rails.filter((r) => r.status === 'deferred').map((r) => r.reason).filter(Boolean).join('; ');
+        return { clause: `supply corners: not-run — marked power net could not be validated: ${reasons}`, ran: false };
+    }
+    if (supplycorner?.unavailable) return { clause: `supply corner requested but unavailable — ${supplycorner.unavailable}`, ran: false };
+    return null;
+}
+
 /** The scope-manifest 'robustness' entry — COMPOSES every robustness sub-analysis that ran (Monte-Carlo tier +
- *  worst-case tolerance corner + ambient temperature corner) into ONE disclosure so none is hidden. (It used to
- *  early-return on Monte-Carlo, silently dropping a corner/temp-corner that also ran.) Each sub-clause keeps its
+ *  worst-case tolerance corner + ambient temperature corner + supply-voltage corner) into ONE disclosure so none
+ *  is hidden. (It used to early-return on Monte-Carlo, silently dropping the others.) Each sub-clause keeps its
  *  exact prior wording, so an MC-only or corner-only manifest is byte-identical to before; ' | ' joins only when
  *  more than one ran. gradation:'presence' is set when the ambient temperature corner ran — its ambient-only
  *  ceiling makes it deliberately shallower than "temperature verified", exactly the presence-depth marker. */
-export function robustnessManifestEntry(montecarlo?: MonteCarloEvidence, corner?: WorstCaseEvidence, tempcorner?: TempCornerEvidence): DeterminedEntry {
+export function robustnessManifestEntry(montecarlo?: MonteCarloEvidence, corner?: WorstCaseEvidence, tempcorner?: TempCornerEvidence, supplycorner?: SupplyCornerEvidence): DeterminedEntry {
     const clauses: string[] = [];
     let ranAny = false;
     let presence = false;
@@ -210,6 +258,13 @@ export function robustnessManifestEntry(montecarlo?: MonteCarloEvidence, corner?
         clauses.push(`temperature corner requested but unavailable — ${tempcorner.unavailable}`);
     }
 
+    // Supply-voltage corner (informational) — its honest 3-way not-run is built in supplyCornerClause.
+    const supply = supplyCornerClause(supplycorner);
+    if (supply) {
+        clauses.push(supply.clause);
+        if (supply.ran) ranAny = true;
+    }
+
     if (clauses.length === 0) return { status: 'not-run', detail: 'tolerance robustness not requested' };
     const entry: DeterminedEntry = { status: ranAny ? 'run' : 'not-run', detail: clauses.join(' | ') };
     if (presence) entry.gradation = 'presence';
@@ -234,7 +289,7 @@ export class VerificationService {
         analysisConfig?: AnalysisConfig,
         assertions: AssertionDto[] = [],
         userId?: string,
-        robustness?: { corner?: boolean; maxCorners?: number; montecarlo?: boolean; n?: number; seed?: number; profile?: RobustnessProfile; temperature?: boolean },
+        robustness?: { corner?: boolean; maxCorners?: number; montecarlo?: boolean; n?: number; seed?: number; profile?: RobustnessProfile; temperature?: boolean; supply?: boolean; supplyTolerance?: number },
     ): Promise<DesignEvidence> {
         // Validate ONCE up front and reuse: the nets let evaluateAssertions resolve a criterion that names a
         // net ("v(out)") to the node the generator emitted from that net's ID — so the check still matches when
@@ -294,7 +349,7 @@ export class VerificationService {
             validCircuit.success ? (validCircuit.data as CircuitJson) : undefined,
         );
         verdict = rob.verdict;
-        const { robustnessEvidence, montecarlo, tempcorner, robustnessManifest } = rob;
+        const { robustnessEvidence, montecarlo, tempcorner, supplycorner, robustnessManifest } = rob;
 
         return {
             verdict,
@@ -317,6 +372,7 @@ export class VerificationService {
             ...(robustnessEvidence ? { robustness: robustnessEvidence } : {}),
             ...(montecarlo ? { montecarlo } : {}),
             ...(tempcorner ? { tempcorner } : {}),
+            ...(supplycorner ? { supplycorner } : {}),
             // Scope disclosure fragment. Reports what THIS verdict actually ran: sim run-state (only 'ok'
             // counts as run — a skipped or failed run produced no usable simulation, so it is disclosed
             // not-run, never a false "Simulation ran"), assertion COVERAGE (which quantities the supplied
@@ -455,6 +511,40 @@ export class VerificationService {
     }
 
     /**
+     * Enqueue a supply-voltage corner batch on the worker, poll it, and distill metrics.supplyCorner into the
+     * evidence's supplycorner section. Mirrors runTempCorner: never throws. A NOT-APPLICABLE result (no rail
+     * trusted — no rail marked, or all deferred) is a VALID result (returned with its rail statuses so the
+     * manifest can disclose the honest 3-way not-run), not an unavailability. INFORMATIONAL — never gated on.
+     */
+    private async runSupplyCorner(
+        circuit: unknown,
+        analysis: AnalysisConfig,
+        assertions: AssertionDto[],
+        spec: SupplyCornerSpec,
+        userId: string,
+    ): Promise<SupplyCornerEvidence> {
+        try {
+            const { jobId } = await this.simulation!.createSupplyCornerJob(
+                circuit as CircuitJson,
+                analysis as unknown as Record<string, unknown>,
+                assertions as unknown as AcceptanceCriterion[],
+                spec,
+                userId,
+            );
+            const { status, metrics } = await this.pollJob(jobId, userId);
+            if (status !== 'SUCCEEDED') {
+                return { unavailable: `supply-corner check did not complete (${status.toLowerCase()}) — try again` };
+            }
+            const sc = (metrics as { supplyCorner?: SupplyCornerEvidence['supplyCorner'] } | null | undefined)?.supplyCorner;
+            if (!sc) return { unavailable: 'supply-corner check produced no result' };
+            return { supplyCorner: sc };
+        } catch (e) {
+            this.logger.error(`supply-corner run failed: ${e instanceof Error ? e.message : e}`);
+            return { unavailable: 'supply-corner check could not be run (worker/queue unavailable) — try again' };
+        }
+    }
+
+    /**
      * Run the requested INFORMATIONAL robustness checks on a nominally-passing design (worst-case corner +
      * Monte-Carlo tolerance-yield tier) and return the evidence, the disclosure manifest entry, and the
      * (possibly gate-flipped) verdict. Only a COMPLETE Monte-Carlo at-risk whose tolerance spread the user
@@ -466,10 +556,10 @@ export class VerificationService {
         analysis: AnalysisConfig,
         assertions: AssertionDto[],
         nominalVerdict: DesignEvidence['verdict'],
-        robustness: { corner?: boolean; maxCorners?: number; montecarlo?: boolean; n?: number; seed?: number; profile?: RobustnessProfile; temperature?: boolean } | undefined,
+        robustness: { corner?: boolean; maxCorners?: number; montecarlo?: boolean; n?: number; seed?: number; profile?: RobustnessProfile; temperature?: boolean; supply?: boolean; supplyTolerance?: number } | undefined,
         userId: string | undefined,
         circuitJson: CircuitJson | undefined,
-    ): Promise<{ verdict: DesignEvidence['verdict']; robustnessEvidence?: WorstCaseEvidence; montecarlo?: MonteCarloEvidence; tempcorner?: TempCornerEvidence; robustnessManifest: DeterminedEntry }> {
+    ): Promise<{ verdict: DesignEvidence['verdict']; robustnessEvidence?: WorstCaseEvidence; montecarlo?: MonteCarloEvidence; tempcorner?: TempCornerEvidence; supplycorner?: SupplyCornerEvidence; robustnessManifest: DeterminedEntry }> {
         let verdict = nominalVerdict;
 
         let robustnessEvidence: WorstCaseEvidence | undefined;
@@ -507,7 +597,16 @@ export class VerificationService {
             tempcorner = await this.runTempCorner(circuit, analysis, assertions, spec, userId);
         }
 
-        return { verdict, robustnessEvidence, montecarlo, tempcorner, robustnessManifest: robustnessManifestEntry(montecarlo, robustnessEvidence, tempcorner) };
+        // SUPPLY-VOLTAGE corner (INFORMATIONAL). NEVER touches `verdict` in ANY branch — a Vmin/Vmax fail the user
+        // did not ask to gate on stays informational (robustness-gate discipline). Default ±5% supply tolerance.
+        let supplycorner: SupplyCornerEvidence | undefined;
+        if (robustness?.supply && verdict === 'pass' && this.simulation && userId && circuitJson) {
+            const tol = robustness.supplyTolerance && robustness.supplyTolerance > 0 ? robustness.supplyTolerance : 0.05;
+            const spec: SupplyCornerSpec = { tolerance: tol, rangeLabel: `±${(tol * 100).toFixed(0)}%` };
+            supplycorner = await this.runSupplyCorner(circuit, analysis, assertions, spec, userId);
+        }
+
+        return { verdict, robustnessEvidence, montecarlo, tempcorner, supplycorner, robustnessManifest: robustnessManifestEntry(montecarlo, robustnessEvidence, tempcorner, supplycorner) };
     }
 
     /**

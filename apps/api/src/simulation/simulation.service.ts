@@ -11,7 +11,7 @@ import { VersionsService } from '../versions/versions.service';
 import { OrgsService } from '../orgs/orgs.service';
 import { UsageService } from '../usage/usage.service';
 import { generateNetlist, safeValidateCircuitJson, safeValidateAnalysisConfig, downsampleResult } from '@circuit-forge/eda-core';
-import type { CircuitJson, AnalysisConfig, SimulationResult, AcceptanceCriterion, CornerSpec, TempCornerSpec } from '@circuit-forge/eda-core';
+import type { CircuitJson, AnalysisConfig, SimulationResult, AcceptanceCriterion, CornerSpec, TempCornerSpec, SupplyCornerSpec } from '@circuit-forge/eda-core';
 import { propagation, context as otelContext } from '@opentelemetry/api';
 
 /** Capture the current trace context as a W3C carrier to ride on the queued job, so the worker's
@@ -348,6 +348,65 @@ export class SimulationService {
             analysisType: (analysisConfig as { type?: string } | undefined)?.type || 'op',
             analysisConfig: analysisConfig || {},
             tempCorner: {
+                circuit: validCircuit.data as CircuitJson,
+                analysis: validAnalysis.data as AnalysisConfig,
+                criteria,
+                spec,
+            },
+            otel: otelCarrier(),
+        });
+
+        return { jobId: job.id };
+    }
+
+    /**
+     * Enqueue a SUPPLY-VOLTAGE corner job: the worker perturbs each trusted power rail's driving source ±tolerance
+     * and persists the result in metrics.supplyCorner (see the worker's handleSupplyCorner). INFORMATIONAL — never
+     * gates. One job = one quota unit, mirroring createTempCornerJob.
+     */
+    async createSupplyCornerJob(
+        circuit: CircuitJson,
+        analysisConfig: Record<string, unknown> | undefined,
+        criteria: AcceptanceCriterion[],
+        spec: SupplyCornerSpec,
+        userId: string,
+    ) {
+        const orgs = await this.orgsService.findAllForUser(userId);
+        const orgId = orgs[0]?.id;
+        if (!orgId) throw new NotFoundException('No organization found for user');
+
+        const validCircuit = safeValidateCircuitJson(circuit);
+        if (!validCircuit.success) {
+            const issues = validCircuit.error.errors.slice(0, 5).map((e) => `${e.path.join('.') || '(root)'}: ${e.message}`).join('; ');
+            throw new BadRequestException(`Invalid circuit for supply-corner: ${issues}`);
+        }
+        const validAnalysis = safeValidateAnalysisConfig(analysisConfig);
+        if (!validAnalysis.success) {
+            const issues = validAnalysis.error.errors.map((e) => `${e.path.join('.') || '(root)'}: ${e.message}`).join('; ');
+            throw new BadRequestException(`Invalid analysis config for supply-corner: ${issues}`);
+        }
+
+        const job = await this.usageService.createSimGuarded(orgId, (tx) =>
+            tx.simulationJob.create({
+                data: {
+                    orgId,
+                    status: 'QUEUED',
+                    engine: 'NGSPICE',
+                    analysisConfig: (analysisConfig || {}) as Prisma.InputJsonValue,
+                    netlist: '', // the worker regenerates a netlist per corner from supplyCorner.circuit
+                },
+            }),
+        );
+
+        await this.simulationQueue.add('simulation', {
+            jobId: job.id,
+            orgId,
+            mode: 'supply-corner',
+            netlist: '',
+            probeNames: [],
+            analysisType: (analysisConfig as { type?: string } | undefined)?.type || 'op',
+            analysisConfig: analysisConfig || {},
+            supplyCorner: {
                 circuit: validCircuit.data as CircuitJson,
                 analysis: validAnalysis.data as AnalysisConfig,
                 criteria,

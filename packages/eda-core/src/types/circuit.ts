@@ -154,6 +154,11 @@ export interface Net {
     id: string;
     name: string;
     isGround?: boolean;
+    /** Marks this net as a POWER/supply RAIL (e.g. VCC/VDD/+5V) — the designer's/AI's DECLARATION, mirroring
+     *  `isGround`. It is INTENT to be validated, never settled fact: consumers must cross-check it against the
+     *  topology (a source drives it) before acting, exactly as KiCad ERC validates a designer-placed power symbol.
+     *  Unlocks supply-voltage corners (and, later, power-rail-aware checks). Absent = rail unmarked. */
+    isPower?: boolean;
 }
 
 /**

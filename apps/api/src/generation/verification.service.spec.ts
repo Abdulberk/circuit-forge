@@ -222,10 +222,11 @@ function makeWorkerService(opts: { status?: string; metrics?: unknown; result?: 
     const createCornerJob = jest.fn(async () => ({ jobId: 'corner-1' }));
     const createMonteCarloJob = jest.fn(async () => ({ jobId: 'mc-1' }));
     const createTempCornerJob = jest.fn(async () => ({ jobId: 'temp-1' }));
-    const simulation = { createQuickSim, getStatus, getResult, createCornerJob, createMonteCarloJob, createTempCornerJob } as unknown as SimulationService;
+    const createSupplyCornerJob = jest.fn(async () => ({ jobId: 'supply-1' }));
+    const simulation = { createQuickSim, getStatus, getResult, createCornerJob, createMonteCarloJob, createTempCornerJob, createSupplyCornerJob } as unknown as SimulationService;
     const simulateWithRemedies = jest.fn(); // must NOT be called on the worker path
     const simulator = { simulateWithRemedies } as unknown as CircuitSimulatorService;
-    return { svc: new VerificationService(simulator, simulation), createQuickSim, getStatus, getResult, createCornerJob, createMonteCarloJob, createTempCornerJob, simulateWithRemedies };
+    return { svc: new VerificationService(simulator, simulation), createQuickSim, getStatus, getResult, createCornerJob, createMonteCarloJob, createTempCornerJob, createSupplyCornerJob, simulateWithRemedies };
 }
 
 describe('VerificationService — worker delegation (prod path, userId present)', () => {
@@ -692,5 +693,44 @@ describe('VerificationService — temperature corner is INFORMATIONAL (never gat
         const rob = ev.scope.checks.find((c) => c.id === 'robustness');
         expect(rob?.detail).toContain('self-heating');
         expect(rob?.gradation).toBe('presence');
+    });
+});
+
+describe('robustnessManifestEntry — supply corner is a COMPOSED clause with an honest 3-way not-run', () => {
+    const MC = { tier: 'robust', yieldLowerBound: 0.995, evaluated: 500, toleranceBasis: 'user-specified' } as never;
+    const supply = () =>
+        ({ supplyCorner: { applicable: true, rails: [{ netId: 'vcc', status: 'trusted', driverDesignator: 'V1' }], omitted: [], tolerance: 0.05, rangeLabel: '±5%', evaluated: 2, passed: 2, failed: 0, errored: 0, hasLimits: true, passAllCorners: true, drift: [] } }) as never;
+
+    it('a RAN supply corner joins as its own clause (does not overwrite MC — the early-return bug stays dead)', () => {
+        const e = robustnessManifestEntry(MC, undefined, undefined, supply());
+        expect(e.status).toBe('run');
+        expect(e.detail).toContain('Monte-Carlo runs'); // MC survives
+        expect(e.detail).toContain('supply corners (±5%)'); // supply is its OWN clause
+        expect(e.detail!.split(' | ')).toHaveLength(2);
+    });
+
+    it('not-run (c): NO power rail marked reads as "not yet marked", not broken (the common freeze-era case)', () => {
+        const e = robustnessManifestEntry(undefined, undefined, undefined, { supplyCorner: { applicable: false, rails: [], omitted: [], tolerance: 0.05, evaluated: 0, passed: 0, failed: 0, errored: 0, hasLimits: false, passAllCorners: false, drift: [] } } as never);
+        expect(e.status).toBe('not-run');
+        expect(e.detail).toMatch(/no power rail marked/i);
+    });
+
+    it('not-run (b): a marked rail that could not be validated surfaces the DEFERRAL reason (not silent)', () => {
+        const e = robustnessManifestEntry(undefined, undefined, undefined, { supplyCorner: { applicable: false, rails: [{ netId: 'vref', status: 'deferred', reason: 'no DC power source drives this net' }], omitted: [], tolerance: 0.05, evaluated: 0, passed: 0, failed: 0, errored: 0, hasLimits: false, passAllCorners: false, drift: [] } } as never);
+        expect(e.status).toBe('not-run');
+        expect(e.detail).toMatch(/could not be validated: no DC power source/i);
+    });
+});
+
+describe('VerificationService — supply corner is INFORMATIONAL (never gates)', () => {
+    it('a FAILED supply corner does NOT flip the verdict; the result is surfaced', async () => {
+        const supplyCorner = { applicable: true, rails: [{ netId: 'rail', status: 'trusted', driverDesignator: 'V1' }], omitted: [], tolerance: 0.05, rangeLabel: '±5%', evaluated: 2, passed: 1, failed: 1, errored: 0, hasLimits: true, passAllCorners: false, drift: [] };
+        const { svc, createSupplyCornerJob } = makeWorkerService({ metrics: { supplyCorner } });
+        const ev = await svc.verify(DIVIDER, { type: 'op' }, [A('out', 'final', 'approx', 5.0, 0.1)], 'user-1', { supply: true });
+        expect(createSupplyCornerJob).toHaveBeenCalledTimes(1);
+        expect(ev.verdict).toBe('pass'); // nominal passed; a failing supply corner NEVER gates (informational)
+        expect(ev.supplycorner?.supplyCorner?.failed).toBe(1);
+        const rob = ev.scope.checks.find((c) => c.id === 'robustness');
+        expect(rob?.detail).toContain('supply corners');
     });
 });

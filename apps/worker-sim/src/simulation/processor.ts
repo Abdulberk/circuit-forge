@@ -11,10 +11,11 @@ import { runSimulation, type SimulationJobResult } from './runner';
 import { runMonteCarloBatch } from './montecarlo-runner';
 import { runCornerBatch } from './corner-runner';
 import { runTempCornerBatch } from './temp-corner-runner';
+import { runSupplyCornerBatch } from './supply-corner-runner';
 import { classifyJobOutcome, isFinalAttempt, deriveFailureStatus, buildFailureMetrics, buildSuccessMetrics } from './outcome';
 import { downloadFile, uploadJsonResult } from '../storage/s3-client';
 import { downsampleResult } from '@circuit-forge/eda-core';
-import type { CircuitJson, AnalysisConfig, AcceptanceCriterion, CornerSpec, TempCornerSpec } from '@circuit-forge/eda-core';
+import type { CircuitJson, AnalysisConfig, AcceptanceCriterion, CornerSpec, TempCornerSpec, SupplyCornerSpec } from '@circuit-forge/eda-core';
 import { Prisma } from '@prisma/client';
 import { recordSim } from '../observability/telemetry';
 import { propagation, context as otelContext, trace, SpanStatusCode } from '@opentelemetry/api';
@@ -47,9 +48,10 @@ export interface SimulationJobPayload {
     otel?: Record<string, string>;
     /** Batch robustness job (skips the normal single-sim path): 'monte-carlo' = N random tolerance draws →
      *  yield (handleMonteCarlo); 'corner' = the 2^k deterministic ±tol corners → worst-case (handleCorner);
-     *  'temp-corner' = ambient cold/room/hot re-evaluation + metric drift (handleTempCorner). All are
+     *  'temp-corner' = ambient cold/room/hot re-evaluation + metric drift (handleTempCorner);
+     *  'supply-corner' = each power rail's source perturbed ±tol → spec + rail drift (handleSupplyCorner). All are
      *  informational robustness signals — never a design failure. */
-    mode?: 'monte-carlo' | 'corner' | 'temp-corner';
+    mode?: 'monte-carlo' | 'corner' | 'temp-corner' | 'supply-corner';
     montecarlo?: {
         circuit: CircuitJson;
         analysis: AnalysisConfig;
@@ -68,6 +70,12 @@ export interface SimulationJobPayload {
         analysis: AnalysisConfig;
         criteria: AcceptanceCriterion[];
         spec: TempCornerSpec;
+    };
+    supplyCorner?: {
+        circuit: CircuitJson;
+        analysis: AnalysisConfig;
+        criteria: AcceptanceCriterion[];
+        spec: SupplyCornerSpec;
     };
 }
 
@@ -182,6 +190,16 @@ async function processJob(job: Job<SimulationJobPayload>): Promise<void> {
                 if (job.data.mode === 'temp-corner' && job.data.tempCorner) {
                     await handleTempCorner(job, modelFiles.length > 0 ? modelFiles : undefined);
                     span.setAttribute('sim.outcome', 'tempcorner');
+                    span.setStatus({ code: SpanStatusCode.OK });
+                    return;
+                }
+
+                // SUPPLY-VOLTAGE corner job: perturb each trusted power rail's driving source ±tolerance and report
+                // spec pass/fail + per-node drift. Same posture — persisted SUCCEEDED with metrics.supplyCorner (or
+                // FAILED+infra → inconclusive); informational, never gates.
+                if (job.data.mode === 'supply-corner' && job.data.supplyCorner) {
+                    await handleSupplyCorner(job, modelFiles.length > 0 ? modelFiles : undefined);
+                    span.setAttribute('sim.outcome', 'supplycorner');
                     span.setStatus({ code: SpanStatusCode.OK });
                     return;
                 }
@@ -425,6 +443,60 @@ async function handleTempCorner(
     } catch (error) {
         const msg = error instanceof Error ? error.message : String(error);
         logger.error({ jobId, error: msg }, 'Temperature-corner batch failed');
+        recordSim({ status: 'failed' });
+        await prisma.simulationJob.update({
+            where: { id: jobId },
+            data: {
+                status: 'FAILED',
+                finishedAt: new Date(),
+                metrics: { error: msg, failureClass: 'infra' } as unknown as Prisma.InputJsonValue,
+            },
+        });
+    }
+}
+
+/**
+ * Supply-voltage corner job: perturb each trusted power rail's driving source ±tolerance, evaluate the criteria,
+ * and capture per-node drift, persisting the result in metrics.supplyCorner. Same contract as handleTempCorner —
+ * informational, never retried, never a design failure; runSupplyCornerBatch never throws on a sim fault (a dead
+ * corner is `errored`), so the catch is a defensive net that persists FAILED+infra → the API treats it inconclusive.
+ */
+async function handleSupplyCorner(
+    job: Job<SimulationJobPayload>,
+    modelFiles?: Array<{ name: string; content: Buffer }>,
+): Promise<void> {
+    const { jobId } = job.data;
+    const sc = job.data.supplyCorner!;
+    try {
+        const result = await runSupplyCornerBatch({ jobId, circuit: sc.circuit, analysis: sc.analysis, criteria: sc.criteria, spec: sc.spec, modelFiles });
+        recordSim({ status: 'succeeded', durationMs: result.runtimeMs });
+        await prisma.simulationJob.update({
+            where: { id: jobId },
+            data: {
+                status: 'SUCCEEDED',
+                finishedAt: new Date(),
+                metrics: {
+                    runtimeMs: result.runtimeMs,
+                    supplyCorner: {
+                        applicable: result.applicable,
+                        rails: result.rails,
+                        omitted: result.omitted,
+                        tolerance: result.tolerance,
+                        rangeLabel: result.rangeLabel,
+                        evaluated: result.evaluated,
+                        passed: result.passed,
+                        failed: result.failed,
+                        errored: result.errored,
+                        hasLimits: result.hasLimits,
+                        passAllCorners: result.passAllCorners,
+                        drift: result.drift,
+                    },
+                } as unknown as Prisma.InputJsonValue,
+            },
+        });
+    } catch (error) {
+        const msg = error instanceof Error ? error.message : String(error);
+        logger.error({ jobId, error: msg }, 'Supply-voltage corner batch failed');
         recordSim({ status: 'failed' });
         await prisma.simulationJob.update({
             where: { id: jobId },
