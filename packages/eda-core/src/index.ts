@@ -222,6 +222,22 @@ export {
     type TempCornerResult,
 } from './tempcorner';
 
+// Supply-voltage corner analysis — does the spec hold when the SUPPLY varies (±%)? Perturbs each trusted power
+// rail's DRIVING SOURCE (never forces the rail — a regulator regulates naturally) and reports pass/fail + per-node
+// drift vs the nominal run. validatePowerRails is the mini-ERC over the isPower DECLARATION with a refutation
+// asymmetry (evidence-absent trusts, only evidence-contrary defers). Informational; profile-neutral; needs isPower.
+export {
+    driversOf,
+    validatePowerRails,
+    runSupplyCorner,
+    type RailStatus,
+    type RailValidation,
+    type SupplyCornerSpec,
+    type SupplyCornerPoint,
+    type SupplyDrift,
+    type SupplyCornerResult,
+} from './supply-corner';
+
 // Analysis — measurement distillation + assertion evaluation (shared by the API AND the Monte-Carlo worker,
 // which is why they live here and not in the API).
 export { summarizeSeries, type SimMeasurement } from './analysis/measurements';

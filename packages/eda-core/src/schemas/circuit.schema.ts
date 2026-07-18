@@ -75,6 +75,8 @@ export const NetSchema = z.object({
     id: z.string().min(1).max(100),
     name: z.string().min(1).max(100),
     isGround: z.boolean().optional(),
+    /** Power/supply-rail marker (VCC/VDD/+5V) — a DECLARATION validated against topology before use (see Net.isPower). */
+    isPower: z.boolean().optional(),
 });
 
 /**

@@ -98,6 +98,16 @@ export class RobustnessDto {
     @IsBoolean()
     @IsOptional()
     temperature?: boolean;
+
+    @ApiPropertyOptional({ description: 'Re-check the spec and report per-node drift when each POWER RAIL\'s driving source is perturbed ±tolerance (default ±5%). Needs a net marked isPower (validated against the topology; a net that no DC source drives is deferred, disclosed as not-run). INFORMATIONAL — never gates the verdict. Runs only when the nominal verdict is "pass".' })
+    @IsBoolean()
+    @IsOptional()
+    supply?: boolean;
+
+    @ApiPropertyOptional({ description: 'Supply tolerance to sweep for the supply corner, fractional (e.g. 0.05 = ±5%). Default 0.05.', minimum: 0, maximum: 1 })
+    @IsNumber()
+    @IsOptional()
+    supplyTolerance?: number;
 }
 
 export class VerifyDesignDto {
