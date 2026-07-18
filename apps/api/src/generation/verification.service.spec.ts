@@ -2,7 +2,7 @@
  * VerificationService — assertion evaluation + verdict logic. CircuitSimulatorService is stubbed so
  * the suite is deterministic and ngspice-free; the assertion math and verdict rules are the contract.
  */
-import { VerificationService, isCurrentProbe } from './verification.service';
+import { VerificationService, isCurrentProbe, deriveToleranceBasis } from './verification.service';
 import type { CircuitSimulatorService, SimSummary } from './circuit-simulator.service';
 import type { SimulationService } from '../simulation/simulation.service';
 import { sanitizeNodeName, type CircuitJson } from '@circuit-forge/eda-core';
@@ -220,10 +220,11 @@ function makeWorkerService(opts: { status?: string; metrics?: unknown; result?: 
         ...(opts.resultError ? { error: opts.resultError } : {}),
     }));
     const createCornerJob = jest.fn(async () => ({ jobId: 'corner-1' }));
-    const simulation = { createQuickSim, getStatus, getResult, createCornerJob } as unknown as SimulationService;
+    const createMonteCarloJob = jest.fn(async () => ({ jobId: 'mc-1' }));
+    const simulation = { createQuickSim, getStatus, getResult, createCornerJob, createMonteCarloJob } as unknown as SimulationService;
     const simulateWithRemedies = jest.fn(); // must NOT be called on the worker path
     const simulator = { simulateWithRemedies } as unknown as CircuitSimulatorService;
-    return { svc: new VerificationService(simulator, simulation), createQuickSim, getStatus, getResult, createCornerJob, simulateWithRemedies };
+    return { svc: new VerificationService(simulator, simulation), createQuickSim, getStatus, getResult, createCornerJob, createMonteCarloJob, simulateWithRemedies };
 }
 
 describe('VerificationService — worker delegation (prod path, userId present)', () => {
@@ -530,4 +531,105 @@ describe('VerificationService — worst-case (corner) robustness option (informa
         expect(ev.verdict).toBe('pass'); // infra failure of the informational check never touches the verdict
         expect(ev.robustness?.unavailable).toMatch(/worker|queue|unavailable/i);
     });
+});
+
+describe('VerificationService — Monte-Carlo robustness tier + gate', () => {
+    const passSpec = [A('out', 'final', 'approx', 5.0, 0.1)]; // workerResult out=5 → nominal pass
+    const withTol = (source: 'user' | 'catalog') =>
+        ({ ...DIVIDER, components: DIVIDER.components.map((c) => (c.id === 'r1' ? { ...c, tolerance: 0.01, toleranceSource: source } : c)) } as CircuitJson);
+    const atRisk = { total: 100, evaluated: 100, passed: 80, failed: 20, errored: 0, yield: 0.8, ci95: { low: 0.71, high: 0.87 } };
+    const robust = { total: 500, evaluated: 500, passed: 500, failed: 0, errored: 0, yield: 1, ci95: { low: 0.994, high: 1 } };
+
+    it('at-risk tier on USER-specified tolerances GATES: the nominal pass flips to fail, disclosed', async () => {
+        const { svc, createMonteCarloJob } = makeWorkerService({ metrics: { monteCarlo: atRisk } });
+        const ev = await svc.verify(withTol('user'), { type: 'op' }, passSpec, 'user-1', { montecarlo: true });
+        expect(createMonteCarloJob).toHaveBeenCalledTimes(1);
+        expect(ev.montecarlo?.tier).toBe('at-risk');
+        expect(ev.montecarlo?.toleranceBasis).toBe('user-specified');
+        expect(ev.montecarlo?.gated).toBe(true);
+        expect(ev.verdict).toBe('fail'); // the gate flipped the nominal pass
+        // the top-level summary must EXPLAIN the robustness gate (never the malformed "Not verified: .")
+        expect(ev.summary).toMatch(/production-robust/i);
+        expect(ev.summary).not.toBe('Not verified: .');
+        const rob = ev.scope.checks.find((c) => c.id === 'robustness');
+        expect(rob?.status).toBe('run');
+        expect(rob?.detail).toMatch(/at-risk/);
+        expect(rob?.detail).toMatch(/GATED/);
+    });
+
+    it('at-risk on a MIXED (user + catalog) circuit does NOT gate — the at-risk is not purely user-caused', async () => {
+        // r1 user-toleranced, r2 catalog-toleranced → basis 'mixed'. The worker perturbs both, so an at-risk
+        // could be driven by the catalog spread; we must NOT auto-fail on tolerances the user didn't fully own.
+        const mixed = { ...DIVIDER, components: DIVIDER.components.map((c) => (c.id === 'r1' ? { ...c, tolerance: 0.01, toleranceSource: 'user' } : c.id === 'r2' ? { ...c, tolerance: 0.05, toleranceSource: 'catalog' } : c)) } as CircuitJson;
+        const { svc } = makeWorkerService({ metrics: { monteCarlo: atRisk } });
+        const ev = await svc.verify(mixed, { type: 'op' }, passSpec, 'user-1', { montecarlo: true });
+        expect(ev.montecarlo?.tier).toBe('at-risk');
+        expect(ev.montecarlo?.toleranceBasis).toBe('mixed');
+        expect(ev.montecarlo?.gated).toBeFalsy();
+        expect(ev.verdict).toBe('pass'); // informational — disclosed at-risk, but not a user-owned gate
+    });
+
+    it('at-risk on CATALOG-derived tolerances is INFORMATIONAL: verdict stays pass, not gated', async () => {
+        const { svc } = makeWorkerService({ metrics: { monteCarlo: atRisk } });
+        const ev = await svc.verify(withTol('catalog'), { type: 'op' }, passSpec, 'user-1', { montecarlo: true });
+        expect(ev.montecarlo?.tier).toBe('at-risk');
+        expect(ev.montecarlo?.toleranceBasis).toBe('catalog');
+        expect(ev.montecarlo?.gated).toBeFalsy();
+        expect(ev.verdict).toBe('pass'); // a catalog-derived at-risk never auto-fails a design the user didn't gate on
+    });
+
+    it('a robust tier never gates (verdict stays pass) and discloses N + basis', async () => {
+        const { svc } = makeWorkerService({ metrics: { monteCarlo: robust } });
+        const ev = await svc.verify(withTol('user'), { type: 'op' }, passSpec, 'user-1', { montecarlo: true });
+        expect(ev.montecarlo?.tier).toBe('robust');
+        expect(ev.montecarlo?.gated).toBeFalsy();
+        expect(ev.verdict).toBe('pass');
+        expect(ev.scope.checks.find((c) => c.id === 'robustness')?.detail).toMatch(/robust/);
+    });
+
+    it('does NOT run Monte-Carlo when the nominal verdict is not pass (no point)', async () => {
+        const { svc, createMonteCarloJob } = makeWorkerService({ metrics: { monteCarlo: atRisk } });
+        const ev = await svc.verify(withTol('user'), { type: 'op' }, [A('out', 'final', 'approx', 99)], 'user-1', { montecarlo: true });
+        expect(ev.verdict).toBe('fail'); // nominal spec unmet
+        expect(createMonteCarloJob).not.toHaveBeenCalled();
+    });
+
+    it('a BUDGET-truncated at-risk run does NOT gate (a small-sample low bound is not a robustness failure)', async () => {
+        const { svc } = makeWorkerService({ metrics: { monteCarlo: { ...atRisk, budgetHit: true } } });
+        const ev = await svc.verify(withTol('user'), { type: 'op' }, passSpec, 'user-1', { montecarlo: true });
+        expect(ev.montecarlo?.budgetHit).toBe(true);
+        expect(ev.montecarlo?.gated).toBeFalsy();
+        expect(ev.verdict).toBe('pass'); // never auto-fail on a run cut short by the wall-clock budget
+        expect(ev.montecarlo?.note).toMatch(/INCOMPLETE/i);
+    });
+
+    it('a REQUESTED-but-unavailable Monte-Carlo discloses "requested but unavailable" (not "not requested")', async () => {
+        const { svc } = makeWorkerService({ metrics: { monteCarlo: { ...atRisk, evaluated: 0 } } });
+        const ev = await svc.verify(withTol('user'), { type: 'op' }, passSpec, 'user-1', { montecarlo: true });
+        expect(ev.montecarlo?.unavailable).toBeTruthy();
+        const rob = ev.scope.checks.find((c) => c.id === 'robustness');
+        expect(rob?.detail).toMatch(/requested but unavailable/i);
+        expect(rob?.detail).not.toMatch(/not requested/i);
+    });
+
+    it('SKIPS Monte-Carlo on a circuit with no toleranced parts (no wasted sims, honest disclosure)', async () => {
+        const { svc, createMonteCarloJob } = makeWorkerService({ metrics: { monteCarlo: robust } });
+        const ev = await svc.verify(DIVIDER, { type: 'op' }, passSpec, 'user-1', { montecarlo: true }); // DIVIDER has no tolerances
+        expect(createMonteCarloJob).not.toHaveBeenCalled(); // no ~500 identical sims burned
+        expect(ev.montecarlo?.unavailable).toMatch(/no toleranced parts/i);
+        expect(ev.verdict).toBe('pass');
+    });
+});
+
+describe('deriveToleranceBasis — the honest provenance the tier discloses + the gate keys on', () => {
+    const comp = (over: Record<string, unknown> = {}) => ({ id: 'r1', type: 'resistor', designator: 'R1', value: '1k', pins: [{ pinId: '1', netId: 'a' }, { pinId: '2', netId: 'b' }], ...over });
+    const circ = (comps: unknown[]) => ({ version: '1.0', components: comps, nets: [{ id: 'a', name: 'a' }, { id: 'b', name: 'b' }] } as CircuitJson);
+
+    it("'none' when nothing is toleranced", () => expect(deriveToleranceBasis(circ([comp()]))).toBe('none'));
+    it("'catalog' when EVERY toleranced part is catalog-sourced", () => expect(deriveToleranceBasis(circ([comp({ tolerance: 0.01, toleranceSource: 'catalog' })]))).toBe('catalog'));
+    it("'user-specified' only when EVERY toleranced part is user-stated (the whole spread is user-owned)", () =>
+        expect(deriveToleranceBasis(circ([comp({ tolerance: 0.01, toleranceSource: 'user' }), comp({ id: 'r2', tolerance: 0.05, toleranceSource: 'user' })]))).toBe('user-specified'));
+    it("'mixed' when user + catalog tolerances coexist (NOT user-specified — the at-risk isn't purely user-caused)", () =>
+        expect(deriveToleranceBasis(circ([comp({ tolerance: 0.05, toleranceSource: 'catalog' }), comp({ id: 'r2', tolerance: 0.01, toleranceSource: 'user' })]))).toBe('mixed'));
+    it("'unspecified' when a tolerance carries no recorded source", () => expect(deriveToleranceBasis(circ([comp({ tolerance: 0.05 })]))).toBe('unspecified'));
 });

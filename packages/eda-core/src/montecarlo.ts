@@ -129,7 +129,7 @@ export async function runMonteCarlo(
     runVariant: VariantRunner,
     opts: MonteCarloOptions = {},
 ): Promise<MonteCarloYield> {
-    const n = Math.max(1, Math.min(opts.n ?? 300, 300));
+    const n = Math.max(1, Math.min(opts.n ?? 300, 2000)); // cap raised for a tight "robust" bound / manual deep runs
     const minRuns = Math.max(1, opts.minRuns ?? 24);
     const ciStop = opts.ciStopHalfWidth ?? 0.03;
     const dist = opts.dist ?? 'gaussian';

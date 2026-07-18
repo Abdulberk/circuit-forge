@@ -71,6 +71,28 @@ export class RobustnessDto {
     @Max(12)
     @IsOptional()
     maxCorners?: number;
+
+    @ApiPropertyOptional({ description: 'Monte-Carlo tolerance-yield analysis: sample the circuit N times with every toleranced part drawn within its tolerance, and grade the pass-rate into a robustness tier (robust/marginal/at-risk on the Wilson-95% lower bound). Runs only when the nominal verdict is "pass" and the circuit has toleranced parts (user-set or catalog-sourced). Informational; it flips the verdict to fail ONLY when the tier is at-risk AND the tolerances were user-specified.' })
+    @IsBoolean()
+    @IsOptional()
+    montecarlo?: boolean;
+
+    @ApiPropertyOptional({ description: 'Monte-Carlo sample count (virtual builds). Default 500; raise it for a tighter confidence bound (a "robust" claim needs a large-enough sample). Capped at 2000.' })
+    @IsInt()
+    @Min(1)
+    @Max(2000)
+    @IsOptional()
+    n?: number;
+
+    @ApiPropertyOptional({ description: 'Monte-Carlo PRNG seed for a reproducible run (same seed ⇒ identical sample set).' })
+    @IsInt()
+    @IsOptional()
+    seed?: number;
+
+    @ApiPropertyOptional({ description: 'Yield bars for the tier: "consumer" (robust ≥99%, ≈Cpk 1.33), "automotive"/"medical" (robust ≥99.9%). Default "consumer".', enum: ['consumer', 'automotive', 'medical'] })
+    @IsIn(['consumer', 'automotive', 'medical'])
+    @IsOptional()
+    profile?: 'consumer' | 'automotive' | 'medical';
 }
 
 export class VerifyDesignDto {
@@ -91,7 +113,7 @@ export class VerifyDesignDto {
     @Type(() => AssertionDto)
     assertions?: AssertionDto[];
 
-    @ApiPropertyOptional({ description: 'Optional robustness checks (informational — never flip the verdict)', type: RobustnessDto })
+    @ApiPropertyOptional({ description: 'Optional robustness checks. The corner check is informational; the Monte-Carlo tier is informational too EXCEPT it flips the verdict to fail when at-risk AND tolerances are user-specified.', type: RobustnessDto })
     @IsObject()
     @IsOptional()
     @ValidateNested()

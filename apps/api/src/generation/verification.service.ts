@@ -11,7 +11,7 @@
  */
 import { Injectable, Optional, Logger } from '@nestjs/common';
 import { runErc, generateNetlist, type AnalysisConfig, type SimulationResult, type AcceptanceCriterion, type CornerSpec } from '@circuit-forge/eda-core';
-import { safeValidateCircuitJson, buildElectricalScope, criterionDimension, checkOrientationConsistency, type CircuitJson, type ScopeManifest, type OrientationReport } from '@circuit-forge/eda-core';
+import { safeValidateCircuitJson, buildElectricalScope, criterionDimension, checkOrientationConsistency, classifyRobustness, type CircuitJson, type ScopeManifest, type OrientationReport, type YieldSummary, type RobustnessTier, type DeterminedEntry } from '@circuit-forge/eda-core';
 import { CircuitSimulatorService, summarizeSeries, type SimMeasurement, type SimSummary, type ConvergenceReport } from './circuit-simulator.service';
 import { attachGenericModels } from './model-resolution';
 import { computeResistorPower, type PowerReport } from './power-analysis';
@@ -29,9 +29,10 @@ const VERIFY_POLL_TIMEOUT_MS = 90_000;
 
 export interface DesignEvidence {
     /** pass = sim ok, no ERC errors, all assertions pass. fail = an ERC error, OR ngspice actually ran
-     *  and the circuit failed/couldn't simulate, OR an assertion was not met. inconclusive = the
-     *  simulation couldn't RUN (ngspice not configured, OR the worker/queue was unavailable / backed up)
-     *  so specs couldn't be checked — an OPERATIONAL state, never a statement about the design. */
+     *  and the circuit failed/couldn't simulate, OR an assertion was not met, OR the Monte-Carlo robustness
+     *  gate flipped it (an at-risk tier on tolerances the user fully specified — see `montecarlo`).
+     *  inconclusive = the simulation couldn't RUN (ngspice not configured, OR the worker/queue was
+     *  unavailable / backed up) so specs couldn't be checked — an OPERATIONAL state, never about the design. */
     verdict: 'pass' | 'fail' | 'inconclusive';
     summary: string;
     simStatus: SimSummary['simStatus'];
@@ -58,6 +59,44 @@ export interface DesignEvidence {
     /** Orientation ROLE-consistency (informational): diode/zener/LED that do not declare anode + cathode.
      *  Not geometric; polarized caps/connectors not covered. Present when the circuit validated. */
     polarity?: OrientationReport;
+    /** Monte-Carlo tolerance-yield robustness (present only when requested + the nominal verdict is 'pass').
+     *  The tier (robust/marginal/at-risk) grades the Wilson-95% lower bound of the pass-rate; it is
+     *  INFORMATIONAL and flips `verdict` to 'fail' ONLY when at-risk AND the tolerances were user-specified. */
+    montecarlo?: MonteCarloEvidence;
+}
+
+/** Provenance of the tolerances a robustness tier was computed on — disclosed with the tier, and the gate
+ *  keys on it. Only 'user-specified' (EVERY toleranced part is user-stated) is gate-eligible: the worker
+ *  perturbs every toleranced part regardless of source, so an at-risk verdict is attributable purely to
+ *  user-stated spread ONLY when the user owns the whole spread. A 'mixed' or 'catalog' basis stays
+ *  informational — we never auto-fail a design on catalog-datasheet spread the user didn't state. */
+export type ToleranceBasis = 'user-specified' | 'catalog' | 'mixed' | 'unspecified' | 'none';
+
+/** Domain yield-bar profile for the robustness tier (bars live in eda-core's ROBUSTNESS_PROFILES). */
+export type RobustnessProfile = 'consumer' | 'automotive' | 'medical';
+
+/** The Monte-Carlo robustness section of a DesignEvidence (see VerificationService.runMonteCarloRobustness). */
+export interface MonteCarloEvidence {
+    tier?: RobustnessTier;
+    /** Point-estimate pass-rate in [0,1]. */
+    yield?: number;
+    /** Wilson-95% LOWER bound — what the tier is graded on (honest re: sample count). */
+    yieldLowerBound?: number;
+    /** Variants actually evaluated (the yield denominator). */
+    evaluated?: number;
+    /** Where the tolerances came from — the honest disclosure so a tier is never read off a silent assumption. */
+    toleranceBasis?: ToleranceBasis;
+    /** Domain profile whose bars were applied. */
+    profile?: string;
+    /** Whether this tier flipped the verdict (only at-risk + user-specified + a COMPLETE run does). */
+    gated?: boolean;
+    /** True when the batch was cut short by its wall-clock budget — the tier is then a low-confidence lower
+     *  bound (few samples), NOT a robustness failure, so it is disclosed but NEVER gates. */
+    budgetHit?: boolean;
+    /** Plain-language honest one-liner. */
+    note?: string;
+    /** Present instead when the check couldn't be performed (no toleranced parts / infra / didn't complete). */
+    unavailable?: string;
 }
 
 /** The worst-case corner robustness section of a DesignEvidence (see VerificationService.runCornerRobustness). */
@@ -75,6 +114,44 @@ export interface WorstCaseEvidence {
     };
     /** Present instead when the check couldn't be performed (no toleranced parts / infra / didn't complete). */
     unavailable?: string;
+}
+
+/** Where a circuit's tolerances came from — the honest basis a robustness tier must disclose (and the gate
+ *  keys on): 'user-specified' (the user stated it, gate-eligible), 'catalog' (a datasheet fact from a sourced
+ *  part), 'unspecified' (a tolerance with no recorded source), or 'none' (nothing toleranced). Pure. */
+export function deriveToleranceBasis(circuit: CircuitJson): ToleranceBasis {
+    const toleranced = circuit.components.filter((c) => typeof c.tolerance === 'number' && c.tolerance > 0);
+    if (toleranced.length === 0) return 'none';
+    // The worker perturbs EVERY toleranced part regardless of source, so an at-risk tier is attributable
+    // purely to a given basis ONLY when ALL toleranced parts share it. 'user-specified' (the gate-eligible
+    // basis) therefore requires EVERY toleranced part to be user-stated — one catalog part makes it 'mixed'
+    // (informational), never a user-gated fail on spread the user didn't state.
+    if (toleranced.every((c) => c.toleranceSource === 'user')) return 'user-specified';
+    if (toleranced.every((c) => c.toleranceSource === 'catalog')) return 'catalog';
+    if (toleranced.every((c) => c.toleranceSource === undefined)) return 'unspecified';
+    return 'mixed';
+}
+
+/** The scope-manifest 'robustness' entry: an MC tier (with its basis + N) when MC ran, a corner run, an
+ *  honest "requested but unavailable" when a requested check could not complete, else "not requested". */
+export function robustnessManifestEntry(montecarlo?: MonteCarloEvidence, corner?: WorstCaseEvidence): DeterminedEntry {
+    if (montecarlo && !montecarlo.unavailable) {
+        const tail = montecarlo.gated
+            ? ' — GATED (verdict → fail)'
+            : montecarlo.budgetHit
+                ? ' — informational (INCOMPLETE — budget cut)'
+                : ' — informational (does not gate)';
+        return {
+            status: 'run',
+            detail:
+                `${montecarlo.tier} — ${((montecarlo.yieldLowerBound ?? 0) * 100).toFixed(1)}% yield (95% CI lower bound), ` +
+                `${montecarlo.evaluated} Monte-Carlo runs; tolerances: ${montecarlo.toleranceBasis}${tail}`,
+        };
+    }
+    if (montecarlo?.unavailable) return { status: 'not-run', detail: `Monte-Carlo requested but unavailable — ${montecarlo.unavailable}` };
+    if (corner && !corner.unavailable) return { status: 'run', detail: 'worst-case corner robustness — informational (does not gate the verdict)' };
+    if (corner?.unavailable) return { status: 'not-run', detail: `worst-case corner requested but unavailable — ${corner.unavailable}` };
+    return { status: 'not-run', detail: 'tolerance robustness not requested' };
 }
 
 @Injectable()
@@ -95,7 +172,7 @@ export class VerificationService {
         analysisConfig?: AnalysisConfig,
         assertions: AssertionDto[] = [],
         userId?: string,
-        robustness?: { corner?: boolean; maxCorners?: number },
+        robustness?: { corner?: boolean; maxCorners?: number; montecarlo?: boolean; n?: number; seed?: number; profile?: RobustnessProfile },
     ): Promise<DesignEvidence> {
         // Validate ONCE up front and reuse: the nets let evaluateAssertions resolve a criterion that names a
         // net ("v(out)") to the node the generator emitted from that net's ID — so the check still matches when
@@ -142,23 +219,26 @@ export class VerificationService {
             verdict = 'pass';
         }
 
-        // Worst-case (corner) robustness — INFORMATIONAL, only when the caller asked for it AND the nominal
-        // design already PASSES (no point cornering a design that fails at nominal) AND we have a worker+user
-        // to run the batch. Never changes `verdict` (same posture as power / Monte-Carlo robustness).
-        let robustnessEvidence: WorstCaseEvidence | undefined;
-        if (robustness?.corner && verdict === 'pass' && this.simulation && userId) {
-            robustnessEvidence = await this.runCornerRobustness(
-                circuit,
-                analysisConfig ?? { type: 'op' },
-                assertions,
-                robustness.maxCorners ? { maxComponents: robustness.maxCorners } : {},
-                userId,
-            );
-        }
+        // Robustness (INFORMATIONAL): worst-case corner + Monte-Carlo tolerance-yield tier, run only on a
+        // nominal PASS with a worker+user. Extracted to keep verify() legible; the MC gate MAY flip the verdict
+        // (only a complete at-risk run whose tolerance spread the user owns entirely — see assessRobustness).
+        const rob = await this.assessRobustness(
+            circuit,
+            analysisConfig ?? { type: 'op' },
+            assertions,
+            verdict,
+            robustness,
+            userId,
+            validCircuit.success ? (validCircuit.data as CircuitJson) : undefined,
+        );
+        verdict = rob.verdict;
+        const { robustnessEvidence, montecarlo, robustnessManifest } = rob;
 
         return {
             verdict,
-            summary: this.summarize(verdict, sim, assertionResults),
+            // When the robustness gate flipped the verdict, the honest top-level reason is the tier's own note
+            // (the nominal sim/ERC/assertions all passed, so summarize() would render an empty "Not verified: .").
+            summary: montecarlo?.gated ? `Not production-robust: ${montecarlo.note}` : this.summarize(verdict, sim, assertionResults),
             simStatus: sim.simStatus,
             analysisType: sim.analysisType,
             runError: sim.runError,
@@ -173,22 +253,21 @@ export class VerificationService {
             ...(sim.convergence ? { convergence: sim.convergence } : {}),
             ...(power ? { power } : {}),
             ...(robustnessEvidence ? { robustness: robustnessEvidence } : {}),
+            ...(montecarlo ? { montecarlo } : {}),
             // Scope disclosure fragment. Reports what THIS verdict actually ran: sim run-state (only 'ok'
             // counts as run — a skipped or failed run produced no usable simulation, so it is disclosed
             // not-run, never a false "Simulation ran"), assertion COVERAGE (which quantities the supplied
             // assertions check — coverage, not requirement satisfaction, since no prompt is threaded here),
-            // the resistor-power/derating review, worst-case robustness, and orientation role-consistency —
-            // each disclosed run ONLY when it actually produced a result. Decoupling presence stays not-run
-            // (deferred: no power-rail marking to identify a rail reliably — see buildElectricalScope).
+            // the resistor-power/derating review, tolerance robustness (MC tier + its basis, or corner), and
+            // orientation role-consistency — each disclosed run ONLY when it produced a result. Decoupling
+            // presence stays not-run (deferred: no power-rail marking to identify a rail reliably).
             scope: buildElectricalScope({
                 simRan: sim.simStatus === 'ok',
                 coveredDimensions: [...new Set(assertions.map(criterionDimension))],
                 derating: power
                     ? { status: 'run', detail: 'resistor power vs rating — informational, default-rating-based; caps/semiconductors/current not covered' }
                     : { status: 'not-run', detail: 'no resistor-power data (sim not ok / no resistors)' },
-                robustness: robustnessEvidence
-                    ? { status: 'run', detail: 'worst-case corner robustness — informational (does not gate the verdict)' }
-                    : { status: 'not-run', detail: 'tolerance robustness not requested' },
+                robustness: robustnessManifest,
                 polarity: polarity?.manifestEntry,
             }),
             ...(polarity ? { polarity } : {}),
@@ -227,6 +306,99 @@ export class VerificationService {
             this.logger.error(`worst-case corner run failed: ${e instanceof Error ? e.message : e}`);
             return { unavailable: 'worst-case corner check could not be run (worker/queue unavailable) — try again' };
         }
+    }
+
+    /**
+     * Enqueue a Monte-Carlo yield batch on the worker, poll it, and grade metrics.monteCarlo into a robustness
+     * tier (classifyRobustness on the Wilson-lower bound). Mirrors runCornerRobustness: never throws — an
+     * infra/queue failure or a circuit with no toleranced parts returns an `unavailable` reason, never a
+     * design failure. The tolerance BASIS is threaded in so the caller can disclose it and decide the gate.
+     */
+    private async runMonteCarloRobustness(
+        circuit: unknown,
+        analysis: AnalysisConfig,
+        assertions: AssertionDto[],
+        opts: { n?: number; seed?: number; profile?: RobustnessProfile; basis: ToleranceBasis },
+        userId: string,
+    ): Promise<MonteCarloEvidence> {
+        try {
+            const { jobId } = await this.simulation!.createMonteCarloJob(
+                circuit as CircuitJson,
+                analysis as unknown as Record<string, unknown>,
+                assertions as unknown as AcceptanceCriterion[],
+                { n: opts.n ?? 500, seed: opts.seed }, // default 500 — enough sample for the ~99% robust bar
+                userId,
+            );
+            const { status, metrics } = await this.pollJob(jobId, userId);
+            if (status !== 'SUCCEEDED') {
+                return { unavailable: `Monte-Carlo did not complete (${status.toLowerCase()}) — try again`, toleranceBasis: opts.basis };
+            }
+            const mc = (metrics as { monteCarlo?: YieldSummary & { budgetHit?: boolean } } | null | undefined)?.monteCarlo;
+            if (!mc) return { unavailable: 'Monte-Carlo produced no result', toleranceBasis: opts.basis };
+            if (mc.evaluated === 0) {
+                return { unavailable: 'no toleranced components to vary — set a tolerance or source a real part (its datasheet tolerance is captured)', toleranceBasis: opts.basis };
+            }
+            const v = classifyRobustness(mc as unknown as Record<string, unknown>, opts.profile ?? 'consumer');
+            const budgetHit = mc.budgetHit === true;
+            return {
+                tier: v.tier,
+                yield: v.yield ?? undefined,
+                yieldLowerBound: v.yieldLowerBound ?? undefined,
+                evaluated: v.evaluated ?? undefined,
+                toleranceBasis: opts.basis,
+                profile: v.profile,
+                budgetHit,
+                // A budget-truncated run's low bound is a small-sample artefact, not a real at-risk — say so.
+                note: budgetHit ? `${v.note} (INCOMPLETE — cut short by the time budget after ${v.evaluated} runs; raise n or retry for a gating result)` : v.note,
+            };
+        } catch (e) {
+            this.logger.error(`Monte-Carlo robustness run failed: ${e instanceof Error ? e.message : e}`);
+            return { unavailable: 'Monte-Carlo robustness could not be run (worker/queue unavailable) — try again', toleranceBasis: opts.basis };
+        }
+    }
+
+    /**
+     * Run the requested INFORMATIONAL robustness checks on a nominally-passing design (worst-case corner +
+     * Monte-Carlo tolerance-yield tier) and return the evidence, the disclosure manifest entry, and the
+     * (possibly gate-flipped) verdict. Only a COMPLETE Monte-Carlo at-risk whose tolerance spread the user
+     * OWNS ENTIRELY flips the verdict; every other outcome — a catalog/mixed basis, a budget-truncated run,
+     * or the corner check — is disclosed but never auto-fails. Extracted so verify() stays legible.
+     */
+    private async assessRobustness(
+        circuit: unknown,
+        analysis: AnalysisConfig,
+        assertions: AssertionDto[],
+        nominalVerdict: DesignEvidence['verdict'],
+        robustness: { corner?: boolean; maxCorners?: number; montecarlo?: boolean; n?: number; seed?: number; profile?: RobustnessProfile } | undefined,
+        userId: string | undefined,
+        circuitJson: CircuitJson | undefined,
+    ): Promise<{ verdict: DesignEvidence['verdict']; robustnessEvidence?: WorstCaseEvidence; montecarlo?: MonteCarloEvidence; robustnessManifest: DeterminedEntry }> {
+        let verdict = nominalVerdict;
+
+        let robustnessEvidence: WorstCaseEvidence | undefined;
+        if (robustness?.corner && verdict === 'pass' && this.simulation && userId) {
+            robustnessEvidence = await this.runCornerRobustness(circuit, analysis, assertions, robustness.maxCorners ? { maxComponents: robustness.maxCorners } : {}, userId);
+        }
+
+        let montecarlo: MonteCarloEvidence | undefined;
+        if (robustness?.montecarlo && verdict === 'pass' && this.simulation && userId) {
+            const basis = circuitJson ? deriveToleranceBasis(circuitJson) : 'none';
+            if (basis === 'none') {
+                // No toleranced parts → a Monte-Carlo run would just re-simulate the nominal design N times
+                // (identical variants): wasted compute + a meaningless 'robust'. Skip it, disclose honestly.
+                montecarlo = { unavailable: 'no toleranced parts to vary — set a tolerance or source a real part (its datasheet tolerance is captured)', toleranceBasis: 'none' };
+            } else {
+                montecarlo = await this.runMonteCarloRobustness(circuit, analysis, assertions, { n: robustness.n, seed: robustness.seed, profile: robustness.profile, basis }, userId);
+                // GATE: flip only on a COMPLETE at-risk run whose spread the user OWNS entirely. A budget-cut
+                // run (a small-sample low bound, not a real failure) or a catalog/mixed basis stays informational.
+                if (montecarlo.tier === 'at-risk' && basis === 'user-specified' && !montecarlo.budgetHit) {
+                    verdict = 'fail';
+                    montecarlo.gated = true;
+                }
+            }
+        }
+
+        return { verdict, robustnessEvidence, montecarlo, robustnessManifest: robustnessManifestEntry(montecarlo, robustnessEvidence) };
     }
 
     /**
