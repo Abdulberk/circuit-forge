@@ -173,12 +173,17 @@ export {
     monteCarloVariants,
     computeYield,
     runMonteCarlo,
+    classifyRobustness,
+    ROBUSTNESS_PROFILES,
     type TolDistribution,
     type YieldSummary,
     type VariantOutcome,
     type VariantRunner,
     type MonteCarloOptions,
     type MonteCarloYield,
+    type RobustnessTier,
+    type RobustnessBars,
+    type RobustnessVerdict,
 } from './montecarlo';
 export { mulberry32 } from './utils/prng';
 
