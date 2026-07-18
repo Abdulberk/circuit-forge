@@ -174,8 +174,24 @@ async function processLayoutJob(job: Job<LayoutJobPayload>): Promise<void> {
 
         // Manufacturable → deliver the fab-ready bundle FIRST: it is the manufacturable deliverable and must
         // never be lost to a cosmetic 3D-render failure. Heavy blobs → S3 (keys on the row).
+        //
+        // The delivered gerbers are RE-EXPORTED from the DRC-verified .kicad_pcb (with the GND pour refilled
+        // into the copper), NOT pcb-core's q.outputs.gerbers — those plot the routed soup, which has no zone
+        // element, so they would ship a board missing the ground plane we advertise (checked ≠ delivered).
+        // Exporting here makes the delivered artifact the SAME board the notary DRC'd.
+        const gerbers = await kicad.exportGerbers(q.outputs.kicadPcb);
+        // Evidence, not assertion: when pcb-core injected a GND pour (PCB032), the delivered B.Cu copper MUST
+        // carry a filled region (a gerber G36 region). If it does not, refuse to ship rather than deliver a
+        // board silently missing its advertised ground plane — fail-closed, matching drcReport's posture.
+        // gndPlane is meaningful ONLY when a pour was injected: a G36 region can also come from region-based
+        // pads, so `pourInjected &&` keeps the evidence honest (false when no plane was ever requested).
+        const pourInjected = q.diagnostics.some((d) => d.code === 'PCB032');
+        const gndPlane = pourInjected && (gerbers.layers['B_Cu'] ?? '').includes('G36');
+        if (pourInjected && !gndPlane) {
+            throw new Error('GND pour injected but the exported B.Cu gerber has no filled copper region — refusing to ship a board missing its advertised ground plane');
+        }
         const gerbersKey = `layouts/${jobId}/manufacturing.json`;
-        await uploadFile(gerbersKey, JSON.stringify({ gerbers: q.outputs.gerbers, bomCsv: q.outputs.bomCsv, pnpCsv: q.outputs.pnpCsv }), 'application/json');
+        await uploadFile(gerbersKey, JSON.stringify({ gerbers, bomCsv: q.outputs.bomCsv, pnpCsv: q.outputs.pnpCsv }), 'application/json');
 
         // 3D render is BEST-EFFORT: a GLB export failure (missing 3D model, timeout, ENOBUFS) must not sink an
         // already-manufacturable board — deliver the gerbers with the render omitted rather than failing the job.
@@ -195,7 +211,7 @@ async function processLayoutJob(job: Job<LayoutJobPayload>): Promise<void> {
             ...inspection,
             bodies,
             render: glbKey ? { glbKey } : null,
-            manufacturing: { gerbersKey },
+            manufacturing: { gerbersKey, gndPlane },
         };
         await finish(jobId, { status: 'SUCCEEDED', result, glbKey, gerbersKey });
         logger.info({ jobId, ms: Date.now() - t0, traces: q.stats.traces, manufacturable: true, rendered: !!glbKey }, 'Layout job succeeded (manufacturable)');
