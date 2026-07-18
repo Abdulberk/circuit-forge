@@ -45,62 +45,101 @@ import { executeNgspice } from './runner';
  * mirrors the nominal verify path (verification.service passes the SAME derived probes) so a design that verifies
  * at nominal is measured against the identical criteria under Monte-Carlo / corner / sweep.
  */
+/** The shared per-run core: execute an ALREADY-generated netlist in the prepared job dir and parse → scalar
+ *  measurements. A `null` netlist (a variant that wouldn't generate/sanitize) OR any spawn/timeout/no-output/
+ *  oversize/transient-truncation returns null = ERRORED (excluded from the denominator by the pure orchestrators).
+ *  Reused by BOTH makeVariantRunner (MC/sweep/corner — component variants) and makeTempRunner (temperature corners). */
+async function executeAndMeasure(
+    paths: { netlistPath: string; outputPath: string; logPath: string },
+    analysis: AnalysisConfig,
+    netlist: string | null,
+): Promise<SimMeasurement[] | null> {
+    if (netlist === null) return null;
+    // STALE-CSV SAFETY: clear the prior run's artifacts so a no-output run can't read them.
+    await fs.rm(paths.outputPath, { force: true }).catch(() => undefined);
+    await fs.rm(paths.logPath, { force: true }).catch(() => undefined);
+    await fs.writeFile(paths.netlistPath, netlist);
+
+    const { exitCode, timedOut, spawnError } = await executeNgspice(paths.netlistPath);
+    if (spawnError || timedOut || exitCode !== 0) return null; // couldn't evaluate this run → errored
+
+    let csv: string;
+    try {
+        csv = await fs.readFile(paths.outputPath, 'utf-8');
+    } catch {
+        return null; // ngspice exited 0 but emitted no data (degenerate / non-converging) → errored
+    }
+    if (Buffer.byteLength(csv) > config.SIM_MAX_OUTPUT_BYTES) return null;
+
+    const probes = extractProbes(netlist);
+    const result = parseSimulationOutput(csv, probes, analysis.type);
+    // COMPLETENESS GUARD: a run whose transient SILENTLY TRUNCATED (adaptive timestep collapse — a marginal
+    // perturbation can tip a run into non-convergence even when nominal ran fully) would otherwise be measured
+    // over a CLIPPED waveform → a wrong per-run pass/fail. Treat it like any other unrunnable run: null = ERRORED.
+    if (analysis.type === 'tran') {
+        const stop = parseSpiceValue(analysis.stopTime);
+        if (assessTransientCompleteness(result.series, stop.isValid ? stop.value : 0).endedEarly) return null;
+    }
+    // OOM-GUARD: collapse to scalar measurements now; `result.series` is dropped when this returns.
+    const measurements = result.series.map((s) => summarizeSeries(s, analysis.type));
+    await foldListingMetrics(measurements, analysis, paths.logPath);
+    return measurements;
+}
+
+/** ROBUST scalar metrics (THD from fourier, gain from tf) live in the LISTING, not the CSV — fold them onto the
+ *  measurements so a thd/gain criterion is evaluated PER RUN. Read the listing once, only when either is requested. */
+async function foldListingMetrics(measurements: SimMeasurement[], analysis: AnalysisConfig, logPath: string): Promise<void> {
+    const needsListing = (analysis.type === 'tran' && analysis.fourier) || (analysis.type === 'op' && analysis.tf);
+    if (!needsListing) return;
+    const listing = await fs.readFile(logPath, 'utf-8').catch(() => '');
+    if (analysis.type === 'tran') attachFourierThd(measurements, parseFourierLog(listing));
+    // Fallback to the requested tf output so a valid gain still binds if ngspice's `output_impedance_at_<node>`
+    // echo is missing/truncated (else outputNode='' matches no node).
+    if (analysis.type === 'op') attachTransferFunction(measurements, parseTransferFunction(listing, analysis.tf?.output));
+}
+
+const jobPaths = (jobDir: string) => ({
+    netlistPath: path.join(jobDir, 'circuit.cir'),
+    outputPath: path.join(jobDir, 'output.csv'),
+    logPath: path.join(jobDir, 'stdout.log'),
+});
+
 export function makeVariantRunner(
     jobDir: string,
     analysis: AnalysisConfig,
     extraProbes?: string[],
 ): (variant: CircuitJson) => Promise<SimMeasurement[] | null> {
-    const netlistPath = path.join(jobDir, 'circuit.cir');
-    const outputPath = path.join(jobDir, 'output.csv');
-    const logPath = path.join(jobDir, 'stdout.log');
-
+    const paths = jobPaths(jobDir);
     return async (variant: CircuitJson): Promise<SimMeasurement[] | null> => {
-        let netlist: string;
+        let netlist: string | null;
         try {
             netlist = sanitizeNetlist(generateNetlist(variant, analysis, extraProbes?.length ? { extraProbes } : {}), jobDir);
         } catch {
-            return null; // a variant that won't even generate/sanitize — count errored, never crash the batch
+            netlist = null; // a variant that won't even generate/sanitize — count errored, never crash the batch
         }
-        // STALE-CSV SAFETY: clear the prior variant's artifacts so a no-output run can't read them.
-        await fs.rm(outputPath, { force: true }).catch(() => undefined);
-        await fs.rm(logPath, { force: true }).catch(() => undefined);
-        await fs.writeFile(netlistPath, netlist);
+        return executeAndMeasure(paths, analysis, netlist);
+    };
+}
 
-        const { exitCode, timedOut, spawnError } = await executeNgspice(netlistPath);
-        if (spawnError || timedOut || exitCode !== 0) return null; // couldn't evaluate this variant → errored
-
-        let csv: string;
+/**
+ * Temperature-corner runner: the CIRCUIT is fixed; the ambient temperature varies per call, emitted as a
+ * `.temp <T>` card via generateNetlist's `temperatureC`. Matches eda-core's `TempRunner` contract
+ * `(temperatureC) => measurements | null`. Shares the identical execution/parse core with the variant runner.
+ */
+export function makeTempRunner(
+    jobDir: string,
+    circuit: CircuitJson,
+    analysis: AnalysisConfig,
+    extraProbes?: string[],
+): (temperatureC: number) => Promise<SimMeasurement[] | null> {
+    const paths = jobPaths(jobDir);
+    return async (temperatureC: number): Promise<SimMeasurement[] | null> => {
+        let netlist: string | null;
         try {
-            csv = await fs.readFile(outputPath, 'utf-8');
+            netlist = sanitizeNetlist(generateNetlist(circuit, analysis, { ...(extraProbes?.length ? { extraProbes } : {}), temperatureC }), jobDir);
         } catch {
-            return null; // ngspice exited 0 but emitted no data (degenerate / non-converging) → errored
+            netlist = null;
         }
-        if (Buffer.byteLength(csv) > config.SIM_MAX_OUTPUT_BYTES) return null;
-
-        const probes = extractProbes(netlist);
-        const result = parseSimulationOutput(csv, probes, analysis.type);
-        // COMPLETENESS GUARD: a variant whose transient SILENTLY TRUNCATED (adaptive timestep collapse — a
-        // marginal perturbation can tip a variant into non-convergence even when nominal ran fully) would
-        // otherwise be measured over a CLIPPED waveform → a wrong per-variant pass/fail that corrupts the
-        // yield/passAllCorners number. Treat it like any other unrunnable variant: return null = ERRORED
-        // (excluded from the denominator), the SAME completeness rule the nominal runner FAILS a run on.
-        if (analysis.type === 'tran') {
-            const stop = parseSpiceValue(analysis.stopTime);
-            if (assessTransientCompleteness(result.series, stop.isValid ? stop.value : 0).endedEarly) return null;
-        }
-        // OOM-GUARD: collapse to scalar measurements now; `result.series` is dropped when this returns.
-        const measurements = result.series.map((s) => summarizeSeries(s, analysis.type));
-        // ROBUST scalar metrics (THD from fourier, gain from tf) live in the LISTING, not the CSV — fold them
-        // onto each variant's measurements so a thd/gain criterion is evaluated PER VARIANT. Read the listing
-        // once when either is requested.
-        const needsListing = (analysis.type === 'tran' && analysis.fourier) || (analysis.type === 'op' && analysis.tf);
-        if (needsListing) {
-            const listing = await fs.readFile(logPath, 'utf-8').catch(() => '');
-            if (analysis.type === 'tran') attachFourierThd(measurements, parseFourierLog(listing));
-            // Fallback to the requested tf output so a valid gain still binds if ngspice's
-            // `output_impedance_at_<node>` echo is missing/truncated (else outputNode='' matches no node).
-            if (analysis.type === 'op') attachTransferFunction(measurements, parseTransferFunction(listing, analysis.tf?.output));
-        }
-        return measurements;
+        return executeAndMeasure(paths, analysis, netlist);
     };
 }

@@ -208,6 +208,20 @@ export {
     type WorstCaseResult,
 } from './corner';
 
+// Temperature-corner analysis — the AMBIENT-temperature lens (does the spec hold + how do metrics drift across
+// cold/room/hot?), emitted as `.temp <T>` per run. Informational, ambient-only (no self-heating/Tj). Profile-driven
+// range (ROBUSTNESS_PROFILES.tempCornersC). Passive-only circuits are temperature-flat → not-applicable, not passed.
+export {
+    hasTemperatureResponsiveDevice,
+    runTempCorner,
+    TEMP_CORNER_CEILING,
+    type TempRunner,
+    type TempCornerSpec,
+    type TempCornerPoint,
+    type TempMetricDrift,
+    type TempCornerResult,
+} from './tempcorner';
+
 // Analysis — measurement distillation + assertion evaluation (shared by the API AND the Monte-Carlo worker,
 // which is why they live here and not in the API).
 export { summarizeSeries, type SimMeasurement } from './analysis/measurements';

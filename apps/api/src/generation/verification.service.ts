@@ -11,7 +11,7 @@
  */
 import { Injectable, Optional, Logger } from '@nestjs/common';
 import { runErc, generateNetlist, type AnalysisConfig, type SimulationResult, type AcceptanceCriterion, type CornerSpec } from '@circuit-forge/eda-core';
-import { safeValidateCircuitJson, buildElectricalScope, criterionDimension, checkOrientationConsistency, classifyRobustness, type CircuitJson, type ScopeManifest, type OrientationReport, type YieldSummary, type RobustnessTier, type DeterminedEntry } from '@circuit-forge/eda-core';
+import { safeValidateCircuitJson, buildElectricalScope, criterionDimension, checkOrientationConsistency, classifyRobustness, ROBUSTNESS_PROFILES, TEMP_CORNER_CEILING, type CircuitJson, type ScopeManifest, type OrientationReport, type YieldSummary, type RobustnessTier, type DeterminedEntry, type TempCornerSpec, type TempMetricDrift } from '@circuit-forge/eda-core';
 import { CircuitSimulatorService, summarizeSeries, type SimMeasurement, type SimSummary, type ConvergenceReport } from './circuit-simulator.service';
 import { attachGenericModels } from './model-resolution';
 import { computeResistorPower, type PowerReport } from './power-analysis';
@@ -63,6 +63,11 @@ export interface DesignEvidence {
      *  The tier (robust/marginal/at-risk) grades the Wilson-95% lower bound of the pass-rate; it is
      *  INFORMATIONAL and flips `verdict` to 'fail' ONLY when at-risk AND the tolerances were user-specified. */
     montecarlo?: MonteCarloEvidence;
+    /** Ambient temperature-corner robustness (present only when requested + the nominal verdict is 'pass'):
+     *  spec re-evaluated + per-node metric drift across the profile's cold/room/hot set. INFORMATIONAL and
+     *  AMBIENT-ONLY (no self-heating/Tj) — NEVER flips `verdict` in any branch. Temperature-flat circuits are
+     *  disclosed not-applicable, never "passed". */
+    tempcorner?: TempCornerEvidence;
 }
 
 /** Provenance of the tolerances a robustness tier was computed on — disclosed with the tier, and the gate
@@ -116,6 +121,27 @@ export interface WorstCaseEvidence {
     unavailable?: string;
 }
 
+/** The AMBIENT temperature-corner section of a DesignEvidence (see VerificationService.runTempCorner). Informational
+ *  and AMBIENT-ONLY (self-heating / junction-temp Tj NOT modeled — see TEMP_CORNER_CEILING); never gates the verdict. */
+export interface TempCornerEvidence {
+    tempCorner?: {
+        /** False when temperature-flat (passive-only / behavioral subckt) — not-applicable, never "passed". */
+        applicable: boolean;
+        notApplicableReason?: string;
+        temperaturesC: number[];
+        rangeLabel?: string;
+        evaluated: number;
+        passed: number;
+        failed: number;
+        errored: number;
+        hasLimits: boolean;
+        passAllTemps: boolean;
+        drift: TempMetricDrift[];
+    };
+    /** Present instead when the check couldn't be performed (infra / didn't complete). */
+    unavailable?: string;
+}
+
 /** Where a circuit's tolerances came from — the honest basis a robustness tier must disclose (and the gate
  *  keys on): 'user-specified' (the user stated it, gate-eligible), 'catalog' (a datasheet fact from a sourced
  *  part), 'unspecified' (a tolerance with no recorded source), or 'none' (nothing toleranced). Pure. */
@@ -132,26 +158,62 @@ export function deriveToleranceBasis(circuit: CircuitJson): ToleranceBasis {
     return 'mixed';
 }
 
-/** The scope-manifest 'robustness' entry: an MC tier (with its basis + N) when MC ran, a corner run, an
- *  honest "requested but unavailable" when a requested check could not complete, else "not requested". */
-export function robustnessManifestEntry(montecarlo?: MonteCarloEvidence, corner?: WorstCaseEvidence): DeterminedEntry {
+/** The scope-manifest 'robustness' entry — COMPOSES every robustness sub-analysis that ran (Monte-Carlo tier +
+ *  worst-case tolerance corner + ambient temperature corner) into ONE disclosure so none is hidden. (It used to
+ *  early-return on Monte-Carlo, silently dropping a corner/temp-corner that also ran.) Each sub-clause keeps its
+ *  exact prior wording, so an MC-only or corner-only manifest is byte-identical to before; ' | ' joins only when
+ *  more than one ran. gradation:'presence' is set when the ambient temperature corner ran — its ambient-only
+ *  ceiling makes it deliberately shallower than "temperature verified", exactly the presence-depth marker. */
+export function robustnessManifestEntry(montecarlo?: MonteCarloEvidence, corner?: WorstCaseEvidence, tempcorner?: TempCornerEvidence): DeterminedEntry {
+    const clauses: string[] = [];
+    let ranAny = false;
+    let presence = false;
+
+    // Monte-Carlo tier (the only sub-analysis that can gate — its clause reports whether it did).
     if (montecarlo && !montecarlo.unavailable) {
+        ranAny = true;
         const tail = montecarlo.gated
             ? ' — GATED (verdict → fail)'
             : montecarlo.budgetHit
                 ? ' — informational (INCOMPLETE — budget cut)'
                 : ' — informational (does not gate)';
-        return {
-            status: 'run',
-            detail:
-                `${montecarlo.tier} — ${((montecarlo.yieldLowerBound ?? 0) * 100).toFixed(1)}% yield (95% CI lower bound), ` +
+        clauses.push(
+            `${montecarlo.tier} — ${((montecarlo.yieldLowerBound ?? 0) * 100).toFixed(1)}% yield (95% CI lower bound), ` +
                 `${montecarlo.evaluated} Monte-Carlo runs; tolerances: ${montecarlo.toleranceBasis}${tail}`,
-        };
+        );
+    } else if (montecarlo?.unavailable) {
+        clauses.push(`Monte-Carlo requested but unavailable — ${montecarlo.unavailable}`);
     }
-    if (montecarlo?.unavailable) return { status: 'not-run', detail: `Monte-Carlo requested but unavailable — ${montecarlo.unavailable}` };
-    if (corner && !corner.unavailable) return { status: 'run', detail: 'worst-case corner robustness — informational (does not gate the verdict)' };
-    if (corner?.unavailable) return { status: 'not-run', detail: `worst-case corner requested but unavailable — ${corner.unavailable}` };
-    return { status: 'not-run', detail: 'tolerance robustness not requested' };
+
+    // Worst-case ±tolerance corner (informational).
+    if (corner && !corner.unavailable) {
+        ranAny = true;
+        clauses.push('worst-case corner robustness — informational (does not gate the verdict)');
+    } else if (corner?.unavailable) {
+        clauses.push(`worst-case corner requested but unavailable — ${corner.unavailable}`);
+    }
+
+    // Ambient temperature corner (informational, ambient-only ceiling). A temperature-flat circuit is disclosed
+    // not-applicable (NOT "passed"); a run carries the ambient-only ceiling so it can't be over-read.
+    const tc = tempcorner?.tempCorner;
+    if (tc && !tempcorner?.unavailable) {
+        if (!tc.applicable) {
+            clauses.push(`temperature corner: ${tc.notApplicableReason ?? 'not-applicable (temperature-flat circuit)'}`);
+        } else {
+            ranAny = true;
+            presence = true;
+            const range = tc.rangeLabel ?? `${tc.temperaturesC.join(' / ')} C`;
+            const outcome = tc.hasLimits ? (tc.passAllTemps ? 'spec held at every temperature' : `spec violated at ${tc.failed} temperature(s)`) : 'drift-only (no spec limits supplied)';
+            clauses.push(`temperature corners (${range}) — ${outcome}; informational (does not gate). ${TEMP_CORNER_CEILING}`);
+        }
+    } else if (tempcorner?.unavailable) {
+        clauses.push(`temperature corner requested but unavailable — ${tempcorner.unavailable}`);
+    }
+
+    if (clauses.length === 0) return { status: 'not-run', detail: 'tolerance robustness not requested' };
+    const entry: DeterminedEntry = { status: ranAny ? 'run' : 'not-run', detail: clauses.join(' | ') };
+    if (presence) entry.gradation = 'presence';
+    return entry;
 }
 
 @Injectable()
@@ -172,7 +234,7 @@ export class VerificationService {
         analysisConfig?: AnalysisConfig,
         assertions: AssertionDto[] = [],
         userId?: string,
-        robustness?: { corner?: boolean; maxCorners?: number; montecarlo?: boolean; n?: number; seed?: number; profile?: RobustnessProfile },
+        robustness?: { corner?: boolean; maxCorners?: number; montecarlo?: boolean; n?: number; seed?: number; profile?: RobustnessProfile; temperature?: boolean },
     ): Promise<DesignEvidence> {
         // Validate ONCE up front and reuse: the nets let evaluateAssertions resolve a criterion that names a
         // net ("v(out)") to the node the generator emitted from that net's ID — so the check still matches when
@@ -232,7 +294,7 @@ export class VerificationService {
             validCircuit.success ? (validCircuit.data as CircuitJson) : undefined,
         );
         verdict = rob.verdict;
-        const { robustnessEvidence, montecarlo, robustnessManifest } = rob;
+        const { robustnessEvidence, montecarlo, tempcorner, robustnessManifest } = rob;
 
         return {
             verdict,
@@ -254,6 +316,7 @@ export class VerificationService {
             ...(power ? { power } : {}),
             ...(robustnessEvidence ? { robustness: robustnessEvidence } : {}),
             ...(montecarlo ? { montecarlo } : {}),
+            ...(tempcorner ? { tempcorner } : {}),
             // Scope disclosure fragment. Reports what THIS verdict actually ran: sim run-state (only 'ok'
             // counts as run — a skipped or failed run produced no usable simulation, so it is disclosed
             // not-run, never a false "Simulation ran"), assertion COVERAGE (which quantities the supplied
@@ -358,6 +421,40 @@ export class VerificationService {
     }
 
     /**
+     * Enqueue an ambient temperature-corner batch on the worker, poll it, and distill metrics.tempCorner into the
+     * evidence's tempcorner section. Mirrors runCornerRobustness: never throws — an infra/queue failure returns an
+     * `unavailable` reason, never a design failure. A not-applicable result (temperature-flat circuit) is a VALID
+     * result (surfaced with its reason), not an unavailability. INFORMATIONAL — the caller never gates on it.
+     */
+    private async runTempCorner(
+        circuit: unknown,
+        analysis: AnalysisConfig,
+        assertions: AssertionDto[],
+        spec: TempCornerSpec,
+        userId: string,
+    ): Promise<TempCornerEvidence> {
+        try {
+            const { jobId } = await this.simulation!.createTempCornerJob(
+                circuit as CircuitJson,
+                analysis as unknown as Record<string, unknown>,
+                assertions as unknown as AcceptanceCriterion[],
+                spec,
+                userId,
+            );
+            const { status, metrics } = await this.pollJob(jobId, userId);
+            if (status !== 'SUCCEEDED') {
+                return { unavailable: `temperature-corner check did not complete (${status.toLowerCase()}) — try again` };
+            }
+            const tc = (metrics as { tempCorner?: TempCornerEvidence['tempCorner'] } | null | undefined)?.tempCorner;
+            if (!tc) return { unavailable: 'temperature-corner check produced no result' };
+            return { tempCorner: tc };
+        } catch (e) {
+            this.logger.error(`temperature-corner run failed: ${e instanceof Error ? e.message : e}`);
+            return { unavailable: 'temperature-corner check could not be run (worker/queue unavailable) — try again' };
+        }
+    }
+
+    /**
      * Run the requested INFORMATIONAL robustness checks on a nominally-passing design (worst-case corner +
      * Monte-Carlo tolerance-yield tier) and return the evidence, the disclosure manifest entry, and the
      * (possibly gate-flipped) verdict. Only a COMPLETE Monte-Carlo at-risk whose tolerance spread the user
@@ -369,10 +466,10 @@ export class VerificationService {
         analysis: AnalysisConfig,
         assertions: AssertionDto[],
         nominalVerdict: DesignEvidence['verdict'],
-        robustness: { corner?: boolean; maxCorners?: number; montecarlo?: boolean; n?: number; seed?: number; profile?: RobustnessProfile } | undefined,
+        robustness: { corner?: boolean; maxCorners?: number; montecarlo?: boolean; n?: number; seed?: number; profile?: RobustnessProfile; temperature?: boolean } | undefined,
         userId: string | undefined,
         circuitJson: CircuitJson | undefined,
-    ): Promise<{ verdict: DesignEvidence['verdict']; robustnessEvidence?: WorstCaseEvidence; montecarlo?: MonteCarloEvidence; robustnessManifest: DeterminedEntry }> {
+    ): Promise<{ verdict: DesignEvidence['verdict']; robustnessEvidence?: WorstCaseEvidence; montecarlo?: MonteCarloEvidence; tempcorner?: TempCornerEvidence; robustnessManifest: DeterminedEntry }> {
         let verdict = nominalVerdict;
 
         let robustnessEvidence: WorstCaseEvidence | undefined;
@@ -398,7 +495,19 @@ export class VerificationService {
             }
         }
 
-        return { verdict, robustnessEvidence, montecarlo, robustnessManifest: robustnessManifestEntry(montecarlo, robustnessEvidence) };
+        // Ambient TEMPERATURE corner (INFORMATIONAL). It NEVER touches `verdict` in ANY branch — the ambient-only
+        // ceiling (no self-heating/Tj) makes gating on it unjustifiable, so passAllTemps/failed are disclosed only.
+        // The temperature range comes from the SAME robustness profile (one grade concept — not a separate temp grade).
+        let tempcorner: TempCornerEvidence | undefined;
+        if (robustness?.temperature && verdict === 'pass' && this.simulation && userId && circuitJson) {
+            const profileName = robustness.profile ?? 'consumer';
+            const bars = ROBUSTNESS_PROFILES[profileName] ?? ROBUSTNESS_PROFILES.consumer!;
+            const temperaturesC = [...bars.tempCornersC];
+            const spec: TempCornerSpec = { temperaturesC, rangeLabel: `${profileName} ${temperaturesC.join(' / ')} C` };
+            tempcorner = await this.runTempCorner(circuit, analysis, assertions, spec, userId);
+        }
+
+        return { verdict, robustnessEvidence, montecarlo, tempcorner, robustnessManifest: robustnessManifestEntry(montecarlo, robustnessEvidence, tempcorner) };
     }
 
     /**

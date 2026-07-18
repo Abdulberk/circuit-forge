@@ -93,6 +93,11 @@ export class RobustnessDto {
     @IsIn(['consumer', 'automotive', 'medical'])
     @IsOptional()
     profile?: 'consumer' | 'automotive' | 'medical';
+
+    @ApiPropertyOptional({ description: 'Re-check the spec and report per-node metric drift across the profile\'s ambient temperature set (consumer 0/25/70, automotive -40/25/125, medical -40/25/85 °C). INFORMATIONAL and AMBIENT-ONLY (no self-heating/Tj) — never gates the verdict. Temperature-flat circuits (passive-only / behavioral subckt) are reported not-applicable. Runs only when the nominal verdict is "pass".' })
+    @IsBoolean()
+    @IsOptional()
+    temperature?: boolean;
 }
 
 export class VerifyDesignDto {
