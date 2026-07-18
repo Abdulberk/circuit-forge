@@ -10,10 +10,11 @@ import { logger } from '../logger';
 import { runSimulation, type SimulationJobResult } from './runner';
 import { runMonteCarloBatch } from './montecarlo-runner';
 import { runCornerBatch } from './corner-runner';
+import { runTempCornerBatch } from './temp-corner-runner';
 import { classifyJobOutcome, isFinalAttempt, deriveFailureStatus, buildFailureMetrics, buildSuccessMetrics } from './outcome';
 import { downloadFile, uploadJsonResult } from '../storage/s3-client';
 import { downsampleResult } from '@circuit-forge/eda-core';
-import type { CircuitJson, AnalysisConfig, AcceptanceCriterion, CornerSpec } from '@circuit-forge/eda-core';
+import type { CircuitJson, AnalysisConfig, AcceptanceCriterion, CornerSpec, TempCornerSpec } from '@circuit-forge/eda-core';
 import { Prisma } from '@prisma/client';
 import { recordSim } from '../observability/telemetry';
 import { propagation, context as otelContext, trace, SpanStatusCode } from '@opentelemetry/api';
@@ -45,9 +46,10 @@ export interface SimulationJobPayload {
      *  created it, so a verify-design / simulate trace spans API → queue → worker end-to-end. */
     otel?: Record<string, string>;
     /** Batch robustness job (skips the normal single-sim path): 'monte-carlo' = N random tolerance draws →
-     *  yield (handleMonteCarlo); 'corner' = the 2^k deterministic ±tol corners → worst-case (handleCorner).
-     *  Both are informational robustness signals — never a design failure. */
-    mode?: 'monte-carlo' | 'corner';
+     *  yield (handleMonteCarlo); 'corner' = the 2^k deterministic ±tol corners → worst-case (handleCorner);
+     *  'temp-corner' = ambient cold/room/hot re-evaluation + metric drift (handleTempCorner). All are
+     *  informational robustness signals — never a design failure. */
+    mode?: 'monte-carlo' | 'corner' | 'temp-corner';
     montecarlo?: {
         circuit: CircuitJson;
         analysis: AnalysisConfig;
@@ -60,6 +62,12 @@ export interface SimulationJobPayload {
         analysis: AnalysisConfig;
         criteria: AcceptanceCriterion[];
         spec: CornerSpec;
+    };
+    tempCorner?: {
+        circuit: CircuitJson;
+        analysis: AnalysisConfig;
+        criteria: AcceptanceCriterion[];
+        spec: TempCornerSpec;
     };
 }
 
@@ -164,6 +172,16 @@ async function processJob(job: Job<SimulationJobPayload>): Promise<void> {
                 if (job.data.mode === 'corner' && job.data.corner) {
                     await handleCorner(job, modelFiles.length > 0 ? modelFiles : undefined);
                     span.setAttribute('sim.outcome', 'worstcase');
+                    span.setStatus({ code: SpanStatusCode.OK });
+                    return;
+                }
+
+                // Ambient TEMPERATURE-CORNER job: re-evaluate the criteria + capture per-node metric drift across
+                // the profile's cold/room/hot set. Same posture as the other robustness batches — persisted
+                // SUCCEEDED with metrics.tempCorner (or FAILED+infra → inconclusive); informational, never gates.
+                if (job.data.mode === 'temp-corner' && job.data.tempCorner) {
+                    await handleTempCorner(job, modelFiles.length > 0 ? modelFiles : undefined);
+                    span.setAttribute('sim.outcome', 'tempcorner');
                     span.setStatus({ code: SpanStatusCode.OK });
                     return;
                 }
@@ -354,6 +372,59 @@ async function handleCorner(
     } catch (error) {
         const msg = error instanceof Error ? error.message : String(error);
         logger.error({ jobId, error: msg }, 'Worst-case corner batch failed');
+        recordSim({ status: 'failed' });
+        await prisma.simulationJob.update({
+            where: { id: jobId },
+            data: {
+                status: 'FAILED',
+                finishedAt: new Date(),
+                metrics: { error: msg, failureClass: 'infra' } as unknown as Prisma.InputJsonValue,
+            },
+        });
+    }
+}
+
+/**
+ * Ambient temperature-corner job: re-evaluate the criteria and capture per-node metric drift across the profile's
+ * cold/room/hot set, persisting the result in metrics.tempCorner. Same contract as handleCorner — informational,
+ * never retried, never a design failure; runTempCornerBatch never throws on a sim fault (a dead temperature is
+ * counted `errored`), so the catch is a defensive net that persists FAILED+infra → the API treats it inconclusive.
+ */
+async function handleTempCorner(
+    job: Job<SimulationJobPayload>,
+    modelFiles?: Array<{ name: string; content: Buffer }>,
+): Promise<void> {
+    const { jobId } = job.data;
+    const tc = job.data.tempCorner!;
+    try {
+        const result = await runTempCornerBatch({ jobId, circuit: tc.circuit, analysis: tc.analysis, criteria: tc.criteria, spec: tc.spec, modelFiles });
+        recordSim({ status: 'succeeded', durationMs: result.runtimeMs });
+        await prisma.simulationJob.update({
+            where: { id: jobId },
+            data: {
+                status: 'SUCCEEDED',
+                finishedAt: new Date(),
+                metrics: {
+                    runtimeMs: result.runtimeMs,
+                    tempCorner: {
+                        applicable: result.applicable,
+                        notApplicableReason: result.notApplicableReason,
+                        temperaturesC: result.temperaturesC,
+                        rangeLabel: result.rangeLabel,
+                        evaluated: result.evaluated,
+                        passed: result.passed,
+                        failed: result.failed,
+                        errored: result.errored,
+                        hasLimits: result.hasLimits,
+                        passAllTemps: result.passAllTemps,
+                        drift: result.drift,
+                    },
+                } as unknown as Prisma.InputJsonValue,
+            },
+        });
+    } catch (error) {
+        const msg = error instanceof Error ? error.message : String(error);
+        logger.error({ jobId, error: msg }, 'Temperature-corner batch failed');
         recordSim({ status: 'failed' });
         await prisma.simulationJob.update({
             where: { id: jobId },

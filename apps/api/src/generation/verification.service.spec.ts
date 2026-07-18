@@ -2,7 +2,7 @@
  * VerificationService — assertion evaluation + verdict logic. CircuitSimulatorService is stubbed so
  * the suite is deterministic and ngspice-free; the assertion math and verdict rules are the contract.
  */
-import { VerificationService, isCurrentProbe, deriveToleranceBasis } from './verification.service';
+import { VerificationService, isCurrentProbe, deriveToleranceBasis, robustnessManifestEntry } from './verification.service';
 import type { CircuitSimulatorService, SimSummary } from './circuit-simulator.service';
 import type { SimulationService } from '../simulation/simulation.service';
 import { sanitizeNodeName, type CircuitJson } from '@circuit-forge/eda-core';
@@ -221,10 +221,11 @@ function makeWorkerService(opts: { status?: string; metrics?: unknown; result?: 
     }));
     const createCornerJob = jest.fn(async () => ({ jobId: 'corner-1' }));
     const createMonteCarloJob = jest.fn(async () => ({ jobId: 'mc-1' }));
-    const simulation = { createQuickSim, getStatus, getResult, createCornerJob, createMonteCarloJob } as unknown as SimulationService;
+    const createTempCornerJob = jest.fn(async () => ({ jobId: 'temp-1' }));
+    const simulation = { createQuickSim, getStatus, getResult, createCornerJob, createMonteCarloJob, createTempCornerJob } as unknown as SimulationService;
     const simulateWithRemedies = jest.fn(); // must NOT be called on the worker path
     const simulator = { simulateWithRemedies } as unknown as CircuitSimulatorService;
-    return { svc: new VerificationService(simulator, simulation), createQuickSim, getStatus, getResult, createCornerJob, createMonteCarloJob, simulateWithRemedies };
+    return { svc: new VerificationService(simulator, simulation), createQuickSim, getStatus, getResult, createCornerJob, createMonteCarloJob, createTempCornerJob, simulateWithRemedies };
 }
 
 describe('VerificationService — worker delegation (prod path, userId present)', () => {
@@ -632,4 +633,64 @@ describe('deriveToleranceBasis — the honest provenance the tier discloses + th
     it("'mixed' when user + catalog tolerances coexist (NOT user-specified — the at-risk isn't purely user-caused)", () =>
         expect(deriveToleranceBasis(circ([comp({ tolerance: 0.05, toleranceSource: 'catalog' }), comp({ id: 'r2', tolerance: 0.01, toleranceSource: 'user' })]))).toBe('mixed'));
     it("'unspecified' when a tolerance carries no recorded source", () => expect(deriveToleranceBasis(circ([comp({ tolerance: 0.05 })]))).toBe('unspecified'));
+});
+
+describe('robustnessManifestEntry — composes every robustness sub-analysis (no early-return drop)', () => {
+    const MC = { tier: 'robust', yieldLowerBound: 0.995, evaluated: 500, toleranceBasis: 'user-specified' } as never;
+    const CORNER = { worstCase: { componentsCornered: ['R1'], omitted: [], evaluated: 2, passed: 2, failed: 0, errored: 0, passAllCorners: true, worstCorners: [] } } as never;
+    const tempRun = (over: Record<string, unknown> = {}) =>
+        ({ tempCorner: { applicable: true, temperaturesC: [0, 25, 70], rangeLabel: 'consumer 0 / 25 / 70 C', evaluated: 3, passed: 3, failed: 0, errored: 0, hasLimits: true, passAllTemps: true, drift: [], ...over } }) as never;
+
+    it('MC-only detail is BYTE-IDENTICAL to the pre-compose format (zero regression)', () => {
+        const e = robustnessManifestEntry(MC);
+        expect(e.status).toBe('run');
+        expect(e.detail).toBe('robust — 99.5% yield (95% CI lower bound), 500 Monte-Carlo runs; tolerances: user-specified — informational (does not gate)');
+        expect(e.gradation).toBeUndefined();
+        expect(e.detail).not.toContain(' | '); // a single clause never joins
+    });
+
+    it('corner-only detail is BYTE-IDENTICAL to the pre-compose format', () => {
+        const e = robustnessManifestEntry(undefined, CORNER);
+        expect(e.status).toBe('run');
+        expect(e.detail).toBe('worst-case corner robustness — informational (does not gate the verdict)');
+        expect(e.detail).not.toContain(' | ');
+    });
+
+    it('all THREE ran → none is dropped (MC + corner + temp all present), joined by " | "', () => {
+        const e = robustnessManifestEntry(MC, CORNER, tempRun());
+        const clauses = e.detail!.split(' | ');
+        expect(clauses).toHaveLength(3);
+        expect(e.detail).toContain('Monte-Carlo runs'); // MC survived (the early-return bug would have hidden the rest)
+        expect(e.detail).toContain('worst-case corner robustness'); // corner survived
+        expect(e.detail).toContain('temperature corners'); // temp survived
+        expect(e.detail).toContain('self-heating'); // the ambient-only ceiling is disclosed
+        expect(e.gradation).toBe('presence'); // a temperature corner ran → presence-depth marker
+    });
+
+    it('a temperature corner that is NOT-APPLICABLE is disclosed but does not count as "run" on its own', () => {
+        const e = robustnessManifestEntry(undefined, undefined, tempRun({ applicable: false, notApplicableReason: 'not-applicable — no temperature-responsive device (passive-only)', hasLimits: false, passAllTemps: false }));
+        expect(e.status).toBe('not-run'); // not-applicable alone is not a run
+        expect(e.detail).toContain('not-applicable');
+        expect(e.gradation).toBeUndefined();
+    });
+
+    it('nothing requested → "not requested" (unchanged)', () => {
+        expect(robustnessManifestEntry()).toEqual({ status: 'not-run', detail: 'tolerance robustness not requested' });
+    });
+});
+
+describe('VerificationService — temperature corner is INFORMATIONAL (never gates)', () => {
+    it('a FAILED temperature corner does NOT flip the verdict; the result is surfaced', async () => {
+        const tempCorner = { applicable: true, temperaturesC: [0, 25, 70], rangeLabel: 'consumer 0 / 25 / 70 C', evaluated: 3, passed: 2, failed: 1, errored: 0, hasLimits: true, passAllTemps: false, drift: [] };
+        const { svc, createTempCornerJob } = makeWorkerService({ metrics: { tempCorner } });
+        const ev = await svc.verify(DIVIDER, { type: 'op' }, [A('out', 'final', 'approx', 5.0, 0.1)], 'user-1', { temperature: true });
+        expect(createTempCornerJob).toHaveBeenCalledTimes(1);
+        expect(ev.verdict).toBe('pass'); // nominal passed; a failing AMBIENT-only temperature corner NEVER gates
+        expect(ev.tempcorner?.tempCorner?.failed).toBe(1);
+        expect(ev.tempcorner?.tempCorner?.passAllTemps).toBe(false);
+        // and the scope manifest discloses it with the ambient-only ceiling
+        const rob = ev.scope.checks.find((c) => c.id === 'robustness');
+        expect(rob?.detail).toContain('self-heating');
+        expect(rob?.gradation).toBe('presence');
+    });
 });

@@ -231,13 +231,17 @@ export interface RobustnessBars {
     robustMin: number;
     /** Wilson-lower-bound yield at/above which it is "marginal" (works but below the production bar). */
     marginalMin: number;
+    /** Ambient temperature-corner points (°C) [cold, room, hot] for this grade — the SAME profile drives BOTH
+     *  the tolerance-yield bars and the temperature range, so there is ONE grade concept, not two (a separate
+     *  "temperature grade" would confuse which knob does what). Consumed by the temperature-corner axis. */
+    tempCornersC: readonly number[];
 }
 
 /** Yield bars per domain — DEFAULTS, configurable; customer/contract requirements override (Cpk 1.33 vs 1.67). */
 export const ROBUSTNESS_PROFILES: Record<string, RobustnessBars> = {
-    consumer: { robustMin: 0.99, marginalMin: 0.9 }, // general electronics "capable" bar (≈ Cpk 1.33 / 4σ)
-    automotive: { robustMin: 0.999, marginalMin: 0.99 }, // safety/critical (≈ Cpk 1.67 / 5σ, AIAG PPAP / IATF 16949)
-    medical: { robustMin: 0.999, marginalMin: 0.99 },
+    consumer: { robustMin: 0.99, marginalMin: 0.9, tempCornersC: [0, 25, 70] }, // general "capable" bar (≈ Cpk 1.33 / 4σ); commercial 0–70 °C
+    automotive: { robustMin: 0.999, marginalMin: 0.99, tempCornersC: [-40, 25, 125] }, // safety/critical (≈ Cpk 1.67 / 5σ, IATF 16949); AEC-Q100 grade 1
+    medical: { robustMin: 0.999, marginalMin: 0.99, tempCornersC: [-40, 25, 85] }, // industrial-equivalent -40–85 °C
 };
 
 export interface RobustnessVerdict {

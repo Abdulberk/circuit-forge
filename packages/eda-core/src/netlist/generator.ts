@@ -36,6 +36,14 @@ export interface NetlistOptions {
      * domain's supply (default 5 V if none). Set explicitly to pin a logic family (e.g. 3.3 for 3V3 CMOS).
      */
     logicVoltage?: number;
+    /**
+     * Ambient simulation temperature (°C) emitted as a `.temp <T>` card — the temperature-corner axis. ngspice
+     * recomputes device-model temperature physics (semiconductor IS/BF/mobility drift) at this single uniform
+     * temperature. AMBIENT ONLY: it models board/ambient temperature, NOT device self-heating (junction-temp
+     * rise Tj = Ta + P·Rth). Omit for the ngspice default TNOM (27 °C). A passive-only circuit is
+     * temperature-flat here (no TC1/TC2 emitted), so this is a physical no-op there.
+     */
+    temperatureC?: number;
 }
 
 /**
@@ -431,6 +439,15 @@ export function generateNetlist(
     if (optionTokens.length > 0) {
         lines.push('* Options');
         lines.push(`.options ${optionTokens.join(' ')}`);
+        lines.push('');
+    }
+
+    // `.temp` card: ambient simulation temperature for a temperature-corner run (AMBIENT ONLY — ngspice
+    // recomputes device-model temp physics; it does NOT model self-heating/Tj). Guarded to a finite number
+    // because it lands verbatim on a netlist line (a non-numeric value would be netlist injection).
+    if (options.temperatureC !== undefined && Number.isFinite(options.temperatureC)) {
+        lines.push('* Temperature corner (ambient)');
+        lines.push(`.temp ${options.temperatureC}`);
         lines.push('');
     }
 
