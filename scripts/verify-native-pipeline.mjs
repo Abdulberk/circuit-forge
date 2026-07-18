@@ -135,5 +135,29 @@ if (existsSync(bodied)) {
     fail(`no bodied board fixture at ${bodied} — run \`pnpm test:layout\` (Docker) once to generate it`);
 }
 
+// 4. exportGerbers — the DELIVERED fab bundle. It must be re-exported from the DRC'd board WITH the GND pour
+//    refilled into the copper (checked == delivered), carry the full layer set + drill, and NOT leak the
+//    Gerber Job File (.gbrjob) in as a bogus 'job' layer. This is the harness's live consumer of the runner's
+//    exportGerbers — the exact path processor.ts delivers — so a pour-delivery regression turns the harness red.
+try {
+    const cleanTxt = readFileSync(need(clean), 'utf8');
+    const hasZone = cleanTxt.includes('(zone ') && cleanTxt.includes('(net_name "GND")');
+    const g = await kicad.exportGerbers(cleanTxt);
+    const keys = Object.keys(g.layers);
+    if (!keys.includes('F_Cu') || !keys.includes('B_Cu') || !keys.includes('Edge_Cuts') || !g.drill.length) {
+        fail(`exportGerbers: incomplete bundle — layers=${keys.join(',')} drillBytes=${g.drill.length}`);
+    } else {
+        ok(`exportGerbers → ${keys.length} layers + drill (${g.drill.length}B)`);
+    }
+    if (keys.includes('job')) fail("exportGerbers: .gbrjob leaked into layers as 'job' — layers must be a pure layer→gerber map");
+    else ok('exportGerbers: no .gbrjob pseudo-layer (layers stays a pure layer→gerber map)');
+    if (hasZone) {
+        if ((g.layers['B_Cu'] ?? '').includes('G36')) ok('exportGerbers: delivered B.Cu carries the GND pour (G36 region) — checked == delivered');
+        else fail('exportGerbers: B.Cu has NO filled region despite an injected GND zone — pour missing from the DELIVERED gerbers');
+    }
+} catch (e) {
+    fail(`exportGerbers threw — ${String(e).slice(0, 300)}`);
+}
+
 console.log(failures === 0 ? '\n✅ native-pipeline VERIFIED' : `\n❌ native-pipeline FAILED (${failures})`);
 process.exit(failures === 0 ? 0 : 1);

@@ -5,11 +5,12 @@
  *   • notaryDrc(pcb,pro)  → boolean accept-oracle for pcb-core's margin-retry (exit-code-violations)
  *   • drcReport(pcb,pro)  → parsed report (violations + unconnected) for airwires + categorized checks
  *   • exportGlb(pcb)      → 3D GLB bytes (kicad-cli export glb --subst-models)
+ *   • exportGerbers(pcb)  → delivered fab gerbers+drill from the DRC'd board (--check-zones refills the pour)
  *
  * Env (pcb-worker image): KICAD_CLI (default "kicad-cli").
  */
 import { execFileSync } from 'node:child_process';
-import { writeFileSync, readFileSync, existsSync, mkdtempSync, rmSync } from 'node:fs';
+import { writeFileSync, readFileSync, readdirSync, existsSync, mkdirSync, mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -62,5 +63,26 @@ export function makeNativeKicad(opts = {}) {
             return readFileSync(out);
         });
 
-    return { notaryDrc, drcReport, exportGlb };
+    /** Delivered fab gerbers + drill, exported from the DRC'd board. --check-zones refills the injected GND
+     *  pour INTO the copper (without it the B.Cu gerber ships 0 filled regions) → { layers, drill }. */
+    const exportGerbers = async (kicadPcb) =>
+        withBoard(kicadPcb, null, (dir) => {
+            const out = join(dir, 'gbr');
+            mkdirSync(out);
+            execFileSync(cli, ['pcb', 'export', 'gerbers', '--check-zones', '--output', out, join(dir, 'b.kicad_pcb')],
+                { stdio: 'pipe', timeout: timeoutMs });
+            execFileSync(cli, ['pcb', 'export', 'drill', '--output', `${out}/`, join(dir, 'b.kicad_pcb')],
+                { stdio: 'pipe', timeout: timeoutMs });
+            const layers = {};
+            let drill = '';
+            for (const f of readdirSync(out)) {
+                if (f.endsWith('.drl')) { drill = readFileSync(join(out, f), 'utf8'); continue; }
+                // .gbrjob is JSON CAM metadata, not a layer — keep `layers` a pure layer→gerber map.
+                if (f.endsWith('.gbrjob')) continue;
+                layers[f.replace(/^b-/, '').replace(/\.[^.]+$/, '')] = readFileSync(join(out, f), 'utf8');
+            }
+            return { layers, drill };
+        });
+
+    return { notaryDrc, drcReport, exportGlb, exportGerbers };
 }

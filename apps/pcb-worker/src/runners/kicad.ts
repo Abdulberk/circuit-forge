@@ -1,13 +1,15 @@
 /**
  * Native kicad-cli runner (TS port of scripts/lib/kicad-native.mjs — proven in M2/M3a). Provides the
- * three things the LayoutJob needs: notaryDrc (bool accept-oracle for the margin-retry), drcReport
- * (parsed, for airwires + categorized checks) and exportGlb (3D bodies via --subst-models).
+ * four things the LayoutJob needs: notaryDrc (bool accept-oracle for the margin-retry), drcReport
+ * (parsed, for airwires + categorized checks), exportGlb (3D bodies via --subst-models) and exportGerbers
+ * (the DELIVERED fab gerbers, exported from the DRC-verified board with the GND pour refilled in).
  */
 import { execFile } from 'node:child_process';
-import { writeFileSync, readFileSync, existsSync, mkdtempSync, rmSync } from 'node:fs';
+import { writeFileSync, readFileSync, readdirSync, existsSync, mkdirSync, mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { promisify } from 'node:util';
+import type { GerberOutputs } from '@circuit-forge/pcb-core';
 
 const execFileAsync = promisify(execFile);
 /** kicad-cli progress/warnings go to stdout/stderr which we never read (results are files); a chatty run can
@@ -34,6 +36,7 @@ export interface NativeKicad {
     notaryDrc: (kicadPcb: string, kicadPro?: string) => Promise<boolean>;
     drcReport: (kicadPcb: string, kicadPro?: string) => Promise<KicadDrcJson>;
     exportGlb: (kicadPcb: string) => Promise<Buffer>;
+    exportGerbers: (kicadPcb: string) => Promise<GerberOutputs>;
 }
 
 export function makeNativeKicad(opts: KicadOpts = {}): NativeKicad {
@@ -122,5 +125,43 @@ export function makeNativeKicad(opts: KicadOpts = {}): NativeKicad {
             return readFileSync(out);
         });
 
-    return { notaryDrc, drcReport, exportGlb };
+    // The DELIVERED fab gerbers + drill, exported from the SAME .kicad_pcb the notary DRC'd — so what ships
+    // IS the verified board (checked == delivered). `--check-zones` refills the injected GND pour INTO the
+    // copper before plotting: proven 18 Tem 2026 that WITHOUT it the B.Cu gerber carries 0 filled regions
+    // (the advertised ground plane silently absent from delivery), WITH it the pour lands as real copper.
+    // pcb-core's own generateGerbers plots the routed SOUP, which has no zone element at all — hence this
+    // authoritative re-export in the worker (where kicad-cli lives) rather than shipping the pourless soup.
+    const exportGerbers = async (kicadPcb: string): Promise<GerberOutputs> =>
+        withBoard(kicadPcb, undefined, async (dir) => {
+            const out = join(dir, 'gbr');
+            mkdirSync(out);
+            await execFileAsync(
+                cli,
+                ['pcb', 'export', 'gerbers', '--check-zones', '--output', out, join(dir, 'b.kicad_pcb')],
+                { timeout: timeoutMs, maxBuffer: MAX_BUFFER },
+            );
+            await execFileAsync(
+                cli,
+                ['pcb', 'export', 'drill', '--output', `${out}/`, join(dir, 'b.kicad_pcb')],
+                { timeout: timeoutMs, maxBuffer: MAX_BUFFER },
+            );
+            const layers: Record<string, string> = {};
+            let drill = '';
+            for (const f of readdirSync(out)) {
+                if (f.endsWith('.drl')) {
+                    drill = readFileSync(join(out, f), 'utf8');
+                    continue;
+                }
+                // The Gerber Job File (.gbrjob) is JSON CAM metadata, NOT a copper/technical layer — keep
+                // `layers` a pure layer→gerber map (the GerberOutputs contract) and skip it rather than key
+                // its JSON as a bogus 'job' layer (which a fab consumer would materialize as job.gbr).
+                if (f.endsWith('.gbrjob')) continue;
+                // Key by clean layer name (drop the temp board basename prefix + extension) — the same
+                // Record<layer, content> shape the delivery already used from circuit-json-to-gerber.
+                layers[f.replace(/^b-/, '').replace(/\.[^.]+$/, '')] = readFileSync(join(out, f), 'utf8');
+            }
+            return { layers, drill };
+        });
+
+    return { notaryDrc, drcReport, exportGlb, exportGerbers };
 }
