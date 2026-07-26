@@ -1,0 +1,16 @@
+# Line endings are a repository-level contract, not a per-developer setting.
+#
+# Why this file exists: the repo is developed on Windows but EVERY runtime target is Linux —
+# the Docker images, the CI runners, and the ngspice/freerouting/kicad-cli containers. Without
+# this, `core.autocrlf` decides per machine, and a CRLF shell script copied into an image dies
+# with `bad interpreter: /bin/bash^M` (infra/docker/api-dev-entrypoint.sh and
+# scripts/worker-container-smoke.sh are both COPYed into images). It also keeps the working tree
+# consistent with .prettierrc's `endOfLine: lf`, so `format:check` means the same thing everywhere.
+#
+# The index is already 100% LF, so this normalizes the WORKING TREE only — it produces no diff.
+* text=auto eol=lf
+
+# Binary — the only non-text assets tracked here (3D board bodies + one HDR env map).
+# Declared so git never applies eol conversion or attempts a text diff on them.
+*.glb binary
+*.exr binary
