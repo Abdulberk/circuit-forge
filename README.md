@@ -9,6 +9,8 @@ Every verdict is backed by measured evidence — never by a model's say-so.
 [![PCB quality gate](https://github.com/Abdulberk/circuit-forge/actions/workflows/pcb-gate.yml/badge.svg)](https://github.com/Abdulberk/circuit-forge/actions/workflows/pcb-gate.yml)
 [![Release](https://img.shields.io/github/v/release/Abdulberk/circuit-forge?include_prereleases&label=release)](https://github.com/Abdulberk/circuit-forge/releases)
 [![npm](https://img.shields.io/npm/v/%40circuit-forge%2Feda-core?label=eda-core&logo=npm&color=CB3837)](https://www.npmjs.com/package/@circuit-forge/eda-core)
+
+[![ngspice](https://img.shields.io/badge/ngspice-real%20engine%2C%20in%20CI-0A7E8C)](#-tested-against-real-ngspice--in-ci)
 ![Node](https://img.shields.io/badge/node-%E2%89%A5%2020-5FA04E?logo=node.js&logoColor=white)
 ![pnpm](https://img.shields.io/badge/pnpm-8-F69220?logo=pnpm&logoColor=white)
 ![TypeScript](https://img.shields.io/badge/TypeScript-strict-3178C6?logo=typescript&logoColor=white)
