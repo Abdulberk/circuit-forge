@@ -4,10 +4,12 @@
 import { Controller, Get, Post, Body, Param, ParseUUIDPipe, Query, UseGuards, BadRequestException } from '@nestjs/common';
 import { ApiTags, ApiOperation, ApiBearerAuth, ApiQuery } from '@nestjs/swagger';
 import { Throttle } from '@nestjs/throttler';
-import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
+
 import { CurrentUser } from '../auth/decorators/current-user.decorator';
-import { SimulationService } from './simulation.service';
+import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
+
 import { CreateSimulationDto, QuickSimulationDto } from './dto';
+import { SimulationService } from './simulation.service';
 
 @ApiTags('simulation')
 @ApiBearerAuth()

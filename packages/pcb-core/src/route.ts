@@ -6,8 +6,8 @@
  * Golden-fixture + live-DRC coverage runs in the `pnpm test:layout` harness (the ESM deps keep these
  * out of jest).
  */
-import type { TscElement } from './parity';
 import { JLC_FAB_PROFILE, type FabProfile } from './fab-profile';
+import type { TscElement } from './parity';
 
 /**
  * tscircuit circuit-json (traces stripped by the caller for a fresh route) -> Specctra DSN, with the

@@ -1,5 +1,6 @@
-import { ComponentMapper } from './component-mapper';
 import type { CatalogPart } from '../provider/part-provider.interface';
+
+import { ComponentMapper } from './component-mapper';
 
 const mapper = new ComponentMapper();
 

@@ -10,7 +10,7 @@ import {
     type CircuitJson,
     type AnalysisConfig,
 } from '@circuit-forge/eda-core';
-import { DEFAULT_TIMEOUT_MS, DEFAULT_TOKEN_BUDGET, budgetExceeded } from './policy';
+
 import {
     createModelClient,
     type ModelClient,
@@ -18,6 +18,7 @@ import {
     type NeutralToolSchema,
     type LlmProtocol,
 } from './model-client';
+import { DEFAULT_TIMEOUT_MS, DEFAULT_TOKEN_BUDGET, budgetExceeded } from './policy';
 
 /** Defaults — overridable via config / env. */
 const DEFAULT_BASE_URL = 'https://api.zentio.dev'; // SDK appends /v1/messages
@@ -384,7 +385,7 @@ async function callModel(
                 {
                     system,
                     messages: convo,
-                    ...(allowTools ? { tools: opts!.tools } : {}),
+                    ...(allowTools ? { tools: opts.tools } : {}),
                     maxTokens: r.maxTokens,
                     ...(r.temperature !== undefined ? { temperature: r.temperature } : {}),
                 },
@@ -409,7 +410,7 @@ async function callModel(
             for (const tc of reply.toolCalls) {
                 let content: string;
                 try {
-                    const out = await opts!.executor!(tc.name, tc.input);
+                    const out = await opts.executor!(tc.name, tc.input);
                     content = JSON.stringify(out ?? null).slice(0, MAX_TOOL_RESULT_CHARS);
                 } catch (e) {
                     content = JSON.stringify({ error: e instanceof Error ? e.message : String(e) });

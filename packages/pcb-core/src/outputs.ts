@@ -2,8 +2,8 @@
  * Production outputs: Gerber/drill + .kicad_pcb (+ .kicad_pro rules) via the tscircuit converters
  * (ESM seams), BOM + pick-and-place CSVs from our own data (pure).
  */
-import type { TscElement } from './parity';
 import type { LayoutabilityResult } from './layoutability';
+import type { TscElement } from './parity';
 
 export interface GerberOutputs {
     /** layer name -> gerber content (F_Cu, B_Cu, F_SilkScreen, ..., Edge_Cuts). */
@@ -17,7 +17,7 @@ export async function generateGerbers(circuitJson: TscElement[]): Promise<Gerber
     const drill = mod.stringifyExcellonDrill(
         mod.convertSoupToExcellonDrillCommands({ circuitJson: circuitJson as never, is_plated: true }),
     );
-    return { layers: layers as Record<string, string>, drill };
+    return { layers: layers, drill };
 }
 
 export async function generateKicadPcb(circuitJson: TscElement[]): Promise<string> {

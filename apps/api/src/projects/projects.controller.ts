@@ -3,11 +3,14 @@
  */
 import { Controller, Get, Post, Patch, Delete, Body, Param, ParseUUIDPipe, Query, UseGuards } from '@nestjs/common';
 import { ApiTags, ApiOperation, ApiBearerAuth } from '@nestjs/swagger';
-import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
+
 import { CurrentUser } from '../auth/decorators/current-user.decorator';
-import { ProjectsService } from './projects.service';
-import { CreateProjectDto, UpdateProjectDto } from './dto';
+import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { PaginationQueryDto } from '../common/dto/pagination.dto';
+
+import { CreateProjectDto, UpdateProjectDto } from './dto';
+import { ProjectsService } from './projects.service';
+
 
 @ApiTags('projects')
 @ApiBearerAuth()

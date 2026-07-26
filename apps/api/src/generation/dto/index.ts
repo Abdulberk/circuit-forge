@@ -1,6 +1,8 @@
 /**
  * AI circuit generation DTOs
  */
+import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
+import { Type } from 'class-transformer';
 import {
     IsString,
     IsOptional,
@@ -17,8 +19,6 @@ import {
     ArrayMaxSize,
     ValidateNested,
 } from 'class-validator';
-import { Type } from 'class-transformer';
-import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 
 /** One measurable spec checked against the simulation — the unit of a "verified design" report. */
 export class AssertionDto {

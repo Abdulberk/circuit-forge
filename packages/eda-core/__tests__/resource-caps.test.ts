@@ -2,13 +2,13 @@
  * Resource-cap regression tests (#7): bound a single simulation's OUTPUT rows (analysis point budget)
  * and the auto-generated probe width, so a careless/huge request can't drive a memory/IO/time runaway.
  */
+import { generateNetlist } from '../src/netlist/generator';
 import { analysisToSpice, MAX_SIM_POINTS } from '../src/types/analysis';
 import type { TranAnalysis, AcAnalysis, DcAnalysis } from '../src/types/analysis';
 // analysisToSpice now shares the ONE tolerant parser (utils/unit-parser); the file's old private throwing parser
 // is gone. Read the numeric value the same way the generator does so the point-count assertions stay honest.
-import { parseSpiceValue } from '../src/utils/unit-parser';
-import { generateNetlist } from '../src/netlist/generator';
 import type { CircuitJson, Component, Net } from '../src/types/circuit';
+import { parseSpiceValue } from '../src/utils/unit-parser';
 
 const num = (v: string) => parseSpiceValue(v).value;
 

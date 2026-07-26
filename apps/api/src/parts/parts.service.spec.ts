@@ -1,7 +1,8 @@
 import type { ConfigService } from '@nestjs/config';
-import { PartsService } from './parts.service';
+
 import { TtlCache } from './cache/ttl-cache';
 import type { ComponentMapper } from './mappers/component-mapper';
+import { PartsService } from './parts.service';
 import type { CatalogPart, PartProvider } from './provider/part-provider.interface';
 
 /** Minimal real-ish part; the mapper is stubbed so its exact shape doesn't matter. */

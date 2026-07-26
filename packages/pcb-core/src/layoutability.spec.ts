@@ -1,5 +1,6 @@
-import { classifyCircuit } from './layoutability';
 import type { CircuitJson, Component } from '@circuit-forge/eda-core';
+
+import { classifyCircuit } from './layoutability';
 
 const comp = (over: Partial<Component>): Component => ({
     id: over.designator ?? 'c',

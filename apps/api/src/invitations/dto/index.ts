@@ -1,9 +1,9 @@
 /**
  * Invitation DTOs.
  */
-import { IsEmail, IsEnum, IsOptional, IsString, MaxLength } from 'class-validator';
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import { OrgRole } from '@prisma/client';
+import { IsEmail, IsEnum, IsOptional, IsString, MaxLength } from 'class-validator';
 
 /** Invite someone (by email) to join an org. */
 export class CreateInvitationDto {

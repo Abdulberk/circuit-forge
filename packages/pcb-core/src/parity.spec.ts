@@ -1,5 +1,5 @@
-import { checkConnectivityParity, type TscElement } from './parity';
 import type { PinExpectation } from './adapter';
+import { checkConnectivityParity, type TscElement } from './parity';
 
 /** Build a minimal evaluated board: components, semantic-hinted ports, named nets, traces. */
 function board(opts: {

@@ -7,16 +7,18 @@
  * GenerationModule) so AdminQueueService can read depth / (Phase 3) pause without importing the feature
  * modules' queue providers.
  */
-import { Module } from '@nestjs/common';
 import { BullModule } from '@nestjs/bullmq';
+import { Module } from '@nestjs/common';
 import { ConfigModule, ConfigService } from '@nestjs/config';
+
+import { HealthModule } from '../health/health.module';
 import { OrgsModule } from '../orgs/orgs.module';
 import { UsageModule } from '../usage/usage.module';
-import { HealthModule } from '../health/health.module';
-import { AdminController } from './admin.controller';
-import { AdminService } from './admin.service';
+
 import { AdminQueueService } from './admin-queue.service';
 import { AdminStorageService } from './admin-storage.service';
+import { AdminController } from './admin.controller';
+import { AdminService } from './admin.service';
 import { PlatformAdminGuard } from './guards/platform-admin.guard';
 
 @Module({

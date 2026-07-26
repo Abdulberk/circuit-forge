@@ -1,5 +1,6 @@
-import { resolveFootprint, normalizeFootprint, isLedDiode, soicForPinCount } from './footprints';
 import type { Component } from '@circuit-forge/eda-core';
+
+import { resolveFootprint, normalizeFootprint, isLedDiode, soicForPinCount } from './footprints';
 
 const mk = (over: Partial<Component>): Component => ({
     id: 'c1',

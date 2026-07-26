@@ -6,11 +6,13 @@
  * BOTH GenerationService (/generate-circuit) and DesignService (/design-circuit) so the two endpoints
  * can't drift. Grounding is enabled only when the catalog is fully configured (TME_TOKEN && TME_SECRET).
  */
+import type { CircuitJson, ComponentSourcing, AnalysisConfig } from '@circuit-forge/eda-core';
+import type { GroundingOptions, ToolExecutor } from '@circuitforge/llm-core';
 import { Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
-import type { GroundingOptions, ToolExecutor } from '@circuitforge/llm-core';
-import type { CircuitJson, ComponentSourcing, AnalysisConfig } from '@circuit-forge/eda-core';
+
 import { PartsService } from '../parts/parts.service';
+
 import { CircuitSimulatorService } from './circuit-simulator.service';
 
 @Injectable()

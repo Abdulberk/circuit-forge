@@ -5,11 +5,13 @@
 import { Controller, Get, Param, Query, UseGuards } from '@nestjs/common';
 import { ApiTags, ApiOperation, ApiBearerAuth } from '@nestjs/swagger';
 import { Throttle } from '@nestjs/throttler';
-import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
+
 import { CurrentUser } from '../auth/decorators/current-user.decorator';
+import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { UsageService } from '../usage/usage.service';
-import { PartsService } from './parts.service';
+
 import { SearchPartsDto } from './dto';
+import { PartsService } from './parts.service';
 
 @ApiTags('parts')
 @ApiBearerAuth()

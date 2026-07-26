@@ -9,15 +9,17 @@
  * receipts" surface (review an existing circuit, generation optional). Stays a SYNCHRONOUS request via
  * server-side job polling.
  */
-import { Injectable, Optional, Logger } from '@nestjs/common';
 import { runErc, generateNetlist, type AnalysisConfig, type SimulationResult, type AcceptanceCriterion, type CornerSpec } from '@circuit-forge/eda-core';
 import { safeValidateCircuitJson, buildElectricalScope, criterionDimension, checkOrientationConsistency, classifyRobustness, ROBUSTNESS_PROFILES, TEMP_CORNER_CEILING, type CircuitJson, type ScopeManifest, type OrientationReport, type YieldSummary, type RobustnessTier, type DeterminedEntry, type TempCornerSpec, type TempMetricDrift, type SupplyCornerSpec, type RailValidation, type SupplyDrift } from '@circuit-forge/eda-core';
+import { Injectable, Optional, Logger } from '@nestjs/common';
+
+import { SimulationService } from '../simulation/simulation.service';
+
+import { evaluateAssertions, attachFourierThd, attachTransferFunction, extraProbesForCriteria, type AssertionResult } from './assertions';
 import { CircuitSimulatorService, summarizeSeries, type SimMeasurement, type SimSummary, type ConvergenceReport } from './circuit-simulator.service';
+import type { AssertionDto } from './dto';
 import { attachGenericModels } from './model-resolution';
 import { computeResistorPower, type PowerReport } from './power-analysis';
-import { SimulationService } from '../simulation/simulation.service';
-import type { AssertionDto } from './dto';
-import { evaluateAssertions, attachFourierThd, attachTransferFunction, extraProbesForCriteria, type AssertionResult } from './assertions';
 
 // Assertion evaluation now lives in the shared, pure ./assertions module (used by the AI design loop too).
 // Re-export so existing importers (controllers, specs) keep their './verification.service' path unchanged.

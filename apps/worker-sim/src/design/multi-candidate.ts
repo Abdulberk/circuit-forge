@@ -24,8 +24,10 @@ import {
     type DesignResult,
     type ScreenResult,
 } from '@circuitforge/llm-core';
-import { llmSem } from './pools';
+
 import { logger } from '../logger';
+
+import { llmSem } from './pools';
 
 export interface MultiCandidateOptions {
     /** Candidates to generate+screen (clamped 1..MAX_CANDIDATES). */

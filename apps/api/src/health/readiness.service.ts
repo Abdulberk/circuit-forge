@@ -7,9 +7,9 @@
  * BullMQ connection (maxRetriesPerRequest:null — a ping there would hang when Redis is down) and from the
  * feature S3 clients.
  */
+import { S3Client, HeadBucketCommand } from '@aws-sdk/client-s3';
 import { Injectable, Logger, OnModuleDestroy } from '@nestjs/common';
 import Redis from 'ioredis';
-import { S3Client, HeadBucketCommand } from '@aws-sdk/client-s3';
 
 /** Reject `p` if it doesn't settle within `ms` — keeps a readiness probe bounded even if a client hangs. */
 function withTimeout<T>(p: Promise<T>, ms: number, message: string): Promise<T> {

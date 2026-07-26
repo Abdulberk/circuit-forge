@@ -1,8 +1,8 @@
-import { cornerVariants, runWorstCase } from '../src/corner';
-import { parseSpiceValue } from '../src/utils/unit-parser';
-import type { CircuitJson } from '../src/types/circuit';
-import type { SimMeasurement } from '../src/analysis/measurements';
 import type { AcceptanceCriterion } from '../src/analysis/assertions';
+import type { SimMeasurement } from '../src/analysis/measurements';
+import { cornerVariants, runWorstCase } from '../src/corner';
+import type { CircuitJson } from '../src/types/circuit';
+import { parseSpiceValue } from '../src/utils/unit-parser';
 
 /** Divider with two ±10% resistors. out = 5·R2/(R1+R2). */
 const DIVIDER = (r1Tol?: number, r2Tol?: number): CircuitJson => ({

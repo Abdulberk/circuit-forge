@@ -9,7 +9,6 @@
  * directly (no bespoke runner). INFORMATIONAL: the API keeps it from gating the verdict; a corner the runner
  * can't evaluate is counted `errored`, never a spec failure.
  */
-import { logger } from '../logger';
 import {
     runSupplyCorner,
     extraProbesForCriteria,
@@ -19,6 +18,9 @@ import {
     type SupplyCornerSpec,
     type SupplyCornerResult,
 } from '@circuit-forge/eda-core';
+
+import { logger } from '../logger';
+
 import { withVariantJobDir } from './job-dir';
 
 export interface SupplyCornerBatchInput {

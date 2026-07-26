@@ -3,9 +3,10 @@
  */
 import { Injectable, NotFoundException, ForbiddenException, BadRequestException } from '@nestjs/common';
 import { Prisma, OrgRole } from '@prisma/client';
-import { PrismaService } from '../prisma/prisma.service';
+
 import { AuditService } from '../common/audit/audit.service';
 import { paginated, type Paginated } from '../common/dto/pagination.dto';
+import { PrismaService } from '../prisma/prisma.service';
 
 /** The audit-row shape a TENANT may see. Deliberately omits operator PII (adminActorEmail), the internal
  *  correlation id (requestId), and the raw platform-admin user id — those stay admin-only. */

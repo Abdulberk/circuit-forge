@@ -20,9 +20,10 @@
  */
 import { Queue } from 'bullmq';
 import Redis from 'ioredis';
-import { prisma } from '../prisma/client';
+
 import { config } from '../config';
 import { logger } from '../logger';
+import { prisma } from '../prisma/client';
 
 /** The minimal row shape the reaper reasons about. */
 export interface ReapableRow {

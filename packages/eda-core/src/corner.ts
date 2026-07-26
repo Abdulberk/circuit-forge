@@ -14,11 +14,11 @@
  * Pure + deterministic: no ngspice. The 2^k simulations + criteria evaluation happen in the injected
  * `runVariant` (worker supplies real ngspice; tests supply a fake), mirroring montecarlo.ts / sweep.ts.
  */
-import type { CircuitJson, Component } from './types/circuit';
-import { parseComponentMagnitude } from './utils/unit-parser';
 import { evaluateAssertions, type AcceptanceCriterion } from './analysis/assertions';
 import type { SimMeasurement } from './analysis/measurements';
 import type { VariantRunner } from './montecarlo';
+import type { CircuitJson, Component } from './types/circuit';
+import { parseComponentMagnitude } from './utils/unit-parser';
 
 /** Which extreme of a component's ±tolerance band a given corner puts it at. */
 export type CornerSide = 'lo' | 'hi';
@@ -93,8 +93,8 @@ export function cornerVariants(circuit: CircuitJson, spec: CornerSpec = {}): { v
     const cap = Math.max(1, spec.maxComponents ?? 8);
     const all = tolerancedComponents(circuit, spec.components);
     const cornered = all.slice(0, cap);
-    const omitted = all.slice(cap).map((t) => t.component.designator!).filter(Boolean);
-    const componentsCornered = cornered.map((t) => t.component.designator!).filter(Boolean);
+    const omitted = all.slice(cap).map((t) => t.component.designator).filter(Boolean);
+    const componentsCornered = cornered.map((t) => t.component.designator).filter(Boolean);
     if (cornered.length === 0) return { variants: [], componentsCornered, omitted };
 
     const k = cornered.length;
@@ -105,7 +105,7 @@ export function cornerVariants(circuit: CircuitJson, spec: CornerSpec = {}): { v
         for (let i = 0; i < k; i++) {
             const t = cornered[i]!;
             const hi = (mask & (1 << i)) !== 0;
-            corner[t.component.designator!] = hi ? 'hi' : 'lo';
+            corner[t.component.designator] = hi ? 'hi' : 'lo';
             overrides.set(t.component, t.rebuild(t.nominal * (hi ? 1 + t.tol : 1 - t.tol)));
         }
         variants.push({

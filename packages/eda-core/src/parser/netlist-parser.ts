@@ -2,8 +2,8 @@
  * SPICE Netlist Parser
  * Parses SPICE netlists back to CircuitJson (for import functionality)
  */
-import type { CircuitJson, Component, Net, ComponentType, ModelDef } from '../types/circuit';
 import type { AnalysisConfig, TranAnalysis, AcAnalysis, DcAnalysis, OpAnalysis, SolverOptions } from '../types/analysis';
+import type { CircuitJson, Component, Net, ComponentType, ModelDef } from '../types/circuit';
 
 /**
  * Parse result including circuit and detected analysis
@@ -267,7 +267,7 @@ export function parseNetlist(netlist: string): NetlistParseResult {
     if (analysis) {
         if (solverOptions && Object.keys(solverOptions).length > 0) analysis.options = solverOptions;
         if (initialConditions && Object.keys(initialConditions).length > 0 && analysis.type === 'tran') {
-            (analysis as TranAnalysis).initialConditions = initialConditions;
+            (analysis).initialConditions = initialConditions;
         }
     }
 

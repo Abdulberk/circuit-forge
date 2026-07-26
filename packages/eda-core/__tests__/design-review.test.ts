@@ -6,8 +6,8 @@
  * (Decoupling presence was deferred — the model has no power-rail marking to identify a rail without false
  * positives on DC signal/reference nets and `generic` connectors; disclosed not-run in the manifest.)
  */
-import { checkOrientationConsistency } from '../src/verification/design-review';
 import type { CircuitJson } from '../src/types/circuit';
+import { checkOrientationConsistency } from '../src/verification/design-review';
 
 const nets = (...ids: string[]): CircuitJson['nets'] => ids.map((id) => ({ id, name: id.toUpperCase(), ...(id === 'gnd' ? { isGround: true } : {}) }));
 const diode = (id: string, p1: [string, string], p2: [string, string]): CircuitJson['components'][number] =>

@@ -9,6 +9,7 @@
  */
 import { Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
+
 import { resolveEmailTransport, type EmailTransport } from './email-transports';
 import { verificationEmail, passwordResetEmail, orgInviteEmail, type EmailContent } from './templates';
 

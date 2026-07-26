@@ -5,6 +5,7 @@
  * without importing this module explicitly, mirroring PrismaModule.
  */
 import { Global, Module } from '@nestjs/common';
+
 import { AuditService } from './audit.service';
 
 @Global()

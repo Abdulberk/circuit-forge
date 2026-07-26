@@ -7,11 +7,11 @@
  * Pure + deterministic (a seeded PRNG is injected) — no ngspice, no I/O. The actual N simulations + criteria
  * evaluation happen in the caller (API/worker), which feeds the pass/fail flags back to computeYield.
  */
-import type { CircuitJson } from './types/circuit';
-import { parseComponentMagnitude } from './utils/unit-parser';
-import { mulberry32 } from './utils/prng';
 import { evaluateAssertions, type AcceptanceCriterion } from './analysis/assertions';
 import type { SimMeasurement } from './analysis/measurements';
+import type { CircuitJson } from './types/circuit';
+import { mulberry32 } from './utils/prng';
+import { parseComponentMagnitude } from './utils/unit-parser';
 
 export type TolDistribution = 'gaussian' | 'uniform';
 
@@ -265,10 +265,10 @@ export function classifyRobustness(
     profileName = 'consumer',
 ): RobustnessVerdict {
     const bars = ROBUSTNESS_PROFILES[profileName] ?? ROBUSTNESS_PROFILES.consumer!;
-    const yld = typeof yieldReport?.yield === 'number' ? (yieldReport.yield as number) : null;
+    const yld = typeof yieldReport?.yield === 'number' ? yieldReport.yield : null;
     const ci = yieldReport?.ci95 as { low?: number; high?: number } | undefined;
     const lo = typeof ci?.low === 'number' ? ci.low : null;
-    const evaluated = typeof yieldReport?.evaluated === 'number' ? (yieldReport.evaluated as number) : null;
+    const evaluated = typeof yieldReport?.evaluated === 'number' ? yieldReport.evaluated : null;
     const pct = (x: number) => `${(x * 100).toFixed(1)}%`;
 
     if (lo === null) {

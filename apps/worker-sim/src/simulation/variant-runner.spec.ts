@@ -31,7 +31,9 @@ jest.mock('@circuit-forge/eda-core', () => ({
 
 import * as fs from 'fs/promises';
 import * as path from 'path';
+
 import * as eda from '@circuit-forge/eda-core';
+
 import { executeNgspice } from './runner';
 import { makeVariantRunner } from './variant-runner';
 

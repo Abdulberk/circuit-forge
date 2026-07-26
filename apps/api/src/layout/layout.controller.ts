@@ -6,10 +6,12 @@
 import { Controller, Post, Get, Body, Param, Query, ParseUUIDPipe, HttpCode, UseGuards } from '@nestjs/common';
 import { ApiTags, ApiOperation, ApiBearerAuth } from '@nestjs/swagger';
 import { Throttle } from '@nestjs/throttler';
-import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
+
 import { CurrentUser } from '../auth/decorators/current-user.decorator';
-import { LayoutService } from './layout.service';
+import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
+
 import { CreateLayoutDto, ListLayoutsQueryDto } from './dto';
+import { LayoutService } from './layout.service';
 
 @ApiTags('pcb')
 @ApiBearerAuth()

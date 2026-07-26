@@ -1,23 +1,26 @@
 /**
  * AI Circuit Generation Module
  */
-import { Module } from '@nestjs/common';
 import { BullModule } from '@nestjs/bullmq';
+import { Module } from '@nestjs/common';
 import { ConfigModule, ConfigService } from '@nestjs/config';
-import { GenerationController } from './generation.controller';
-import { GenerationService } from './generation.service';
-import { DesignController } from './design.controller';
-import { DesignService } from './design.service';
-import { DesignJobsController } from './design-jobs.controller';
-import { DesignJobService } from './design-job.service';
-import { VerificationController } from './verification.controller';
-import { VerificationService } from './verification.service';
+
+import { OrgsModule } from '../orgs/orgs.module';
+import { PartsModule } from '../parts/parts.module';
+import { SimulationModule } from '../simulation/simulation.module';
+import { UsageModule } from '../usage/usage.module';
+
 import { CatalogGroundingService } from './catalog-grounding.service';
 import { CircuitSimulatorService } from './circuit-simulator.service';
-import { SimulationModule } from '../simulation/simulation.module';
-import { PartsModule } from '../parts/parts.module';
-import { OrgsModule } from '../orgs/orgs.module';
-import { UsageModule } from '../usage/usage.module';
+import { DesignJobService } from './design-job.service';
+import { DesignJobsController } from './design-jobs.controller';
+import { DesignController } from './design.controller';
+import { DesignService } from './design.service';
+import { GenerationController } from './generation.controller';
+import { GenerationService } from './generation.service';
+import { VerificationController } from './verification.controller';
+import { VerificationService } from './verification.service';
+
 
 @Module({
     // ConfigService is available globally (ConfigModule.forRoot({ isGlobal: true })).

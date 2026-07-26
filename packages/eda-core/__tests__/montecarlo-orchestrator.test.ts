@@ -3,11 +3,11 @@
  * runner driven by each variant's perturbed R value, so the adaptive-N / Wilson-CI / three-way-accounting
  * logic is verified deterministically WITHOUT a simulator.
  */
-import { runMonteCarlo } from '../src/montecarlo';
-import { parseSpiceValue } from '../src/utils/unit-parser';
-import type { CircuitJson } from '../src/types/circuit';
 import type { AcceptanceCriterion } from '../src/analysis/assertions';
 import type { SimMeasurement } from '../src/analysis/measurements';
+import { runMonteCarlo } from '../src/montecarlo';
+import type { CircuitJson } from '../src/types/circuit';
+import { parseSpiceValue } from '../src/utils/unit-parser';
 
 // An RC divider whose OUTPUT node voltage = Vin * R2/(R1+R2). R1,R2 toleranced; we judge the output node.
 const DIVIDER: CircuitJson = {

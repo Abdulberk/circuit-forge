@@ -18,17 +18,19 @@ import { execFileSync } from 'child_process';
 import { mkdtempSync, writeFileSync, readFileSync } from 'fs';
 import { tmpdir } from 'os';
 import { resolve, join } from 'path';
-import { ConfigService } from '@nestjs/config';
+
 import { generateNetlist, type CircuitJson, type AnalysisConfig } from '@circuit-forge/eda-core';
-import { GenerationService } from '../generation.service';
-import { CatalogGroundingService } from '../catalog-grounding.service';
-import { CircuitSimulatorService } from '../circuit-simulator.service';
-import { PartsService } from '../../parts/parts.service';
+import { ConfigService } from '@nestjs/config';
+
 import { TtlCache } from '../../parts/cache/ttl-cache';
 import { ComponentMapper } from '../../parts/mappers/component-mapper';
+import { PartsService } from '../../parts/parts.service';
+import { TmeProvider } from '../../parts/provider/tme.provider';
 import { TmeClient } from '../../parts/tme/tme-client';
 import { TmeTokenCache } from '../../parts/tme/tme-token-cache';
-import { TmeProvider } from '../../parts/provider/tme.provider';
+import { CatalogGroundingService } from '../catalog-grounding.service';
+import { CircuitSimulatorService } from '../circuit-simulator.service';
+import { GenerationService } from '../generation.service';
 
 const LIVE = process.env.AI_LIVE === '1';
 const NGSPICE_BIN = process.env.NGSPICE_BIN;

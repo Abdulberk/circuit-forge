@@ -1,5 +1,6 @@
-import { BomService } from './bom.service';
 import type { CircuitJson } from '@circuit-forge/eda-core';
+
+import { BomService } from './bom.service';
 
 const bom = new BomService();
 

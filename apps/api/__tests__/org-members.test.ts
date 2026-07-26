@@ -5,9 +5,10 @@
  * writes a TENANT audit row (adminActorId null, acting user in meta.actorUserId). Members are seeded directly
  * (the invite/add path is phase 2). Boots the real app + DB. Requires Postgres.
  */
-import { Test, TestingModule } from '@nestjs/testing';
 import { INestApplication, ValidationPipe } from '@nestjs/common';
+import { Test, TestingModule } from '@nestjs/testing';
 import request from 'supertest';
+
 import { AppModule } from '../src/app.module';
 import { PrismaService } from '../src/prisma/prisma.service';
 

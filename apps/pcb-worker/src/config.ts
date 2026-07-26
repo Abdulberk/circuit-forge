@@ -3,8 +3,9 @@
  * source of truth, then an optional per-package .env, then a Zod schema validates process.env.
  */
 import path from 'path';
-import { z } from 'zod';
+
 import dotenv from 'dotenv';
+import { z } from 'zod';
 
 dotenv.config({ path: path.resolve(process.cwd(), '../../.env') });
 dotenv.config();

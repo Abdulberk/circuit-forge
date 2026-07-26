@@ -4,6 +4,7 @@
  * against PartsService, the returned circuit carries a real MPN, and the server attaches sourcing.
  */
 import type { ConfigService } from '@nestjs/config';
+
 import type { PartsService } from '../parts/parts.service';
 
 // --- Mock the Anthropic SDK that llm-core (dist) imports. mockCreate is scripted per call. ---
@@ -17,9 +18,9 @@ jest.mock('@anthropic-ai/sdk', () => ({
 }));
 
 // Imported AFTER the mock is registered.
-import { GenerationService } from './generation.service';
 import { CatalogGroundingService } from './catalog-grounding.service';
 import type { CircuitSimulatorService } from './circuit-simulator.service';
+import { GenerationService } from './generation.service';
 
 /** A stub simulator. Default: unavailable (so existing catalog-only tests are unchanged). The
  *  simulate_circuit tool executor calls simulateWithRemedies (the Convergence Doctor wrapper), so the

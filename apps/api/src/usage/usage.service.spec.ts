@@ -1,7 +1,9 @@
 import { HttpException } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
-import { UsageService } from './usage.service';
+
 import type { PrismaService } from '../prisma/prisma.service';
+
+import { UsageService } from './usage.service';
 
 /** ConfigService stub backed by a plain object. */
 const cfg = (vals: Record<string, string>) =>

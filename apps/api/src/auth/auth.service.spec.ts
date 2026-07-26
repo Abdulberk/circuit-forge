@@ -3,12 +3,14 @@
  * are controlled and the suite stays fast; prisma/jwt/config are stubs.
  */
 import { BadRequestException, ForbiddenException, HttpException, UnauthorizedException } from '@nestjs/common';
+import type { ConfigService } from '@nestjs/config';
+import type { JwtService } from '@nestjs/jwt';
 import * as argon2 from 'argon2';
-import { AuthService } from './auth.service';
+
 import { EmailService } from '../email/email.service';
 import type { PrismaService } from '../prisma/prisma.service';
-import type { JwtService } from '@nestjs/jwt';
-import type { ConfigService } from '@nestjs/config';
+
+import { AuthService } from './auth.service';
 
 jest.mock('argon2', () => ({
     hash: jest.fn(async () => '$argon2id$dummy'),

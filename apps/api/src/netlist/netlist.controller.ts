@@ -2,12 +2,14 @@
  * SPICE netlist import/export endpoints (JWT-guarded, throttled like the other compute routes).
  */
 import { Body, Controller, Post, Res, UseGuards } from '@nestjs/common';
-import type { Response } from 'express';
 import { ApiBearerAuth, ApiOperation, ApiTags } from '@nestjs/swagger';
 import { Throttle } from '@nestjs/throttler';
+import type { Response } from 'express';
+
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
-import { NetlistService } from './netlist.service';
+
 import { ExportNetlistDto, ImportNetlistDto } from './dto';
+import { NetlistService } from './netlist.service';
 
 @ApiTags('netlist')
 @ApiBearerAuth()

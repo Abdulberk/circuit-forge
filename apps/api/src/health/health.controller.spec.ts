@@ -1,6 +1,8 @@
 import { ServiceUnavailableException, HttpStatus } from '@nestjs/common';
-import { HealthController } from './health.controller';
+
 import type { PrismaService } from '../prisma/prisma.service';
+
+import { HealthController } from './health.controller';
 import type { ReadinessService } from './readiness.service';
 
 /**

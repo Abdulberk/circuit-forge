@@ -3,8 +3,8 @@
  * The CSV test is a genuine round-trip — write the table, split it back, and reconstruct the series — so it
  * proves the export is lossless, not just well-formed.
  */
-import { resultToCsv, resultToVcd } from '../src/parser/result-export';
 import { parseCsv } from '../src/parser/csv-parser';
+import { resultToCsv, resultToVcd } from '../src/parser/result-export';
 import type { SimulationResult } from '../src/types/simulation';
 
 const tranResult: SimulationResult = {

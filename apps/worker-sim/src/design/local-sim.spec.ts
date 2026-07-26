@@ -5,8 +5,8 @@
  * processor (status values + metrics.failureClass + the getResult {result, metrics, error} shape) so the loop
  * sees identical evidence in the API and the worker. The real runner is mocked — this is a pure shape test.
  */
-import type { SimulationJobResult } from '../simulation/runner';
 import type { MonteCarloBatchResult } from '../simulation/montecarlo-runner';
+import type { SimulationJobResult } from '../simulation/runner';
 
 // config loads dotenv + validates env at import → stub the fields local-sim + the global pools read.
 jest.mock('../config', () => ({ config: { WORKER_MAX_POINTS: 20000, CONCURRENCY: 2 } }));

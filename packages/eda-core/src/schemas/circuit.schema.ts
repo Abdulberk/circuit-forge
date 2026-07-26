@@ -2,6 +2,7 @@
  * Zod schemas for circuit validation
  */
 import { z } from 'zod';
+
 import { COMPONENT_TYPES } from '../types/circuit';
 
 /**

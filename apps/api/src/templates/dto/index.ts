@@ -1,9 +1,9 @@
 /**
  * Templates DTOs
  */
-import { IsString, IsOptional, IsArray, IsObject, IsUUID, IsInt, Min } from 'class-validator';
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import { Type } from 'class-transformer';
+import { IsString, IsOptional, IsArray, IsObject, IsUUID, IsInt, Min } from 'class-validator';
 
 export class CreateTemplateDto {
     @ApiPropertyOptional({ description: 'Organization ID (null for public template)' })

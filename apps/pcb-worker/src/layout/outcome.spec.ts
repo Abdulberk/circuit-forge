@@ -1,4 +1,5 @@
 import { parseDrcReport } from '@circuit-forge/pcb-core';
+
 import { assessManufacturability } from './outcome';
 
 // Real parse path: build the verdict from parseDrcReport's output on the exact JSON shapes kicad-cli emits

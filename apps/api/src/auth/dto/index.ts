@@ -1,8 +1,8 @@
 /**
  * Auth DTOs
  */
-import { IsBoolean, IsEmail, IsOptional, IsString, MinLength, MaxLength } from 'class-validator';
 import { ApiProperty } from '@nestjs/swagger';
+import { IsBoolean, IsEmail, IsOptional, IsString, MinLength, MaxLength } from 'class-validator';
 
 export class RegisterDto {
     @ApiProperty({ example: 'user@example.com' })

@@ -14,11 +14,13 @@ import {
     ParseUUIDPipe,
 } from '@nestjs/common';
 import { ApiTags, ApiOperation, ApiBearerAuth, ApiQuery, ApiParam } from '@nestjs/swagger';
+
+import { CurrentUser } from '../auth/decorators/current-user.decorator';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { OptionalJwtAuthGuard } from '../auth/guards/optional-jwt-auth.guard';
-import { CurrentUser } from '../auth/decorators/current-user.decorator';
-import { TemplatesService } from './templates.service';
+
 import { CreateTemplateDto, ListTemplatesQueryDto } from './dto';
+import { TemplatesService } from './templates.service';
 
 @ApiTags('templates')
 @Controller('templates')

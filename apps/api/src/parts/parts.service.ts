@@ -11,6 +11,10 @@ import {
     ServiceUnavailableException,
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
+
+import { TtlCache } from './cache/ttl-cache';
+import { SearchPartsDto } from './dto';
+import { ComponentMapper, type MappedComponent } from './mappers/component-mapper';
 import {
     PART_PROVIDER,
     type CatalogPart,
@@ -19,10 +23,7 @@ import {
     type PartProvider,
     type SearchResult,
 } from './provider/part-provider.interface';
-import { TtlCache } from './cache/ttl-cache';
-import { ComponentMapper, type MappedComponent } from './mappers/component-mapper';
 import { TmeApiError, TmeNetworkError } from './tme/tme-errors';
-import { SearchPartsDto } from './dto';
 
 const SYMBOL_RE = /^[A-Za-z0-9][A-Za-z0-9._-]{0,99}$/;
 

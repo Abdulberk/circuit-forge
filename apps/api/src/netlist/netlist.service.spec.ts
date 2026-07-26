@@ -1,6 +1,7 @@
-import { BadRequestException } from '@nestjs/common';
-import { NetlistService } from './netlist.service';
 import type { CircuitJson } from '@circuit-forge/eda-core';
+import { BadRequestException } from '@nestjs/common';
+
+import { NetlistService } from './netlist.service';
 
 const svc = new NetlistService();
 

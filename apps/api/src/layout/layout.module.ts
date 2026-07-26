@@ -3,13 +3,15 @@
  * (like the design queue). attempts:1 — the pipeline is not checkpointed, so a crash surfaces as a
  * terminal FAILED the user can retry, never a silent re-route + re-bill of compute.
  */
-import { Module } from '@nestjs/common';
 import { BullModule } from '@nestjs/bullmq';
+import { Module } from '@nestjs/common';
 import { ConfigModule, ConfigService } from '@nestjs/config';
-import { LayoutController } from './layout.controller';
-import { LayoutService } from './layout.service';
+
 import { OrgsModule } from '../orgs/orgs.module';
 import { UsageModule } from '../usage/usage.module';
+
+import { LayoutController } from './layout.controller';
+import { LayoutService } from './layout.service';
 
 @Module({
     imports: [

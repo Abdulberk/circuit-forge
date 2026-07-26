@@ -6,10 +6,10 @@
  * idempotence fixed-point check on a model-free circuit.
  */
 import { generateNetlist } from '../src/netlist/generator';
-import { parseNetlist } from '../src/parser/netlist-parser';
 import { sanitizeNodeName } from '../src/netlist/sanitizer';
-import type { CircuitJson, ModelDef } from '../src/types/circuit';
+import { parseNetlist } from '../src/parser/netlist-parser';
 import type { TranAnalysis, OpAnalysis } from '../src/types/analysis';
+import type { CircuitJson, ModelDef } from '../src/types/circuit';
 
 const roundTrip = (c: CircuitJson, a: Parameters<typeof generateNetlist>[1]) => parseNetlist(generateNetlist(c, a));
 

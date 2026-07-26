@@ -3,8 +3,9 @@
  * Math.max(...ys) threw RangeError ("Maximum call stack size exceeded") once a transient series
  * passed ~100k points (exactly the large runs that matter). No ngspice needed — pure function.
  */
-import { summarizeSeries } from './circuit-simulator.service';
 import type { DataSeries } from '@circuit-forge/eda-core';
+
+import { summarizeSeries } from './circuit-simulator.service';
 
 describe('summarizeSeries', () => {
     it('handles a 200k-point series WITHOUT a stack-overflow and reports correct min/max/final/pp', () => {

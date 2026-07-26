@@ -2,15 +2,16 @@
  * Parts module integration test. The TME-backed PartProvider is mocked, so this needs no live
  * TME calls and no database — it verifies the HTTP surface, validation, and component mapping.
  */
-import { Test, type TestingModule } from '@nestjs/testing';
 import { INestApplication, ValidationPipe } from '@nestjs/common';
 import { ConfigModule } from '@nestjs/config';
+import { Test, type TestingModule } from '@nestjs/testing';
 import request from 'supertest';
+
+import { JwtAuthGuard } from '../src/auth/guards/jwt-auth.guard';
+import { OrgsService } from '../src/orgs/orgs.service';
 import { PartsModule } from '../src/parts/parts.module';
 import { PART_PROVIDER, type PartProvider } from '../src/parts/provider/part-provider.interface';
-import { JwtAuthGuard } from '../src/auth/guards/jwt-auth.guard';
 import { UsageService } from '../src/usage/usage.service';
-import { OrgsService } from '../src/orgs/orgs.service';
 
 describe('Parts (integration, TME mocked)', () => {
     let app: INestApplication;

@@ -13,12 +13,13 @@
  *
  * Requires Postgres + Redis up (like e2e-smoke / authz-isolation) and the test DB migrated.
  */
-import { Test, TestingModule } from '@nestjs/testing';
 import { INestApplication, ValidationPipe } from '@nestjs/common';
+import { Test, TestingModule } from '@nestjs/testing';
 import request from 'supertest';
+
 import { AppModule } from '../src/app.module';
-import { PrismaService } from '../src/prisma/prisma.service';
 import { AllExceptionsFilter } from '../src/common/filters/all-exceptions.filter';
+import { PrismaService } from '../src/prisma/prisma.service';
 
 const DUMMY_NETLIST = '* admin-e2e\nV1 in 0 DC 5\nR1 in 0 1k\n.op\n.end\n';
 

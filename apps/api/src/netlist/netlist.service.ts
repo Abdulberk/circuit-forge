@@ -10,7 +10,6 @@
  * etc. resolved by name, mirroring the simulation path) -> generateNetlist. The result is a
  * SELF-CONTAINED deck (models inlined) that runs in any ngspice.
  */
-import { BadRequestException, Injectable } from '@nestjs/common';
 import {
     generateNetlist,
     parseNetlist,
@@ -20,6 +19,7 @@ import {
     type AnalysisConfig,
     type CircuitJson,
 } from '@circuit-forge/eda-core';
+import { BadRequestException, Injectable } from '@nestjs/common';
 
 export interface ImportResult {
     circuit: CircuitJson;

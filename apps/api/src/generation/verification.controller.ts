@@ -1,15 +1,17 @@
 /**
  * Verified Designs controller — deterministic, simulation-backed circuit verification.
  */
+import { safeValidateCircuitJson, safeValidateAnalysisConfig, type AnalysisConfig } from '@circuit-forge/eda-core';
 import { Controller, Post, Body, UseGuards, BadRequestException } from '@nestjs/common';
 import { ApiTags, ApiOperation, ApiBearerAuth, ApiResponse } from '@nestjs/swagger';
 import { Throttle } from '@nestjs/throttler';
-import { safeValidateCircuitJson, safeValidateAnalysisConfig, type AnalysisConfig } from '@circuit-forge/eda-core';
-import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
+
 import { CurrentUser } from '../auth/decorators/current-user.decorator';
-import { VerificationService, type DesignEvidence } from './verification.service';
+import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
+
 import { isCurrentProbe, isObservableCurrentProbe } from './assertions';
 import { VerifyDesignDto } from './dto';
+import { VerificationService, type DesignEvidence } from './verification.service';
 
 @ApiTags('ai')
 @ApiBearerAuth()

@@ -2,10 +2,12 @@
  * Templates Service
  * Handles template CRUD operations with public/org scope
  */
-import { Injectable, NotFoundException, ForbiddenException, BadRequestException } from '@nestjs/common';
 import { safeValidateAnalysisConfig } from '@circuit-forge/eda-core';
-import { PrismaService } from '../prisma/prisma.service';
+import { Injectable, NotFoundException, ForbiddenException, BadRequestException } from '@nestjs/common';
+
 import { OrgsService } from '../orgs/orgs.service';
+import { PrismaService } from '../prisma/prisma.service';
+
 import { CreateTemplateDto, ListTemplatesQueryDto } from './dto';
 
 @Injectable()

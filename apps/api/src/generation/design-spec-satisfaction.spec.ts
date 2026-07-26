@@ -5,10 +5,11 @@
  * worker's convergence diagnosis into the AI fix round. Anthropic SDK + SimulationService are mocked, so
  * this exercises the REAL llm-core parse + the REAL loop deterministically (no network, no ngspice).
  */
+import { sanitizeNodeName } from '@circuit-forge/eda-core';
 import type { ConfigService } from '@nestjs/config';
+
 import type { PartsService } from '../parts/parts.service';
 import type { SimulationService } from '../simulation/simulation.service';
-import { sanitizeNodeName } from '@circuit-forge/eda-core';
 
 const mockCreate = jest.fn();
 jest.mock('@anthropic-ai/sdk', () => ({
@@ -19,9 +20,9 @@ jest.mock('@anthropic-ai/sdk', () => ({
     },
 }));
 
-import { DesignService } from './design.service';
 import { CatalogGroundingService } from './catalog-grounding.service';
 import type { CircuitSimulatorService } from './circuit-simulator.service';
+import { DesignService } from './design.service';
 
 const noSimulator = { available: () => false, simulate: jest.fn() } as unknown as CircuitSimulatorService;
 

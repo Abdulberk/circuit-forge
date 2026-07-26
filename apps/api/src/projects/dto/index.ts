@@ -1,8 +1,8 @@
 /**
  * Projects DTOs
  */
-import { IsString, MinLength, MaxLength, IsOptional } from 'class-validator';
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
+import { IsString, MinLength, MaxLength, IsOptional } from 'class-validator';
 
 export class CreateProjectDto {
     @ApiProperty({ example: 'My Circuit Project' })

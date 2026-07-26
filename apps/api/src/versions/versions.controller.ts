@@ -1,16 +1,19 @@
 /**
  * Versions Controller
  */
+import type { CircuitJson } from '@circuit-forge/eda-core';
 import { Controller, Get, Post, Body, Param, ParseUUIDPipe, Query, Res, UseGuards } from '@nestjs/common';
-import type { Response } from 'express';
 import { ApiTags, ApiOperation, ApiBearerAuth, ApiQuery } from '@nestjs/swagger';
-import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
+import type { Response } from 'express';
+
 import { CurrentUser } from '../auth/decorators/current-user.decorator';
-import { VersionsService } from './versions.service';
+import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
+import { PaginationQueryDto } from '../common/dto/pagination.dto';
+
 import { BomService } from './bom.service';
 import { CreateVersionDto } from './dto';
-import { PaginationQueryDto } from '../common/dto/pagination.dto';
-import type { CircuitJson } from '@circuit-forge/eda-core';
+import { VersionsService } from './versions.service';
+
 
 @ApiTags('versions')
 @ApiBearerAuth()

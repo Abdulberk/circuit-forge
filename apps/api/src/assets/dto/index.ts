@@ -1,8 +1,9 @@
 /**
  * Assets DTOs
  */
-import { IsString, IsInt, Min, Max, IsHash, IsOptional } from 'class-validator';
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
+import { IsString, IsInt, Min, Max, IsHash, IsOptional } from 'class-validator';
+
 import { PaginationQueryDto } from '../../common/dto/pagination.dto';
 
 /** List query: pagination (limit/offset) + an optional type filter. Extends the shared pagination DTO so all

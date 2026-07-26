@@ -14,6 +14,7 @@
  */
 import type { CircuitJson, UiJson, Component } from '@circuit-forge/eda-core';
 import { parseSpiceValue } from '@circuit-forge/eda-core';
+
 import type { ComponentPlan, LayoutabilityResult, LayoutDiagnostic } from './layoutability';
 
 export interface PinExpectation {

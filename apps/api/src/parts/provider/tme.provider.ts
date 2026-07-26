@@ -3,15 +3,7 @@
  * All TME shape knowledge lives here + tme-mapper.ts; other providers (DigiKey/LCSC) plug in later.
  */
 import { Injectable, Logger, NotFoundException } from '@nestjs/common';
-import { TmeClient } from '../tme/tme-client';
-import {
-    type CatalogPart,
-    type CategoryNode,
-    type ManufacturerRef,
-    type PartProvider,
-    type SearchParams,
-    type SearchResult,
-} from './part-provider.interface';
+
 import {
     datasheetFromFiles,
     footprintFromParameters,
@@ -27,6 +19,16 @@ import {
     type TmeParametersElement,
     type TmeSearchElement,
 } from '../mappers/tme-mapper';
+import { TmeClient } from '../tme/tme-client';
+
+import {
+    type CatalogPart,
+    type CategoryNode,
+    type ManufacturerRef,
+    type PartProvider,
+    type SearchParams,
+    type SearchResult,
+} from './part-provider.interface';
 
 @Injectable()
 export class TmeProvider implements PartProvider {

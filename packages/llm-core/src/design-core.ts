@@ -30,8 +30,6 @@ import {
     type RobustnessVerdict,
     type CircuitJson,
     type AnalysisConfig,
-    type TranAnalysis,
-    type OpAnalysis,
     type DataSeries,
     type AcceptanceCriterion,
     type AssertionResult,
@@ -39,6 +37,7 @@ import {
     type FourierResult,
     type TransferFunctionResult,
 } from '@circuit-forge/eda-core';
+
 import { generateCircuit, fixCircuit, type GenerateCircuitConfig } from './index';
 
 export interface RoundRecord {
@@ -410,13 +409,13 @@ export async function runDesignLoop(input: DesignLoopInput, deps: DesignDeps): P
  */
 export function preserveMetricOverlays(prev: AnalysisConfig, next: AnalysisConfig, criteria: AcceptanceCriterion[]): AnalysisConfig {
     let out = next;
-    const prevTran = prev.type === 'tran' ? (prev as TranAnalysis) : undefined;
-    const nextTran = next.type === 'tran' ? (next as TranAnalysis) : undefined;
+    const prevTran = prev.type === 'tran' ? prev : undefined;
+    const nextTran = next.type === 'tran' ? next : undefined;
     if (criteria.some((c) => c.metric === 'thd') && prevTran?.fourier && nextTran && !nextTran.fourier) {
         out = { ...nextTran, fourier: prevTran.fourier };
     }
-    const prevOp = prev.type === 'op' ? (prev as OpAnalysis) : undefined;
-    const nextOp = out.type === 'op' ? (out as OpAnalysis) : undefined;
+    const prevOp = prev.type === 'op' ? prev : undefined;
+    const nextOp = out.type === 'op' ? out : undefined;
     if (criteria.some((c) => c.metric === 'gain') && prevOp?.tf && nextOp && !nextOp.tf) {
         out = { ...nextOp, tf: prevOp.tf };
     }

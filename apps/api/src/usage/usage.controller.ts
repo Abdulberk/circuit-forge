@@ -3,9 +3,11 @@
  */
 import { Controller, Get, Param, ParseUUIDPipe, UseGuards } from '@nestjs/common';
 import { ApiBearerAuth, ApiOperation, ApiTags } from '@nestjs/swagger';
-import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
+
 import { CurrentUser } from '../auth/decorators/current-user.decorator';
+import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { OrgsService } from '../orgs/orgs.service';
+
 import { UsageService } from './usage.service';
 
 @ApiTags('usage')

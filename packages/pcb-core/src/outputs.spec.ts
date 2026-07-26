@@ -1,6 +1,7 @@
-import { buildBomCsv, buildPnpCsv } from './outputs';
-import { classifyCircuit } from './layoutability';
 import type { CircuitJson } from '@circuit-forge/eda-core';
+
+import { classifyCircuit } from './layoutability';
+import { buildBomCsv, buildPnpCsv } from './outputs';
 import type { TscElement } from './parity';
 
 const circuit: CircuitJson = {

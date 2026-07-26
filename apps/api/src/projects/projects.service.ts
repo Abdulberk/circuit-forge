@@ -2,9 +2,10 @@
  * Projects Service
  */
 import { Injectable, NotFoundException } from '@nestjs/common';
-import { PrismaService } from '../prisma/prisma.service';
-import { OrgsService } from '../orgs/orgs.service';
+
 import { paginated, type Paginated } from '../common/dto/pagination.dto';
+import { OrgsService } from '../orgs/orgs.service';
+import { PrismaService } from '../prisma/prisma.service';
 
 @Injectable()
 export class ProjectsService {

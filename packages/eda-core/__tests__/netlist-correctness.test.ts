@@ -5,8 +5,8 @@
  *        node-collision guard, not silently merged by ngspice with a colliding net node.
  */
 import { rewriteProbeNodeRefs, transformerMidNodes, generateNetlist } from '../src/netlist/generator';
-import type { CircuitJson } from '../src/types/circuit';
 import type { TranAnalysis } from '../src/types/analysis';
+import type { CircuitJson } from '../src/types/circuit';
 
 describe('#13 rewriteProbeNodeRefs — dropping ground is sign-safe only when ground is the subtrahend', () => {
     // stand-in for the net-id/name -> sanitized-node map generate() builds

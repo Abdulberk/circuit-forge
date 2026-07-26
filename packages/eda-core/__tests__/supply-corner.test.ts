@@ -1,7 +1,7 @@
+import type { AcceptanceCriterion } from '../src/analysis/assertions';
+import type { SimMeasurement } from '../src/analysis/measurements';
 import { validatePowerRails, driversOf, runSupplyCorner, type SupplyCornerSpec } from '../src/supply-corner';
 import type { CircuitJson } from '../src/types/circuit';
-import type { SimMeasurement } from '../src/analysis/measurements';
-import type { AcceptanceCriterion } from '../src/analysis/assertions';
 
 const meas = (node: string, value: number): SimMeasurement => ({
     node, min: value, max: value, final: value, pp: 0, avg: value, rms: Math.abs(value),

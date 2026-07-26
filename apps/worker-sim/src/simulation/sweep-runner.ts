@@ -5,7 +5,6 @@
  * and the worker-only concerns: one reused job dir, and a hard cap on the number of swept points so a runaway
  * sweep (e.g. a 10 000-point dec range) can't hold a worker slot indefinitely.
  */
-import { logger } from '../logger';
 import {
     runParametricSweep,
     extraProbesForCriteria,
@@ -15,6 +14,9 @@ import {
     type SweepSpec,
     type SweepResult,
 } from '@circuit-forge/eda-core';
+
+import { logger } from '../logger';
+
 import { withVariantJobDir } from './job-dir';
 
 /** Hard cap on swept points (mirrors runMonteCarlo's 300-variant cap) — a runaway sweep can't spin forever. */

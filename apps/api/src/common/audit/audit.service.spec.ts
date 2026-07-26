@@ -1,5 +1,6 @@
-import { AuditService } from './audit.service';
 import { runWithRequestId, getRequestId } from '../context/request-context';
+
+import { AuditService } from './audit.service';
 
 describe('AuditService', () => {
     const makeService = () => {

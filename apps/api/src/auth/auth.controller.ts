@@ -5,6 +5,7 @@ import { Controller, Post, Body, HttpCode, HttpStatus, Req } from '@nestjs/commo
 import { ApiTags, ApiOperation, ApiResponse } from '@nestjs/swagger';
 import { Throttle } from '@nestjs/throttler';
 import type { Request } from 'express';
+
 import { AuthService, TokensResponse, AuthContext } from './auth.service';
 import {
     RegisterDto,

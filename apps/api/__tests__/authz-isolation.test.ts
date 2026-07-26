@@ -11,12 +11,13 @@
  * Denied = 403 (checkMembership: "not a member") for resource access, or 404 (orgs.findOne hides existence)
  * for the org entity itself — never 200, never the data. Requires Postgres + Redis up (like e2e-smoke).
  */
-import { Test, TestingModule } from '@nestjs/testing';
 import { INestApplication, ValidationPipe } from '@nestjs/common';
+import { Test, TestingModule } from '@nestjs/testing';
 import request from 'supertest';
+
 import { AppModule } from '../src/app.module';
-import { PrismaService } from '../src/prisma/prisma.service';
 import { AllExceptionsFilter } from '../src/common/filters/all-exceptions.filter';
+import { PrismaService } from '../src/prisma/prisma.service';
 
 const circuit = {
     version: '1.0',

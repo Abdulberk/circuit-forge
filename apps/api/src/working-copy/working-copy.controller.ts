@@ -6,10 +6,12 @@
  */
 import { Controller, Get, Put, Delete, Body, Param, ParseUUIDPipe, HttpCode, UseGuards } from '@nestjs/common';
 import { ApiTags, ApiOperation, ApiBearerAuth } from '@nestjs/swagger';
-import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
+
 import { CurrentUser } from '../auth/decorators/current-user.decorator';
-import { WorkingCopyService } from './working-copy.service';
+import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
+
 import { SaveWorkingCopyDto } from './dto';
+import { WorkingCopyService } from './working-copy.service';
 
 @ApiTags('projects')
 @ApiBearerAuth()

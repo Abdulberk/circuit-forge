@@ -12,6 +12,7 @@
  * Skipped under NODE_ENV=test so test runs never start the SDK or export test telemetry.
  */
 import * as path from 'path';
+
 import { startTelemetry } from './telemetry';
 
 if (process.env.NODE_ENV !== 'test') {

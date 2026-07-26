@@ -5,8 +5,7 @@
 import { spawn, type ChildProcess } from 'child_process';
 import * as fs from 'fs/promises';
 import * as path from 'path';
-import { config } from '../config';
-import { logger } from '../logger';
+
 import {
     parseSimulationOutput,
     parseFourierLog,
@@ -23,6 +22,10 @@ import {
     applySolverOptions,
 } from '@circuit-forge/eda-core';
 import type { SimulationResult, ConvergenceReport } from '@circuit-forge/eda-core';
+
+import { config } from '../config';
+import { logger } from '../logger';
+
 import { sandboxedCommand, resolveSandboxConfig } from './sandbox';
 
 /**

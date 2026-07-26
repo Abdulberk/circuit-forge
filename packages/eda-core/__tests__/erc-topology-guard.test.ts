@@ -4,9 +4,9 @@
  * 4.7uΩ) + the schema accepting multi-section refdes (U1A) that it previously rejected.
  */
 import { runErc } from '../src/erc/checker';
-import { ErcCode } from '../src/types/erc';
 import { CircuitJsonSchema } from '../src/schemas/circuit.schema';
 import type { CircuitJson, Component } from '../src/types/circuit';
+import { ErcCode } from '../src/types/erc';
 
 const C = (id: string, type: Component['type'], designator: string, value: string | undefined, nets: string[]): Component => ({
     id,

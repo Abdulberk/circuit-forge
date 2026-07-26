@@ -3,9 +3,10 @@
  */
 import { Injectable, NotFoundException, ConflictException } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
+
+import { paginated, type Paginated } from '../common/dto/pagination.dto';
 import { PrismaService } from '../prisma/prisma.service';
 import { ProjectsService } from '../projects/projects.service';
-import { paginated, type Paginated } from '../common/dto/pagination.dto';
 
 @Injectable()
 export class VersionsService {

@@ -23,10 +23,12 @@
  */
 import { downsampleResult, type AnalysisConfig } from '@circuit-forge/eda-core';
 import type { DesignRunSim } from '@circuitforge/llm-core';
+
 import { config } from '../config';
-import { runSimulation } from '../simulation/runner';
 import { runMonteCarloBatch } from '../simulation/montecarlo-runner';
 import { deriveFailureStatus } from '../simulation/outcome';
+import { runSimulation } from '../simulation/runner';
+
 import { ngspiceSem } from './pools';
 
 /** A finished local run, shaped to answer the loop's getStatus + getResult from memory. */

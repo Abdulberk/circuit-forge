@@ -4,17 +4,19 @@
  * quality pipeline and writes the outcome back onto the row. This service owns only the row lifecycle +
  * presigning the S3 artifacts on read; it does NOT run the pipeline.
  */
-import { Injectable, NotFoundException, ServiceUnavailableException, Logger } from '@nestjs/common';
-import { InjectQueue } from '@nestjs/bullmq';
-import { Queue } from 'bullmq';
-import { type LayoutJobStatus } from '@prisma/client';
-import { propagation, context as otelContext } from '@opentelemetry/api';
 import { S3Client, GetObjectCommand } from '@aws-sdk/client-s3';
 import { getSignedUrl } from '@aws-sdk/s3-request-presigner';
-import { PrismaService } from '../prisma/prisma.service';
-import { OrgsService } from '../orgs/orgs.service';
-import { UsageService } from '../usage/usage.service';
+import { InjectQueue } from '@nestjs/bullmq';
+import { Injectable, NotFoundException, ServiceUnavailableException, Logger } from '@nestjs/common';
+import { propagation, context as otelContext } from '@opentelemetry/api';
+import { type LayoutJobStatus } from '@prisma/client';
+import { Queue } from 'bullmq';
+
 import { paginated, type Paginated } from '../common/dto/pagination.dto';
+import { OrgsService } from '../orgs/orgs.service';
+import { PrismaService } from '../prisma/prisma.service';
+import { UsageService } from '../usage/usage.service';
+
 import { CreateLayoutDto } from './dto';
 
 function otelCarrier(): Record<string, string> {

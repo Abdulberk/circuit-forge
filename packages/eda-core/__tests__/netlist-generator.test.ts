@@ -3,9 +3,9 @@
  */
 import { generateNetlist, getNodeNames, validateNetlist } from '../src/netlist/generator';
 import type { NetlistOptions } from '../src/netlist/generator';
+import type { TranAnalysis, AcAnalysis, DcAnalysis, OpAnalysis } from '../src/types/analysis';
 import type { CircuitJson, Component, Net } from '../src/types/circuit';
 import { isSimulatable } from '../src/types/circuit';
-import type { TranAnalysis, AcAnalysis, DcAnalysis, OpAnalysis } from '../src/types/analysis';
 
 // Helper to create a component
 function createComponent(

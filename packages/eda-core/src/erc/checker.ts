@@ -2,14 +2,16 @@
  * ERC (Electrical Rule Check) Checker
  * Validates circuits for common electrical issues
  */
+import { buildZenerModel, normalizeControlledSourceGain, parseTransformerParams, parseTransmissionLineParams } from '../models/library';
+import { sourceHighLevel, sourceLowLevel } from '../netlist/digital';
 import type { CircuitJson, Component } from '../types/circuit';
 import { isDigitalType, isLogicGateType, isSingleInputGate, digitalPinRole, SEQUENTIAL_TYPES, COMPONENT_PINS } from '../types/circuit';
 import { ErcCode, ErcSeverity, ErcResult, ErcIssue } from '../types/erc';
-import { ERC_DESCRIPTIONS, ERC_SEVERITIES } from './codes';
-import { buildZenerModel, normalizeControlledSourceGain, parseTransformerParams, parseTransmissionLineParams } from '../models/library';
-import { sourceHighLevel, sourceLowLevel } from '../netlist/digital';
-import { parseSpiceValue } from '../utils/unit-parser';
 import { isESeriesValue, snapValueString } from '../utils/eseries';
+import { parseSpiceValue } from '../utils/unit-parser';
+
+import { ERC_DESCRIPTIONS, ERC_SEVERITIES } from './codes';
+
 
 /**
  * Expected pin counts for each component type

@@ -5,10 +5,11 @@
  */
 import { Injectable } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
-import { requireTmeConfig, type TmeConfig } from './tme.config';
-import { TmeTokenCache } from './tme-token-cache';
-import { TmeApiError, TmeNetworkError } from './tme-errors';
+
 import { createLimiter, type Limiter } from './concurrency-limiter';
+import { TmeApiError, TmeNetworkError } from './tme-errors';
+import { TmeTokenCache } from './tme-token-cache';
+import { requireTmeConfig, type TmeConfig } from './tme.config';
 
 export type QueryValue = string | number | boolean | undefined | Array<string | number>;
 export type Query = Record<string, QueryValue>;
@@ -134,7 +135,7 @@ export class TmeClient {
         }
 
         if (res.ok && json?.status === 'OK') {
-            return (json.data ?? ({} as T)) as T;
+            return (json.data ?? ({} as T));
         }
         // A 2xx with an unparseable body is a distinct failure from an error envelope.
         if (res.ok && json === null) {

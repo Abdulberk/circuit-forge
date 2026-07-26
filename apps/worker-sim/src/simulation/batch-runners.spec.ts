@@ -33,9 +33,10 @@ jest.mock('./job-dir', () => ({
 }));
 
 import { config } from '../config';
-import { runSweepBatch } from './sweep-runner';
-import { runMonteCarloBatch } from './montecarlo-runner';
+
 import { runCornerBatch } from './corner-runner';
+import { runMonteCarloBatch } from './montecarlo-runner';
+import { runSweepBatch } from './sweep-runner';
 
 const input = { jobId: 'j1', circuit: {} as never, analysis: { type: 'op' } as never, criteria: [] };
 

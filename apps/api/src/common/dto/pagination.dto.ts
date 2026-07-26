@@ -4,9 +4,9 @@
  * with. limit is capped server-side (a client can't ask for everything), and an absent/blank query still
  * applies the default cap — so even a naive caller is bounded.
  */
-import { IsInt, IsOptional, Max, Min } from 'class-validator';
-import { Type } from 'class-transformer';
 import { ApiPropertyOptional } from '@nestjs/swagger';
+import { Type } from 'class-transformer';
+import { IsInt, IsOptional, Max, Min } from 'class-validator';
 
 export const DEFAULT_PAGE_LIMIT = 50;
 export const MAX_PAGE_LIMIT = 100;

@@ -1,4 +1,5 @@
 import { ArgumentsHost, BadRequestException, HttpException, Logger, NotFoundException } from '@nestjs/common';
+
 import { AllExceptionsFilter } from './all-exceptions.filter';
 
 /** Drive the filter with a mock host; capture the status + JSON body it writes. */

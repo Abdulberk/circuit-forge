@@ -36,7 +36,9 @@ jest.mock('@circuit-forge/eda-core', () => {
 
 import { spawn } from 'child_process';
 import * as fs from 'fs/promises';
+
 import * as eda from '@circuit-forge/eda-core';
+
 import { runSimulation } from './runner';
 
 const mock = <T extends (...a: never[]) => unknown>(fn: T) => fn as unknown as jest.Mock;

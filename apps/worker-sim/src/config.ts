@@ -2,8 +2,9 @@
  * Worker configuration
  */
 import path from 'path';
-import { z } from 'zod';
+
 import dotenv from 'dotenv';
+import { z } from 'zod';
 
 // The monorepo root .env is the single source of truth (see turbo.json globalDependencies).
 // When run via pnpm/turbo the CWD is this package's dir, so the root .env sits two levels up.

@@ -1,7 +1,7 @@
+import type { AcceptanceCriterion } from '../src/analysis/assertions';
+import type { SimMeasurement } from '../src/analysis/measurements';
 import { runTempCorner, hasTemperatureResponsiveDevice, type TempRunner } from '../src/tempcorner';
 import type { CircuitJson } from '../src/types/circuit';
-import type { SimMeasurement } from '../src/analysis/measurements';
-import type { AcceptanceCriterion } from '../src/analysis/assertions';
 
 /** A source→resistor→diode string. The diode makes the circuit temperature-responsive (applicable). */
 const DIODE: CircuitJson = {

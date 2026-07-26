@@ -1,8 +1,8 @@
 /**
  * Versions DTOs
  */
-import { IsObject } from 'class-validator';
 import { ApiProperty } from '@nestjs/swagger';
+import { IsObject } from 'class-validator';
 
 export class CreateVersionDto {
     @ApiProperty({ description: 'Circuit JSON (canonical format)' })

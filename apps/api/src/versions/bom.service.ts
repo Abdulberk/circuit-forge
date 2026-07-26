@@ -6,8 +6,8 @@
  * catalog round-trip — deliberately out of scope; the stored unitCost gives an honest upper-bound figure).
  * Non-physical schematic artifacts (ground symbols) are excluded.
  */
+import type { CircuitJson } from '@circuit-forge/eda-core';
 import { Injectable } from '@nestjs/common';
-import type { CircuitJson, Component } from '@circuit-forge/eda-core';
 
 export interface BomLine {
     /** Real manufacturer part number when the component was sourced from the catalog; null for unsourced. */
@@ -49,7 +49,7 @@ export class BomService {
         const lines = new Map<string, BomLine>();
         let componentCount = 0;
 
-        for (const c of circuit.components as Component[]) {
+        for (const c of circuit.components) {
             if (c.type === 'ground') continue; // schematic symbol, not a part
             componentCount++;
             // Group key: real part identity first (mpn|manufacturer), else design identity (type|value).

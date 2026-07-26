@@ -11,9 +11,10 @@
  * burst of candidate generations stays under the provider's rate limits.
  */
 import os from 'os';
+
 import { config } from '../config';
-import { Semaphore } from '../util/semaphore';
 import { logger } from '../logger';
+import { Semaphore } from '../util/semaphore';
 
 const cores = os.cpus()?.length ?? 4;
 const ngspicePermits = config.NGSPICE_GLOBAL_CONCURRENCY ?? Math.max(1, Math.floor(cores * 0.75) - config.CONCURRENCY);

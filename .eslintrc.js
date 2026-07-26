@@ -46,7 +46,22 @@ module.exports = {
         '@typescript-eslint/explicit-function-return-type': 'warn',
         '@typescript-eslint/explicit-module-boundary-types': 'warn',
         '@typescript-eslint/no-explicit-any': 'error',
-        '@typescript-eslint/no-unused-vars': ['error', { argsIgnorePattern: '^_' }],
+        // `_`-prefix already means "deliberately unused" throughout this repo — including the
+        // destructure-to-omit idiom (`const { statusCode: _ignored, ...rest } = body`), which is a
+        // VAR, not an arg. Cover vars and caught errors too so the convention holds everywhere.
+        '@typescript-eslint/no-unused-vars': [
+            'error',
+            { argsIgnorePattern: '^_', varsIgnorePattern: '^_', caughtErrorsIgnorePattern: '^_' },
+        ],
+        // OFF — this rule REWRITES code from a type view we cannot reproduce faithfully. ESLint resolves
+        // types through the root-level tsconfig.eslint.json, while each package builds (and ts-jest
+        // type-checks) through its own tsconfig; in a pnpm workspace those two resolve @types differently.
+        // Concretely, it deleted a REQUIRED non-null assertion in
+        // apps/worker-sim/src/simulation/variant-runner.spec.ts ("the receiver accepts the original type"),
+        // and ts-jest then failed the whole suite with TS2345 — 15 tests silently vanished from the run.
+        // Every other rule here only REPORTS; this is the only one whose --fix can break the build, so the
+        // cost of a false positive is not symmetric with its value.
+        '@typescript-eslint/no-unnecessary-type-assertion': 'off',
         '@typescript-eslint/no-floating-promises': 'error',
         '@typescript-eslint/await-thenable': 'error',
         '@typescript-eslint/no-misused-promises': 'error',

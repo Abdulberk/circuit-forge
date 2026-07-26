@@ -4,6 +4,7 @@
  * Anthropic SDK + SimulationService + PartsService are mocked (no network, no DB, no worker).
  */
 import type { ConfigService } from '@nestjs/config';
+
 import type { PartsService } from '../parts/parts.service';
 import type { SimulationService } from '../simulation/simulation.service';
 
@@ -16,9 +17,9 @@ jest.mock('@anthropic-ai/sdk', () => ({
     },
 }));
 
-import { DesignService } from './design.service';
 import { CatalogGroundingService } from './catalog-grounding.service';
 import type { CircuitSimulatorService } from './circuit-simulator.service';
+import { DesignService } from './design.service';
 
 /** Stub simulator — unavailable, so these catalog-focused design tests are unchanged. */
 const noSimulator = { available: () => false, simulate: jest.fn() } as unknown as CircuitSimulatorService;
