@@ -25,8 +25,13 @@ const ConfigSchema = z.object({
     // 10–120s), so default concurrency 1 — the per-box lever against oversubscription (plan §5).
     PCB_QUEUE_NAME: z.string().default('pcb-layout'),
     PCB_CONCURRENCY: z.string().transform(Number).default('1'),
-    // Routing headroom (mm/side) for the quality route; matches pcb-core's default. 0 = exact outline.
-    PCB_ROUTING_MARGIN_MM: z.string().transform(Number).default('6'),
+    // Routing headroom (mm/side) for the quality route. UNSET is the correct production setting: pcb-core then
+    // walks its margin LADDER ([6, 4, 10, 2, 8, 12]) and keeps the first rung the DRC notary accepts. Freerouting
+    // is NON-MONOTONIC in margin — a board that fails at 6 can be clean at 10 — so a single margin is not a
+    // superset of the others. Setting this pins the route to that ONE margin (routeBestMargin treats an explicit
+    // value as a binding cap), which withholds the fab bundle for every board whose clean rung is a different
+    // one. Pin it only to reproduce a specific run. 0 = exact outline.
+    PCB_ROUTING_MARGIN_MM: z.string().transform(Number).optional(),
 
     // Orphan reaper (mirrors worker-sim's design reaper) — recovers layout jobs a dead/redeployed worker left
     // stuck RUNNING, or the API's insert↔enqueue gap left QUEUED. It reconciles such rows against the queue's
