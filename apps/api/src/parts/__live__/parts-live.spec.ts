@@ -118,11 +118,24 @@ function loadRealCreds(): boolean {
         expect(ic!.mapped.simulatable).toBe(false);
     });
 
-    it('does NOT misclassify a real Zener diode as a plain diode (structured map wins)', async () => {
+    it('classifies a real Zener as a zener and carries its breakdown voltage (never a plain rectifier)', async () => {
         const z = await classifyFirst('BZX55C5V1');
-        // Zener category -> generic; must never be emitted as a plain DDEFAULT rectifier.
-        expect(z!.mapped.component?.type).toBe('generic');
-        expect(z!.mapped.simulatable).toBe(false);
+        // The original assertion here was `type === 'generic'`, written when eda-core had no zener
+        // type and 'generic' was the safe fallback. Zener is now first-class — it is in ComponentType
+        // and generator.ts builds the SPICE breakdown model from Vz — so 'generic' is no longer the
+        // safe answer, it is a REGRESSION: it would drop the part out of simulation entirely.
+        expect(z!.mapped.component?.type).toBe('zener');
+
+        // The type alone is not the point. The breakdown voltage is what makes it simulable at all
+        // (component-mapper returns simulatable:false when it cannot extract Vz), so assert the value
+        // actually came across — BZX55C5V1 is a 5.1 V part.
+        expect(z!.mapped.simulatable).toBe(true);
+        const vz = Number(String(z!.mapped.component?.value).replace(/[^0-9.]/g, ''));
+        expect(vz).toBeCloseTo(5.1, 1);
+
+        // The failure this test exists to prevent: a Zener emitted as a plain rectifier, which would
+        // simulate with no breakdown region and silently produce a wrong verdict.
+        expect(z!.mapped.component?.type).not.toBe('diode');
     });
 
     it('classifies a real connector as catalog-only generic', async () => {
