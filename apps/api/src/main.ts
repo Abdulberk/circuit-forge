@@ -3,14 +3,15 @@
  */
 // MUST stay first: starts OpenTelemetry (when configured) before any instrumented module loads.
 import './observability/instrumentation';
-import { shutdownTelemetry } from './observability/telemetry';
-import { NestFactory } from '@nestjs/core';
 import { ValidationPipe } from '@nestjs/common';
+import { NestFactory } from '@nestjs/core';
 import { NestExpressApplication } from '@nestjs/platform-express';
 import { SwaggerModule, DocumentBuilder } from '@nestjs/swagger';
 import helmet from 'helmet';
+
 import { AppModule } from './app.module';
 import { AllExceptionsFilter } from './common/filters/all-exceptions.filter';
+import { shutdownTelemetry } from './observability/telemetry';
 
 async function bootstrap() {
     const app = await NestFactory.create<NestExpressApplication>(AppModule, {
@@ -102,4 +103,10 @@ async function bootstrap() {
     process.once('SIGINT', () => void shutdown('SIGINT'));
 }
 
-bootstrap();
+// Mirrors the workers' `main().catch(...)`: a rejected bootstrap (bad env, DB unreachable, port in use)
+// would otherwise surface as a bare unhandled rejection — which Node terminates on, but silently, with no
+// line saying why. Log the cause first, then exit non-zero so the orchestrator restarts us.
+bootstrap().catch((error: unknown) => {
+    console.error('Fatal error during bootstrap:', error instanceof Error ? error.stack : error);
+    process.exit(1);
+});
