@@ -62,7 +62,7 @@ export interface PlacementOutput {
 const FORCE_STEPS = 200;
 const RELAX_STEPS = 50;
 const ROTATION_CHECKPOINTS = [80, 160];
-const LEARN_START = 0.30;
+const LEARN_START = 0.3;
 const LEARN_END = 0.05;
 // Default inter-courtyard breathing room used by repulsion + legalization. This is the ROUTING
 // CHANNEL between parts: at the economy profile (0.2mm track + 0.2mm clearance) one escape lane
@@ -83,10 +83,14 @@ const MIN_BOARD_MM = 20;
 /** Rotate a point by 0/90/180/270° with exact integer matrices — no trig (plan §12). */
 export function rot(r: Rotation, x: number, y: number): [number, number] {
     switch (r) {
-        case 0: return [x, y];
-        case 90: return [-y, x];
-        case 180: return [-x, -y];
-        case 270: return [y, -x];
+        case 0:
+            return [x, y];
+        case 90:
+            return [-y, x];
+        case 180:
+            return [-x, -y];
+        case 270:
+            return [y, -x];
     }
 }
 
@@ -97,10 +101,18 @@ function halfExtents(p: PlaceablePart, r: Rotation): [number, number] {
 
 // ---------------------------------------------------------------- graph
 
-interface Edge { a: number; b: number; weight: number }
+interface Edge {
+    a: number;
+    b: number;
+    weight: number;
+}
 
 /** Pairwise part-to-part edges: shared nets (weighted) + derived extra edges. */
-function buildEdges(parts: PlaceablePart[], netWeights: Record<string, number>, extra: PlacementInput['extraEdges']): Edge[] {
+function buildEdges(
+    parts: PlaceablePart[],
+    netWeights: Record<string, number>,
+    extra: PlacementInput['extraEdges'],
+): Edge[] {
     const idx = new Map(parts.map((p, i) => [p.id, i]));
     const acc = new Map<string, Edge>();
     const add = (a: number, b: number, weight: number) => {
@@ -152,7 +164,10 @@ function median(nums: number[]): number {
 function seed(parts: PlaceablePart[], edges: Edge[], boardW: number, boardH: number, notes: string[]): State {
     const n = parts.length;
     const degree = new Array<number>(n).fill(0);
-    for (const e of edges) { degree[e.a]! += e.weight; degree[e.b]! += e.weight; }
+    for (const e of edges) {
+        degree[e.a]! += e.weight;
+        degree[e.b]! += e.weight;
+    }
 
     const med = median(degree);
     // hubs: clearly-above-median connectivity (plan: no hub → skip rings, grid seed)
@@ -182,18 +197,27 @@ function seed(parts: PlaceablePart[], edges: Edge[], boardW: number, boardH: num
     // cluster assignment: each part joins the hub with the largest summed edge weight (ties: id)
     const hubWeight = new Map<number, Map<number, number>>(hubIdx.map((h) => [h, new Map()]));
     for (const e of edges) {
-        for (const [h, other] of [[e.a, e.b], [e.b, e.a]] as const) {
+        for (const [h, other] of [
+            [e.a, e.b],
+            [e.b, e.a],
+        ] as const) {
             hubWeight.get(h)?.set(other, (hubWeight.get(h)?.get(other) ?? 0) + e.weight);
         }
     }
     const clusterOf = new Map<number, number>();
     for (let i = 0; i < n; i++) {
-        if (hubIdx.includes(i)) { clusterOf.set(i, i); continue; }
+        if (hubIdx.includes(i)) {
+            clusterOf.set(i, i);
+            continue;
+        }
         let best = -1;
         let bestW = 0;
         for (const h of hubIdx) {
             const w = hubWeight.get(h)?.get(i) ?? 0;
-            if (w > bestW || (w === bestW && w > 0 && best !== -1 && parts[h]!.id < parts[best]!.id)) { best = h; bestW = w; }
+            if (w > bestW || (w === bestW && w > 0 && best !== -1 && parts[h]!.id < parts[best]!.id)) {
+                best = h;
+                bestW = w;
+            }
         }
         clusterOf.set(i, best === -1 ? hubIdx[0]! : best);
     }
@@ -211,13 +235,21 @@ function seed(parts: PlaceablePart[], edges: Edge[], boardW: number, boardH: num
     for (const i of order) {
         const h = clusterOf.get(i)!;
         const [cx, cy] = centers.get(h)!;
-        if (i === h) { st.x[i] = cx; st.y[i] = cy; continue; }
+        if (i === h) {
+            st.x[i] = cx;
+            st.y[i] = cy;
+            continue;
+        }
         const hub = parts[h]!;
         // which side of the hub does this part connect to? (no trig: pad-side buckets, plan §12)
         let sx = 0;
         let sy = 0;
         const nets = new Set(parts[i]!.pads.map((p) => p.net).filter(Boolean));
-        for (const pad of hub.pads) if (nets.has(pad.net)) { sx += pad.x; sy += pad.y; }
+        for (const pad of hub.pads)
+            if (nets.has(pad.net)) {
+                sx += pad.x;
+                sy += pad.y;
+            }
         const qx = sx === 0 ? (i % 2 === 0 ? 1 : -1) : sx > 0 ? 1 : -1;
         const qy = sy === 0 ? (i % 2 === 0 ? 1 : -1) : sy > 0 ? 1 : -1;
         const key = `${h}:${qx}${qy}`;
@@ -261,17 +293,23 @@ function rotationSweep(parts: PlaceablePart[], st: State, order: number[], netWe
                     for (const q of parts[j]!.pads) {
                         if (q.net !== pad.net) continue;
                         const [qx, qy] = padWorld(st, j, q);
-                        cx += qx; cy += qy; cnt++;
+                        cx += qx;
+                        cy += qy;
+                        cnt++;
                     }
                 }
                 if (cnt === 0) continue;
-                cx /= cnt; cy /= cnt;
+                cx /= cnt;
+                cy /= cnt;
                 const [rx, ry] = rot(r, pad.x, pad.y);
                 const dx = st.x[i]! + rx - cx;
                 const dy = st.y[i]! + ry - cy;
                 score += w * Math.sqrt(dx * dx + dy * dy);
             }
-            if (score < bestScore - 1e-9) { bestScore = score; bestR = r; }
+            if (score < bestScore - 1e-9) {
+                bestScore = score;
+                bestR = r;
+            }
         }
         st.r[i] = bestR;
     }
@@ -294,7 +332,10 @@ function forceLoop(parts: PlaceablePart[], edges: Edge[], st: State, input: Plac
         for (const e of edges) {
             let dx = st.x[e.b]! - st.x[e.a]!;
             let dy = st.y[e.b]! - st.y[e.a]!;
-            if (dx === 0 && dy === 0) { dx = e.a < e.b ? 0.01 : -0.01; dy = 0.01; } // ε-guard (plan §12)
+            if (dx === 0 && dy === 0) {
+                dx = e.a < e.b ? 0.01 : -0.01;
+                dy = 0.01;
+            } // ε-guard (plan §12)
             fx[e.a]! += dx * e.weight * 0.02;
             fy[e.a]! += dy * e.weight * 0.02;
             fx[e.b]! -= dx * e.weight * 0.02;
@@ -308,13 +349,23 @@ function forceLoop(parts: PlaceablePart[], edges: Edge[], st: State, input: Plac
                 const [wj, hj] = halfExtents(parts[j]!, st.r[j]!);
                 let dx = st.x[j]! - st.x[i]!;
                 let dy = st.y[j]! - st.y[i]!;
-                if (dx === 0 && dy === 0) { dx = 0.01; dy = -0.01; }
+                if (dx === 0 && dy === 0) {
+                    dx = 0.01;
+                    dy = -0.01;
+                }
                 const ox = wi + wj + spacing - (dx < 0 ? -dx : dx);
                 const oy = hi + hj + spacing - (dy < 0 ? -dy : dy);
                 if (ox <= 0 || oy <= 0) continue; // no overlap
                 const push = 0.5 * Math.min(ox, oy);
-                if (ox < oy) { const s = dx < 0 ? -1 : 1; fx[i]! -= s * push; fx[j]! += s * push; }
-                else { const s = dy < 0 ? -1 : 1; fy[i]! -= s * push; fy[j]! += s * push; }
+                if (ox < oy) {
+                    const s = dx < 0 ? -1 : 1;
+                    fx[i]! -= s * push;
+                    fx[j]! += s * push;
+                } else {
+                    const s = dy < 0 ? -1 : 1;
+                    fy[i]! -= s * push;
+                    fy[j]! += s * push;
+                }
             }
         }
 
@@ -325,10 +376,10 @@ function forceLoop(parts: PlaceablePart[], edges: Edge[], st: State, input: Plac
             const [wi, hi] = halfExtents(parts[i]!, st.r[i]!);
             const maxX = bx - wi;
             const maxY = by - hi;
-            if (st.x[i]! > maxX) fx[i]! -= (st.x[i]! - maxX);
-            if (st.x[i]! < -maxX) fx[i]! += (-maxX - st.x[i]!);
-            if (st.y[i]! > maxY) fy[i]! -= (st.y[i]! - maxY);
-            if (st.y[i]! < -maxY) fy[i]! += (-maxY - st.y[i]!);
+            if (st.x[i]! > maxX) fx[i]! -= st.x[i]! - maxX;
+            if (st.x[i]! < -maxX) fx[i]! += -maxX - st.x[i]!;
+            if (st.y[i]! > maxY) fy[i]! -= st.y[i]! - maxY;
+            if (st.y[i]! < -maxY) fy[i]! += -maxY - st.y[i]!;
             if (parts[i]!.role === 'connector') {
                 // pull toward the nearest vertical edge (deterministic: sign of current x, ties → left)
                 const targetX = st.x[i]! >= 0 ? maxX : -maxX;
@@ -349,8 +400,14 @@ const snap = (v: number, g: number) => Math.round(v / g) * g;
 
 function overlaps(
     spacing: number,
-    x1: number, y1: number, w1: number, h1: number,
-    x2: number, y2: number, w2: number, h2: number,
+    x1: number,
+    y1: number,
+    w1: number,
+    h1: number,
+    x2: number,
+    y2: number,
+    w2: number,
+    h2: number,
 ): boolean {
     const dx = x2 - x1;
     const dy = y2 - y1;
@@ -362,10 +419,20 @@ function overlaps(
  * ring search, deterministic order) that fits inside the board and overlaps nothing already placed.
  * Finite grid ⇒ guaranteed termination; no free cell ⇒ caller grows the board and retries once.
  */
-function legalize(parts: PlaceablePart[], st: State, boardW: number, boardH: number, grid: number, margin: number, spacing: number): boolean {
+function legalize(
+    parts: PlaceablePart[],
+    st: State,
+    boardW: number,
+    boardH: number,
+    grid: number,
+    margin: number,
+    spacing: number,
+): boolean {
     const order = parts
         .map((_, i) => i)
-        .sort((a, b) => parts[b]!.w * parts[b]!.h - parts[a]!.w * parts[a]!.h || parts[a]!.id.localeCompare(parts[b]!.id));
+        .sort(
+            (a, b) => parts[b]!.w * parts[b]!.h - parts[a]!.w * parts[a]!.h || parts[a]!.id.localeCompare(parts[b]!.id),
+        );
     const placed: number[] = [];
     for (const i of order) {
         const [wi, hi] = halfExtents(parts[i]!, st.r[i]!);
@@ -392,9 +459,17 @@ function legalize(parts: PlaceablePart[], st: State, boardW: number, boardH: num
                 let free = true;
                 for (const j of placed) {
                     const [wj, hj] = halfExtents(parts[j]!, st.r[j]!);
-                    if (overlaps(spacing, px, py, wi, hi, st.x[j]!, st.y[j]!, wj, hj)) { free = false; break; }
+                    if (overlaps(spacing, px, py, wi, hi, st.x[j]!, st.y[j]!, wj, hj)) {
+                        free = false;
+                        break;
+                    }
                 }
-                if (free) { st.x[i] = px; st.y[i] = py; done = true; break; }
+                if (free) {
+                    st.x[i] = px;
+                    st.y[i] = py;
+                    done = true;
+                    break;
+                }
             }
         }
         if (!done) return false; // no free cell on the whole board — grow & retry
@@ -405,7 +480,10 @@ function legalize(parts: PlaceablePart[], st: State, boardW: number, boardH: num
 
 // ---------------------------------------------------------------- HPWL (plan §4.7)
 
-export function computeHpwl(parts: PlaceablePart[], positions: Record<string, { x: number; y: number; rotation: Rotation }>): number {
+export function computeHpwl(
+    parts: PlaceablePart[],
+    positions: Record<string, { x: number; y: number; rotation: Rotation }>,
+): number {
     const box = new Map<string, [number, number, number, number]>();
     for (const p of parts) {
         const pos = positions[p.id];
@@ -456,8 +534,13 @@ export function placeParts(input: PlacementInput): PlacementOutput {
 
     // rotation sweep order: hubs first, then descending weighted degree (deterministic)
     const degree = new Array<number>(parts.length).fill(0);
-    for (const e of edges) { degree[e.a]! += e.weight; degree[e.b]! += e.weight; }
-    const rotOrder = parts.map((_, i) => i).sort((a, b) => degree[b]! - degree[a]! || parts[a]!.id.localeCompare(parts[b]!.id));
+    for (const e of edges) {
+        degree[e.a]! += e.weight;
+        degree[e.b]! += e.weight;
+    }
+    const rotOrder = parts
+        .map((_, i) => i)
+        .sort((a, b) => degree[b]! - degree[a]! || parts[a]!.id.localeCompare(parts[b]!.id));
 
     forceLoop(parts, edges, st, { ...input, boardW, boardH }, rotOrder);
 

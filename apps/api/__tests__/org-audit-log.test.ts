@@ -18,10 +18,21 @@ describe('Org audit log (GET /orgs/:orgId/audit-logs)', () => {
     let prisma: PrismaService;
     let server: import('http').Server;
 
-    let tokenA = '', userIdA = '', orgA = '', orgZero = '';
-    let tokenB = '', userIdB = '', orgB = '';
-    let tokenC = '', userIdC = ''; // a plain MEMBER of orgA
-    let rowAdmin = '', rowTenant = '', rowQuota = '', rowExtra = '', rowNullMeta = '', rowOther = '';
+    let tokenA = '',
+        userIdA = '',
+        orgA = '',
+        orgZero = '';
+    let tokenB = '',
+        userIdB = '',
+        orgB = '';
+    let tokenC = '',
+        userIdC = ''; // a plain MEMBER of orgA
+    let rowAdmin = '',
+        rowTenant = '',
+        rowQuota = '',
+        rowExtra = '',
+        rowNullMeta = '',
+        rowOther = '';
 
     const audit = (org: string, token: string, q = '') =>
         request(server).get(`/orgs/${org}/audit-logs${q}`).set('Authorization', `Bearer ${token}`);
@@ -35,41 +46,120 @@ describe('Org audit log (GET /orgs/:orgId/audit-logs)', () => {
         server = app.getHttpServer();
 
         const reg = async (p: string) =>
-            (await request(server).post('/auth/register').send({ email: `${p}-${Date.now()}@test.com`, password: 'SecurePassword123!', name: p }).expect(201)).body;
-        const a = await reg('aud-a'); tokenA = a.accessToken; userIdA = a.user.id;
-        const b = await reg('aud-b'); tokenB = b.accessToken; userIdB = b.user.id;
-        const c = await reg('aud-c'); tokenC = c.accessToken; userIdC = c.user.id;
-        orgA = (await request(server).post('/orgs').set('Authorization', `Bearer ${tokenA}`).send({ name: 'Aud Org A' }).expect(201)).body.id;
-        orgB = (await request(server).post('/orgs').set('Authorization', `Bearer ${tokenB}`).send({ name: 'Aud Org B' }).expect(201)).body.id;
-        orgZero = (await request(server).post('/orgs').set('Authorization', `Bearer ${tokenA}`).send({ name: 'Aud Org Zero' }).expect(201)).body.id;
+            (
+                await request(server)
+                    .post('/auth/register')
+                    .send({ email: `${p}-${Date.now()}@test.com`, password: 'SecurePassword123!', name: p })
+                    .expect(201)
+            ).body;
+        const a = await reg('aud-a');
+        tokenA = a.accessToken;
+        userIdA = a.user.id;
+        const b = await reg('aud-b');
+        tokenB = b.accessToken;
+        userIdB = b.user.id;
+        const c = await reg('aud-c');
+        tokenC = c.accessToken;
+        userIdC = c.user.id;
+        orgA = (
+            await request(server)
+                .post('/orgs')
+                .set('Authorization', `Bearer ${tokenA}`)
+                .send({ name: 'Aud Org A' })
+                .expect(201)
+        ).body.id;
+        orgB = (
+            await request(server)
+                .post('/orgs')
+                .set('Authorization', `Bearer ${tokenB}`)
+                .send({ name: 'Aud Org B' })
+                .expect(201)
+        ).body.id;
+        orgZero = (
+            await request(server)
+                .post('/orgs')
+                .set('Authorization', `Bearer ${tokenA}`)
+                .send({ name: 'Aud Org Zero' })
+                .expect(201)
+        ).body.id;
         await prisma.orgMembership.create({ data: { orgId: orgA, userId: userIdC, role: 'MEMBER' } });
 
-        const mk = async (data: Parameters<typeof prisma.auditLog.create>[0]['data']) => (await prisma.auditLog.create({ data })).id;
+        const mk = async (data: Parameters<typeof prisma.auditLog.create>[0]['data']) =>
+            (await prisma.auditLog.create({ data })).id;
         // 1) operator suspension — reason IS tenant-facing; PII in meta must be stripped.
-        rowAdmin = await mk({ orgId: orgA, adminActorId: userIdB, action: 'admin.org.suspend', entityType: 'Organization', entityId: orgA,
-            meta: { requestId: 'req-secret-1', adminActorEmail: 'operator@internal.example', reason: 'Terms violation',
-                    before: { suspendedAt: null }, after: { suspendedAt: '2026-07-15T00:00:00.000Z' } } });
+        rowAdmin = await mk({
+            orgId: orgA,
+            adminActorId: userIdB,
+            action: 'admin.org.suspend',
+            entityType: 'Organization',
+            entityId: orgA,
+            meta: {
+                requestId: 'req-secret-1',
+                adminActorEmail: 'operator@internal.example',
+                reason: 'Terms violation',
+                before: { suspendedAt: null },
+                after: { suspendedAt: '2026-07-15T00:00:00.000Z' },
+            },
+        });
         // 2) the org's OWN action (no admin actor) — reason is the org's own note, shown.
-        rowTenant = await mk({ orgId: orgA, userId: userIdC, action: 'org.member.role', entityType: 'OrgMembership', entityId: userIdC,
-            meta: { reason: 'promote to admin', before: { role: 'MEMBER' }, after: { role: 'ADMIN' } } });
+        rowTenant = await mk({
+            orgId: orgA,
+            userId: userIdC,
+            action: 'org.member.role',
+            entityType: 'OrgMembership',
+            entityId: userIdC,
+            meta: { reason: 'promote to admin', before: { role: 'MEMBER' }, after: { role: 'ADMIN' } },
+        });
         // 3) operator quota override — the snapshot embeds updatedByAdminId (the raw operator id) — MUST be stripped
         //    from before/after; reason is an internal operator note on a non-suspend action — MUST be withheld.
-        rowQuota = await mk({ orgId: orgA, adminActorId: userIdB, action: 'admin.org.quota_override', entityType: 'OrgQuotaOverride', entityId: orgA,
-            meta: { requestId: 'req-secret-q', adminActorEmail: 'operator@internal.example', reason: 'internal note SEC-4412 do not disclose',
-                    before: { simConcurrent: 2, updatedByAdminId: userIdB }, after: { simConcurrent: 10, updatedByAdminId: userIdB } } });
+        rowQuota = await mk({
+            orgId: orgA,
+            adminActorId: userIdB,
+            action: 'admin.org.quota_override',
+            entityType: 'OrgQuotaOverride',
+            entityId: orgA,
+            meta: {
+                requestId: 'req-secret-q',
+                adminActorEmail: 'operator@internal.example',
+                reason: 'internal note SEC-4412 do not disclose',
+                before: { simConcurrent: 2, updatedByAdminId: userIdB },
+                after: { simConcurrent: 10, updatedByAdminId: userIdB },
+            },
+        });
         // 4) an operator action with an UNEXPECTED top-level meta key — must never be projected (whitelist, not blacklist).
-        rowExtra = await mk({ orgId: orgA, adminActorId: userIdB, action: 'admin.org.rename', entityType: 'Organization', entityId: orgA,
-            meta: { internalNote: 'ops-only: flagged for review', reason: 'internal rename note' } });
+        rowExtra = await mk({
+            orgId: orgA,
+            adminActorId: userIdB,
+            action: 'admin.org.rename',
+            entityType: 'Organization',
+            entityId: orgA,
+            meta: { internalNote: 'ops-only: flagged for review', reason: 'internal rename note' },
+        });
         // 5) a row with NO meta at all — the defensive branch must yield reason/before/after = null, still 200.
-        rowNullMeta = await mk({ orgId: orgA, userId: userIdC, action: 'project.create', entityType: 'Project', entityId: 'proj-a1' });
+        rowNullMeta = await mk({
+            orgId: orgA,
+            userId: userIdC,
+            action: 'project.create',
+            entityType: 'Project',
+            entityId: 'proj-a1',
+        });
         // other org — must never surface for orgA.
-        rowOther = await mk({ orgId: orgB, action: 'project.create', entityType: 'Project', entityId: 'proj-x',
-            meta: { reason: 'n/a', after: { name: 'secret-b-project' } } });
+        rowOther = await mk({
+            orgId: orgB,
+            action: 'project.create',
+            entityType: 'Project',
+            entityId: 'proj-x',
+            meta: { reason: 'n/a', after: { name: 'secret-b-project' } },
+        });
     });
 
     afterAll(async () => {
-        await prisma.auditLog.deleteMany({ where: { id: { in: [rowAdmin, rowTenant, rowQuota, rowExtra, rowNullMeta, rowOther] } } }).catch(() => undefined);
-        await prisma.orgMembership.deleteMany({ where: { orgId: { in: [orgA, orgB, orgZero] } } }).catch(() => undefined);
+        await prisma.auditLog
+            .deleteMany({ where: { id: { in: [rowAdmin, rowTenant, rowQuota, rowExtra, rowNullMeta, rowOther] } } })
+            .catch(() => undefined);
+        await prisma.orgMembership
+            .deleteMany({ where: { orgId: { in: [orgA, orgB, orgZero] } } })
+            .catch(() => undefined);
         await prisma.organization.deleteMany({ where: { id: { in: [orgA, orgB, orgZero] } } }).catch(() => undefined);
         await prisma.user.deleteMany({ where: { id: { in: [userIdA, userIdB, userIdC] } } }).catch(() => undefined);
         await app.close();
@@ -88,8 +178,12 @@ describe('Org audit log (GET /orgs/:orgId/audit-logs)', () => {
 
     it('REDACTION (suspend): exposes reason/before/after + byPlatformAdmin, but NO operator PII', async () => {
         const item = find((await audit(orgA, tokenA).expect(200)).body, rowAdmin);
-        expect(item).toMatchObject({ byPlatformAdmin: true, reason: 'Terms violation',
-            before: { suspendedAt: null }, after: { suspendedAt: '2026-07-15T00:00:00.000Z' } });
+        expect(item).toMatchObject({
+            byPlatformAdmin: true,
+            reason: 'Terms violation',
+            before: { suspendedAt: null },
+            after: { suspendedAt: '2026-07-15T00:00:00.000Z' },
+        });
         for (const k of ['meta', 'adminActorId', 'adminActorEmail', 'requestId']) expect(item).not.toHaveProperty(k);
         const blob = JSON.stringify(item);
         expect(blob).not.toContain('operator@internal.example');
@@ -110,7 +204,7 @@ describe('Org audit log (GET /orgs/:orgId/audit-logs)', () => {
         expect(blob).not.toContain('SEC-4412');
     });
 
-    it("REDACTION (unexpected key): a meta key outside the whitelist is never projected; non-suspend operator reason withheld", async () => {
+    it('REDACTION (unexpected key): a meta key outside the whitelist is never projected; non-suspend operator reason withheld', async () => {
         const item = find((await audit(orgA, tokenA).expect(200)).body, rowExtra);
         expect(item.reason).toBeNull();
         expect(JSON.stringify(item)).not.toContain('ops-only: flagged for review');

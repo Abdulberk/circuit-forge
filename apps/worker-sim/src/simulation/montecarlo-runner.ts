@@ -61,25 +61,32 @@ export async function runMonteCarloBatch(
     // are drawn (random). Derive the SAME criterion probes the nominal verify path unions in, so a current
     // criterion (i(R1)) is saved per variant instead of reading "probe not found" → yield collapsing to ~0.
     const extraProbes = extraProbesForCriteria(input.criteria);
-    const summary = await withVariantJobDir(input.jobId, 'mc', input.analysis, extraProbes, input.modelFiles, async (runVariant) => {
-        const s = await runMonteCarlo(input.circuit, input.criteria, runVariant, {
-            n: input.n ?? config.MC_N_DEFAULT,
-            seed: input.seed ?? 1,
-            ciStopHalfWidth: config.MC_CI_HALFWIDTH_STOP,
-            shouldStop: () => {
-                if (Date.now() > deadline) {
-                    budgetHit = true;
-                    return true;
-                }
-                return false;
-            },
-            onProgress,
-        });
-        logger.info(
-            { jobId: input.jobId, ran: s.ran, evaluated: s.evaluated, yield: s.yield, budgetHit },
-            'Monte-Carlo batch complete',
-        );
-        return s;
-    });
+    const summary = await withVariantJobDir(
+        input.jobId,
+        'mc',
+        input.analysis,
+        extraProbes,
+        input.modelFiles,
+        async (runVariant) => {
+            const s = await runMonteCarlo(input.circuit, input.criteria, runVariant, {
+                n: input.n ?? config.MC_N_DEFAULT,
+                seed: input.seed ?? 1,
+                ciStopHalfWidth: config.MC_CI_HALFWIDTH_STOP,
+                shouldStop: () => {
+                    if (Date.now() > deadline) {
+                        budgetHit = true;
+                        return true;
+                    }
+                    return false;
+                },
+                onProgress,
+            });
+            logger.info(
+                { jobId: input.jobId, ran: s.ran, evaluated: s.evaluated, yield: s.yield, budgetHit },
+                'Monte-Carlo batch complete',
+            );
+            return s;
+        },
+    );
     return { ...summary, runtimeMs: Date.now() - startTime, budgetHit };
 }

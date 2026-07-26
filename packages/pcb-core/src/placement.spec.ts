@@ -4,26 +4,67 @@ import { placeParts, computeHpwl, rot, type PlacementInput, type PlaceablePart }
 import { buildNetWeights, deriveExtraEdges } from './placement-bridge';
 
 const R = (id: string, net1: string, net2: string): PlaceablePart => ({
-    id, w: 1.6, h: 0.8, role: 'part',
-    pads: [{ x: -0.8, y: 0, net: net1 }, { x: 0.8, y: 0, net: net2 }],
+    id,
+    w: 1.6,
+    h: 0.8,
+    role: 'part',
+    pads: [
+        { x: -0.8, y: 0, net: net1 },
+        { x: 0.8, y: 0, net: net2 },
+    ],
 });
 
 /** A tiny 555-ish board: hub IC + timing parts + LED chain + power connector. */
 function blinkerParts(): PlaceablePart[] {
     return [
         {
-            id: 'U1', w: 4, h: 5, role: 'part',
+            id: 'U1',
+            w: 4,
+            h: 5,
+            role: 'part',
             pads: [
-                { x: -2, y: -1.9, net: 'GND' }, { x: -2, y: -0.6, net: 'THR' }, { x: -2, y: 0.6, net: 'OUT' }, { x: -2, y: 1.9, net: 'VCC' },
-                { x: 2, y: -0.6, net: 'THR' }, { x: 2, y: 0.6, net: 'DIS' }, { x: 2, y: 1.9, net: 'VCC' },
+                { x: -2, y: -1.9, net: 'GND' },
+                { x: -2, y: -0.6, net: 'THR' },
+                { x: -2, y: 0.6, net: 'OUT' },
+                { x: -2, y: 1.9, net: 'VCC' },
+                { x: 2, y: -0.6, net: 'THR' },
+                { x: 2, y: 0.6, net: 'DIS' },
+                { x: 2, y: 1.9, net: 'VCC' },
             ],
         },
         R('R1', 'VCC', 'DIS'),
         R('R2', 'DIS', 'THR'),
         R('R3', 'OUT', 'LEDK'),
-        { id: 'C1', w: 1.6, h: 0.8, role: 'part', pads: [{ x: -0.8, y: 0, net: 'THR' }, { x: 0.8, y: 0, net: 'GND' }] },
-        { id: 'LED1', w: 1.6, h: 0.8, role: 'part', pads: [{ x: -0.8, y: 0, net: 'LEDK' }, { x: 0.8, y: 0, net: 'GND' }] },
-        { id: 'V1', w: 2.5, h: 5, role: 'connector', pads: [{ x: 0, y: -1.27, net: 'VCC' }, { x: 0, y: 1.27, net: 'GND' }] },
+        {
+            id: 'C1',
+            w: 1.6,
+            h: 0.8,
+            role: 'part',
+            pads: [
+                { x: -0.8, y: 0, net: 'THR' },
+                { x: 0.8, y: 0, net: 'GND' },
+            ],
+        },
+        {
+            id: 'LED1',
+            w: 1.6,
+            h: 0.8,
+            role: 'part',
+            pads: [
+                { x: -0.8, y: 0, net: 'LEDK' },
+                { x: 0.8, y: 0, net: 'GND' },
+            ],
+        },
+        {
+            id: 'V1',
+            w: 2.5,
+            h: 5,
+            role: 'connector',
+            pads: [
+                { x: 0, y: -1.27, net: 'VCC' },
+                { x: 0, y: 1.27, net: 'GND' },
+            ],
+        },
     ];
 }
 
@@ -61,7 +102,9 @@ describe('placeParts — the Lever-2 engine', () => {
         }
         // vs a deliberately bad diagonal spread
         const spread: Record<string, { x: number; y: number; rotation: 0 }> = {};
-        blinkerParts().forEach((p, i) => { spread[p.id] = { x: -15 + i * 5, y: -15 + i * 5, rotation: 0 }; });
+        blinkerParts().forEach((p, i) => {
+            spread[p.id] = { x: -15 + i * 5, y: -15 + i * 5, rotation: 0 };
+        });
         expect(out.hpwl).toBeLessThan(computeHpwl(blinkerParts(), spread));
     });
 
@@ -92,8 +135,14 @@ describe('placeParts — the Lever-2 engine', () => {
 
     it('terminates (with growth or an honest failure) on a deliberately too-small board — never hangs', () => {
         const big: PlaceablePart[] = Array.from({ length: 4 }, (_, i) => ({
-            id: `BIG${i}`, w: 14, h: 14, role: 'part',
-            pads: [{ x: -6, y: 0, net: 'A' }, { x: 6, y: 0, net: 'A' }],
+            id: `BIG${i}`,
+            w: 14,
+            h: 14,
+            role: 'part',
+            pads: [
+                { x: -6, y: 0, net: 'A' },
+                { x: 6, y: 0, net: 'A' },
+            ],
         }));
         const out = placeParts(input({ parts: big, netWeights: { A: 1 }, boardW: 20, boardH: 20 }));
         // either grown-and-legal or ok:false — both acceptable, hanging is not
@@ -128,13 +177,77 @@ describe('placement-bridge — weights and derived decap edges (plan §4.2)', ()
     const circuit: CircuitJson = {
         version: '1.0',
         components: [
-            { id: 'v1', type: 'voltage_source', designator: 'V1', value: 'DC 5', pins: [{ pinId: '+', netId: 'vcc' }, { pinId: '-', netId: 'gnd' }] },
-            { id: 'u1', type: 'generic', designator: 'U1', footprint: 'soic16', pins: [{ pinId: '16', netId: 'vcc' }, { pinId: '8', netId: 'gnd' }, { pinId: '1', netId: 'sig' }] },
-            { id: 'u2', type: 'generic', designator: 'U2', footprint: 'soic8', pins: [{ pinId: '8', netId: 'vcc' }, { pinId: '4', netId: 'gnd' }] },
-            { id: 'cd1', type: 'capacitor', designator: 'C1', value: '100n', pins: [{ pinId: '1', netId: 'vcc' }, { pinId: '2', netId: 'gnd' }] },
-            { id: 'cd2', type: 'capacitor', designator: 'C2', value: '100n', pins: [{ pinId: '1', netId: 'vcc' }, { pinId: '2', netId: 'gnd' }] },
-            { id: 'cbulk', type: 'capacitor', designator: 'C3', value: '10u', pins: [{ pinId: '1', netId: 'vcc' }, { pinId: '2', netId: 'gnd' }] },
-            { id: 'ct', type: 'capacitor', designator: 'C4', value: '10n', pins: [{ pinId: '1', netId: 'sig' }, { pinId: '2', netId: 'gnd' }] },
+            {
+                id: 'v1',
+                type: 'voltage_source',
+                designator: 'V1',
+                value: 'DC 5',
+                pins: [
+                    { pinId: '+', netId: 'vcc' },
+                    { pinId: '-', netId: 'gnd' },
+                ],
+            },
+            {
+                id: 'u1',
+                type: 'generic',
+                designator: 'U1',
+                footprint: 'soic16',
+                pins: [
+                    { pinId: '16', netId: 'vcc' },
+                    { pinId: '8', netId: 'gnd' },
+                    { pinId: '1', netId: 'sig' },
+                ],
+            },
+            {
+                id: 'u2',
+                type: 'generic',
+                designator: 'U2',
+                footprint: 'soic8',
+                pins: [
+                    { pinId: '8', netId: 'vcc' },
+                    { pinId: '4', netId: 'gnd' },
+                ],
+            },
+            {
+                id: 'cd1',
+                type: 'capacitor',
+                designator: 'C1',
+                value: '100n',
+                pins: [
+                    { pinId: '1', netId: 'vcc' },
+                    { pinId: '2', netId: 'gnd' },
+                ],
+            },
+            {
+                id: 'cd2',
+                type: 'capacitor',
+                designator: 'C2',
+                value: '100n',
+                pins: [
+                    { pinId: '1', netId: 'vcc' },
+                    { pinId: '2', netId: 'gnd' },
+                ],
+            },
+            {
+                id: 'cbulk',
+                type: 'capacitor',
+                designator: 'C3',
+                value: '10u',
+                pins: [
+                    { pinId: '1', netId: 'vcc' },
+                    { pinId: '2', netId: 'gnd' },
+                ],
+            },
+            {
+                id: 'ct',
+                type: 'capacitor',
+                designator: 'C4',
+                value: '10n',
+                pins: [
+                    { pinId: '1', netId: 'sig' },
+                    { pinId: '2', netId: 'gnd' },
+                ],
+            },
         ],
         nets: [{ id: 'vcc', name: 'VCC' }, { id: 'sig', name: 'SIG' }, gnd],
     } as unknown as CircuitJson;

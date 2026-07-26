@@ -29,11 +29,23 @@ describe('Platform Admin API (e2e, real stack)', () => {
     let server: import('http').Server;
 
     const stamp = Date.now();
-    const mk = (tag: string) => ({ email: `admin-e2e-${tag}-${stamp}@test.com`, password: 'SecurePassword123!', name: tag });
+    const mk = (tag: string) => ({
+        email: `admin-e2e-${tag}-${stamp}@test.com`,
+        password: 'SecurePassword123!',
+        name: tag,
+    });
 
     // actors + targets
-    let adminTok = '', opTok = '', supTok = '', tenantTok = '';
-    let adminId = '', opId = '', supId = '', tenantId = '', lockId = '', roleId = '';
+    let adminTok = '',
+        opTok = '',
+        supTok = '',
+        tenantTok = '';
+    let adminId = '',
+        opId = '',
+        supId = '',
+        tenantId = '',
+        lockId = '',
+        roleId = '';
     let roleTok = '';
     let tenantOrg = '';
     const createdUserIds: string[] = [];
@@ -46,11 +58,20 @@ describe('Platform Admin API (e2e, real stack)', () => {
     };
     const get = (path: string, token: string) => request(server).get(path).set('Authorization', `Bearer ${token}`);
     const post = (path: string, token: string, body?: unknown) =>
-        request(server).post(path).set('Authorization', `Bearer ${token}`).send(body ?? {});
+        request(server)
+            .post(path)
+            .set('Authorization', `Bearer ${token}`)
+            .send(body ?? {});
     const patch = (path: string, token: string, body?: unknown) =>
-        request(server).patch(path).set('Authorization', `Bearer ${token}`).send(body ?? {});
+        request(server)
+            .patch(path)
+            .set('Authorization', `Bearer ${token}`)
+            .send(body ?? {});
     const del = (path: string, token: string, body?: unknown) =>
-        request(server).delete(path).set('Authorization', `Bearer ${token}`).send(body ?? {});
+        request(server)
+            .delete(path)
+            .set('Authorization', `Bearer ${token}`)
+            .send(body ?? {});
 
     beforeAll(async () => {
         const moduleFixture: TestingModule = await Test.createTestingModule({ imports: [AppModule] }).compile();
@@ -85,7 +106,15 @@ describe('Platform Admin API (e2e, real stack)', () => {
     afterAll(async () => {
         // Audit rows now SetNull on user delete (they outlive the subject) → remove the test's rows explicitly.
         await prisma.auditLog
-            .deleteMany({ where: { OR: [{ userId: { in: createdUserIds } }, { adminActorId: { in: createdUserIds } }, { orgId: tenantOrg }] } })
+            .deleteMany({
+                where: {
+                    OR: [
+                        { userId: { in: createdUserIds } },
+                        { adminActorId: { in: createdUserIds } },
+                        { orgId: tenantOrg },
+                    ],
+                },
+            })
             .catch(() => undefined);
         await prisma.orgQuotaOverride.deleteMany({ where: { orgId: tenantOrg } }).catch(() => undefined);
         await prisma.simulationJob.deleteMany({ where: { orgId: tenantOrg } }).catch(() => undefined);
@@ -94,8 +123,11 @@ describe('Platform Admin API (e2e, real stack)', () => {
         }
         await prisma.refreshToken.deleteMany({ where: { userId: { in: createdUserIds } } }).catch(() => undefined);
         // Orgs created by register (personal) cascade-delete their memberships/jobs.
-        const orgs = await prisma.orgMembership.findMany({ where: { userId: { in: createdUserIds } }, select: { orgId: true } }).catch(() => []);
-        for (const { orgId } of orgs) await prisma.organization.deleteMany({ where: { id: orgId } }).catch(() => undefined);
+        const orgs = await prisma.orgMembership
+            .findMany({ where: { userId: { in: createdUserIds } }, select: { orgId: true } })
+            .catch(() => []);
+        for (const { orgId } of orgs)
+            await prisma.organization.deleteMany({ where: { id: orgId } }).catch(() => undefined);
         await prisma.user.deleteMany({ where: { id: { in: createdUserIds } } }).catch(() => undefined);
         await app.close();
     }, 30000);
@@ -153,20 +185,32 @@ describe('Platform Admin API (e2e, real stack)', () => {
     describe('org suspension blocks writes (before → after)', () => {
         it('quick-sim works, then suspend blocks it 403 ORG_SUSPENDED, then reinstate restores it', async () => {
             // BEFORE: the tenant can enqueue a quick sim.
-            const before = await post('/simulations/quick', tenantTok, { netlist: DUMMY_NETLIST, analysisConfig: { type: 'op' } });
+            const before = await post('/simulations/quick', tenantTok, {
+                netlist: DUMMY_NETLIST,
+                analysisConfig: { type: 'op' },
+            });
             expect([200, 201, 202]).toContain(before.status);
 
             // SUSPEND (operator).
-            await patch(`/admin/orgs/${tenantOrg}/suspend`, opTok, { suspended: true, reason: 'e2e abuse test' }).expect(200);
+            await patch(`/admin/orgs/${tenantOrg}/suspend`, opTok, {
+                suspended: true,
+                reason: 'e2e abuse test',
+            }).expect(200);
 
             // AFTER: the same write is blocked with the structured 403.
-            const during = await post('/simulations/quick', tenantTok, { netlist: DUMMY_NETLIST, analysisConfig: { type: 'op' } });
+            const during = await post('/simulations/quick', tenantTok, {
+                netlist: DUMMY_NETLIST,
+                analysisConfig: { type: 'op' },
+            });
             expect(during.status).toBe(403);
             expect(JSON.stringify(during.body)).toContain('ORG_SUSPENDED');
 
             // REINSTATE → writes flow again.
             await patch(`/admin/orgs/${tenantOrg}/suspend`, opTok, { suspended: false }).expect(200);
-            const after = await post('/simulations/quick', tenantTok, { netlist: DUMMY_NETLIST, analysisConfig: { type: 'op' } });
+            const after = await post('/simulations/quick', tenantTok, {
+                netlist: DUMMY_NETLIST,
+                analysisConfig: { type: 'op' },
+            });
             expect([200, 201, 202]).toContain(after.status);
         });
     });
@@ -174,7 +218,10 @@ describe('Platform Admin API (e2e, real stack)', () => {
     // ---------------------------------------------------------------- quota override
     describe('per-org quota override', () => {
         it('sets an override and reflects it in the effective limit; clears it back to env', async () => {
-            const set = await patch(`/admin/orgs/${tenantOrg}/quota`, opTok, { simConcurrent: 1, reason: 'e2e cap' }).expect(200);
+            const set = await patch(`/admin/orgs/${tenantOrg}/quota`, opTok, {
+                simConcurrent: 1,
+                reason: 'e2e cap',
+            }).expect(200);
             expect(set.body.simConcurrent).toBe(1);
             const detail = await get(`/admin/orgs/${tenantOrg}`, adminTok).expect(200);
             expect(detail.body.usage.sim.limits.concurrent).toBe(1);
@@ -190,11 +237,16 @@ describe('Platform Admin API (e2e, real stack)', () => {
     describe('simulation job cancel (queued)', () => {
         it('cancels a QUEUED sim by removing it from the queue; a second cancel is a 409', async () => {
             // No worker runs in the test, so the enqueued job stays waiting in BullMQ → removable.
-            const created = await post('/simulations/quick', tenantTok, { netlist: DUMMY_NETLIST, analysisConfig: { type: 'op' } });
+            const created = await post('/simulations/quick', tenantTok, {
+                netlist: DUMMY_NETLIST,
+                analysisConfig: { type: 'op' },
+            });
             expect([200, 201, 202]).toContain(created.status);
             const jobId = created.body.jobId as string;
 
-            const cancel = await post(`/admin/jobs/simulation/${jobId}/cancel`, opTok, { reason: 'e2e cancel' }).expect(200);
+            const cancel = await post(`/admin/jobs/simulation/${jobId}/cancel`, opTok, { reason: 'e2e cancel' }).expect(
+                200,
+            );
             expect(cancel.body).toMatchObject({ status: 'CANCELED', removedFromQueue: true });
             const row = await prisma.simulationJob.findUnique({ where: { id: jobId }, select: { status: true } });
             expect(row?.status).toBe('CANCELED');
@@ -209,7 +261,9 @@ describe('Platform Admin API (e2e, real stack)', () => {
         it('locking a user sets lockedUntil and revokes its live refresh tokens', async () => {
             const before = await prisma.refreshToken.count({ where: { userId: lockId, revokedAt: null } });
             expect(before).toBeGreaterThan(0); // the register session
-            const res = await patch(`/admin/users/${lockId}/lock`, opTok, { locked: true, reason: 'e2e lock' }).expect(200);
+            const res = await patch(`/admin/users/${lockId}/lock`, opTok, { locked: true, reason: 'e2e lock' }).expect(
+                200,
+            );
             expect(res.body.sessionsRevoked).toBeGreaterThanOrEqual(1);
             const after = await prisma.refreshToken.count({ where: { userId: lockId, revokedAt: null } });
             expect(after).toBe(0);
@@ -224,12 +278,18 @@ describe('Platform Admin API (e2e, real stack)', () => {
             // roleTarget starts NONE → 403 on /admin/me
             await get('/admin/me', roleTok).expect(403);
             // ADMIN promotes to SUPPORT
-            await patch(`/admin/users/${roleId}/role`, adminTok, { platformRole: 'SUPPORT', reason: 'e2e promote' }).expect(200);
+            await patch(`/admin/users/${roleId}/role`, adminTok, {
+                platformRole: 'SUPPORT',
+                reason: 'e2e promote',
+            }).expect(200);
             // Same token now passes — the guard read the new role from the DB (no re-login)
             const me = await get('/admin/me', roleTok).expect(200);
             expect(me.body.platformRole).toBe('SUPPORT');
             // ADMIN demotes back to NONE → the same token is locked out again
-            const demote = await patch(`/admin/users/${roleId}/role`, adminTok, { platformRole: 'NONE', reason: 'e2e demote' }).expect(200);
+            const demote = await patch(`/admin/users/${roleId}/role`, adminTok, {
+                platformRole: 'NONE',
+                reason: 'e2e demote',
+            }).expect(200);
             expect(demote.body.platformRole).toBe('NONE');
             await get('/admin/me', roleTok).expect(403);
         });
@@ -271,7 +331,10 @@ describe('Platform Admin API (e2e, real stack)', () => {
         });
 
         it('purge cleans terminal cruft and reports a count; rejects an unknown queue / bad status', async () => {
-            const purge = await post('/admin/queues/design/purge', adminTok, { status: 'completed', reason: 'e2e purge' }).expect(200);
+            const purge = await post('/admin/queues/design/purge', adminTok, {
+                status: 'completed',
+                reason: 'e2e purge',
+            }).expect(200);
             expect(purge.body).toMatchObject({ name: 'design', status: 'completed' });
             expect(typeof purge.body.removed).toBe('number');
 

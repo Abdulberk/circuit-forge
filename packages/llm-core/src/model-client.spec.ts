@@ -3,7 +3,11 @@
 import { toOpenAIMessages, toAnthropicMessage, type NeutralMessage } from './model-client';
 
 const userMsg: NeutralMessage = { role: 'user', text: 'design an RC filter' };
-const assistantMsg: NeutralMessage = { role: 'assistant', text: 'let me search', toolCalls: [{ id: 'call_1', name: 'search_parts', input: { query: '10k resistor' } }] };
+const assistantMsg: NeutralMessage = {
+    role: 'assistant',
+    text: 'let me search',
+    toolCalls: [{ id: 'call_1', name: 'search_parts', input: { query: '10k resistor' } }],
+};
 const toolMsg: NeutralMessage = { role: 'tool', results: [{ toolCallId: 'call_1', content: '[{"mpn":"RC0603"}]' }] };
 const convo: NeutralMessage[] = [userMsg, assistantMsg, toolMsg];
 
@@ -20,7 +24,11 @@ describe('toOpenAIMessages', () => {
         expect(assistant.role).toBe('assistant');
         expect(assistant.content).toBe('let me search');
         expect(assistant.tool_calls).toEqual([
-            { id: 'call_1', type: 'function', function: { name: 'search_parts', arguments: JSON.stringify({ query: '10k resistor' }) } },
+            {
+                id: 'call_1',
+                type: 'function',
+                function: { name: 'search_parts', arguments: JSON.stringify({ query: '10k resistor' }) },
+            },
         ]);
     });
 

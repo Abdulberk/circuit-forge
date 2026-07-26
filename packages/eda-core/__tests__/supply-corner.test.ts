@@ -4,31 +4,93 @@ import { validatePowerRails, driversOf, runSupplyCorner, type SupplyCornerSpec }
 import type { CircuitJson } from '../src/types/circuit';
 
 const meas = (node: string, value: number): SimMeasurement => ({
-    node, min: value, max: value, final: value, pp: 0, avg: value, rms: Math.abs(value),
+    node,
+    min: value,
+    max: value,
+    final: value,
+    pp: 0,
+    avg: value,
+    rms: Math.abs(value),
     raw: { min: value, max: value, final: value, pp: 0, avg: value, rms: Math.abs(value) },
 });
 
 /** A directly-source-driven rail with ONE consumer. V1 → rail (isPower) → RL → gnd. */
-const directRail = (extra: CircuitJson['components'] = [], railNet: Partial<CircuitJson['nets'][number]> = {}): CircuitJson => ({
-    version: '1.0',
-    components: [
-        { id: 'V1', type: 'voltage_source', designator: 'V1', value: 'DC 12', pins: [{ pinId: '+', netId: 'rail' }, { pinId: '-', netId: 'gnd' }] },
-        { id: 'RL', type: 'resistor', designator: 'RL', value: '1k', pins: [{ pinId: '1', netId: 'rail' }, { pinId: '2', netId: 'gnd' }] },
-        ...extra,
-    ],
-    nets: [{ id: 'rail', name: 'rail', isPower: true, ...railNet }, { id: 'gnd', name: 'gnd', isGround: true }],
-} as unknown as CircuitJson);
+const directRail = (
+    extra: CircuitJson['components'] = [],
+    railNet: Partial<CircuitJson['nets'][number]> = {},
+): CircuitJson =>
+    ({
+        version: '1.0',
+        components: [
+            {
+                id: 'V1',
+                type: 'voltage_source',
+                designator: 'V1',
+                value: 'DC 12',
+                pins: [
+                    { pinId: '+', netId: 'rail' },
+                    { pinId: '-', netId: 'gnd' },
+                ],
+            },
+            {
+                id: 'RL',
+                type: 'resistor',
+                designator: 'RL',
+                value: '1k',
+                pins: [
+                    { pinId: '1', netId: 'rail' },
+                    { pinId: '2', netId: 'gnd' },
+                ],
+            },
+            ...extra,
+        ],
+        nets: [
+            { id: 'rail', name: 'rail', isPower: true, ...railNet },
+            { id: 'gnd', name: 'gnd', isGround: true },
+        ],
+    }) as unknown as CircuitJson;
 
 describe('driversOf', () => {
     it('finds the DC power source that drives a net, ignoring a pure-signal (DC 0) source', () => {
         const c: CircuitJson = {
             version: '1.0',
             components: [
-                { id: 'VSIG', type: 'voltage_source', designator: 'VSIG', value: 'DC 0 AC 1', pins: [{ pinId: '+', netId: 'sig' }, { pinId: '-', netId: 'gnd' }] },
-                { id: 'RS', type: 'resistor', designator: 'RS', value: '1k', pins: [{ pinId: '1', netId: 'sig' }, { pinId: '2', netId: 'rail' }] },
-                { id: 'V1', type: 'voltage_source', designator: 'V1', value: 'DC 12', pins: [{ pinId: '+', netId: 'rail' }, { pinId: '-', netId: 'gnd' }] },
+                {
+                    id: 'VSIG',
+                    type: 'voltage_source',
+                    designator: 'VSIG',
+                    value: 'DC 0 AC 1',
+                    pins: [
+                        { pinId: '+', netId: 'sig' },
+                        { pinId: '-', netId: 'gnd' },
+                    ],
+                },
+                {
+                    id: 'RS',
+                    type: 'resistor',
+                    designator: 'RS',
+                    value: '1k',
+                    pins: [
+                        { pinId: '1', netId: 'sig' },
+                        { pinId: '2', netId: 'rail' },
+                    ],
+                },
+                {
+                    id: 'V1',
+                    type: 'voltage_source',
+                    designator: 'V1',
+                    value: 'DC 12',
+                    pins: [
+                        { pinId: '+', netId: 'rail' },
+                        { pinId: '-', netId: 'gnd' },
+                    ],
+                },
             ],
-            nets: [{ id: 'sig', name: 'sig' }, { id: 'rail', name: 'rail' }, { id: 'gnd', name: 'gnd', isGround: true }],
+            nets: [
+                { id: 'sig', name: 'sig' },
+                { id: 'rail', name: 'rail' },
+                { id: 'gnd', name: 'gnd', isGround: true },
+            ],
         } as unknown as CircuitJson;
         const d = driversOf(c, 'rail').map((x) => x.designator);
         expect(d).toEqual(['V1']); // VSIG (DC 0) is not a power driver even though it is topologically reachable
@@ -38,10 +100,31 @@ describe('driversOf', () => {
         const c: CircuitJson = {
             version: '1.0',
             components: [
-                { id: 'V1', type: 'voltage_source', designator: 'V1', value: '5', pins: [{ pinId: '+', netId: 'rail' }, { pinId: '-', netId: 'gnd' }] },
-                { id: 'RL', type: 'resistor', designator: 'RL', value: '1k', pins: [{ pinId: '1', netId: 'rail' }, { pinId: '2', netId: 'gnd' }] },
+                {
+                    id: 'V1',
+                    type: 'voltage_source',
+                    designator: 'V1',
+                    value: '5',
+                    pins: [
+                        { pinId: '+', netId: 'rail' },
+                        { pinId: '-', netId: 'gnd' },
+                    ],
+                },
+                {
+                    id: 'RL',
+                    type: 'resistor',
+                    designator: 'RL',
+                    value: '1k',
+                    pins: [
+                        { pinId: '1', netId: 'rail' },
+                        { pinId: '2', netId: 'gnd' },
+                    ],
+                },
             ],
-            nets: [{ id: 'rail', name: 'rail' }, { id: 'gnd', name: 'gnd', isGround: true }],
+            nets: [
+                { id: 'rail', name: 'rail' },
+                { id: 'gnd', name: 'gnd', isGround: true },
+            ],
         } as unknown as CircuitJson;
         expect(driversOf(c, 'rail').map((x) => x.designator)).toEqual(['V1']);
     });
@@ -67,10 +150,31 @@ describe('validatePowerRails — refutation asymmetry (evidence-absent trusts, o
         const c: CircuitJson = {
             version: '1.0',
             components: [
-                { id: 'VSIG', type: 'voltage_source', designator: 'VSIG', value: 'DC 0 AC 1', pins: [{ pinId: '+', netId: 'sig' }, { pinId: '-', netId: 'gnd' }] },
-                { id: 'RS', type: 'resistor', designator: 'RS', value: '1k', pins: [{ pinId: '1', netId: 'sig' }, { pinId: '2', netId: 'gnd' }] },
+                {
+                    id: 'VSIG',
+                    type: 'voltage_source',
+                    designator: 'VSIG',
+                    value: 'DC 0 AC 1',
+                    pins: [
+                        { pinId: '+', netId: 'sig' },
+                        { pinId: '-', netId: 'gnd' },
+                    ],
+                },
+                {
+                    id: 'RS',
+                    type: 'resistor',
+                    designator: 'RS',
+                    value: '1k',
+                    pins: [
+                        { pinId: '1', netId: 'sig' },
+                        { pinId: '2', netId: 'gnd' },
+                    ],
+                },
             ],
-            nets: [{ id: 'sig', name: 'sig', isPower: true }, { id: 'gnd', name: 'gnd', isGround: true }],
+            nets: [
+                { id: 'sig', name: 'sig', isPower: true },
+                { id: 'gnd', name: 'gnd', isGround: true },
+            ],
         } as unknown as CircuitJson;
         const r = validatePowerRails(c);
         expect(r[0]!.status).toBe('deferred');
@@ -81,12 +185,53 @@ describe('validatePowerRails — refutation asymmetry (evidence-absent trusts, o
         const c: CircuitJson = {
             version: '1.0',
             components: [
-                { id: 'V1', type: 'voltage_source', designator: 'V1', value: 'DC 12', pins: [{ pinId: '+', netId: 'a' }, { pinId: '-', netId: 'gnd' }] },
-                { id: 'R1', type: 'resistor', designator: 'R1', value: '1k', pins: [{ pinId: '1', netId: 'a' }, { pinId: '2', netId: 'mid' }] },
-                { id: 'V2', type: 'voltage_source', designator: 'V2', value: 'DC 5', pins: [{ pinId: '+', netId: 'b' }, { pinId: '-', netId: 'gnd' }] },
-                { id: 'R2', type: 'resistor', designator: 'R2', value: '1k', pins: [{ pinId: '1', netId: 'b' }, { pinId: '2', netId: 'mid' }] },
+                {
+                    id: 'V1',
+                    type: 'voltage_source',
+                    designator: 'V1',
+                    value: 'DC 12',
+                    pins: [
+                        { pinId: '+', netId: 'a' },
+                        { pinId: '-', netId: 'gnd' },
+                    ],
+                },
+                {
+                    id: 'R1',
+                    type: 'resistor',
+                    designator: 'R1',
+                    value: '1k',
+                    pins: [
+                        { pinId: '1', netId: 'a' },
+                        { pinId: '2', netId: 'mid' },
+                    ],
+                },
+                {
+                    id: 'V2',
+                    type: 'voltage_source',
+                    designator: 'V2',
+                    value: 'DC 5',
+                    pins: [
+                        { pinId: '+', netId: 'b' },
+                        { pinId: '-', netId: 'gnd' },
+                    ],
+                },
+                {
+                    id: 'R2',
+                    type: 'resistor',
+                    designator: 'R2',
+                    value: '1k',
+                    pins: [
+                        { pinId: '1', netId: 'b' },
+                        { pinId: '2', netId: 'mid' },
+                    ],
+                },
             ],
-            nets: [{ id: 'a', name: 'a' }, { id: 'b', name: 'b' }, { id: 'mid', name: 'mid', isPower: true }, { id: 'gnd', name: 'gnd', isGround: true }],
+            nets: [
+                { id: 'a', name: 'a' },
+                { id: 'b', name: 'b' },
+                { id: 'mid', name: 'mid', isPower: true },
+                { id: 'gnd', name: 'gnd', isGround: true },
+            ],
         } as unknown as CircuitJson;
         const r = validatePowerRails(c);
         expect(r[0]!.status).toBe('deferred');
@@ -94,7 +239,11 @@ describe('validatePowerRails — refutation asymmetry (evidence-absent trusts, o
     });
 
     it('returns nothing when no net is marked isPower', () => {
-        const c: CircuitJson = { version: '1.0', components: [], nets: [{ id: 'gnd', name: 'gnd', isGround: true }] } as unknown as CircuitJson;
+        const c: CircuitJson = {
+            version: '1.0',
+            components: [],
+            nets: [{ id: 'gnd', name: 'gnd', isGround: true }],
+        } as unknown as CircuitJson;
         expect(validatePowerRails(c)).toHaveLength(0);
     });
 });
@@ -112,8 +261,22 @@ describe('runSupplyCorner', () => {
     it('not-applicable with rails:[] when NO power rail is marked (the freeze-era "no data yet" case)', async () => {
         const c: CircuitJson = {
             version: '1.0',
-            components: [{ id: 'V1', type: 'voltage_source', designator: 'V1', value: 'DC 12', pins: [{ pinId: '+', netId: 'rail' }, { pinId: '-', netId: 'gnd' }] }],
-            nets: [{ id: 'rail', name: 'rail' }, { id: 'gnd', name: 'gnd', isGround: true }], // rail NOT marked isPower
+            components: [
+                {
+                    id: 'V1',
+                    type: 'voltage_source',
+                    designator: 'V1',
+                    value: 'DC 12',
+                    pins: [
+                        { pinId: '+', netId: 'rail' },
+                        { pinId: '-', netId: 'gnd' },
+                    ],
+                },
+            ],
+            nets: [
+                { id: 'rail', name: 'rail' },
+                { id: 'gnd', name: 'gnd', isGround: true },
+            ], // rail NOT marked isPower
         } as unknown as CircuitJson;
         const r = await runSupplyCorner(c, [], SPEC, railFollowsSource);
         expect(r.applicable).toBe(false);

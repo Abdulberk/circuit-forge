@@ -113,7 +113,11 @@ export class AdminQueueService {
      * status. Bounded by `limit`. Never touches active/waiting/delayed jobs, so it can't cancel pending
      * work — it only reclaims Redis memory from finished records.
      */
-    async purge(name: string, status: PurgeableStatus, limit = 10000): Promise<{ name: string; status: string; removed: number }> {
+    async purge(
+        name: string,
+        status: PurgeableStatus,
+        limit = 10000,
+    ): Promise<{ name: string; status: string; removed: number }> {
         const queue = this.byName(name);
         const removed = await queue.clean(0, limit, status);
         return { name, status, removed: removed.length };

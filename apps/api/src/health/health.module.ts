@@ -13,4 +13,4 @@ import { ReadinessService } from './readiness.service';
     // Exported so the admin health-dashboard can reuse the same fail-fast Redis/S3 probes.
     exports: [ReadinessService],
 })
-export class HealthModule { }
+export class HealthModule {}

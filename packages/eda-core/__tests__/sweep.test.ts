@@ -7,17 +7,54 @@ import { parseSpiceValue } from '../src/utils/unit-parser';
 const DIVIDER: CircuitJson = {
     version: '1.0',
     components: [
-        { id: 'v1', type: 'voltage_source', designator: 'V1', value: 'DC 10', pins: [{ pinId: '+', netId: 'in' }, { pinId: '-', netId: '0' }] },
-        { id: 'r1', type: 'resistor', designator: 'R1', value: '1k', pins: [{ pinId: '1', netId: 'in' }, { pinId: '2', netId: 'out' }] },
-        { id: 'r2', type: 'resistor', designator: 'R2', value: '1k', pins: [{ pinId: '1', netId: 'out' }, { pinId: '2', netId: '0' }] },
+        {
+            id: 'v1',
+            type: 'voltage_source',
+            designator: 'V1',
+            value: 'DC 10',
+            pins: [
+                { pinId: '+', netId: 'in' },
+                { pinId: '-', netId: '0' },
+            ],
+        },
+        {
+            id: 'r1',
+            type: 'resistor',
+            designator: 'R1',
+            value: '1k',
+            pins: [
+                { pinId: '1', netId: 'in' },
+                { pinId: '2', netId: 'out' },
+            ],
+        },
+        {
+            id: 'r2',
+            type: 'resistor',
+            designator: 'R2',
+            value: '1k',
+            pins: [
+                { pinId: '1', netId: 'out' },
+                { pinId: '2', netId: '0' },
+            ],
+        },
         { id: 'gnd', type: 'ground', designator: 'GND1', pins: [{ pinId: '1', netId: '0' }] },
     ],
-    nets: [{ id: 'in', name: 'in' }, { id: 'out', name: 'out' }, { id: '0', name: '0', isGround: true }],
+    nets: [
+        { id: 'in', name: 'in' },
+        { id: 'out', name: 'out' },
+        { id: '0', name: '0', isGround: true },
+    ],
 } as unknown as CircuitJson;
 
 /** A per-node measurement with min=max=final=avg=value (both rounded + raw, so evaluateAssertions is happy). */
 const meas = (node: string, value: number): SimMeasurement => ({
-    node, min: value, max: value, final: value, pp: 0, avg: value, rms: Math.abs(value),
+    node,
+    min: value,
+    max: value,
+    final: value,
+    pp: 0,
+    avg: value,
+    rms: Math.abs(value),
     raw: { min: value, max: value, final: value, pp: 0, avg: value, rms: Math.abs(value) },
 });
 
@@ -37,7 +74,13 @@ describe('sweepVariants', () => {
     });
 
     it('generates a decade (log) range when scale="dec"', () => {
-        const variants = sweepVariants(DIVIDER, { designator: 'R1', start: 1000, stop: 100000, points: 3, scale: 'dec' });
+        const variants = sweepVariants(DIVIDER, {
+            designator: 'R1',
+            start: 1000,
+            stop: 100000,
+            points: 3,
+            scale: 'dec',
+        });
         expect(variants.map((v) => Math.round(valueOf(v.circuit, 'R1')))).toEqual([1000, 10000, 100000]);
     });
 
@@ -61,7 +104,7 @@ describe('runParametricSweep', () => {
     // Divider out = 10 * R2/(R1+R2). Fake ngspice: read R1 from the variant, compute v(out) exactly.
     const dividerRunner = (variant: CircuitJson): Promise<SimMeasurement[]> => {
         const r1 = valueOf(variant, 'R1');
-        const out = 10 * 1000 / (r1 + 1000);
+        const out = (10 * 1000) / (r1 + 1000);
         return Promise.resolve([meas('v(out)', out)]);
     };
     const outAtLeast = (v: number): AcceptanceCriterion[] => [{ probe: 'out', metric: 'final', op: 'gte', value: v }];
@@ -75,13 +118,18 @@ describe('runParametricSweep', () => {
         expect(res.passed).toBe(3);
         expect(res.failed).toBe(2);
         expect(res.errored).toBe(0);
-        expect(res.passAll).toBe(false);                 // it fails at the high end
+        expect(res.passAll).toBe(false); // it fails at the high end
         expect(res.passRange).toEqual({ lo: 1000, hi: 3000 }); // spec holds for R1 ∈ [1k, 3k]
         expect(res.points.map((p) => p.outcome)).toEqual(['pass', 'pass', 'pass', 'fail', 'fail']);
     });
 
     it('passAll=true when every swept point meets the criterion', async () => {
-        const res = await runParametricSweep(DIVIDER, outAtLeast(0.5), { designator: 'R1', start: 1000, stop: 5000, points: 5 }, dividerRunner);
+        const res = await runParametricSweep(
+            DIVIDER,
+            outAtLeast(0.5),
+            { designator: 'R1', start: 1000, stop: 5000, points: 5 },
+            dividerRunner,
+        );
         expect(res.passAll).toBe(true);
         expect(res.passed).toBe(5);
         expect(res.passRange).toEqual({ lo: 1000, hi: 5000 });
@@ -89,7 +137,12 @@ describe('runParametricSweep', () => {
 
     it('a point whose sim could not be run is errored (excluded, not a false fail) and blocks passAll', async () => {
         const flaky = (variant: CircuitJson, i: number) => (i === 2 ? Promise.resolve(null) : dividerRunner(variant));
-        const res = await runParametricSweep(DIVIDER, outAtLeast(0.5), { designator: 'R1', start: 1000, stop: 5000, points: 5 }, flaky);
+        const res = await runParametricSweep(
+            DIVIDER,
+            outAtLeast(0.5),
+            { designator: 'R1', start: 1000, stop: 5000, points: 5 },
+            flaky,
+        );
         expect(res.errored).toBe(1);
         expect(res.evaluated).toBe(4);
         expect(res.passed).toBe(4);
@@ -104,14 +157,24 @@ describe('runParametricSweep', () => {
             const out = r1 === 3000 ? 999 : 1; // only the middle point violates
             return Promise.resolve([meas('v(out)', out)]);
         };
-        const res = await runParametricSweep(DIVIDER, endsOnly, { designator: 'R1', start: 1000, stop: 5000, points: 5 }, bandRunner);
+        const res = await runParametricSweep(
+            DIVIDER,
+            endsOnly,
+            { designator: 'R1', start: 1000, stop: 5000, points: 5 },
+            bandRunner,
+        );
         expect(res.passed).toBe(4);
         expect(res.failed).toBe(1);
         expect(res.passRange).toBeUndefined(); // pass–fail–pass is not contiguous → don't fabricate a range
     });
 
     it('an unknown designator yields an empty, honestly-non-passing sweep', async () => {
-        const res = await runParametricSweep(DIVIDER, outAtLeast(1), { designator: 'R99', start: 1, stop: 2, points: 2 }, dividerRunner);
+        const res = await runParametricSweep(
+            DIVIDER,
+            outAtLeast(1),
+            { designator: 'R99', start: 1, stop: 2, points: 2 },
+            dividerRunner,
+        );
         expect(res.points).toHaveLength(0);
         expect(res.evaluated).toBe(0);
         expect(res.passAll).toBe(false);

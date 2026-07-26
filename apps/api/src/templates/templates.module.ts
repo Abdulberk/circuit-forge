@@ -14,4 +14,4 @@ import { TemplatesService } from './templates.service';
     providers: [TemplatesService],
     exports: [TemplatesService],
 })
-export class TemplatesModule { }
+export class TemplatesModule {}

@@ -28,31 +28,91 @@ function resolveNgspice(): string {
 
 const NGSPICE = resolveNgspice();
 const makeConfig = (ngspice = NGSPICE): ConfigService =>
-    ({ get: (k: string) => (({ NGSPICE_PATH: ngspice || undefined, SIM_TIMEOUT_MS: '8000' }) as Record<string, string | undefined>)[k] }) as unknown as ConfigService;
+    ({
+        get: (k: string) =>
+            (({ NGSPICE_PATH: ngspice || undefined, SIM_TIMEOUT_MS: '8000' }) as Record<string, string | undefined>)[k],
+    }) as unknown as ConfigService;
 
 /** 10V DC across two equal 1k resistors → v(out) = 5.0V exactly at the operating point. */
 const DIVIDER: CircuitJson = {
     version: '1.0',
     components: [
-        { id: 'v1', type: 'voltage_source', designator: 'V1', value: 'DC 10', pins: [{ pinId: '+', netId: 'in' }, { pinId: '-', netId: 'gnd' }] },
-        { id: 'r1', type: 'resistor', designator: 'R1', value: '1k', pins: [{ pinId: '1', netId: 'in' }, { pinId: '2', netId: 'out' }] },
-        { id: 'r2', type: 'resistor', designator: 'R2', value: '1k', pins: [{ pinId: '1', netId: 'out' }, { pinId: '2', netId: 'gnd' }] },
+        {
+            id: 'v1',
+            type: 'voltage_source',
+            designator: 'V1',
+            value: 'DC 10',
+            pins: [
+                { pinId: '+', netId: 'in' },
+                { pinId: '-', netId: 'gnd' },
+            ],
+        },
+        {
+            id: 'r1',
+            type: 'resistor',
+            designator: 'R1',
+            value: '1k',
+            pins: [
+                { pinId: '1', netId: 'in' },
+                { pinId: '2', netId: 'out' },
+            ],
+        },
+        {
+            id: 'r2',
+            type: 'resistor',
+            designator: 'R2',
+            value: '1k',
+            pins: [
+                { pinId: '1', netId: 'out' },
+                { pinId: '2', netId: 'gnd' },
+            ],
+        },
         { id: 'gnd', type: 'ground', designator: 'GND1', pins: [{ pinId: '1', netId: 'gnd' }] },
     ],
-    nets: [{ id: 'in', name: 'in' }, { id: 'out', name: 'out' }, { id: 'gnd', name: 'gnd', isGround: true }],
+    nets: [
+        { id: 'in', name: 'in' },
+        { id: 'out', name: 'out' },
+        { id: 'gnd', name: 'gnd', isGround: true },
+    ],
 };
 
 const NO_GROUND: CircuitJson = {
     version: '1.0',
     components: [
-        { id: 'v1', type: 'voltage_source', designator: 'V1', value: 'DC 5', pins: [{ pinId: '+', netId: 'a' }, { pinId: '-', netId: 'b' }] },
-        { id: 'r1', type: 'resistor', designator: 'R1', value: '1k', pins: [{ pinId: '1', netId: 'a' }, { pinId: '2', netId: 'b' }] },
+        {
+            id: 'v1',
+            type: 'voltage_source',
+            designator: 'V1',
+            value: 'DC 5',
+            pins: [
+                { pinId: '+', netId: 'a' },
+                { pinId: '-', netId: 'b' },
+            ],
+        },
+        {
+            id: 'r1',
+            type: 'resistor',
+            designator: 'R1',
+            value: '1k',
+            pins: [
+                { pinId: '1', netId: 'a' },
+                { pinId: '2', netId: 'b' },
+            ],
+        },
     ],
-    nets: [{ id: 'a', name: 'a' }, { id: 'b', name: 'b' }],
+    nets: [
+        { id: 'a', name: 'a' },
+        { id: 'b', name: 'b' },
+    ],
 };
 
-const A = (probe: string, metric: AssertionDto['metric'], op: AssertionDto['op'], value: number, tol?: number): AssertionDto =>
-    ({ probe, metric, op, value, ...(tol !== undefined ? { tol } : {}) });
+const A = (
+    probe: string,
+    metric: AssertionDto['metric'],
+    op: AssertionDto['op'],
+    value: number,
+    tol?: number,
+): AssertionDto => ({ probe, metric, op, value, ...(tol !== undefined ? { tol } : {}) });
 
 (NGSPICE ? describe : describe.skip)('VerificationService (real ngspice, offline)', () => {
     const svc = new VerificationService(new CircuitSimulatorService(makeConfig()));

@@ -107,11 +107,17 @@ export class LayoutService {
         try {
             await this.layoutQueue.add('layout', { jobId: job.id, otel: otelCarrier() }, { jobId: job.id });
         } catch (err) {
-            this.logger.error(`layout job ${job.id} could not be enqueued: ${err instanceof Error ? err.message : String(err)}`);
+            this.logger.error(
+                `layout job ${job.id} could not be enqueued: ${err instanceof Error ? err.message : String(err)}`,
+            );
             await this.prisma.layoutJob
                 .updateMany({
                     where: { id: job.id, status: 'QUEUED' },
-                    data: { status: 'FAILED', errorMessage: 'Could not queue the layout job; please retry.', finishedAt: new Date() },
+                    data: {
+                        status: 'FAILED',
+                        errorMessage: 'Could not queue the layout job; please retry.',
+                        finishedAt: new Date(),
+                    },
                 })
                 .catch(() => undefined);
             throw new ServiceUnavailableException('Could not start the layout job; please retry.');
@@ -125,15 +131,27 @@ export class LayoutService {
         const job = await this.prisma.layoutJob.findUnique({
             where: { id: jobId },
             select: {
-                id: true, orgId: true, projectId: true, versionId: true, status: true, result: true, errorMessage: true,
-                glbKey: true, gerbersKey: true, createdAt: true, startedAt: true, finishedAt: true,
+                id: true,
+                orgId: true,
+                projectId: true,
+                versionId: true,
+                status: true,
+                result: true,
+                errorMessage: true,
+                glbKey: true,
+                gerbersKey: true,
+                createdAt: true,
+                startedAt: true,
+                finishedAt: true,
             },
         });
         if (!job) throw new NotFoundException('Layout job not found');
         await this.orgs.checkMembership(job.orgId, userId);
 
         const presign = async (key: string | null) =>
-            key ? getSignedUrl(this.s3, new GetObjectCommand({ Bucket: this.bucket, Key: key }), { expiresIn: 3600 }) : undefined;
+            key
+                ? getSignedUrl(this.s3, new GetObjectCommand({ Bucket: this.bucket, Key: key }), { expiresIn: 3600 })
+                : undefined;
 
         return {
             id: job.id,
@@ -177,8 +195,14 @@ export class LayoutService {
                 // share a createdAt (matches ProjectsService / AssetsService / AdminService list convention).
                 orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
                 select: {
-                    id: true, projectId: true, versionId: true, status: true,
-                    errorMessage: true, createdAt: true, startedAt: true, finishedAt: true,
+                    id: true,
+                    projectId: true,
+                    versionId: true,
+                    status: true,
+                    errorMessage: true,
+                    createdAt: true,
+                    startedAt: true,
+                    finishedAt: true,
                 },
                 skip: page.offset,
                 take: page.limit,

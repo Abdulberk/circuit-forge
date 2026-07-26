@@ -11,7 +11,11 @@ export class CreateInvitationDto {
     @IsEmail()
     email!: string;
 
-    @ApiPropertyOptional({ enum: OrgRole, default: OrgRole.MEMBER, description: 'Role to grant on accept (default MEMBER)' })
+    @ApiPropertyOptional({
+        enum: OrgRole,
+        default: OrgRole.MEMBER,
+        description: 'Role to grant on accept (default MEMBER)',
+    })
     @IsOptional()
     @IsEnum(OrgRole)
     role?: OrgRole;

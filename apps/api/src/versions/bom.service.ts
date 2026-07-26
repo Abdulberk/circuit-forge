@@ -86,7 +86,12 @@ export class BomService {
             lineCost: l.unitCost !== null ? Number((l.unitCost * l.quantity).toPrecision(6)) : null,
         }));
         // Stable, purchase-friendly order: sourced lines first, then by type/designator.
-        out.sort((a, b) => Number(a.unsourced) - Number(b.unsourced) || a.type.localeCompare(b.type) || (a.designators[0] ?? '').localeCompare(b.designators[0] ?? ''));
+        out.sort(
+            (a, b) =>
+                Number(a.unsourced) - Number(b.unsourced) ||
+                a.type.localeCompare(b.type) ||
+                (a.designators[0] ?? '').localeCompare(b.designators[0] ?? ''),
+        );
 
         const costByCurrency: Record<string, number> = {};
         for (const l of out) {
@@ -113,7 +118,8 @@ export class BomService {
             const s = String(v);
             return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
         };
-        const header = 'designators,quantity,type,value,mpn,manufacturer,footprint,unit_cost,currency,line_cost,stock,supplier,supplier_id,datasheet,unsourced';
+        const header =
+            'designators,quantity,type,value,mpn,manufacturer,footprint,unit_cost,currency,line_cost,stock,supplier,supplier_id,datasheet,unsourced';
         const rows = bom.lines.map((l) =>
             [
                 esc(l.designators.join(' ')),

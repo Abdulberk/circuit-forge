@@ -11,4 +11,4 @@ import { OrgsService } from './orgs.service';
     providers: [OrgsService],
     exports: [OrgsService],
 })
-export class OrgsModule { }
+export class OrgsModule {}

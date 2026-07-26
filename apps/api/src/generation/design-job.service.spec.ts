@@ -15,7 +15,9 @@ function setup() {
         checkMembership: jest.fn().mockResolvedValue(undefined),
     } as never;
     // createDesignGuarded runs its callback against the (mock) prisma — mirrors the no-quota plain-insert path.
-    const usage = { createDesignGuarded: jest.fn((_orgId: string, create: (db: unknown) => unknown) => create(prisma)) } as never;
+    const usage = {
+        createDesignGuarded: jest.fn((_orgId: string, create: (db: unknown) => unknown) => create(prisma)),
+    } as never;
     const designQueue = { add: jest.fn().mockResolvedValue(undefined) } as never;
     const svc = new DesignJobService(prisma, orgs, usage, designQueue);
     return {
@@ -39,7 +41,13 @@ describe('DesignJobService.create', () => {
         expect(usage.createDesignGuarded).toHaveBeenCalledWith('org-1', expect.any(Function));
         expect(designJob.create).toHaveBeenCalledWith(
             expect.objectContaining({
-                data: expect.objectContaining({ orgId: 'org-1', userId: 'u1', status: 'QUEUED', prompt: 'an LED driver', maxRounds: 2 }),
+                data: expect.objectContaining({
+                    orgId: 'org-1',
+                    userId: 'u1',
+                    status: 'QUEUED',
+                    prompt: 'an LED driver',
+                    maxRounds: 2,
+                }),
             }),
         );
         // The job is enqueued onto the durable 'design' queue for the worker to run, with the BullMQ job id
@@ -63,11 +71,16 @@ describe('DesignJobService.create', () => {
         designJob.create.mockResolvedValue({ id: 'j1', status: 'QUEUED' });
         designQueue.add.mockRejectedValue(new Error('redis down'));
 
-        await expect(svc.create('u1', { prompt: 'x', maxRounds: 1 })).rejects.toBeInstanceOf(ServiceUnavailableException);
+        await expect(svc.create('u1', { prompt: 'x', maxRounds: 1 })).rejects.toBeInstanceOf(
+            ServiceUnavailableException,
+        );
         // CONDITIONAL flip: updateMany gated on status:'QUEUED' so it can't clobber a row the worker already
         // claimed (RUNNING/SUCCEEDED) if queue.add's reply was lost after Redis stored the job.
         expect(designJob.updateMany).toHaveBeenCalledWith(
-            expect.objectContaining({ where: { id: 'j1', status: 'QUEUED' }, data: expect.objectContaining({ status: 'FAILED' }) }),
+            expect.objectContaining({
+                where: { id: 'j1', status: 'QUEUED' },
+                data: expect.objectContaining({ status: 'FAILED' }),
+            }),
         );
     });
 });
@@ -76,8 +89,14 @@ describe('DesignJobService.getForUser', () => {
     it('returns status + result and enforces org membership', async () => {
         const { svc, designJob, orgs } = setup();
         designJob.findUnique.mockResolvedValue({
-            id: 'j1', orgId: 'org-1', status: 'SUCCEEDED', result: { ok: true }, errorMessage: null,
-            createdAt: new Date(0), startedAt: new Date(1), finishedAt: new Date(2),
+            id: 'j1',
+            orgId: 'org-1',
+            status: 'SUCCEEDED',
+            result: { ok: true },
+            errorMessage: null,
+            createdAt: new Date(0),
+            startedAt: new Date(1),
+            finishedAt: new Date(2),
         });
 
         const r = await svc.getForUser('j1', 'u1');
@@ -115,9 +134,7 @@ describe('DesignJobService.requestCancel', () => {
         const r = await svc.requestCancel('j1', 'u1');
 
         expect(r).toEqual({ id: 'j1', status: 'RUNNING' });
-        expect(designJob.update).toHaveBeenCalledWith(
-            expect.objectContaining({ data: { abortRequested: true } }),
-        );
+        expect(designJob.update).toHaveBeenCalledWith(expect.objectContaining({ data: { abortRequested: true } }));
     });
 
     it('is a no-op for an already-terminal job', async () => {

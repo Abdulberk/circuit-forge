@@ -20,7 +20,12 @@ describe('sandboxedCommand', () => {
     });
 
     it('drops to a dedicated user via su-exec when one is configured (Linux)', () => {
-        const cmd = sandboxedCommand('/usr/bin/ngspice', ['-b', 'circuit.cir'], { ...rlimit, user: 'simrunner' }, 'linux');
+        const cmd = sandboxedCommand(
+            '/usr/bin/ngspice',
+            ['-b', 'circuit.cir'],
+            { ...rlimit, user: 'simrunner' },
+            'linux',
+        );
         expect(cmd.file).toBe('bash');
         // limits still applied, then exec hands off to su-exec which exec-replaces itself with ngspice.
         expect(cmd.args[1]).toBe('ulimit -v 2097152 -t 25 -f 262144 -u 64; exec su-exec simrunner "$@"');
@@ -57,7 +62,13 @@ describe('resolveSandboxConfig', () => {
     });
 
     it('honors explicit limit overrides', () => {
-        const c = resolveSandboxConfig({ platform: 'linux', SIM_SANDBOX_MEMORY_MB: 512, SIM_SANDBOX_CPU_SEC: 15, SIM_SANDBOX_FSIZE_MB: 64, SIM_SANDBOX_NPROC: 16 });
+        const c = resolveSandboxConfig({
+            platform: 'linux',
+            SIM_SANDBOX_MEMORY_MB: 512,
+            SIM_SANDBOX_CPU_SEC: 15,
+            SIM_SANDBOX_FSIZE_MB: 64,
+            SIM_SANDBOX_NPROC: 16,
+        });
         expect(c.limits).toEqual({ memoryMb: 512, cpuSec: 15, fileSizeMb: 64, maxProcs: 16 });
     });
 

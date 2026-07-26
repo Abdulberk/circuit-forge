@@ -17,15 +17,24 @@ describe('Org member management (GET/PATCH/DELETE /orgs/:orgId/members)', () => 
     let prisma: PrismaService;
     let server: import('http').Server;
 
-    let owner = '', ownerId = '', orgA = '';
-    let adminTok = '', adminId = '';   // ADMIN of orgA
-    let m3Tok = '', m3Id = '';         // MEMBER of orgA (promoted mid-suite)
-    let m4Id = '';                     // MEMBER of orgA
-    let outTok = '', outId = '', orgB = '';
+    let owner = '',
+        ownerId = '',
+        orgA = '';
+    let adminTok = '',
+        adminId = ''; // ADMIN of orgA
+    let m3Tok = '',
+        m3Id = ''; // MEMBER of orgA (promoted mid-suite)
+    let m4Id = ''; // MEMBER of orgA
+    let outTok = '',
+        outId = '',
+        orgB = '';
 
-    const members = (org: string, tok: string, q = '') => request(server).get(`/orgs/${org}/members${q}`).set('Authorization', `Bearer ${tok}`);
-    const patchRole = (org: string, uid: string, tok: string, body: object) => request(server).patch(`/orgs/${org}/members/${uid}`).set('Authorization', `Bearer ${tok}`).send(body);
-    const del = (org: string, uid: string, tok: string, body: object = {}) => request(server).delete(`/orgs/${org}/members/${uid}`).set('Authorization', `Bearer ${tok}`).send(body);
+    const members = (org: string, tok: string, q = '') =>
+        request(server).get(`/orgs/${org}/members${q}`).set('Authorization', `Bearer ${tok}`);
+    const patchRole = (org: string, uid: string, tok: string, body: object) =>
+        request(server).patch(`/orgs/${org}/members/${uid}`).set('Authorization', `Bearer ${tok}`).send(body);
+    const del = (org: string, uid: string, tok: string, body: object = {}) =>
+        request(server).delete(`/orgs/${org}/members/${uid}`).set('Authorization', `Bearer ${tok}`).send(body);
 
     beforeAll(async () => {
         const moduleFixture: TestingModule = await Test.createTestingModule({ imports: [AppModule] }).compile();
@@ -35,28 +44,59 @@ describe('Org member management (GET/PATCH/DELETE /orgs/:orgId/members)', () => 
         prisma = app.get(PrismaService);
         server = app.getHttpServer();
 
-        const reg = async (p: string) => (await request(server).post('/auth/register').send({ email: `${p}-${Date.now()}@test.com`, password: 'SecurePassword123!', name: p }).expect(201)).body;
-        const o = await reg('mem-owner'); owner = o.accessToken; ownerId = o.user.id;
-        const ad = await reg('mem-admin'); adminTok = ad.accessToken; adminId = ad.user.id;
-        const u3 = await reg('mem-3'); m3Tok = u3.accessToken; m3Id = u3.user.id;
-        const u4 = await reg('mem-4'); m4Id = u4.user.id;
-        const ob = await reg('mem-out'); outTok = ob.accessToken; outId = ob.user.id;
+        const reg = async (p: string) =>
+            (
+                await request(server)
+                    .post('/auth/register')
+                    .send({ email: `${p}-${Date.now()}@test.com`, password: 'SecurePassword123!', name: p })
+                    .expect(201)
+            ).body;
+        const o = await reg('mem-owner');
+        owner = o.accessToken;
+        ownerId = o.user.id;
+        const ad = await reg('mem-admin');
+        adminTok = ad.accessToken;
+        adminId = ad.user.id;
+        const u3 = await reg('mem-3');
+        m3Tok = u3.accessToken;
+        m3Id = u3.user.id;
+        const u4 = await reg('mem-4');
+        m4Id = u4.user.id;
+        const ob = await reg('mem-out');
+        outTok = ob.accessToken;
+        outId = ob.user.id;
 
-        orgA = (await request(server).post('/orgs').set('Authorization', `Bearer ${owner}`).send({ name: 'Mem Org A' }).expect(201)).body.id;
-        orgB = (await request(server).post('/orgs').set('Authorization', `Bearer ${outTok}`).send({ name: 'Mem Org B' }).expect(201)).body.id;
+        orgA = (
+            await request(server)
+                .post('/orgs')
+                .set('Authorization', `Bearer ${owner}`)
+                .send({ name: 'Mem Org A' })
+                .expect(201)
+        ).body.id;
+        orgB = (
+            await request(server)
+                .post('/orgs')
+                .set('Authorization', `Bearer ${outTok}`)
+                .send({ name: 'Mem Org B' })
+                .expect(201)
+        ).body.id;
         // Seed orgA team (invite path is phase 2): admin, + two members.
-        await prisma.orgMembership.createMany({ data: [
-            { orgId: orgA, userId: adminId, role: 'ADMIN' },
-            { orgId: orgA, userId: m3Id, role: 'MEMBER' },
-            { orgId: orgA, userId: m4Id, role: 'MEMBER' },
-        ] });
+        await prisma.orgMembership.createMany({
+            data: [
+                { orgId: orgA, userId: adminId, role: 'ADMIN' },
+                { orgId: orgA, userId: m3Id, role: 'MEMBER' },
+                { orgId: orgA, userId: m4Id, role: 'MEMBER' },
+            ],
+        });
     });
 
     afterAll(async () => {
         await prisma.auditLog.deleteMany({ where: { orgId: { in: [orgA, orgB] } } }).catch(() => undefined);
         await prisma.orgMembership.deleteMany({ where: { orgId: { in: [orgA, orgB] } } }).catch(() => undefined);
         await prisma.organization.deleteMany({ where: { id: { in: [orgA, orgB] } } }).catch(() => undefined);
-        await prisma.user.deleteMany({ where: { id: { in: [ownerId, adminId, m3Id, m4Id, outId] } } }).catch(() => undefined);
+        await prisma.user
+            .deleteMany({ where: { id: { in: [ownerId, adminId, m3Id, m4Id, outId] } } })
+            .catch(() => undefined);
         await app.close();
     });
 
@@ -86,7 +126,10 @@ describe('Org member management (GET/PATCH/DELETE /orgs/:orgId/members)', () => 
 
     it('an ADMIN may re-role a MEMBER, and it writes a tenant audit row (actor in meta, adminActorId null)', async () => {
         await patchRole(orgA, m3Id, adminTok, { role: 'ADMIN', reason: 'needs manage access' }).expect(200);
-        const row = await prisma.auditLog.findFirst({ where: { orgId: orgA, action: 'org.member.role_change', userId: m3Id }, orderBy: { createdAt: 'desc' } });
+        const row = await prisma.auditLog.findFirst({
+            where: { orgId: orgA, action: 'org.member.role_change', userId: m3Id },
+            orderBy: { createdAt: 'desc' },
+        });
         expect(row).toBeTruthy();
         expect(row!.adminActorId).toBeNull(); // NOT a platform-admin action
         const meta = row!.meta as Record<string, any>;
@@ -105,7 +148,10 @@ describe('Org member management (GET/PATCH/DELETE /orgs/:orgId/members)', () => 
 
     it('removing a member writes an audit row; an ADMIN cannot remove an OWNER', async () => {
         await del(orgA, m3Id, owner, { reason: 'offboarded' }).expect(200);
-        const row = await prisma.auditLog.findFirst({ where: { orgId: orgA, action: 'org.member.remove', userId: m3Id }, orderBy: { createdAt: 'desc' } });
+        const row = await prisma.auditLog.findFirst({
+            where: { orgId: orgA, action: 'org.member.remove', userId: m3Id },
+            orderBy: { createdAt: 'desc' },
+        });
         expect(row?.adminActorId).toBeNull();
         expect((row!.meta as Record<string, any>).before).toEqual({ role: 'ADMIN' });
         expect((row!.meta as Record<string, any>).after).toBeNull();

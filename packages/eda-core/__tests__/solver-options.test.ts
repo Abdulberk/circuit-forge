@@ -14,7 +14,13 @@ function optionCards(netlist: string): string[][] {
     return netlist
         .split(/\r?\n/)
         .filter((l) => /^\s*\.options\b/i.test(l))
-        .map((l) => l.trim().replace(/^\.options\s*/i, '').split(/\s+/).filter(Boolean));
+        .map((l) =>
+            l
+                .trim()
+                .replace(/^\.options\s*/i, '')
+                .split(/\s+/)
+                .filter(Boolean),
+        );
 }
 
 describe('solverOptionTokens', () => {
@@ -52,7 +58,8 @@ describe('applySolverOptions', () => {
     });
 
     it('merges into an existing card: remedy wins on a shared key, flags + non-overridden tokens preserved, one card', () => {
-        const nl = '* t\nV1 in 0 5\nR1 in 0 1k\n* Options\n.options gmin=1e-12 savecurrents reltol=1e-3\n* Analysis\n.op\n.end';
+        const nl =
+            '* t\nV1 in 0 5\nR1 in 0 1k\n* Options\n.options gmin=1e-12 savecurrents reltol=1e-3\n* Analysis\n.op\n.end';
         const toks = optionCards(applySolverOptions(nl, { gmin: '1e-9', itl4: 500 }))[0]!;
         expect(optionCards(applySolverOptions(nl, { gmin: '1e-9', itl4: 500 })).length).toBe(1);
         expect(toks).toContain('savecurrents'); // flag preserved
@@ -74,11 +81,32 @@ describe('applySolverOptions == a generator regenerate (worker string-merge equa
     const circuit: CircuitJson = {
         version: '1.0',
         components: [
-            { id: 'v1', type: 'voltage_source', designator: 'V1', value: '5', pins: [{ pinId: '+', netId: 'in' }, { pinId: '-', netId: 'gnd' }] },
-            { id: 'r1', type: 'resistor', designator: 'R1', value: '1k', pins: [{ pinId: '1', netId: 'in' }, { pinId: '2', netId: 'gnd' }] },
+            {
+                id: 'v1',
+                type: 'voltage_source',
+                designator: 'V1',
+                value: '5',
+                pins: [
+                    { pinId: '+', netId: 'in' },
+                    { pinId: '-', netId: 'gnd' },
+                ],
+            },
+            {
+                id: 'r1',
+                type: 'resistor',
+                designator: 'R1',
+                value: '1k',
+                pins: [
+                    { pinId: '1', netId: 'in' },
+                    { pinId: '2', netId: 'gnd' },
+                ],
+            },
             { id: 'gnd', type: 'ground', designator: 'GND1', pins: [{ pinId: '1', netId: 'gnd' }] },
         ],
-        nets: [{ id: 'in', name: 'IN' }, { id: 'gnd', name: 'GND', isGround: true }],
+        nets: [
+            { id: 'in', name: 'IN' },
+            { id: 'gnd', name: 'GND', isGround: true },
+        ],
     };
     const remedy: SolverOptions = { gmin: '1e-9', reltol: '1e-2', itl4: 500 };
     const tokenSet = (nl: string) => new Set(optionCards(nl).flat());
@@ -91,8 +119,15 @@ describe('applySolverOptions == a generator regenerate (worker string-merge equa
 
     it('tran: applied netlist carries the same .options token set as regenerating with those options', () => {
         const tran = { type: 'tran', stopTime: '5m', stepTime: '10u' } as const;
-        const applied = applySolverOptions(generateNetlist(circuit, tran), { method: 'gear', itl4: 1000, reltol: '1e-2' });
-        const regenerated = generateNetlist(circuit, { ...tran, options: { method: 'gear', itl4: 1000, reltol: '1e-2' } });
+        const applied = applySolverOptions(generateNetlist(circuit, tran), {
+            method: 'gear',
+            itl4: 1000,
+            reltol: '1e-2',
+        });
+        const regenerated = generateNetlist(circuit, {
+            ...tran,
+            options: { method: 'gear', itl4: 1000, reltol: '1e-2' },
+        });
         expect(tokenSet(applied)).toEqual(tokenSet(regenerated));
     });
 });

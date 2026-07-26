@@ -15,14 +15,13 @@ const comp = (over: Partial<Component>): Component => ({
     ...over,
 });
 
-const baseCircuit = (components: Component[], extraNets: Array<{ id: string; name: string; isGround?: boolean }> = []): CircuitJson => ({
+const baseCircuit = (
+    components: Component[],
+    extraNets: Array<{ id: string; name: string; isGround?: boolean }> = [],
+): CircuitJson => ({
     version: '1.0',
     components,
-    nets: [
-        { id: 'vin', name: 'VIN' },
-        { id: 'gnd', name: 'GND-RAIL', isGround: true },
-        ...extraNets,
-    ],
+    nets: [{ id: 'vin', name: 'VIN' }, { id: 'gnd', name: 'GND-RAIL', isGround: true }, ...extraNets],
 });
 
 const generate = (circuit: CircuitJson, ui?: UiJson) =>
@@ -95,8 +94,26 @@ describe('generateTscircuitCode', () => {
     it('maps semantic pins: transistor via UNIQUE single-letter hints (upstream word-alias collision), diode anode/cathode', () => {
         const r = generate(
             baseCircuit([
-                comp({ designator: 'Q1', type: 'bjt', model: 'QGENPNP', value: undefined, pins: [{ pinId: 'c', netId: 'vin' }, { pinId: 'b', netId: 'gnd' }, { pinId: 'e', netId: 'vin' }] }),
-                comp({ designator: 'D1', type: 'diode', value: undefined, pins: [{ pinId: 'anode', netId: 'vin' }, { pinId: 'cathode', netId: 'gnd' }] }),
+                comp({
+                    designator: 'Q1',
+                    type: 'bjt',
+                    model: 'QGENPNP',
+                    value: undefined,
+                    pins: [
+                        { pinId: 'c', netId: 'vin' },
+                        { pinId: 'b', netId: 'gnd' },
+                        { pinId: 'e', netId: 'vin' },
+                    ],
+                }),
+                comp({
+                    designator: 'D1',
+                    type: 'diode',
+                    value: undefined,
+                    pins: [
+                        { pinId: 'anode', netId: 'vin' },
+                        { pinId: 'cathode', netId: 'gnd' },
+                    ],
+                }),
             ]),
         );
         expect(r.code).toContain('type="pnp"');
@@ -110,7 +127,18 @@ describe('generateTscircuitCode', () => {
     it('mosfet emits BOTH required creation props (channelType + mosfetMode)', () => {
         const r = generate(
             baseCircuit([
-                comp({ designator: 'M1', type: 'mosfet', model: 'NMOSGEN', value: undefined, pins: [{ pinId: 'd', netId: 'vin' }, { pinId: 'g', netId: 'gnd' }, { pinId: 's', netId: 'gnd' }, { pinId: 'b', netId: 'gnd' }] }),
+                comp({
+                    designator: 'M1',
+                    type: 'mosfet',
+                    model: 'NMOSGEN',
+                    value: undefined,
+                    pins: [
+                        { pinId: 'd', netId: 'vin' },
+                        { pinId: 'g', netId: 'gnd' },
+                        { pinId: 's', netId: 'gnd' },
+                        { pinId: 'b', netId: 'gnd' },
+                    ],
+                }),
             ]),
         );
         expect(r.code).toContain('channelType="n" mosfetMode="enhancement"'); // tscircuit enum is n|p, not nmos
@@ -185,7 +213,16 @@ describe('generateTscircuitCode', () => {
     });
 
     it('UiJson positions seed pcbX/pcbY (scaled, centered) when EVERY physical component has one', () => {
-        const circuit = baseCircuit([comp({ designator: 'R1' }), comp({ designator: 'R2', pins: [{ pinId: '1', netId: 'vin' }, { pinId: '2', netId: 'gnd' }] })]);
+        const circuit = baseCircuit([
+            comp({ designator: 'R1' }),
+            comp({
+                designator: 'R2',
+                pins: [
+                    { pinId: '1', netId: 'vin' },
+                    { pinId: '2', netId: 'gnd' },
+                ],
+            }),
+        ]);
         const ui: UiJson = { positions: { R1: { x: 0, y: 0 }, R2: { x: 100, y: 0, rotation: '90' } } };
         const r = generateTscircuitCode(circuit, ui, classifyCircuit(circuit), { boardWidthMm: 30, boardHeightMm: 20 });
         // R1 left of center, R2 right of center, symmetric
@@ -226,7 +263,17 @@ describe('generateTscircuitCode', () => {
         // structural guard for the parity shared-fate residue: each map's values must be distinct.
         const r = generate(
             baseCircuit([
-                comp({ designator: 'Q1', type: 'bjt', model: 'Q', value: undefined, pins: [{ pinId: 'c', netId: 'vin' }, { pinId: 'b', netId: 'gnd' }, { pinId: 'e', netId: 'vin' }] }),
+                comp({
+                    designator: 'Q1',
+                    type: 'bjt',
+                    model: 'Q',
+                    value: undefined,
+                    pins: [
+                        { pinId: 'c', netId: 'vin' },
+                        { pinId: 'b', netId: 'gnd' },
+                        { pinId: 'e', netId: 'vin' },
+                    ],
+                }),
             ]),
         );
         const selectors = r.expectations.filter((e) => e.name === 'Q1').map((e) => e.selector);
@@ -234,7 +281,16 @@ describe('generateTscircuitCode', () => {
     });
 
     it('degenerate UiJson (all positions identical) falls back to the grid — never stacks parts', () => {
-        const circuit = baseCircuit([comp({ designator: 'R1' }), comp({ designator: 'R2', pins: [{ pinId: '1', netId: 'vin' }, { pinId: '2', netId: 'gnd' }] })]);
+        const circuit = baseCircuit([
+            comp({ designator: 'R1' }),
+            comp({
+                designator: 'R2',
+                pins: [
+                    { pinId: '1', netId: 'vin' },
+                    { pinId: '2', netId: 'gnd' },
+                ],
+            }),
+        ]);
         const ui: UiJson = { positions: { R1: { x: 50, y: 50 }, R2: { x: 50, y: 50 } } };
         const r = generateTscircuitCode(circuit, ui, classifyCircuit(circuit), {});
         const xs = [...r.code.matchAll(/pcbX=\{([-\d.]+)\}/g)].map((m) => Number(m[1]));
@@ -243,10 +299,20 @@ describe('generateTscircuitCode', () => {
 
     it('explicit small board dims shrink the grid pitch (parts stay inside the outline)', () => {
         const many = Array.from({ length: 9 }, (_, i) =>
-            comp({ id: `r${i}`, designator: `R${i + 1}`, pins: [{ pinId: '1', netId: 'vin' }, { pinId: '2', netId: 'gnd' }] }),
+            comp({
+                id: `r${i}`,
+                designator: `R${i + 1}`,
+                pins: [
+                    { pinId: '1', netId: 'vin' },
+                    { pinId: '2', netId: 'gnd' },
+                ],
+            }),
         );
         const circuit = baseCircuit(many);
-        const r = generateTscircuitCode(circuit, undefined, classifyCircuit(circuit), { boardWidthMm: 20, boardHeightMm: 20 });
+        const r = generateTscircuitCode(circuit, undefined, classifyCircuit(circuit), {
+            boardWidthMm: 20,
+            boardHeightMm: 20,
+        });
         const coords = [...r.code.matchAll(/pcb[XY]=\{([-\d.]+)\}/g)].map((m) => Math.abs(Number(m[1])));
         // 3x3 grid on a 20mm board with 4mm margins: every coordinate within ±6mm
         expect(Math.max(...coords)).toBeLessThanOrEqual(6.01);

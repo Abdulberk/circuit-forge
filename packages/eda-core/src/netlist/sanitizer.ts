@@ -6,17 +6,7 @@
 /**
  * Reserved SPICE words that cannot be used as node names
  */
-const RESERVED_WORDS = new Set([
-    'all',
-    'none',
-    'in',
-    'out',
-    'vcc',
-    'vdd',
-    'vss',
-    'gnd',
-    'ground',
-]);
+const RESERVED_WORDS = new Set(['all', 'none', 'in', 'out', 'vcc', 'vdd', 'vss', 'gnd', 'ground']);
 
 /**
  * ngspice's expression/wrdata lexer treats these as relational/boolean OPERATORS. A node whose final name
@@ -80,34 +70,22 @@ export function validateIncludePaths(paths: string[], jobDir: string): void {
 export function validateIncludePath(includePath: string, _jobDir: string): void {
     // Reject absolute paths (Unix or Windows style)
     if (includePath.startsWith('/') || /^[A-Za-z]:/.test(includePath)) {
-        throw new SecurityError(
-            `Absolute include path not allowed: ${includePath}`,
-            'ABSOLUTE_PATH',
-        );
+        throw new SecurityError(`Absolute include path not allowed: ${includePath}`, 'ABSOLUTE_PATH');
     }
 
     // Reject path traversal
     if (includePath.includes('..')) {
-        throw new SecurityError(
-            `Path traversal not allowed: ${includePath}`,
-            'PATH_TRAVERSAL',
-        );
+        throw new SecurityError(`Path traversal not allowed: ${includePath}`, 'PATH_TRAVERSAL');
     }
 
     // Reject paths starting with special characters
     if (includePath.startsWith('~') || includePath.startsWith('$')) {
-        throw new SecurityError(
-            `Special path prefix not allowed: ${includePath}`,
-            'SPECIAL_PREFIX',
-        );
+        throw new SecurityError(`Special path prefix not allowed: ${includePath}`, 'SPECIAL_PREFIX');
     }
 
     // Validate characters (alphanumeric, underscore, dash, dot, slash)
     if (!/^[a-zA-Z0-9_\-./]+$/.test(includePath)) {
-        throw new SecurityError(
-            `Invalid characters in include path: ${includePath}`,
-            'INVALID_CHARS',
-        );
+        throw new SecurityError(`Invalid characters in include path: ${includePath}`, 'INVALID_CHARS');
     }
 }
 

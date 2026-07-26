@@ -135,7 +135,7 @@ export class TmeClient {
         }
 
         if (res.ok && json?.status === 'OK') {
-            return (json.data ?? ({} as T));
+            return json.data ?? ({} as T);
         }
         // A 2xx with an unparseable body is a distinct failure from an error envelope.
         if (res.ok && json === null) {

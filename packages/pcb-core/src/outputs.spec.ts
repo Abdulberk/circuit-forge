@@ -41,7 +41,13 @@ describe('buildPnpCsv', () => {
     it('joins pcb_component placements back to designators', () => {
         const evaluated: TscElement[] = [
             { type: 'source_component', source_component_id: 'sc1', name: 'R1' },
-            { type: 'pcb_component', source_component_id: 'sc1', center: { x: 1.5, y: -2 }, rotation: 90, layer: 'top' },
+            {
+                type: 'pcb_component',
+                source_component_id: 'sc1',
+                center: { x: 1.5, y: -2 },
+                rotation: 90,
+                layer: 'top',
+            },
         ];
         const csv = buildPnpCsv(evaluated);
         expect(csv).toContain('R1,1.5,-2,90,top');

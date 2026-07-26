@@ -69,7 +69,11 @@ export type TerminalJobStatus = 'SUCCEEDED' | 'FAILED' | 'TIMED_OUT';
  * authoritative signal. A wall-clock timeout → TIMED_OUT (the API maps it distinctly); every other real fault →
  * FAILED. Infra failures are FAILED at the enum level and re-tagged via metrics.failureClass, not here.
  */
-export function deriveFailureStatus(result: { infra?: boolean; timedOut?: boolean; error?: string }): 'TIMED_OUT' | 'FAILED' {
+export function deriveFailureStatus(result: {
+    infra?: boolean;
+    timedOut?: boolean;
+    error?: string;
+}): 'TIMED_OUT' | 'FAILED' {
     // Decided from infra + timedOut ONLY — `error` is deliberately ignored (matching the string it once matched
     // on is exactly the fragility this removes). Accepting it in the shape lets callers pass the whole result.
     return !result.infra && result.timedOut ? 'TIMED_OUT' : 'FAILED';
@@ -98,7 +102,12 @@ export interface SimJobMetrics {
 
 /** Failure metrics subset (queue handleFailure): failureClass follows infra, convergence rides along when the
  *  remedy ladder ran. Pure — no Prisma — so it is unit-testable in isolation. */
-export function buildFailureMetrics(result: { runtimeMs?: number; error?: string; infra?: boolean; convergence?: ConvergenceReport }): SimJobMetrics {
+export function buildFailureMetrics(result: {
+    runtimeMs?: number;
+    error?: string;
+    infra?: boolean;
+    convergence?: ConvergenceReport;
+}): SimJobMetrics {
     return {
         runtimeMs: result.runtimeMs,
         error: result.error,

@@ -189,7 +189,9 @@ export class ComponentMapper {
      * they need per-die modeling the single-diode mapping can't honestly represent.
      */
     private resolveLedModel(part: CatalogPart): ModelDef | null {
-        const colorParam = part.parameters?.find((p) => /colou?r/i.test(p.name) && !/lens|body|case/i.test(p.name))?.value;
+        const colorParam = part.parameters?.find(
+            (p) => /colou?r/i.test(p.name) && !/lens|body|case/i.test(p.name),
+        )?.value;
         const text = `${colorParam ?? ''} ; ${part.description ?? ''}`.toLowerCase();
         if (/\b(rgb|bicolou?r|bi-colou?r|multicolou?r|red-green|tricolou?r)\b/.test(text)) return null;
         if (/\b(red|pink)\b/.test(text)) return GENERIC_MODELS.led_red ?? null;

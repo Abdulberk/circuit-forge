@@ -4,7 +4,6 @@
  */
 import { randomUUID } from 'crypto';
 
-
 import {
     S3Client,
     PutObjectCommand,
@@ -22,7 +21,6 @@ import { PrismaService } from '../prisma/prisma.service';
 import { UsageService } from '../usage/usage.service';
 
 import { PresignUploadDto, CommitAssetDto } from './dto';
-
 
 @Injectable()
 export class AssetsService {
@@ -139,7 +137,9 @@ export class AssetsService {
             const notFound = status === 404 || name === 'NotFound' || name === 'NoSuchKey';
             if (!notFound) return created;
             await this.prisma.asset.delete({ where: { id: created.id } }).catch(() => undefined);
-            throw new BadRequestException('Asset object disappeared during commit (deleted concurrently). Re-upload and commit again.');
+            throw new BadRequestException(
+                'Asset object disappeared during commit (deleted concurrently). Re-upload and commit again.',
+            );
         }
         return created;
     }
@@ -157,7 +157,12 @@ export class AssetsService {
 
         const [items, total] = await Promise.all([
             // id tie-breaker → TOTAL order so paging can't skip/duplicate equal-createdAt assets at a page edge.
-            this.prisma.asset.findMany({ where, orderBy: [{ createdAt: 'desc' }, { id: 'desc' }], skip: page.offset, take: page.limit }),
+            this.prisma.asset.findMany({
+                where,
+                orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
+                skip: page.offset,
+                take: page.limit,
+            }),
             this.prisma.asset.count({ where }),
         ]);
         return paginated(items, total, page.limit, page.offset);

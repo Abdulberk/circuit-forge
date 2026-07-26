@@ -90,7 +90,11 @@ export interface DesignResult {
 /** The simulation surface the loop needs. The API's SimulationService matches this signature exactly (zero
  *  adapter); the worker supplies a LOCAL-ngspice impl that returns the same shapes synchronously. */
 export interface DesignRunSim {
-    createQuickSim(netlist: string, analysisConfig: Record<string, unknown> | undefined, userId: string): Promise<{ jobId: string }>;
+    createQuickSim(
+        netlist: string,
+        analysisConfig: Record<string, unknown> | undefined,
+        userId: string,
+    ): Promise<{ jobId: string }>;
     getStatus(jobId: string, userId: string): Promise<{ status: string; metrics?: unknown }>;
     getResult(jobId: string, userId: string): Promise<unknown>;
     createMonteCarloJob(
@@ -191,7 +195,9 @@ export async function runDesignLoop(input: DesignLoopInput, deps: DesignDeps): P
     let currentProbes = criteria.filter((c) => isCurrentProbe(c.probe)).map((c) => c.probe);
     const requiredDims = requiredDimensions(input.prompt);
     const freqCaveat = requiredDims.has('frequency')
-        ? ['Frequency response is verified at the −3 dB corner (cutoff) only; passband flatness, stopband attenuation, and roll-off order are not separately asserted.']
+        ? [
+              'Frequency response is verified at the −3 dB corner (cutoff) only; passband flatness, stopband attenuation, and roll-off order are not separately asserted.',
+          ]
         : undefined;
 
     for (let round = 1; round <= maxRounds; round++) {
@@ -206,7 +212,12 @@ export async function runDesignLoop(input: DesignLoopInput, deps: DesignDeps): P
         // endpoint would. The (meaningless) sim is skipped on an ERC-error round; the round is spent fixing.
         const ercErrors = runErc(circuit).issues.filter((i) => i.severity === 'error');
         if (ercErrors.length > 0) {
-            history.push({ round, status: 'ERC_ERROR', pointsCount: 0, note: `${ercErrors.length} ERC error(s): ${ercErrors.map((e) => e.code).join(', ')}` });
+            history.push({
+                round,
+                status: 'ERC_ERROR',
+                pointsCount: 0,
+                note: `${ercErrors.length} ERC error(s): ${ercErrors.map((e) => e.code).join(', ')}`,
+            });
             if (round >= maxRounds) break;
             const problem =
                 'The circuit fails Electrical Rule Check (ERC) with ERROR(s) that MUST be fixed before it can be verified:\n' +
@@ -228,14 +239,24 @@ export async function runDesignLoop(input: DesignLoopInput, deps: DesignDeps): P
         } catch (e) {
             history.push({ round, status: 'NETLIST_ERROR', pointsCount: 0, note: errMsg(e) });
             if (round >= maxRounds) break;
-            ({ circuit, analysis, explanation } = await applyFix(deps, circuit, analysis, `Netlist generation failed: ${errMsg(e)}`));
+            ({ circuit, analysis, explanation } = await applyFix(
+                deps,
+                circuit,
+                analysis,
+                `Netlist generation failed: ${errMsg(e)}`,
+            ));
             continue;
         }
 
         let jobId: string;
         let status: { status: string; metrics?: unknown };
         let result: {
-            result?: { meta?: { pointsCount?: number }; series?: DataSeries[]; fourier?: FourierResult[]; transferFunction?: TransferFunctionResult };
+            result?: {
+                meta?: { pointsCount?: number };
+                series?: DataSeries[];
+                fourier?: FourierResult[];
+                transferFunction?: TransferFunctionResult;
+            };
             metrics?: { pointsCount?: number };
             error?: string;
         };
@@ -243,35 +264,76 @@ export async function runDesignLoop(input: DesignLoopInput, deps: DesignDeps): P
             ({ jobId } = await runSim.createQuickSim(netlist, analysis as unknown as Record<string, unknown>, userId));
             status = await pollJob(deps, jobId);
             if (status.status === 'POLL_TIMEOUT' || status.status === 'CANCELED') {
-                history.push({ round, status: status.status, pointsCount: 0, jobId, note: 'simulation capacity unavailable' });
-                return inconclusive(deps, circuit, analysis, explanation, history, groundingOpts,
-                    'Simulation capacity was unavailable, so the design could not be verified — try again. The circuit was generated but its simulation checks did not run.');
+                history.push({
+                    round,
+                    status: status.status,
+                    pointsCount: 0,
+                    jobId,
+                    note: 'simulation capacity unavailable',
+                });
+                return inconclusive(
+                    deps,
+                    circuit,
+                    analysis,
+                    explanation,
+                    history,
+                    groundingOpts,
+                    'Simulation capacity was unavailable, so the design could not be verified — try again. The circuit was generated but its simulation checks did not run.',
+                );
             }
             result = (await runSim.getResult(jobId, userId)) as typeof result;
         } catch (e) {
             if (deps.isIntentfulError?.(e)) throw e; // 429 QUOTA_EXCEEDED etc. carry intent — keep them
             history.push({ round, status: 'INFRA_ERROR', pointsCount: 0, note: errMsg(e) });
-            return inconclusive(deps, circuit, analysis, explanation, history, groundingOpts,
-                'Simulation could not be run (worker/queue unavailable), so the design could not be verified — try again.');
+            return inconclusive(
+                deps,
+                circuit,
+                analysis,
+                explanation,
+                history,
+                groundingOpts,
+                'Simulation could not be run (worker/queue unavailable), so the design could not be verified — try again.',
+            );
         }
 
         const failureClass = (status.metrics as { failureClass?: string } | undefined)?.failureClass;
         if (status.status !== 'SUCCEEDED' && failureClass === 'infra') {
             history.push({ round, status: status.status, pointsCount: 0, jobId, note: 'worker infrastructure error' });
-            return inconclusive(deps, circuit, analysis, explanation, history, groundingOpts,
-                'The worker could not run the simulation (infrastructure error), so the design could not be verified — try again.');
+            return inconclusive(
+                deps,
+                circuit,
+                analysis,
+                explanation,
+                history,
+                groundingOpts,
+                'The worker could not run the simulation (infrastructure error), so the design could not be verified — try again.',
+            );
         }
 
         const statusMetrics = status.metrics as { pointsCount?: number } | undefined;
-        const pointsCount = statusMetrics?.pointsCount ?? result?.metrics?.pointsCount ?? result?.result?.meta?.pointsCount ?? 0;
+        const pointsCount =
+            statusMetrics?.pointsCount ?? result?.metrics?.pointsCount ?? result?.result?.meta?.pointsCount ?? 0;
         const simHealthy = status.status === 'SUCCEEDED' && pointsCount > 0;
 
         if (simHealthy && criteria.length > 0) {
             const measurements = (result.result?.series ?? []).map((s) => summarizeSeries(s, analysis.type));
             if (measurements.length === 0 && result?.error) {
-                history.push({ round, status: status.status, pointsCount, jobId, note: 'results unavailable to check specs' });
-                return inconclusive(deps, circuit, analysis, explanation, history, groundingOpts,
-                    'The simulation ran but its results were unavailable to check the design specifications — try again.');
+                history.push({
+                    round,
+                    status: status.status,
+                    pointsCount,
+                    jobId,
+                    note: 'results unavailable to check specs',
+                });
+                return inconclusive(
+                    deps,
+                    circuit,
+                    analysis,
+                    explanation,
+                    history,
+                    groundingOpts,
+                    'The simulation ran but its results were unavailable to check the design specifications — try again.',
+                );
             }
             // Fold THD (from a fourier request) onto the measurements so a `thd` criterion gates like any other.
             attachFourierThd(measurements, result.result?.fourier);
@@ -290,12 +352,12 @@ export async function runDesignLoop(input: DesignLoopInput, deps: DesignDeps): P
             note: !simHealthy
                 ? undefined
                 : criteria.length === 0
-                    ? 'no acceptance criteria'
-                    : !specsMet
-                        ? `${lastAssertions.filter((a) => !a.pass).length}/${lastAssertions.length} acceptance criteria unmet`
-                        : covered
-                            ? 'all acceptance criteria met'
-                            : `criteria met but none measures the required ${uncovered.join('/')} target`,
+                  ? 'no acceptance criteria'
+                  : !specsMet
+                    ? `${lastAssertions.filter((a) => !a.pass).length}/${lastAssertions.length} acceptance criteria unmet`
+                    : covered
+                      ? 'all acceptance criteria met'
+                      : `criteria met but none measures the required ${uncovered.join('/')} target`,
         });
 
         if (succeeded) {
@@ -329,7 +391,9 @@ export async function runDesignLoop(input: DesignLoopInput, deps: DesignDeps): P
                     status.status !== 'SUCCEEDED'
                         ? `Simulation ${status.status}. ${result?.error ?? ''}`.trim()
                         : 'Simulation succeeded but produced no data points (pointsCount = 0) — likely a floating node or an analysis that does not excite the circuit.';
-                const conv = (status.metrics as { convergence?: { diagnosis?: string; triedRemedies?: string[] } } | undefined)?.convergence;
+                const conv = (
+                    status.metrics as { convergence?: { diagnosis?: string; triedRemedies?: string[] } } | undefined
+                )?.convergence;
                 if (conv?.diagnosis) {
                     problem += ` Solver diagnosis: ${conv.diagnosis}${conv.triedRemedies?.length ? ` (already tried: ${conv.triedRemedies.join('; ')})` : ''}`;
                 }
@@ -389,8 +453,8 @@ export async function runDesignLoop(input: DesignLoopInput, deps: DesignDeps): P
         warning: ercStuck
             ? 'The circuit could not be made to pass electrical rule checks (ERC) within the round budget, so it is not verified.'
             : specMiss
-            ? 'The circuit simulates but did not meet all acceptance criteria within the round budget.'
-            : coverageMiss
+              ? 'The circuit simulates but did not meet all acceptance criteria within the round budget.'
+              : coverageMiss
                 ? `The circuit simulates and meets its stated criteria, but you specified a ${lastUncovered.join('/')} target that no acceptance criterion verifies — treat it as unverified for that quantity.`
                 : 'Could not produce a successful simulation within the round budget.',
         ...(freqCaveat ? { caveats: freqCaveat } : {}),
@@ -407,7 +471,11 @@ export async function runDesignLoop(input: DesignLoopInput, deps: DesignDeps): P
  * criterion still needs it AND the fixed analysis is still the compatible type (so a deliberate analysis-type
  * change by the fix is respected — a mismatched criterion then reads not-determinable and is fed back honestly).
  */
-export function preserveMetricOverlays(prev: AnalysisConfig, next: AnalysisConfig, criteria: AcceptanceCriterion[]): AnalysisConfig {
+export function preserveMetricOverlays(
+    prev: AnalysisConfig,
+    next: AnalysisConfig,
+    criteria: AcceptanceCriterion[],
+): AnalysisConfig {
     let out = next;
     const prevTran = prev.type === 'tran' ? prev : undefined;
     const nextTran = next.type === 'tran' ? next : undefined;
@@ -427,7 +495,12 @@ async function applyFix(
     circuit: CircuitJson,
     analysis: AnalysisConfig,
     problem: string,
-): Promise<{ circuit: CircuitJson; analysis: AnalysisConfig; explanation?: string; acceptanceCriteria: AcceptanceCriterion[] }> {
+): Promise<{
+    circuit: CircuitJson;
+    analysis: AnalysisConfig;
+    explanation?: string;
+    acceptanceCriteria: AcceptanceCriterion[];
+}> {
     const fixed = await fixCircuit({ circuit, analysisConfig: analysis, problem }, deps.llmConfig);
     attachGenericModels(fixed.circuit);
     return {
@@ -476,7 +549,8 @@ async function pollJob(deps: DesignDeps, jobId: string): Promise<{ status: strin
     let attempt = 0;
     while (Date.now() - start < deps.pollTimeoutMs) {
         const s = (await deps.runSim.getStatus(jobId, deps.userId)) as { status: string; metrics?: unknown };
-        if (s.status === 'SUCCEEDED' || s.status === 'FAILED' || s.status === 'TIMED_OUT' || s.status === 'CANCELED') return s;
+        if (s.status === 'SUCCEEDED' || s.status === 'FAILED' || s.status === 'TIMED_OUT' || s.status === 'CANCELED')
+            return s;
         await new Promise((r) => setTimeout(r, pollBackoffMs(attempt++)));
     }
     return { status: 'POLL_TIMEOUT' };
@@ -493,7 +567,9 @@ export async function runYieldAnalysis(
     if (!deps.mcEnabled) return undefined;
     if (criteria.length === 0) return undefined;
     const hasTolerance = circuit.components.some(
-        (c) => typeof (c as { tolerance?: number }).tolerance === 'number' && ((c as { tolerance?: number }).tolerance ?? 0) > 0,
+        (c) =>
+            typeof (c as { tolerance?: number }).tolerance === 'number' &&
+            ((c as { tolerance?: number }).tolerance ?? 0) > 0,
     );
     if (!hasTolerance) return undefined;
 
@@ -514,7 +590,10 @@ export async function runYieldAnalysis(
                     'Estimated manufacturing yield: each toleranced component value sampled (Gaussian, ±tolerance) and the acceptance criteria re-checked over the run. Models component-value spread ONLY (not temperature/aging/active-device spread); the 95% CI reflects the run count. NOT a certified production figure.',
             };
         }
-        return { available: false, reason: 'yield analysis could not be completed (capacity or no evaluable variants)' };
+        return {
+            available: false,
+            reason: 'yield analysis could not be completed (capacity or no evaluable variants)',
+        };
     } catch {
         return { available: false, reason: 'yield analysis unavailable (simulation capacity)' };
     }
@@ -589,7 +668,11 @@ export function specCloseness(assertions: AssertionResult[]): number {
  *  distort detection). Deterministic — no extra LLM/sim call. The finalist-stage gate (uncovered → not
  *  verified) remains the backstop; this only fixes the screen RANKING, and composes under S2's robustness
  *  ordering (which runs only among coverage-complete passers). */
-export function screenSpecsMet(assertions: AssertionResult[], prompt: string, criteria: AcceptanceCriterion[]): boolean {
+export function screenSpecsMet(
+    assertions: AssertionResult[],
+    prompt: string,
+    criteria: AcceptanceCriterion[],
+): boolean {
     if (assertions.length === 0 || !assertions.every((a) => a.pass)) return false;
     return uncoveredRequiredDimensions(prompt, criteria).length === 0;
 }
@@ -637,15 +720,25 @@ export async function screenCandidate(input: DesignLoopInput, deps: DesignDeps):
     let simStatus = 'UNKNOWN';
     try {
         const netlist = generateNetlist(circuit, analysis, currentProbes.length ? { extraProbes: currentProbes } : {});
-        const { jobId } = await deps.runSim.createQuickSim(netlist, analysis as unknown as Record<string, unknown>, deps.userId);
+        const { jobId } = await deps.runSim.createQuickSim(
+            netlist,
+            analysis as unknown as Record<string, unknown>,
+            deps.userId,
+        );
         const status = await pollJob(deps, jobId);
         simStatus = status.status;
         const result = (await deps.runSim.getResult(jobId, deps.userId)) as {
-            result?: { meta?: { pointsCount?: number }; series?: DataSeries[]; fourier?: FourierResult[]; transferFunction?: TransferFunctionResult };
+            result?: {
+                meta?: { pointsCount?: number };
+                series?: DataSeries[];
+                fourier?: FourierResult[];
+                transferFunction?: TransferFunctionResult;
+            };
             metrics?: { pointsCount?: number };
         };
         const statusMetrics = status.metrics as { pointsCount?: number } | undefined;
-        pointsCount = statusMetrics?.pointsCount ?? result?.metrics?.pointsCount ?? result?.result?.meta?.pointsCount ?? 0;
+        pointsCount =
+            statusMetrics?.pointsCount ?? result?.metrics?.pointsCount ?? result?.result?.meta?.pointsCount ?? 0;
         simHealthy = status.status === 'SUCCEEDED' && pointsCount > 0;
         if (simHealthy && criteria.length > 0) {
             const measurements = (result.result?.series ?? []).map((s) => summarizeSeries(s, analysis.type));
@@ -680,7 +773,10 @@ function partCount(c: CircuitJson): number {
  *  candidates with the same signature are treated as the same topology (values may differ). Not a true
  *  graph isomorphism — a pragmatic "don't spend a finalist slot on a near-duplicate" guard. */
 function topologyKey(c: CircuitJson): string {
-    return `${c.components.map((x) => x.type).sort().join(',')}|${c.nets.length}`;
+    return `${c.components
+        .map((x) => x.type)
+        .sort()
+        .join(',')}|${c.nets.length}`;
 }
 
 /** Worst-case op-aware ROBUSTNESS margin of a spec-met candidate: the MINIMUM normalized slack across its
@@ -692,7 +788,10 @@ function topologyKey(c: CircuitJson): string {
 function robustnessSlack(assertions: AssertionResult[]): number {
     let min = Number.POSITIVE_INFINITY;
     for (const a of assertions) {
-        if (a.distance === null) { min = Math.min(min, 0); continue; }
+        if (a.distance === null) {
+            min = Math.min(min, 0);
+            continue;
+        }
         const denom = Math.abs(a.target) > 1e-12 ? Math.abs(a.target) : a.tol && a.tol > 1e-12 ? a.tol : 1;
         let slack: number;
         switch (a.op) {

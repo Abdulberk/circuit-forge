@@ -27,10 +27,41 @@ describe('classifyCircuit — roles', () => {
         const r = classifyCircuit(
             circuit([
                 comp({ designator: 'R1' }),
-                comp({ designator: 'D1', type: 'diode', pins: [{ pinId: 'anode', netId: 'n1' }, { pinId: 'cathode', netId: 'n2' }] }),
-                comp({ designator: 'LED1', type: 'diode', model: 'led_red', pins: [{ pinId: 'anode', netId: 'n1' }, { pinId: 'cathode', netId: 'n2' }] }),
-                comp({ designator: 'Q1', type: 'bjt', model: 'QGENNPN', pins: [{ pinId: 'c', netId: 'n1' }, { pinId: 'b', netId: 'n2' }, { pinId: 'e', netId: 'n1' }] }),
-                comp({ designator: 'V1', type: 'voltage_source', pins: [{ pinId: '+', netId: 'n1' }, { pinId: '-', netId: 'n2' }] }),
+                comp({
+                    designator: 'D1',
+                    type: 'diode',
+                    pins: [
+                        { pinId: 'anode', netId: 'n1' },
+                        { pinId: 'cathode', netId: 'n2' },
+                    ],
+                }),
+                comp({
+                    designator: 'LED1',
+                    type: 'diode',
+                    model: 'led_red',
+                    pins: [
+                        { pinId: 'anode', netId: 'n1' },
+                        { pinId: 'cathode', netId: 'n2' },
+                    ],
+                }),
+                comp({
+                    designator: 'Q1',
+                    type: 'bjt',
+                    model: 'QGENNPN',
+                    pins: [
+                        { pinId: 'c', netId: 'n1' },
+                        { pinId: 'b', netId: 'n2' },
+                        { pinId: 'e', netId: 'n1' },
+                    ],
+                }),
+                comp({
+                    designator: 'V1',
+                    type: 'voltage_source',
+                    pins: [
+                        { pinId: '+', netId: 'n1' },
+                        { pinId: '-', netId: 'n2' },
+                    ],
+                }),
                 comp({ designator: 'GND1', type: 'ground', pins: [{ pinId: '1', netId: 'n2' }] }),
             ]),
         );
@@ -48,7 +79,12 @@ describe('classifyCircuit — roles', () => {
 
     it('subckt -> chip-fallback with NC declaration (5 ports on soic8 -> 3 NC pins, condition 3)', () => {
         const pins5 = ['out', 'in+', 'in-', 'vcc', 'vee'].map((p) => ({ pinId: p, netId: 'n1' }));
-        const r = classifyCircuit(circuit([comp({ designator: 'U1', type: 'subckt', model: 'OPAMPGEN', pins: pins5 }), comp({ designator: 'R1' })]));
+        const r = classifyCircuit(
+            circuit([
+                comp({ designator: 'U1', type: 'subckt', model: 'OPAMPGEN', pins: pins5 }),
+                comp({ designator: 'R1' }),
+            ]),
+        );
         const u1 = r.plans.find((p) => p.component.designator === 'U1')!;
         expect(u1.role).toBe('chip-fallback');
         expect(u1.ncPinCount).toBe(3);
@@ -88,7 +124,16 @@ describe('classifyCircuit — honesty policy (approval condition 2)', () => {
     it('our 4-pin CONTROLLED switch is a sim primitive, not a pushbutton — excluded', () => {
         const r = classifyCircuit(
             circuit([
-                comp({ designator: 'S1', type: 'switch', pins: [{ pinId: '+', netId: 'n1' }, { pinId: '-', netId: 'n2' }, { pinId: 'c+', netId: 'n1' }, { pinId: 'c-', netId: 'n2' }] }),
+                comp({
+                    designator: 'S1',
+                    type: 'switch',
+                    pins: [
+                        { pinId: '+', netId: 'n1' },
+                        { pinId: '-', netId: 'n2' },
+                        { pinId: 'c+', netId: 'n1' },
+                        { pinId: 'c-', netId: 'n2' },
+                    ],
+                }),
                 comp({ designator: 'R1' }),
             ]),
         );
@@ -104,14 +149,19 @@ describe('classifyCircuit — honesty policy (approval condition 2)', () => {
     });
 
     it('a board with nothing layoutable fails (PCB001)', () => {
-        const r = classifyCircuit(circuit([comp({ designator: 'GND1', type: 'ground', pins: [{ pinId: '1', netId: 'n1' }] })]));
+        const r = classifyCircuit(
+            circuit([comp({ designator: 'GND1', type: 'ground', pins: [{ pinId: '1', netId: 'n1' }] })]),
+        );
         expect(r.layoutable).toBe(false);
         expect(r.diagnostics.some((d) => d.code === 'PCB001')).toBe(true);
     });
 
     it('a ZERO-pin physical component is always an error (PCB011) — even with allowPartial', () => {
         const r = classifyCircuit(
-            circuit([comp({ designator: 'U1', type: 'generic', footprint: 'SOIC-8', pins: [] }), comp({ designator: 'R1' })]),
+            circuit([
+                comp({ designator: 'U1', type: 'generic', footprint: 'SOIC-8', pins: [] }),
+                comp({ designator: 'R1' }),
+            ]),
             { allowPartial: true },
         );
         expect(r.diagnostics.some((d) => d.code === 'PCB011' && d.severity === 'error')).toBe(true);
@@ -165,7 +215,12 @@ describe('classifyCircuit — honesty policy (approval condition 2)', () => {
         expect(r2.plans.find((p) => p.component.designator === 'U3')!.ncPinCount).toBe(15);
 
         // unknown footprint vocabulary: NC unknowable — said EXPLICITLY, never a silent zero
-        const u = comp({ designator: 'U4', type: 'generic', footprint: 'weirdpkg', pins: [{ pinId: '1', netId: 'n1' }] });
+        const u = comp({
+            designator: 'U4',
+            type: 'generic',
+            footprint: 'weirdpkg',
+            pins: [{ pinId: '1', netId: 'n1' }],
+        });
         const r3 = classifyCircuit(circuit([u, comp({ designator: 'R1' })]));
         expect(r3.plans.find((p) => p.component.designator === 'U4')!.ncPinCount).toBeUndefined();
         expect(r3.diagnostics.some((d) => d.code === 'PCB006' && d.message.includes('unknowable'))).toBe(true);

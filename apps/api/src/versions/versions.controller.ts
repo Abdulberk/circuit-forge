@@ -14,7 +14,6 @@ import { BomService } from './bom.service';
 import { CreateVersionDto } from './dto';
 import { VersionsService } from './versions.service';
 
-
 @ApiTags('versions')
 @ApiBearerAuth()
 @UseGuards(JwtAuthGuard)
@@ -23,7 +22,7 @@ export class VersionsController {
     constructor(
         private readonly versionsService: VersionsService,
         private readonly bomService: BomService,
-    ) { }
+    ) {}
 
     @Get('projects/:projectId/versions')
     @ApiOperation({ summary: 'List project versions (paginated: ?limit&offset)' })

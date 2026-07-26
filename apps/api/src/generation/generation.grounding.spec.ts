@@ -35,52 +35,107 @@ function makeSimulator(opts?: { available?: boolean; simulate?: jest.Mock }): Ci
 }
 
 /** Build a GenerationService wired to a real CatalogGroundingService over a mocked PartsService + simulator. */
-function makeService(cfg: ConfigService, parts: unknown, simulator: CircuitSimulatorService = makeSimulator()): GenerationService {
+function makeService(
+    cfg: ConfigService,
+    parts: unknown,
+    simulator: CircuitSimulatorService = makeSimulator(),
+): GenerationService {
     return new GenerationService(cfg, new CatalogGroundingService(cfg, parts as PartsService, simulator));
 }
 
 const VALID_CIRCUIT = {
     version: '1.0',
     components: [
-        { id: 'v1', type: 'voltage_source', designator: 'V1', value: 'SIN(0 5 1k)', pins: [
-            { pinId: '+', netId: 'in' }, { pinId: '-', netId: 'gnd' }] },
-        { id: 'r1', type: 'resistor', designator: 'R1', value: '10k',
-            pins: [{ pinId: '1', netId: 'in' }, { pinId: '2', netId: 'out' }],
-            mpn: 'RC0603FR-0710KL', manufacturer: 'YAGEO' }, // model grounded this from search_parts
-        { id: 'c1', type: 'capacitor', designator: 'C1', value: '100n', pins: [
-            { pinId: '1', netId: 'out' }, { pinId: '2', netId: 'gnd' }] },
+        {
+            id: 'v1',
+            type: 'voltage_source',
+            designator: 'V1',
+            value: 'SIN(0 5 1k)',
+            pins: [
+                { pinId: '+', netId: 'in' },
+                { pinId: '-', netId: 'gnd' },
+            ],
+        },
+        {
+            id: 'r1',
+            type: 'resistor',
+            designator: 'R1',
+            value: '10k',
+            pins: [
+                { pinId: '1', netId: 'in' },
+                { pinId: '2', netId: 'out' },
+            ],
+            mpn: 'RC0603FR-0710KL',
+            manufacturer: 'YAGEO',
+        }, // model grounded this from search_parts
+        {
+            id: 'c1',
+            type: 'capacitor',
+            designator: 'C1',
+            value: '100n',
+            pins: [
+                { pinId: '1', netId: 'out' },
+                { pinId: '2', netId: 'gnd' },
+            ],
+        },
         { id: 'gnd', type: 'ground', designator: 'GND1', pins: [{ pinId: '1', netId: 'gnd' }] },
     ],
     nets: [
-        { id: 'in', name: 'IN' }, { id: 'out', name: 'OUT' }, { id: 'gnd', name: 'GND', isGround: true },
+        { id: 'in', name: 'IN' },
+        { id: 'out', name: 'OUT' },
+        { id: 'gnd', name: 'GND', isGround: true },
     ],
 };
 
 function makeParts() {
     return {
         search: jest.fn(async (_dto: { q: string }) => ({
-            items: [{
-                supplierId: 'SYM-RES-1', mpn: 'RC0603FR-0710KL', manufacturer: 'YAGEO',
-                description: '10k 0603 1% resistor', category: 'SMD resistors',
-                parameters: [], priceBreaks: [], supplier: 'tme',
-            }],
-            page: 1, pageSize: 1,
+            items: [
+                {
+                    supplierId: 'SYM-RES-1',
+                    mpn: 'RC0603FR-0710KL',
+                    manufacturer: 'YAGEO',
+                    description: '10k 0603 1% resistor',
+                    category: 'SMD resistors',
+                    parameters: [],
+                    priceBreaks: [],
+                    supplier: 'tme',
+                },
+            ],
+            page: 1,
+            pageSize: 1,
         })),
         getComponent: jest.fn(async (_symbol: string) => ({
             simulatable: true,
             component: { type: 'resistor', value: '10K' },
             catalog: {
-                mpn: 'RC0603FR-0710KL', manufacturer: 'YAGEO', description: '10k 0603',
-                footprint: '0603', stock: 50000, unitCost: 0.002, currency: 'EUR',
-                datasheetUrl: 'https://d/x.pdf', parameters: [], priceBreaks: [],
-                supplier: 'tme', supplierId: 'SYM-RES-1',
+                mpn: 'RC0603FR-0710KL',
+                manufacturer: 'YAGEO',
+                description: '10k 0603',
+                footprint: '0603',
+                stock: 50000,
+                unitCost: 0.002,
+                currency: 'EUR',
+                datasheetUrl: 'https://d/x.pdf',
+                parameters: [],
+                priceBreaks: [],
+                supplier: 'tme',
+                supplierId: 'SYM-RES-1',
             },
         })),
         getProduct: jest.fn(async (_symbol: string) => ({
-            mpn: 'RC0603FR-0710KL', manufacturer: 'YAGEO', description: '10k 0603',
-            footprint: '0603', stock: 50000, unitCost: 0.002, currency: 'EUR',
-            datasheetUrl: 'https://d/x.pdf', parameters: [], priceBreaks: [],
-            supplier: 'tme', supplierId: 'SYM-RES-1',
+            mpn: 'RC0603FR-0710KL',
+            manufacturer: 'YAGEO',
+            description: '10k 0603',
+            footprint: '0603',
+            stock: 50000,
+            unitCost: 0.002,
+            currency: 'EUR',
+            datasheetUrl: 'https://d/x.pdf',
+            parameters: [],
+            priceBreaks: [],
+            supplier: 'tme',
+            supplierId: 'SYM-RES-1',
         })),
     };
 }
@@ -113,18 +168,53 @@ const EDITED_WITH_BJT = {
     circuit: {
         version: '1.0',
         components: [
-            { id: 'v1', type: 'voltage_source', designator: 'V1', value: 'DC 5', pins: [
-                { pinId: '+', netId: 'vcc' }, { pinId: '-', netId: 'gnd' }] },
-            { id: 'rc', type: 'resistor', designator: 'RC1', value: '1k', pins: [
-                { pinId: '1', netId: 'vcc' }, { pinId: '2', netId: 'col' }] },
-            { id: 'q1', type: 'bjt', designator: 'Q1', model: 'QGENNPN', pins: [
-                { pinId: 'c', netId: 'col' }, { pinId: 'b', netId: 'base' }, { pinId: 'e', netId: 'gnd' }] },
-            { id: 'vb', type: 'voltage_source', designator: 'V2', value: 'DC 0.7', pins: [
-                { pinId: '+', netId: 'base' }, { pinId: '-', netId: 'gnd' }] },
+            {
+                id: 'v1',
+                type: 'voltage_source',
+                designator: 'V1',
+                value: 'DC 5',
+                pins: [
+                    { pinId: '+', netId: 'vcc' },
+                    { pinId: '-', netId: 'gnd' },
+                ],
+            },
+            {
+                id: 'rc',
+                type: 'resistor',
+                designator: 'RC1',
+                value: '1k',
+                pins: [
+                    { pinId: '1', netId: 'vcc' },
+                    { pinId: '2', netId: 'col' },
+                ],
+            },
+            {
+                id: 'q1',
+                type: 'bjt',
+                designator: 'Q1',
+                model: 'QGENNPN',
+                pins: [
+                    { pinId: 'c', netId: 'col' },
+                    { pinId: 'b', netId: 'base' },
+                    { pinId: 'e', netId: 'gnd' },
+                ],
+            },
+            {
+                id: 'vb',
+                type: 'voltage_source',
+                designator: 'V2',
+                value: 'DC 0.7',
+                pins: [
+                    { pinId: '+', netId: 'base' },
+                    { pinId: '-', netId: 'gnd' },
+                ],
+            },
             { id: 'gnd', type: 'ground', designator: 'GND1', pins: [{ pinId: '1', netId: 'gnd' }] },
         ],
         nets: [
-            { id: 'vcc', name: 'VCC' }, { id: 'col', name: 'COL' }, { id: 'base', name: 'BASE' },
+            { id: 'vcc', name: 'VCC' },
+            { id: 'col', name: 'COL' },
+            { id: 'base', name: 'BASE' },
             { id: 'gnd', name: 'GND', isGround: true },
         ],
         // NOTE: no `models` array — the LLM is instructed never to author .model bodies itself.
@@ -143,11 +233,16 @@ describe('GenerationService grounding (tool-use + sourcing enrichment)', () => {
                 content: [{ type: 'tool_use', id: 'tu1', name: 'search_parts', input: { query: '10k 0603 resistor' } }],
             })
             .mockResolvedValueOnce({
-                content: [{ type: 'text', text: JSON.stringify({
-                    circuit: VALID_CIRCUIT,
-                    analysisConfig: { type: 'tran', stopTime: '5m', stepTime: '20u' },
-                    explanation: 'RC low-pass with a real Yageo resistor.',
-                }) }],
+                content: [
+                    {
+                        type: 'text',
+                        text: JSON.stringify({
+                            circuit: VALID_CIRCUIT,
+                            analysisConfig: { type: 'tran', stopTime: '5m', stepTime: '20u' },
+                            explanation: 'RC low-pass with a real Yageo resistor.',
+                        }),
+                    },
+                ],
             });
 
         const parts = makeParts();
@@ -167,7 +262,13 @@ describe('GenerationService grounding (tool-use + sourcing enrichment)', () => {
         expect(r1.manufacturer).toBe('YAGEO');
         // ...and the server attached authoritative sourcing (price/stock/datasheet) + backfilled footprint.
         expect(parts.getProduct).toHaveBeenCalled();
-        expect(r1.sourcing).toMatchObject({ supplier: 'tme', supplierId: 'SYM-RES-1', unitCost: 0.002, currency: 'EUR', stock: 50000 });
+        expect(r1.sourcing).toMatchObject({
+            supplier: 'tme',
+            supplierId: 'SYM-RES-1',
+            unitCost: 0.002,
+            currency: 'EUR',
+            stock: 50000,
+        });
         expect(r1.footprint).toBe('0603');
         // A component without an MPN is left untouched.
         expect(result.circuit.components.find((c) => c.id === 'c1')!.sourcing).toBeUndefined();
@@ -175,9 +276,15 @@ describe('GenerationService grounding (tool-use + sourcing enrichment)', () => {
 
     it('falls back to ungrounded generation when the catalog is not configured (no TME_TOKEN)', async () => {
         mockCreate.mockResolvedValueOnce({
-            content: [{ type: 'text', text: JSON.stringify({
-                circuit: VALID_CIRCUIT, analysisConfig: { type: 'op' },
-            }) }],
+            content: [
+                {
+                    type: 'text',
+                    text: JSON.stringify({
+                        circuit: VALID_CIRCUIT,
+                        analysisConfig: { type: 'op' },
+                    }),
+                },
+            ],
         });
         const parts = makeParts();
         const cfg = { get: (k: string) => (k === 'LLM_API_KEY' ? 'test-key' : undefined) } as unknown as ConfigService;
@@ -198,8 +305,11 @@ describe('GenerationService grounding (tool-use + sourcing enrichment)', () => {
         mockCreate.mockResolvedValueOnce(jsonResponse(FINAL_JSON));
         const parts = {
             search: jest.fn(async () => ({
-                items: [{ supplierId: 'SYM-OTHER', mpn: 'SOME-OTHER-PART', manufacturer: 'X', description: 'unrelated' }],
-                page: 1, pageSize: 1,
+                items: [
+                    { supplierId: 'SYM-OTHER', mpn: 'SOME-OTHER-PART', manufacturer: 'X', description: 'unrelated' },
+                ],
+                page: 1,
+                pageSize: 1,
             })),
             getComponent: jest.fn(),
             getProduct: jest.fn(),
@@ -217,7 +327,8 @@ describe('GenerationService grounding (tool-use + sourcing enrichment)', () => {
     it('caps the tool loop at MAX_TOOL_ITERS and forces a tool-less final answer', async () => {
         // Model keeps calling tools on every offered turn; after the cap the loop must run one tool-less
         // call (tools omitted) that returns the final JSON — proving termination + no runaway.
-        for (let i = 0; i < 5; i++) mockCreate.mockResolvedValueOnce(toolUseResponse(`tu${i}`, 'search_parts', { query: 'resistor' }));
+        for (let i = 0; i < 5; i++)
+            mockCreate.mockResolvedValueOnce(toolUseResponse(`tu${i}`, 'search_parts', { query: 'resistor' }));
         mockCreate.mockResolvedValueOnce(jsonResponse(FINAL_JSON));
 
         const parts = makeParts();
@@ -235,7 +346,9 @@ describe('GenerationService grounding (tool-use + sourcing enrichment)', () => {
             .mockResolvedValueOnce(toolUseResponse('tu1', 'search_parts', { query: '10k resistor' }))
             .mockResolvedValueOnce(jsonResponse(FINAL_JSON));
         const parts = {
-            search: jest.fn(async () => { throw new Error('catalog upstream 502'); }),
+            search: jest.fn(async () => {
+                throw new Error('catalog upstream 502');
+            }),
             getComponent: jest.fn(),
             getProduct: jest.fn(),
         };
@@ -304,8 +417,20 @@ describe('GenerationService grounding (tool-use + sourcing enrichment)', () => {
         // returns the final JSON. Proves simulate_circuit is offered and dispatched to the simulator twice.
         const simulate = jest
             .fn()
-            .mockResolvedValueOnce({ simStatus: 'failed', ercErrors: [{ code: 'ERC001', message: 'No ground node', relatedIds: [] }], ercWarnings: [], measurements: [], nodeCount: 0 })
-            .mockResolvedValueOnce({ simStatus: 'ok', ercErrors: [], ercWarnings: [], measurements: [{ node: 'x_out', min: 0, max: 5, final: 2.5, pp: 5, avg: 2.5, rms: 2.9 }], nodeCount: 2 });
+            .mockResolvedValueOnce({
+                simStatus: 'failed',
+                ercErrors: [{ code: 'ERC001', message: 'No ground node', relatedIds: [] }],
+                ercWarnings: [],
+                measurements: [],
+                nodeCount: 0,
+            })
+            .mockResolvedValueOnce({
+                simStatus: 'ok',
+                ercErrors: [],
+                ercWarnings: [],
+                measurements: [{ node: 'x_out', min: 0, max: 5, final: 2.5, pp: 5, avg: 2.5, rms: 2.9 }],
+                nodeCount: 2,
+            });
         mockCreate
             .mockResolvedValueOnce(toolUseResponse('s1', 'simulate_circuit', { circuit: VALID_CIRCUIT })) // 1st verify → ERC error
             .mockResolvedValueOnce(toolUseResponse('s2', 'simulate_circuit', { circuit: VALID_CIRCUIT })) // re-verify after fix → ok

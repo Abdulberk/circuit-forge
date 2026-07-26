@@ -1,675 +1,666 @@
 {
-  "name": "Sensor Level Meter with 7-Segment Digit",
-  "description": "A complete sensor-to-digit instrument: a slow 0→5V sensor sweep feeds a 2-bit FLASH ADC (1.25/2.50/3.75V reference ladder + 3 comparators), gate logic converts the thermometer code to binary and decodes it to a 7-segment LED display. As the level rises and falls, the displayed digit steps 0 → 1 → 2 → 3 → 2 → 1 → 0, every phase showing the exact standard segment pattern (~7.9mA per lit segment). The full analog→digital→display chain in one circuit. (ngspice-validated across all 7 phases.)",
-  "tags": [
-    "sensor",
-    "display",
-    "led",
-    "7-segment",
-    "adc",
-    "flash-adc",
-    "mixed-signal",
-    "flagship"
-  ],
-  "analysisConfig": {
-    "analysis": {
-      "type": "tran",
-      "stopTime": "8",
-      "stepTime": "2m"
+    "name": "Sensor Level Meter with 7-Segment Digit",
+    "description": "A complete sensor-to-digit instrument: a slow 0→5V sensor sweep feeds a 2-bit FLASH ADC (1.25/2.50/3.75V reference ladder + 3 comparators), gate logic converts the thermometer code to binary and decodes it to a 7-segment LED display. As the level rises and falls, the displayed digit steps 0 → 1 → 2 → 3 → 2 → 1 → 0, every phase showing the exact standard segment pattern (~7.9mA per lit segment). The full analog→digital→display chain in one circuit. (ngspice-validated across all 7 phases.)",
+    "tags": ["sensor", "display", "led", "7-segment", "adc", "flash-adc", "mixed-signal", "flagship"],
+    "analysisConfig": {
+        "analysis": {
+            "type": "tran",
+            "stopTime": "8",
+            "stepTime": "2m"
+        },
+        "probes": [
+            "i(RA1)",
+            "i(RB1)",
+            "i(RC1)",
+            "i(RD1)",
+            "i(RE1)",
+            "i(RF1)",
+            "i(RG1)",
+            "v(sense)",
+            "v(c1)",
+            "v(c2)",
+            "v(c3)",
+            "v(b1)",
+            "v(b0)"
+        ]
     },
-    "probes": [
-      "i(RA1)",
-      "i(RB1)",
-      "i(RC1)",
-      "i(RD1)",
-      "i(RE1)",
-      "i(RF1)",
-      "i(RG1)",
-      "v(sense)",
-      "v(c1)",
-      "v(c2)",
-      "v(c3)",
-      "v(b1)",
-      "v(b0)"
-    ]
-  },
-  "circuitJson": {
-    "version": "1.0",
-    "components": [
-      {
-        "id": "v1",
-        "type": "voltage_source",
-        "designator": "V1",
-        "value": "DC 5",
-        "pins": [
-          {
-            "pinId": "+",
-            "netId": "vcc"
-          },
-          {
-            "pinId": "-",
-            "netId": "0"
-          }
-        ]
-      },
-      {
-        "id": "v2",
-        "type": "voltage_source",
-        "designator": "V2",
-        "value": "PULSE(0 5 0 4 4 1m 8.002)",
-        "pins": [
-          {
-            "pinId": "+",
-            "netId": "sense"
-          },
-          {
-            "pinId": "-",
-            "netId": "0"
-          }
-        ]
-      },
-      {
-        "id": "rl1",
-        "type": "resistor",
-        "designator": "RL1",
-        "value": "1k",
-        "pins": [
-          {
-            "pinId": "1",
-            "netId": "vcc"
-          },
-          {
-            "pinId": "2",
-            "netId": "t3"
-          }
-        ]
-      },
-      {
-        "id": "rl2",
-        "type": "resistor",
-        "designator": "RL2",
-        "value": "1k",
-        "pins": [
-          {
-            "pinId": "1",
-            "netId": "t3"
-          },
-          {
-            "pinId": "2",
-            "netId": "t2"
-          }
-        ]
-      },
-      {
-        "id": "rl3",
-        "type": "resistor",
-        "designator": "RL3",
-        "value": "1k",
-        "pins": [
-          {
-            "pinId": "1",
-            "netId": "t2"
-          },
-          {
-            "pinId": "2",
-            "netId": "t1"
-          }
-        ]
-      },
-      {
-        "id": "rl4",
-        "type": "resistor",
-        "designator": "RL4",
-        "value": "1k",
-        "pins": [
-          {
-            "pinId": "1",
-            "netId": "t1"
-          },
-          {
-            "pinId": "2",
-            "netId": "0"
-          }
-        ]
-      },
-      {
-        "id": "u1",
-        "type": "subckt",
-        "designator": "U1",
-        "model": "OPAMPGEN",
-        "pins": [
-          {
-            "pinId": "out",
-            "netId": "c1"
-          },
-          {
-            "pinId": "in+",
-            "netId": "sense"
-          },
-          {
-            "pinId": "in-",
-            "netId": "t1"
-          },
-          {
-            "pinId": "vcc",
-            "netId": "vcc"
-          },
-          {
-            "pinId": "vee",
-            "netId": "0"
-          }
-        ]
-      },
-      {
-        "id": "u2",
-        "type": "subckt",
-        "designator": "U2",
-        "model": "OPAMPGEN",
-        "pins": [
-          {
-            "pinId": "out",
-            "netId": "c2"
-          },
-          {
-            "pinId": "in+",
-            "netId": "sense"
-          },
-          {
-            "pinId": "in-",
-            "netId": "t2"
-          },
-          {
-            "pinId": "vcc",
-            "netId": "vcc"
-          },
-          {
-            "pinId": "vee",
-            "netId": "0"
-          }
-        ]
-      },
-      {
-        "id": "u3",
-        "type": "subckt",
-        "designator": "U3",
-        "model": "OPAMPGEN",
-        "pins": [
-          {
-            "pinId": "out",
-            "netId": "c3"
-          },
-          {
-            "pinId": "in+",
-            "netId": "sense"
-          },
-          {
-            "pinId": "in-",
-            "netId": "t3"
-          },
-          {
-            "pinId": "vcc",
-            "netId": "vcc"
-          },
-          {
-            "pinId": "vee",
-            "netId": "0"
-          }
-        ]
-      },
-      {
-        "id": "g1",
-        "type": "logic_xor",
-        "designator": "G1",
-        "pins": [
-          {
-            "pinId": "in1",
-            "netId": "c1"
-          },
-          {
-            "pinId": "in2",
-            "netId": "c2"
-          },
-          {
-            "pinId": "out",
-            "netId": "x1"
-          }
-        ]
-      },
-      {
-        "id": "g2",
-        "type": "logic_or",
-        "designator": "G2",
-        "pins": [
-          {
-            "pinId": "in1",
-            "netId": "x1"
-          },
-          {
-            "pinId": "in2",
-            "netId": "c3"
-          },
-          {
-            "pinId": "out",
-            "netId": "b0"
-          }
-        ]
-      },
-      {
-        "id": "g3",
-        "type": "logic_buffer",
-        "designator": "G3",
-        "pins": [
-          {
-            "pinId": "in1",
-            "netId": "c2"
-          },
-          {
-            "pinId": "out",
-            "netId": "b1"
-          }
-        ]
-      },
-      {
-        "id": "g4",
-        "type": "logic_not",
-        "designator": "G4",
-        "pins": [
-          {
-            "pinId": "in1",
-            "netId": "b0"
-          },
-          {
-            "pinId": "out",
-            "netId": "n0"
-          }
-        ]
-      },
-      {
-        "id": "g5",
-        "type": "logic_or",
-        "designator": "G5",
-        "pins": [
-          {
-            "pinId": "in1",
-            "netId": "b1"
-          },
-          {
-            "pinId": "in2",
-            "netId": "n0"
-          },
-          {
-            "pinId": "out",
-            "netId": "sad"
-          }
-        ]
-      },
-      {
-        "id": "g6",
-        "type": "logic_nand",
-        "designator": "G6",
-        "pins": [
-          {
-            "pinId": "in1",
-            "netId": "b1"
-          },
-          {
-            "pinId": "in2",
-            "netId": "n0"
-          },
-          {
-            "pinId": "out",
-            "netId": "sc"
-          }
-        ]
-      },
-      {
-        "id": "g7",
-        "type": "logic_nor",
-        "designator": "G7",
-        "pins": [
-          {
-            "pinId": "in1",
-            "netId": "b1"
-          },
-          {
-            "pinId": "in2",
-            "netId": "b0"
-          },
-          {
-            "pinId": "out",
-            "netId": "sf"
-          }
-        ]
-      },
-      {
-        "id": "ra1",
-        "type": "resistor",
-        "designator": "RA1",
-        "value": "390",
-        "pins": [
-          {
-            "pinId": "1",
-            "netId": "sad"
-          },
-          {
-            "pinId": "2",
-            "netId": "la"
-          }
-        ]
-      },
-      {
-        "id": "da1",
-        "type": "diode",
-        "designator": "DA1",
-        "model": "LEDRED",
-        "pins": [
-          {
-            "pinId": "anode",
-            "netId": "la"
-          },
-          {
-            "pinId": "cathode",
-            "netId": "0"
-          }
-        ]
-      },
-      {
-        "id": "rb1",
-        "type": "resistor",
-        "designator": "RB1",
-        "value": "390",
-        "pins": [
-          {
-            "pinId": "1",
-            "netId": "vcc"
-          },
-          {
-            "pinId": "2",
-            "netId": "lb"
-          }
-        ]
-      },
-      {
-        "id": "db1",
-        "type": "diode",
-        "designator": "DB1",
-        "model": "LEDRED",
-        "pins": [
-          {
-            "pinId": "anode",
-            "netId": "lb"
-          },
-          {
-            "pinId": "cathode",
-            "netId": "0"
-          }
-        ]
-      },
-      {
-        "id": "rc1",
-        "type": "resistor",
-        "designator": "RC1",
-        "value": "390",
-        "pins": [
-          {
-            "pinId": "1",
-            "netId": "sc"
-          },
-          {
-            "pinId": "2",
-            "netId": "lc"
-          }
-        ]
-      },
-      {
-        "id": "dc1",
-        "type": "diode",
-        "designator": "DC1",
-        "model": "LEDRED",
-        "pins": [
-          {
-            "pinId": "anode",
-            "netId": "lc"
-          },
-          {
-            "pinId": "cathode",
-            "netId": "0"
-          }
-        ]
-      },
-      {
-        "id": "rd1",
-        "type": "resistor",
-        "designator": "RD1",
-        "value": "390",
-        "pins": [
-          {
-            "pinId": "1",
-            "netId": "sad"
-          },
-          {
-            "pinId": "2",
-            "netId": "ld"
-          }
-        ]
-      },
-      {
-        "id": "dd1",
-        "type": "diode",
-        "designator": "DD1",
-        "model": "LEDRED",
-        "pins": [
-          {
-            "pinId": "anode",
-            "netId": "ld"
-          },
-          {
-            "pinId": "cathode",
-            "netId": "0"
-          }
-        ]
-      },
-      {
-        "id": "re1",
-        "type": "resistor",
-        "designator": "RE1",
-        "value": "390",
-        "pins": [
-          {
-            "pinId": "1",
-            "netId": "n0"
-          },
-          {
-            "pinId": "2",
-            "netId": "le"
-          }
-        ]
-      },
-      {
-        "id": "de1",
-        "type": "diode",
-        "designator": "DE1",
-        "model": "LEDRED",
-        "pins": [
-          {
-            "pinId": "anode",
-            "netId": "le"
-          },
-          {
-            "pinId": "cathode",
-            "netId": "0"
-          }
-        ]
-      },
-      {
-        "id": "rf1",
-        "type": "resistor",
-        "designator": "RF1",
-        "value": "390",
-        "pins": [
-          {
-            "pinId": "1",
-            "netId": "sf"
-          },
-          {
-            "pinId": "2",
-            "netId": "lf"
-          }
-        ]
-      },
-      {
-        "id": "df1",
-        "type": "diode",
-        "designator": "DF1",
-        "model": "LEDRED",
-        "pins": [
-          {
-            "pinId": "anode",
-            "netId": "lf"
-          },
-          {
-            "pinId": "cathode",
-            "netId": "0"
-          }
-        ]
-      },
-      {
-        "id": "rg1",
-        "type": "resistor",
-        "designator": "RG1",
-        "value": "390",
-        "pins": [
-          {
-            "pinId": "1",
-            "netId": "b1"
-          },
-          {
-            "pinId": "2",
-            "netId": "lg"
-          }
-        ]
-      },
-      {
-        "id": "dg1",
-        "type": "diode",
-        "designator": "DG1",
-        "model": "LEDRED",
-        "pins": [
-          {
-            "pinId": "anode",
-            "netId": "lg"
-          },
-          {
-            "pinId": "cathode",
-            "netId": "0"
-          }
-        ]
-      }
-    ],
-    "nets": [
-      {
-        "id": "0",
-        "name": "GND",
-        "isGround": true
-      },
-      {
-        "id": "vcc",
-        "name": "VCC"
-      },
-      {
-        "id": "sense",
-        "name": "SENSE"
-      },
-      {
-        "id": "t1",
-        "name": "VREF_1V25"
-      },
-      {
-        "id": "t2",
-        "name": "VREF_2V50"
-      },
-      {
-        "id": "t3",
-        "name": "VREF_3V75"
-      },
-      {
-        "id": "c1",
-        "name": "THERM1"
-      },
-      {
-        "id": "c2",
-        "name": "THERM2"
-      },
-      {
-        "id": "c3",
-        "name": "THERM3"
-      },
-      {
-        "id": "x1",
-        "name": "XOR12"
-      },
-      {
-        "id": "b0",
-        "name": "B0"
-      },
-      {
-        "id": "b1",
-        "name": "B1"
-      },
-      {
-        "id": "n0",
-        "name": "NB0"
-      },
-      {
-        "id": "sad",
-        "name": "SEG_AD"
-      },
-      {
-        "id": "sc",
-        "name": "SEG_C"
-      },
-      {
-        "id": "sf",
-        "name": "SEG_F"
-      },
-      {
-        "id": "la",
-        "name": "LED_A"
-      },
-      {
-        "id": "lb",
-        "name": "LED_B"
-      },
-      {
-        "id": "lc",
-        "name": "LED_C"
-      },
-      {
-        "id": "ld",
-        "name": "LED_D"
-      },
-      {
-        "id": "le",
-        "name": "LED_E"
-      },
-      {
-        "id": "lf",
-        "name": "LED_F"
-      },
-      {
-        "id": "lg",
-        "name": "LED_G"
-      }
-    ],
-    "models": [
-      {
-        "name": "LEDRED",
-        "device": "diode",
-        "body": ".model LEDRED D(IS=1e-20 N=1.8 RS=2 CJO=10p)"
-      }
-    ],
-    "metadata": {
-      "name": "Sensor Level Meter with 7-Segment Digit"
+    "circuitJson": {
+        "version": "1.0",
+        "components": [
+            {
+                "id": "v1",
+                "type": "voltage_source",
+                "designator": "V1",
+                "value": "DC 5",
+                "pins": [
+                    {
+                        "pinId": "+",
+                        "netId": "vcc"
+                    },
+                    {
+                        "pinId": "-",
+                        "netId": "0"
+                    }
+                ]
+            },
+            {
+                "id": "v2",
+                "type": "voltage_source",
+                "designator": "V2",
+                "value": "PULSE(0 5 0 4 4 1m 8.002)",
+                "pins": [
+                    {
+                        "pinId": "+",
+                        "netId": "sense"
+                    },
+                    {
+                        "pinId": "-",
+                        "netId": "0"
+                    }
+                ]
+            },
+            {
+                "id": "rl1",
+                "type": "resistor",
+                "designator": "RL1",
+                "value": "1k",
+                "pins": [
+                    {
+                        "pinId": "1",
+                        "netId": "vcc"
+                    },
+                    {
+                        "pinId": "2",
+                        "netId": "t3"
+                    }
+                ]
+            },
+            {
+                "id": "rl2",
+                "type": "resistor",
+                "designator": "RL2",
+                "value": "1k",
+                "pins": [
+                    {
+                        "pinId": "1",
+                        "netId": "t3"
+                    },
+                    {
+                        "pinId": "2",
+                        "netId": "t2"
+                    }
+                ]
+            },
+            {
+                "id": "rl3",
+                "type": "resistor",
+                "designator": "RL3",
+                "value": "1k",
+                "pins": [
+                    {
+                        "pinId": "1",
+                        "netId": "t2"
+                    },
+                    {
+                        "pinId": "2",
+                        "netId": "t1"
+                    }
+                ]
+            },
+            {
+                "id": "rl4",
+                "type": "resistor",
+                "designator": "RL4",
+                "value": "1k",
+                "pins": [
+                    {
+                        "pinId": "1",
+                        "netId": "t1"
+                    },
+                    {
+                        "pinId": "2",
+                        "netId": "0"
+                    }
+                ]
+            },
+            {
+                "id": "u1",
+                "type": "subckt",
+                "designator": "U1",
+                "model": "OPAMPGEN",
+                "pins": [
+                    {
+                        "pinId": "out",
+                        "netId": "c1"
+                    },
+                    {
+                        "pinId": "in+",
+                        "netId": "sense"
+                    },
+                    {
+                        "pinId": "in-",
+                        "netId": "t1"
+                    },
+                    {
+                        "pinId": "vcc",
+                        "netId": "vcc"
+                    },
+                    {
+                        "pinId": "vee",
+                        "netId": "0"
+                    }
+                ]
+            },
+            {
+                "id": "u2",
+                "type": "subckt",
+                "designator": "U2",
+                "model": "OPAMPGEN",
+                "pins": [
+                    {
+                        "pinId": "out",
+                        "netId": "c2"
+                    },
+                    {
+                        "pinId": "in+",
+                        "netId": "sense"
+                    },
+                    {
+                        "pinId": "in-",
+                        "netId": "t2"
+                    },
+                    {
+                        "pinId": "vcc",
+                        "netId": "vcc"
+                    },
+                    {
+                        "pinId": "vee",
+                        "netId": "0"
+                    }
+                ]
+            },
+            {
+                "id": "u3",
+                "type": "subckt",
+                "designator": "U3",
+                "model": "OPAMPGEN",
+                "pins": [
+                    {
+                        "pinId": "out",
+                        "netId": "c3"
+                    },
+                    {
+                        "pinId": "in+",
+                        "netId": "sense"
+                    },
+                    {
+                        "pinId": "in-",
+                        "netId": "t3"
+                    },
+                    {
+                        "pinId": "vcc",
+                        "netId": "vcc"
+                    },
+                    {
+                        "pinId": "vee",
+                        "netId": "0"
+                    }
+                ]
+            },
+            {
+                "id": "g1",
+                "type": "logic_xor",
+                "designator": "G1",
+                "pins": [
+                    {
+                        "pinId": "in1",
+                        "netId": "c1"
+                    },
+                    {
+                        "pinId": "in2",
+                        "netId": "c2"
+                    },
+                    {
+                        "pinId": "out",
+                        "netId": "x1"
+                    }
+                ]
+            },
+            {
+                "id": "g2",
+                "type": "logic_or",
+                "designator": "G2",
+                "pins": [
+                    {
+                        "pinId": "in1",
+                        "netId": "x1"
+                    },
+                    {
+                        "pinId": "in2",
+                        "netId": "c3"
+                    },
+                    {
+                        "pinId": "out",
+                        "netId": "b0"
+                    }
+                ]
+            },
+            {
+                "id": "g3",
+                "type": "logic_buffer",
+                "designator": "G3",
+                "pins": [
+                    {
+                        "pinId": "in1",
+                        "netId": "c2"
+                    },
+                    {
+                        "pinId": "out",
+                        "netId": "b1"
+                    }
+                ]
+            },
+            {
+                "id": "g4",
+                "type": "logic_not",
+                "designator": "G4",
+                "pins": [
+                    {
+                        "pinId": "in1",
+                        "netId": "b0"
+                    },
+                    {
+                        "pinId": "out",
+                        "netId": "n0"
+                    }
+                ]
+            },
+            {
+                "id": "g5",
+                "type": "logic_or",
+                "designator": "G5",
+                "pins": [
+                    {
+                        "pinId": "in1",
+                        "netId": "b1"
+                    },
+                    {
+                        "pinId": "in2",
+                        "netId": "n0"
+                    },
+                    {
+                        "pinId": "out",
+                        "netId": "sad"
+                    }
+                ]
+            },
+            {
+                "id": "g6",
+                "type": "logic_nand",
+                "designator": "G6",
+                "pins": [
+                    {
+                        "pinId": "in1",
+                        "netId": "b1"
+                    },
+                    {
+                        "pinId": "in2",
+                        "netId": "n0"
+                    },
+                    {
+                        "pinId": "out",
+                        "netId": "sc"
+                    }
+                ]
+            },
+            {
+                "id": "g7",
+                "type": "logic_nor",
+                "designator": "G7",
+                "pins": [
+                    {
+                        "pinId": "in1",
+                        "netId": "b1"
+                    },
+                    {
+                        "pinId": "in2",
+                        "netId": "b0"
+                    },
+                    {
+                        "pinId": "out",
+                        "netId": "sf"
+                    }
+                ]
+            },
+            {
+                "id": "ra1",
+                "type": "resistor",
+                "designator": "RA1",
+                "value": "390",
+                "pins": [
+                    {
+                        "pinId": "1",
+                        "netId": "sad"
+                    },
+                    {
+                        "pinId": "2",
+                        "netId": "la"
+                    }
+                ]
+            },
+            {
+                "id": "da1",
+                "type": "diode",
+                "designator": "DA1",
+                "model": "LEDRED",
+                "pins": [
+                    {
+                        "pinId": "anode",
+                        "netId": "la"
+                    },
+                    {
+                        "pinId": "cathode",
+                        "netId": "0"
+                    }
+                ]
+            },
+            {
+                "id": "rb1",
+                "type": "resistor",
+                "designator": "RB1",
+                "value": "390",
+                "pins": [
+                    {
+                        "pinId": "1",
+                        "netId": "vcc"
+                    },
+                    {
+                        "pinId": "2",
+                        "netId": "lb"
+                    }
+                ]
+            },
+            {
+                "id": "db1",
+                "type": "diode",
+                "designator": "DB1",
+                "model": "LEDRED",
+                "pins": [
+                    {
+                        "pinId": "anode",
+                        "netId": "lb"
+                    },
+                    {
+                        "pinId": "cathode",
+                        "netId": "0"
+                    }
+                ]
+            },
+            {
+                "id": "rc1",
+                "type": "resistor",
+                "designator": "RC1",
+                "value": "390",
+                "pins": [
+                    {
+                        "pinId": "1",
+                        "netId": "sc"
+                    },
+                    {
+                        "pinId": "2",
+                        "netId": "lc"
+                    }
+                ]
+            },
+            {
+                "id": "dc1",
+                "type": "diode",
+                "designator": "DC1",
+                "model": "LEDRED",
+                "pins": [
+                    {
+                        "pinId": "anode",
+                        "netId": "lc"
+                    },
+                    {
+                        "pinId": "cathode",
+                        "netId": "0"
+                    }
+                ]
+            },
+            {
+                "id": "rd1",
+                "type": "resistor",
+                "designator": "RD1",
+                "value": "390",
+                "pins": [
+                    {
+                        "pinId": "1",
+                        "netId": "sad"
+                    },
+                    {
+                        "pinId": "2",
+                        "netId": "ld"
+                    }
+                ]
+            },
+            {
+                "id": "dd1",
+                "type": "diode",
+                "designator": "DD1",
+                "model": "LEDRED",
+                "pins": [
+                    {
+                        "pinId": "anode",
+                        "netId": "ld"
+                    },
+                    {
+                        "pinId": "cathode",
+                        "netId": "0"
+                    }
+                ]
+            },
+            {
+                "id": "re1",
+                "type": "resistor",
+                "designator": "RE1",
+                "value": "390",
+                "pins": [
+                    {
+                        "pinId": "1",
+                        "netId": "n0"
+                    },
+                    {
+                        "pinId": "2",
+                        "netId": "le"
+                    }
+                ]
+            },
+            {
+                "id": "de1",
+                "type": "diode",
+                "designator": "DE1",
+                "model": "LEDRED",
+                "pins": [
+                    {
+                        "pinId": "anode",
+                        "netId": "le"
+                    },
+                    {
+                        "pinId": "cathode",
+                        "netId": "0"
+                    }
+                ]
+            },
+            {
+                "id": "rf1",
+                "type": "resistor",
+                "designator": "RF1",
+                "value": "390",
+                "pins": [
+                    {
+                        "pinId": "1",
+                        "netId": "sf"
+                    },
+                    {
+                        "pinId": "2",
+                        "netId": "lf"
+                    }
+                ]
+            },
+            {
+                "id": "df1",
+                "type": "diode",
+                "designator": "DF1",
+                "model": "LEDRED",
+                "pins": [
+                    {
+                        "pinId": "anode",
+                        "netId": "lf"
+                    },
+                    {
+                        "pinId": "cathode",
+                        "netId": "0"
+                    }
+                ]
+            },
+            {
+                "id": "rg1",
+                "type": "resistor",
+                "designator": "RG1",
+                "value": "390",
+                "pins": [
+                    {
+                        "pinId": "1",
+                        "netId": "b1"
+                    },
+                    {
+                        "pinId": "2",
+                        "netId": "lg"
+                    }
+                ]
+            },
+            {
+                "id": "dg1",
+                "type": "diode",
+                "designator": "DG1",
+                "model": "LEDRED",
+                "pins": [
+                    {
+                        "pinId": "anode",
+                        "netId": "lg"
+                    },
+                    {
+                        "pinId": "cathode",
+                        "netId": "0"
+                    }
+                ]
+            }
+        ],
+        "nets": [
+            {
+                "id": "0",
+                "name": "GND",
+                "isGround": true
+            },
+            {
+                "id": "vcc",
+                "name": "VCC"
+            },
+            {
+                "id": "sense",
+                "name": "SENSE"
+            },
+            {
+                "id": "t1",
+                "name": "VREF_1V25"
+            },
+            {
+                "id": "t2",
+                "name": "VREF_2V50"
+            },
+            {
+                "id": "t3",
+                "name": "VREF_3V75"
+            },
+            {
+                "id": "c1",
+                "name": "THERM1"
+            },
+            {
+                "id": "c2",
+                "name": "THERM2"
+            },
+            {
+                "id": "c3",
+                "name": "THERM3"
+            },
+            {
+                "id": "x1",
+                "name": "XOR12"
+            },
+            {
+                "id": "b0",
+                "name": "B0"
+            },
+            {
+                "id": "b1",
+                "name": "B1"
+            },
+            {
+                "id": "n0",
+                "name": "NB0"
+            },
+            {
+                "id": "sad",
+                "name": "SEG_AD"
+            },
+            {
+                "id": "sc",
+                "name": "SEG_C"
+            },
+            {
+                "id": "sf",
+                "name": "SEG_F"
+            },
+            {
+                "id": "la",
+                "name": "LED_A"
+            },
+            {
+                "id": "lb",
+                "name": "LED_B"
+            },
+            {
+                "id": "lc",
+                "name": "LED_C"
+            },
+            {
+                "id": "ld",
+                "name": "LED_D"
+            },
+            {
+                "id": "le",
+                "name": "LED_E"
+            },
+            {
+                "id": "lf",
+                "name": "LED_F"
+            },
+            {
+                "id": "lg",
+                "name": "LED_G"
+            }
+        ],
+        "models": [
+            {
+                "name": "LEDRED",
+                "device": "diode",
+                "body": ".model LEDRED D(IS=1e-20 N=1.8 RS=2 CJO=10p)"
+            }
+        ],
+        "metadata": {
+            "name": "Sensor Level Meter with 7-Segment Digit"
+        }
     }
-  }
 }

@@ -130,7 +130,11 @@ export class AdminStorageService {
         let continuationToken: string | undefined;
         do {
             const page = await this.s3.send(
-                new ListObjectsV2Command({ Bucket: this.bucket, Prefix: MODELS_PREFIX, ContinuationToken: continuationToken }),
+                new ListObjectsV2Command({
+                    Bucket: this.bucket,
+                    Prefix: MODELS_PREFIX,
+                    ContinuationToken: continuationToken,
+                }),
             );
             for (const c of page.Contents ?? []) {
                 if (c.Key) objects.push({ key: c.Key, lastModified: c.LastModified ?? null, sizeBytes: c.Size ?? 0 });
@@ -163,7 +167,8 @@ export class AdminStorageService {
         for (let i = 0; i < orphans.length; i += DELETE_BATCH) {
             const candidates = orphans.slice(i, i + DELETE_BATCH);
             const nowReferenced = await this.referencedKeys(candidates.map((o) => o.key));
-            if (nowReferenced.size > 0) this.logger.warn(`sweep skipped ${nowReferenced.size} key(s) committed mid-sweep`);
+            if (nowReferenced.size > 0)
+                this.logger.warn(`sweep skipped ${nowReferenced.size} key(s) committed mid-sweep`);
             const batch = candidates.filter((o) => !nowReferenced.has(o.key));
             if (batch.length === 0) continue;
 

@@ -10,7 +10,10 @@ import type { CircuitJson } from '../src/types/circuit';
 
 describe('#13 rewriteProbeNodeRefs — dropping ground is sign-safe only when ground is the subtrahend', () => {
     // stand-in for the net-id/name -> sanitized-node map generate() builds
-    const map = new Map<string, string>([['out', 'x_out'], ['rail', 'nrail']]);
+    const map = new Map<string, string>([
+        ['out', 'x_out'],
+        ['rail', 'nrail'],
+    ]);
 
     it('v(out,0) → v(x_out)  (v(out) - 0 = v(out): ground as SUBTRAHEND is safe to drop)', () => {
         expect(rewriteProbeNodeRefs('v(out,0)', map)).toBe('v(x_out)');
@@ -51,15 +54,44 @@ describe('#14 transformer internal winding nodes go through the case-insensitive
     const build = (transformerDesignator: string): CircuitJson => ({
         version: '1.0',
         components: [
-            { id: 'v1', type: 'voltage_source', designator: 'V1', value: 'SIN(0 1 50k)', pins: [{ pinId: '+', netId: 'prim' }, { pinId: '-', netId: 'gnd' }] },
             {
-                id: 't1', type: 'transformer', designator: transformerDesignator,
-                properties: { primaryInductance: '100m', secondaryInductance: '25m' },
-                pins: [{ pinId: 'p+', netId: 'prim' }, { pinId: 'p-', netId: 'gnd' }, { pinId: 's+', netId: '1_wp' }, { pinId: 's-', netId: 'gnd' }],
+                id: 'v1',
+                type: 'voltage_source',
+                designator: 'V1',
+                value: 'SIN(0 1 50k)',
+                pins: [
+                    { pinId: '+', netId: 'prim' },
+                    { pinId: '-', netId: 'gnd' },
+                ],
             },
-            { id: 'rl', type: 'resistor', designator: 'RL1', value: '1k', pins: [{ pinId: '1', netId: '1_wp' }, { pinId: '2', netId: 'gnd' }] },
+            {
+                id: 't1',
+                type: 'transformer',
+                designator: transformerDesignator,
+                properties: { primaryInductance: '100m', secondaryInductance: '25m' },
+                pins: [
+                    { pinId: 'p+', netId: 'prim' },
+                    { pinId: 'p-', netId: 'gnd' },
+                    { pinId: 's+', netId: '1_wp' },
+                    { pinId: 's-', netId: 'gnd' },
+                ],
+            },
+            {
+                id: 'rl',
+                type: 'resistor',
+                designator: 'RL1',
+                value: '1k',
+                pins: [
+                    { pinId: '1', netId: '1_wp' },
+                    { pinId: '2', netId: 'gnd' },
+                ],
+            },
         ],
-        nets: [{ id: 'prim', name: 'PRIM' }, { id: '1_wp', name: 'W' }, { id: 'gnd', name: 'GND', isGround: true }],
+        nets: [
+            { id: 'prim', name: 'PRIM' },
+            { id: '1_wp', name: 'W' },
+            { id: 'gnd', name: 'GND', isGround: true },
+        ],
     });
 
     it('helper node names are deterministic from the designator', () => {

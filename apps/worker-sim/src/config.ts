@@ -36,7 +36,10 @@ const ConfigSchema = z.object({
     S3_SECRET_KEY: z.string(),
     S3_BUCKET: z.string(),
     S3_REGION: z.string().default('us-east-1'),
-    S3_FORCE_PATH_STYLE: z.string().transform((val) => val === 'true').default('true'),
+    S3_FORCE_PATH_STYLE: z
+        .string()
+        .transform((val) => val === 'true')
+        .default('true'),
 
     // Simulation
     SIM_TIMEOUT_MS: z.string().transform(Number).default('10000'),
@@ -112,8 +115,8 @@ const ConfigSchema = z.object({
 
     // Multi-candidate design generation (staged in; ALL default to today's behavior so this ships DARK).
     // DESIGN_CANDIDATES_N=1 → the orchestrator degenerates to a single runDesignLoop = the current code path.
-    DESIGN_CANDIDATES_N: optPosInt,   // default 1 (resolved in code); recommended 4, hard-capped at 5
-    DESIGN_FINALISTS_K: optPosInt,    // default 2; the K finalists that get the full fix-loop + (winner) MC
+    DESIGN_CANDIDATES_N: optPosInt, // default 1 (resolved in code); recommended 4, hard-capped at 5
+    DESIGN_FINALISTS_K: optPosInt, // default 2; the K finalists that get the full fix-loop + (winner) MC
     DESIGN_JOB_LLM_BUDGET: optPosInt, // default 12; hard ceiling on paid LLM requests per design request
     // PROCESS-GLOBAL concurrency caps (NOT per-job) — the load-bearing perf lever once a job runs candidates
     // concurrently: peak concurrent ngspice = NGSPICE_GLOBAL_CONCURRENCY regardless of N. Unset → computed

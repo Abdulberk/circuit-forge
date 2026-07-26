@@ -8,14 +8,14 @@
 // are exactly where an unawaited promise hides. So this project widens the net to everything
 // ESLint lints, without touching what tsc builds.
 {
-  "extends": "./tsconfig.base.json",
-  "compilerOptions": {
-    "noEmit": true,
-    // The build configs run these; ESLint has its own no-unused-vars rule and should not
-    // duplicate (or double-report) tsc's diagnostics.
-    "noUnusedLocals": false,
-    "noUnusedParameters": false
-  },
-  "include": ["apps/**/*.ts", "apps/**/*.tsx", "packages/**/*.ts"],
-  "exclude": ["**/node_modules/**", "**/dist/**", "**/coverage/**", "**/.next/**"]
+    "extends": "./tsconfig.base.json",
+    "compilerOptions": {
+        "noEmit": true,
+        // The build configs run these; ESLint has its own no-unused-vars rule and should not
+        // duplicate (or double-report) tsc's diagnostics.
+        "noUnusedLocals": false,
+        "noUnusedParameters": false
+    },
+    "include": ["apps/**/*.ts", "apps/**/*.tsx", "packages/**/*.ts"],
+    "exclude": ["**/node_modules/**", "**/dist/**", "**/coverage/**", "**/.next/**"]
 }

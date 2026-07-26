@@ -20,7 +20,12 @@ describe('EmailService', () => {
     it('is best-effort: a transport failure is swallowed so the auth flow is not broken', async () => {
         const svc = new EmailService(cfg({})); // log transport
         // Replace the resolved transport with one that throws.
-        const boom: EmailTransport = { name: 'boom', send: jest.fn(async () => { throw new Error('SES down'); }) };
+        const boom: EmailTransport = {
+            name: 'boom',
+            send: jest.fn(async () => {
+                throw new Error('SES down');
+            }),
+        };
         (svc as unknown as { transport: EmailTransport }).transport = boom;
         await expect(svc.sendVerificationEmail('u@x.com', 'tok')).resolves.toBeUndefined();
         await expect(svc.sendPasswordResetEmail('u@x.com', 'tok')).resolves.toBeUndefined();
@@ -50,7 +55,12 @@ describe('EmailService', () => {
     it('delegates to the active transport with the rendered message', async () => {
         const svc = new EmailService(cfg({ APP_URL: 'https://cf.io' }));
         const sent: { to: string; subject: string; text: string }[] = [];
-        (svc as unknown as { transport: EmailTransport }).transport = { name: 'capture', send: async (m) => { sent.push(m); } };
+        (svc as unknown as { transport: EmailTransport }).transport = {
+            name: 'capture',
+            send: async (m) => {
+                sent.push(m);
+            },
+        };
         await svc.sendVerificationEmail('u@x.com', 'TK');
         expect(sent[0]!.to).toBe('u@x.com');
         expect(sent[0]!.subject).toMatch(/verify/i);

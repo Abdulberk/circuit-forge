@@ -29,12 +29,43 @@ const noSimulator = { available: () => false, simulate: jest.fn() } as unknown a
 const VALID_CIRCUIT = {
     version: '1.0',
     components: [
-        { id: 'v1', type: 'voltage_source', designator: 'V1', value: 'SIN(0 5 1k)', pins: [{ pinId: '+', netId: 'in' }, { pinId: '-', netId: 'gnd' }] },
-        { id: 'r1', type: 'resistor', designator: 'R1', value: '10k', pins: [{ pinId: '1', netId: 'in' }, { pinId: '2', netId: 'out' }] },
-        { id: 'c1', type: 'capacitor', designator: 'C1', value: '100n', pins: [{ pinId: '1', netId: 'out' }, { pinId: '2', netId: 'gnd' }] },
+        {
+            id: 'v1',
+            type: 'voltage_source',
+            designator: 'V1',
+            value: 'SIN(0 5 1k)',
+            pins: [
+                { pinId: '+', netId: 'in' },
+                { pinId: '-', netId: 'gnd' },
+            ],
+        },
+        {
+            id: 'r1',
+            type: 'resistor',
+            designator: 'R1',
+            value: '10k',
+            pins: [
+                { pinId: '1', netId: 'in' },
+                { pinId: '2', netId: 'out' },
+            ],
+        },
+        {
+            id: 'c1',
+            type: 'capacitor',
+            designator: 'C1',
+            value: '100n',
+            pins: [
+                { pinId: '1', netId: 'out' },
+                { pinId: '2', netId: 'gnd' },
+            ],
+        },
         { id: 'gnd', type: 'ground', designator: 'GND1', pins: [{ pinId: '1', netId: 'gnd' }] },
     ],
-    nets: [{ id: 'in', name: 'IN' }, { id: 'out', name: 'OUT' }, { id: 'gnd', name: 'GND', isGround: true }],
+    nets: [
+        { id: 'in', name: 'IN' },
+        { id: 'out', name: 'OUT' },
+        { id: 'gnd', name: 'GND', isGround: true },
+    ],
 };
 
 // Same RC topology but the source declares an AC magnitude, so the REAL generateNetlist accepts an `.ac`
@@ -49,34 +80,89 @@ function makeConfig(): ConfigService {
     return { get: (k: string) => v[k] } as unknown as ConfigService;
 }
 function makeParts() {
-    const part = { mpn: 'RC0603FR-0710KL', manufacturer: 'YAGEO', description: '10k', footprint: '0603', stock: 50000, unitCost: 0.002, currency: 'EUR', datasheetUrl: 'https://d/x.pdf', parameters: [], priceBreaks: [], supplier: 'tme', supplierId: 'SYM-RES-1' };
-    return { search: jest.fn(async () => ({ items: [part], page: 1, pageSize: 1 })), getProduct: jest.fn(async () => part), getComponent: jest.fn(async () => ({ simulatable: true, component: {}, catalog: part })) };
+    const part = {
+        mpn: 'RC0603FR-0710KL',
+        manufacturer: 'YAGEO',
+        description: '10k',
+        footprint: '0603',
+        stock: 50000,
+        unitCost: 0.002,
+        currency: 'EUR',
+        datasheetUrl: 'https://d/x.pdf',
+        parameters: [],
+        priceBreaks: [],
+        supplier: 'tme',
+        supplierId: 'SYM-RES-1',
+    };
+    return {
+        search: jest.fn(async () => ({ items: [part], page: 1, pageSize: 1 })),
+        getProduct: jest.fn(async () => part),
+        getComponent: jest.fn(async () => ({ simulatable: true, component: {}, catalog: part })),
+    };
 }
 function makeService(sim: SimulationService): DesignService {
     const cfg = makeConfig();
-    return new DesignService(cfg, sim, new CatalogGroundingService(cfg, makeParts() as unknown as PartsService, noSimulator));
+    return new DesignService(
+        cfg,
+        sim,
+        new CatalogGroundingService(cfg, makeParts() as unknown as PartsService, noSimulator),
+    );
 }
 
 /** Make the model return ONE design (optionally with acceptance criteria). */
 function generateOnce(acceptanceCriteria?: unknown[]) {
     mockCreate.mockResolvedValueOnce({
-        content: [{ type: 'text', text: JSON.stringify({ circuit: VALID_CIRCUIT, analysisConfig: { type: 'op' }, explanation: 'x', ...(acceptanceCriteria ? { acceptanceCriteria } : {}) }) }],
+        content: [
+            {
+                type: 'text',
+                text: JSON.stringify({
+                    circuit: VALID_CIRCUIT,
+                    analysisConfig: { type: 'op' },
+                    explanation: 'x',
+                    ...(acceptanceCriteria ? { acceptanceCriteria } : {}),
+                }),
+            },
+        ],
     });
 }
 /** The model's next call (a fix round) returns a (still VALID) circuit. */
 function fixOnce() {
-    mockCreate.mockResolvedValueOnce({ content: [{ type: 'text', text: JSON.stringify({ circuit: VALID_CIRCUIT, analysisConfig: { type: 'op' }, explanation: 'fixed' }) }] });
+    mockCreate.mockResolvedValueOnce({
+        content: [
+            {
+                type: 'text',
+                text: JSON.stringify({ circuit: VALID_CIRCUIT, analysisConfig: { type: 'op' }, explanation: 'fixed' }),
+            },
+        ],
+    });
 }
 /** A fix round that ALSO returns (revised) acceptance criteria — e.g. adding a current check the coverage
  *  gate demanded. */
 function fixOnceWithCriteria(acceptanceCriteria: unknown[]) {
-    mockCreate.mockResolvedValueOnce({ content: [{ type: 'text', text: JSON.stringify({ circuit: VALID_CIRCUIT, analysisConfig: { type: 'op' }, explanation: 'fixed', acceptanceCriteria }) }] });
+    mockCreate.mockResolvedValueOnce({
+        content: [
+            {
+                type: 'text',
+                text: JSON.stringify({
+                    circuit: VALID_CIRCUIT,
+                    analysisConfig: { type: 'op' },
+                    explanation: 'fixed',
+                    acceptanceCriteria,
+                }),
+            },
+        ],
+    });
 }
 
 /** A SimulationService whose result series / status / metrics are configurable. `ys` are the y-samples of
  *  the "out" node; `currents` maps a device designator → its branch-current samples (named "@<dev>[i]",
  *  exactly how ngspice/wrdata reports a saved R/C current). summarizeSeries derives min/max/final/pp. */
-function makeSimSeries(opts: { status?: string; ys?: number[]; currents?: Record<string, number[]>; metrics?: Record<string, unknown> }): SimulationService {
+function makeSimSeries(opts: {
+    status?: string;
+    ys?: number[];
+    currents?: Record<string, number[]>;
+    metrics?: Record<string, unknown>;
+}): SimulationService {
     const node = `v(${sanitizeNodeName('out')})`;
     const series: { name: string; points: { x: number; y: number }[] }[] = [];
     if (opts.ys) series.push({ name: node, points: opts.ys.map((y, i) => ({ x: i, y })) });
@@ -86,8 +172,14 @@ function makeSimSeries(opts: { status?: string; ys?: number[]; currents?: Record
     const pc = (opts.ys?.length ?? 0) + Object.values(opts.currents ?? {}).reduce((n, a) => n + a.length, 0) || 1;
     return {
         createQuickSim: jest.fn(async () => ({ jobId: 'job-1' })),
-        getStatus: jest.fn(async () => ({ status: opts.status ?? 'SUCCEEDED', metrics: opts.metrics ?? { pointsCount: pc } })),
-        getResult: jest.fn(async () => ({ result: { meta: { pointsCount: pc }, series }, metrics: { pointsCount: pc } })),
+        getStatus: jest.fn(async () => ({
+            status: opts.status ?? 'SUCCEEDED',
+            metrics: opts.metrics ?? { pointsCount: pc },
+        })),
+        getResult: jest.fn(async () => ({
+            result: { meta: { pointsCount: pc }, series },
+            metrics: { pointsCount: pc },
+        })),
     } as unknown as SimulationService;
 }
 
@@ -96,7 +188,10 @@ describe('DesignService — spec satisfaction (#2: verified means meets-the-spec
 
     it('A — healthy sim that MEETS the acceptance criteria → ok:true, verified:true, one round, no fix', async () => {
         generateOnce([{ probe: 'out', metric: 'final', op: 'approx', value: 5, tol: 0.1 }]);
-        const r = (await makeService(makeSimSeries({ ys: [5, 5] })).design({ prompt: 'reg to 5V', maxRounds: 2 } as never, 'u')) as Record<string, unknown>;
+        const r = (await makeService(makeSimSeries({ ys: [5, 5] })).design(
+            { prompt: 'reg to 5V', maxRounds: 2 } as never,
+            'u',
+        )) as Record<string, unknown>;
         expect(r.ok).toBe(true);
         expect(r.verified).toBe(true);
         expect((r.assertions as { pass: boolean }[])[0]!.pass).toBe(true);
@@ -106,7 +201,10 @@ describe('DesignService — spec satisfaction (#2: verified means meets-the-spec
     it('B — healthy sim that MISSES the spec (gain 3 vs 10) → a fix round runs, ends ok:false NOT verified, gap surfaced', async () => {
         generateOnce([{ probe: 'out', metric: 'pp', op: 'gte', value: 9.5, label: 'gain ≥ 10' }]);
         fixOnce(); // round-1 specs fail → applyFix returns a (still-wrong) circuit
-        const r = (await makeService(makeSimSeries({ ys: [-1.5, 1.5] })).design({ prompt: 'gain 10 amplifier', maxRounds: 2 } as never, 'u')) as Record<string, unknown>;
+        const r = (await makeService(makeSimSeries({ ys: [-1.5, 1.5] })).design(
+            { prompt: 'gain 10 amplifier', maxRounds: 2 } as never,
+            'u',
+        )) as Record<string, unknown>;
         expect(r.ok).toBe(false);
         expect(r.verified).toBe(false);
         expect(mockCreate).toHaveBeenCalledTimes(2); // initial generate + exactly one fix round
@@ -120,7 +218,10 @@ describe('DesignService — spec satisfaction (#2: verified means meets-the-spec
 
     it('D — no acceptance criteria (no measurable intent) → ok:true but verified:false (only proved it simulates)', async () => {
         generateOnce(); // no acceptanceCriteria
-        const r = (await makeService(makeSimSeries({ ys: [5] })).design({ prompt: 'some circuit', maxRounds: 2 } as never, 'u')) as Record<string, unknown>;
+        const r = (await makeService(makeSimSeries({ ys: [5] })).design(
+            { prompt: 'some circuit', maxRounds: 2 } as never,
+            'u',
+        )) as Record<string, unknown>;
         expect(r.ok).toBe(true);
         expect(r.verified).toBe(false);
         expect(r.assertions).toEqual([]);
@@ -133,9 +234,16 @@ describe('DesignService — spec satisfaction (#2: verified means meets-the-spec
         const sim = {
             createQuickSim: jest.fn(async () => ({ jobId: 'job-1' })),
             getStatus: jest.fn(async () => ({ status: 'SUCCEEDED', metrics: { pointsCount: 4242 } })),
-            getResult: jest.fn(async () => ({ result: { meta: { pointsCount: 4242 } }, metrics: { pointsCount: 4242 }, error: 'Result data is currently unavailable from storage.' })),
+            getResult: jest.fn(async () => ({
+                result: { meta: { pointsCount: 4242 } },
+                metrics: { pointsCount: 4242 },
+                error: 'Result data is currently unavailable from storage.',
+            })),
         } as unknown as SimulationService;
-        const r = (await makeService(sim).design({ prompt: 'reg to 5V', maxRounds: 2 } as never, 'u')) as Record<string, unknown>;
+        const r = (await makeService(sim).design({ prompt: 'reg to 5V', maxRounds: 2 } as never, 'u')) as Record<
+            string,
+            unknown
+        >;
         expect(r.ok).toBe(false);
         expect(r.inconclusive).toBe(true); // storage issue, never a design fault
         expect(mockCreate).toHaveBeenCalledTimes(1); // NOT fed to the LLM as a "fix" — no fix round
@@ -147,7 +255,10 @@ describe('DesignService — spec satisfaction (#2: verified means meets-the-spec
             { probe: 'out', metric: 'pp', op: 'gte', value: 10, label: 'swing ≥ 10' }, // fails (pp 0)
         ]);
         fixOnce();
-        const r = (await makeService(makeSimSeries({ ys: [5, 5] })).design({ prompt: 'x', maxRounds: 2 } as never, 'u')) as Record<string, unknown>;
+        const r = (await makeService(makeSimSeries({ ys: [5, 5] })).design(
+            { prompt: 'x', maxRounds: 2 } as never,
+            'u',
+        )) as Record<string, unknown>;
         expect(r.ok).toBe(false);
         expect(r.verified).toBe(false);
         const a = r.assertions as { pass: boolean }[];
@@ -164,7 +275,10 @@ describe('DesignService — spec satisfaction (#2: verified means meets-the-spec
             { nonsense: true }, // junk → dropped
             { probe: 'out', metric: 'final', op: 'gt', value: 'NaNstring' }, // non-numeric value → dropped
         ]);
-        const r = (await makeService(makeSimSeries({ ys: [5] })).design({ prompt: 'x', maxRounds: 1 } as never, 'u')) as Record<string, unknown>;
+        const r = (await makeService(makeSimSeries({ ys: [5] })).design(
+            { prompt: 'x', maxRounds: 1 } as never,
+            'u',
+        )) as Record<string, unknown>;
         expect((r.assertions as unknown[]).length).toBe(1); // 3 malformed dropped by parseAcceptanceCriteria
         expect(r.ok).toBe(true);
         expect(r.verified).toBe(true);
@@ -175,7 +289,10 @@ describe('DesignService — spec satisfaction (#2: verified means meets-the-spec
         // headline fidelity bug (LED "≈10mA" "verified" via anode-voltage proxy) — now caught.
         generateOnce([{ probe: 'out', metric: 'final', op: 'approx', value: 5, tol: 0.1 }]);
         fixOnce(); // fix returns no new criteria → the current gap stays open
-        const r = (await makeService(makeSimSeries({ ys: [5, 5] })).design({ prompt: 'deliver about 10 mA to the load from a 5V supply', maxRounds: 2 } as never, 'u')) as Record<string, unknown>;
+        const r = (await makeService(makeSimSeries({ ys: [5, 5] })).design(
+            { prompt: 'deliver about 10 mA to the load from a 5V supply', maxRounds: 2 } as never,
+            'u',
+        )) as Record<string, unknown>;
         expect(r.ok).toBe(false);
         expect(r.verified).toBe(false);
         expect((r.assertions as { pass: boolean }[]).every((a) => a.pass)).toBe(true); // the proxy itself passed
@@ -190,10 +307,15 @@ describe('DesignService — spec satisfaction (#2: verified means meets-the-spec
             { probe: 'i(R1)', metric: 'final', op: 'approx', value: 0.01, tol: 0.002, label: '~10mA through R1' },
         ]);
         const sim = makeSimSeries({ ys: [5, 5], currents: { R1: [0.01, 0.01] } });
-        const r = (await makeService(sim).design({ prompt: 'about 10 mA from 5V through R1', maxRounds: 2 } as never, 'u')) as Record<string, unknown>;
+        const r = (await makeService(sim).design(
+            { prompt: 'about 10 mA from 5V through R1', maxRounds: 2 } as never,
+            'u',
+        )) as Record<string, unknown>;
         expect(r.ok).toBe(true);
         expect(r.verified).toBe(true);
-        const cur = (r.assertions as { probe: string; pass: boolean; actual: number }[]).find((x) => x.probe === 'i(R1)')!;
+        const cur = (r.assertions as { probe: string; pass: boolean; actual: number }[]).find(
+            (x) => x.probe === 'i(R1)',
+        )!;
         expect(cur.pass).toBe(true); // the current criterion matched its @r1[i] measurement end-to-end
         expect(cur.actual).toBeCloseTo(0.01, 5);
         expect(mockCreate).toHaveBeenCalledTimes(1);
@@ -206,7 +328,10 @@ describe('DesignService — spec satisfaction (#2: verified means meets-the-spec
             { probe: 'i(R1)', metric: 'final', op: 'approx', value: 0.01, tol: 0.002 },
         ]);
         const sim = makeSimSeries({ ys: [5, 5], currents: { R1: [0.01, 0.01] } });
-        const r = (await makeService(sim).design({ prompt: 'deliver 10 mA from a 5V supply', maxRounds: 3 } as never, 'u')) as Record<string, unknown>;
+        const r = (await makeService(sim).design(
+            { prompt: 'deliver 10 mA from a 5V supply', maxRounds: 3 } as never,
+            'u',
+        )) as Record<string, unknown>;
         expect(r.ok).toBe(true);
         expect(r.verified).toBe(true);
         const crit = r.acceptanceCriteria as { probe: string }[];
@@ -219,7 +344,10 @@ describe('DesignService — spec satisfaction (#2: verified means meets-the-spec
         generateOnce([{ probe: 'out', metric: 'pp', op: 'approx', value: 1.414, tol: 0.3 }]); // voltage proxy only
         fixOnce(); // the fix round fails to add a cutoff criterion → the frequency gap stays open
         const sim = makeSimSeries({ ys: [-0.707, 0.707] }); // the voltage criterion itself passes (pp = 1.414)
-        const r = (await makeService(sim).design({ prompt: 'RC low-pass with a 1 kHz cutoff', maxRounds: 2 } as never, 'u')) as Record<string, unknown>;
+        const r = (await makeService(sim).design(
+            { prompt: 'RC low-pass with a 1 kHz cutoff', maxRounds: 2 } as never,
+            'u',
+        )) as Record<string, unknown>;
         expect(r.ok).toBe(false);
         expect(r.verified).toBe(false); // simulates + meets its stated criteria, but the named frequency is unmeasured
         expect(String(r.warning)).toMatch(/frequency/i);
@@ -239,20 +367,33 @@ describe('DesignService — spec satisfaction (#2: verified means meets-the-spec
         const sim = {
             createQuickSim: jest.fn(async () => ({ jobId: 'job-ac' })),
             getStatus: jest.fn(async () => ({ status: 'SUCCEEDED', metrics: { pointsCount: points.length } })),
-            getResult: jest.fn(async () => ({ result: { meta: { pointsCount: points.length }, series: [{ name: node, points }] }, metrics: { pointsCount: points.length } })),
+            getResult: jest.fn(async () => ({
+                result: { meta: { pointsCount: points.length }, series: [{ name: node, points }] },
+                metrics: { pointsCount: points.length },
+            })),
         } as unknown as SimulationService;
         mockCreate.mockResolvedValueOnce({
-            content: [{ type: 'text', text: JSON.stringify({
-                circuit: VALID_CIRCUIT_AC,
-                analysisConfig: { type: 'ac', variation: 'dec', points: 20, startFreq: '10', stopFreq: '100k' },
-                explanation: 'rc low-pass',
-                acceptanceCriteria: [{ probe: 'out', metric: 'cutoff', op: 'approx', value: 1000, tol: 200 }],
-            }) }],
+            content: [
+                {
+                    type: 'text',
+                    text: JSON.stringify({
+                        circuit: VALID_CIRCUIT_AC,
+                        analysisConfig: { type: 'ac', variation: 'dec', points: 20, startFreq: '10', stopFreq: '100k' },
+                        explanation: 'rc low-pass',
+                        acceptanceCriteria: [{ probe: 'out', metric: 'cutoff', op: 'approx', value: 1000, tol: 200 }],
+                    }),
+                },
+            ],
         });
-        const r = (await makeService(sim).design({ prompt: 'RC low-pass with a 1 kHz cutoff', maxRounds: 2 } as never, 'u')) as Record<string, unknown>;
+        const r = (await makeService(sim).design(
+            { prompt: 'RC low-pass with a 1 kHz cutoff', maxRounds: 2 } as never,
+            'u',
+        )) as Record<string, unknown>;
         expect(r.ok).toBe(true);
         expect(r.verified).toBe(true);
-        const cut = (r.assertions as { metric: string; pass: boolean; actual: number }[]).find((x) => x.metric === 'cutoff')!;
+        const cut = (r.assertions as { metric: string; pass: boolean; actual: number }[]).find(
+            (x) => x.metric === 'cutoff',
+        )!;
         expect(cut.pass).toBe(true);
         expect(cut.actual).toBeGreaterThan(900);
         expect(cut.actual).toBeLessThan(1100);
@@ -267,7 +408,10 @@ describe('DesignService — spec satisfaction (#2: verified means meets-the-spec
         generateOnce([{ probe: 'out', metric: 'pp', op: 'approx', value: 10, tol: 1 }]); // voltage proxy only
         fixOnce(); // the fix round fails to add a thd criterion → the distortion gap stays open
         const sim = makeSimSeries({ ys: [-5, 5] }); // pp = 10 → the voltage criterion itself passes
-        const r = (await makeService(sim).design({ prompt: 'a clean audio stage, THD under 1%', maxRounds: 2 } as never, 'u')) as Record<string, unknown>;
+        const r = (await makeService(sim).design(
+            { prompt: 'a clean audio stage, THD under 1%', maxRounds: 2 } as never,
+            'u',
+        )) as Record<string, unknown>;
         expect(r.ok).toBe(false);
         expect(r.verified).toBe(false); // simulates + meets its stated criteria, but the named THD is unmeasured
         expect((r.assertions as { pass: boolean }[]).every((a) => a.pass)).toBe(true); // the proxy itself passed
@@ -279,24 +423,46 @@ describe('DesignService — spec satisfaction (#2: verified means meets-the-spec
     it('O — a thd criterion over a tran+fourier verifies the named THD DIRECTLY (distortion gap closed)', async () => {
         const node = `v(${sanitizeNodeName('out')})`;
         mockCreate.mockResolvedValueOnce({
-            content: [{ type: 'text', text: JSON.stringify({
-                circuit: VALID_CIRCUIT, // SIN(0 5 1k) source → a real tran+fourier request is well-formed
-                analysisConfig: { type: 'tran', stopTime: '5m', stepTime: '5u', fourier: { fundamentalFreq: '1k', probes: ['v(out)'] } },
-                explanation: 'low-distortion stage',
-                acceptanceCriteria: [{ probe: 'out', metric: 'thd', op: 'lt', value: 1 }],
-            }) }],
+            content: [
+                {
+                    type: 'text',
+                    text: JSON.stringify({
+                        circuit: VALID_CIRCUIT, // SIN(0 5 1k) source → a real tran+fourier request is well-formed
+                        analysisConfig: {
+                            type: 'tran',
+                            stopTime: '5m',
+                            stepTime: '5u',
+                            fourier: { fundamentalFreq: '1k', probes: ['v(out)'] },
+                        },
+                        explanation: 'low-distortion stage',
+                        acceptanceCriteria: [{ probe: 'out', metric: 'thd', op: 'lt', value: 1 }],
+                    }),
+                },
+            ],
         });
         const points = [-5, 5, -5, 5].map((y, i) => ({ x: i, y }));
         const sim = {
             createQuickSim: jest.fn(async () => ({ jobId: 'job-thd' })),
             getStatus: jest.fn(async () => ({ status: 'SUCCEEDED', metrics: { pointsCount: points.length } })),
             // THD is folded from result.result.fourier — exactly the shape attachFourierThd reads (probe → node key).
-            getResult: jest.fn(async () => ({ result: { meta: { pointsCount: points.length }, series: [{ name: node, points }], fourier: [{ probe: 'v(out)', fundamentalFreq: 1000, thd: 0.5, harmonics: [] }] }, metrics: { pointsCount: points.length } })),
+            getResult: jest.fn(async () => ({
+                result: {
+                    meta: { pointsCount: points.length },
+                    series: [{ name: node, points }],
+                    fourier: [{ probe: 'v(out)', fundamentalFreq: 1000, thd: 0.5, harmonics: [] }],
+                },
+                metrics: { pointsCount: points.length },
+            })),
         } as unknown as SimulationService;
-        const r = (await makeService(sim).design({ prompt: 'a low-distortion audio stage, THD under 1%', maxRounds: 2 } as never, 'u')) as Record<string, unknown>;
+        const r = (await makeService(sim).design(
+            { prompt: 'a low-distortion audio stage, THD under 1%', maxRounds: 2 } as never,
+            'u',
+        )) as Record<string, unknown>;
         expect(r.ok).toBe(true);
         expect(r.verified).toBe(true);
-        const thd = (r.assertions as { metric: string; pass: boolean; actual: number }[]).find((x) => x.metric === 'thd')!;
+        const thd = (r.assertions as { metric: string; pass: boolean; actual: number }[]).find(
+            (x) => x.metric === 'thd',
+        )!;
         expect(thd.pass).toBe(true);
         expect(thd.actual).toBeCloseTo(0.5, 5); // measured THD folded from the fourier listing, gated directly
         expect(mockCreate).toHaveBeenCalledTimes(1); // covered on the first pass → no fix round
@@ -307,7 +473,16 @@ describe('DesignService — spec satisfaction (#2: verified means meets-the-spec
         fixOnce();
         const sim = makeSimSeries({
             status: 'FAILED',
-            metrics: { failureClass: 'sim', error: 'no convergence', convergence: { recovered: false, kind: 'no_convergence', diagnosis: 'matrix is singular at node out', triedRemedies: ['add gmin', 'relaxed tolerances'] } },
+            metrics: {
+                failureClass: 'sim',
+                error: 'no convergence',
+                convergence: {
+                    recovered: false,
+                    kind: 'no_convergence',
+                    diagnosis: 'matrix is singular at node out',
+                    triedRemedies: ['add gmin', 'relaxed tolerances'],
+                },
+            },
         });
         await makeService(sim).design({ prompt: 'stiff circuit', maxRounds: 2 } as never, 'u');
         expect(mockCreate).toHaveBeenCalledTimes(2);
@@ -326,9 +501,36 @@ describe('DesignService — spec satisfaction (#2: verified means meets-the-spec
         };
         const crit = [{ probe: 'out', metric: 'final', op: 'approx', value: 5, tol: 0.1 }];
         // Round 1 generate: the no-ground circuit (ERC-blocked before any sim). Round 2 fix: ground restored.
-        mockCreate.mockResolvedValueOnce({ content: [{ type: 'text', text: JSON.stringify({ circuit: NO_GROUND, analysisConfig: { type: 'op' }, explanation: 'no ground', acceptanceCriteria: crit }) }] });
-        mockCreate.mockResolvedValueOnce({ content: [{ type: 'text', text: JSON.stringify({ circuit: VALID_CIRCUIT, analysisConfig: { type: 'op' }, explanation: 'grounded', acceptanceCriteria: crit }) }] });
-        const r = (await makeService(makeSimSeries({ ys: [5, 5] })).design({ prompt: 'a 5V rail', maxRounds: 2 } as never, 'u')) as Record<string, unknown>;
+        mockCreate.mockResolvedValueOnce({
+            content: [
+                {
+                    type: 'text',
+                    text: JSON.stringify({
+                        circuit: NO_GROUND,
+                        analysisConfig: { type: 'op' },
+                        explanation: 'no ground',
+                        acceptanceCriteria: crit,
+                    }),
+                },
+            ],
+        });
+        mockCreate.mockResolvedValueOnce({
+            content: [
+                {
+                    type: 'text',
+                    text: JSON.stringify({
+                        circuit: VALID_CIRCUIT,
+                        analysisConfig: { type: 'op' },
+                        explanation: 'grounded',
+                        acceptanceCriteria: crit,
+                    }),
+                },
+            ],
+        });
+        const r = (await makeService(makeSimSeries({ ys: [5, 5] })).design(
+            { prompt: 'a 5V rail', maxRounds: 2 } as never,
+            'u',
+        )) as Record<string, unknown>;
         expect(r.ok).toBe(true);
         expect(r.verified).toBe(true); // verified only AFTER the ground was restored (round 2)
         expect(mockCreate).toHaveBeenCalledTimes(2); // gen (ERC-blocked, sim skipped) + one fix that closed it
@@ -342,29 +544,72 @@ describe('DesignService — Monte-Carlo yield (informational; never flips verifi
 
     const OUT = `v(${sanitizeNodeName('out')})`;
     // VALID_CIRCUIT with a toleranced R1, so the yield hook fires (it skips circuits with no tolerance).
-    const tolCircuit = { ...VALID_CIRCUIT, components: VALID_CIRCUIT.components.map((c) => (c.id === 'r1' ? { ...c, tolerance: 0.05 } : c)) };
+    const tolCircuit = {
+        ...VALID_CIRCUIT,
+        components: VALID_CIRCUIT.components.map((c) => (c.id === 'r1' ? { ...c, tolerance: 0.05 } : c)),
+    };
     const genTolDesign = () =>
         mockCreate.mockResolvedValueOnce({
-            content: [{ type: 'text', text: JSON.stringify({ circuit: tolCircuit, analysisConfig: { type: 'op' }, explanation: 'x', acceptanceCriteria: [{ probe: 'out', metric: 'final', op: 'approx', value: 5, tol: 0.1 }] }) }],
+            content: [
+                {
+                    type: 'text',
+                    text: JSON.stringify({
+                        circuit: tolCircuit,
+                        analysisConfig: { type: 'op' },
+                        explanation: 'x',
+                        acceptanceCriteria: [{ probe: 'out', metric: 'final', op: 'approx', value: 5, tol: 0.1 }],
+                    }),
+                },
+            ],
         });
     /** SimulationService where the nominal sim succeeds and the MC job (jobId 'mc-1') returns canned yield metrics. */
     const simWithYield = (mc: Record<string, unknown> | 'throw') =>
         ({
             createQuickSim: jest.fn(async () => ({ jobId: 'sim-1' })),
-            createMonteCarloJob: mc === 'throw' ? jest.fn(async () => { throw new Error('QUOTA_EXCEEDED'); }) : jest.fn(async () => ({ jobId: 'mc-1' })),
+            createMonteCarloJob:
+                mc === 'throw'
+                    ? jest.fn(async () => {
+                          throw new Error('QUOTA_EXCEEDED');
+                      })
+                    : jest.fn(async () => ({ jobId: 'mc-1' })),
             getStatus: jest.fn(async (id: string) =>
                 id === 'mc-1'
                     ? { status: 'SUCCEEDED', metrics: { monteCarlo: mc } }
                     : { status: 'SUCCEEDED', metrics: { pointsCount: 2 } },
             ),
-            getResult: jest.fn(async () => ({ result: { meta: { pointsCount: 2 }, series: [{ name: OUT, points: [{ x: 0, y: 5 }, { x: 1, y: 5 }] }] }, metrics: { pointsCount: 2 } })),
-        } as unknown as SimulationService);
+            getResult: jest.fn(async () => ({
+                result: {
+                    meta: { pointsCount: 2 },
+                    series: [
+                        {
+                            name: OUT,
+                            points: [
+                                { x: 0, y: 5 },
+                                { x: 1, y: 5 },
+                            ],
+                        },
+                    ],
+                },
+                metrics: { pointsCount: 2 },
+            })),
+        }) as unknown as SimulationService;
 
     it('N — a verified design with toleranced parts attaches an informational yield + CI (verified unchanged)', async () => {
         genTolDesign();
-        const mc = { yield: 0.92, ci95: { low: 0.85, high: 0.96 }, total: 100, evaluated: 100, passed: 92, failed: 8, errored: 0 };
+        const mc = {
+            yield: 0.92,
+            ci95: { low: 0.85, high: 0.96 },
+            total: 100,
+            evaluated: 100,
+            passed: 92,
+            failed: 8,
+            errored: 0,
+        };
         const sim = simWithYield(mc);
-        const r = (await makeService(sim).design({ prompt: 'a divider that outputs 5V', maxRounds: 1 } as never, 'u')) as Record<string, unknown>;
+        const r = (await makeService(sim).design(
+            { prompt: 'a divider that outputs 5V', maxRounds: 1 } as never,
+            'u',
+        )) as Record<string, unknown>;
         expect(r.ok).toBe(true);
         expect(r.verified).toBe(true);
         const y = r.yield as Record<string, unknown>;
@@ -372,13 +617,16 @@ describe('DesignService — Monte-Carlo yield (informational; never flips verifi
         expect(y.yield).toBe(0.92);
         expect(y.evaluated).toBe(100);
         expect(String(y.assumptions)).toMatch(/not a certified/i); // honest framing carried through
-        expect((sim.createMonteCarloJob as jest.Mock)).toHaveBeenCalled();
+        expect(sim.createMonteCarloJob as jest.Mock).toHaveBeenCalled();
     });
 
     it('O — yield analysis failure (429/capacity) is NON-FATAL: design stays verified, yield marked unavailable', async () => {
         genTolDesign();
         const sim = simWithYield('throw');
-        const r = (await makeService(sim).design({ prompt: 'a divider that outputs 5V', maxRounds: 1 } as never, 'u')) as Record<string, unknown>;
+        const r = (await makeService(sim).design(
+            { prompt: 'a divider that outputs 5V', maxRounds: 1 } as never,
+            'u',
+        )) as Record<string, unknown>;
         expect(r.ok).toBe(true);
         expect(r.verified).toBe(true); // UNCHANGED despite the yield run failing
         expect((r.yield as Record<string, unknown>).available).toBe(false);
@@ -388,9 +636,12 @@ describe('DesignService — Monte-Carlo yield (informational; never flips verifi
         // VALID_CIRCUIT has no tolerance → the hook short-circuits before enqueuing anything.
         generateOnce([{ probe: 'out', metric: 'final', op: 'approx', value: 5, tol: 0.1 }]);
         const sim = simWithYield({ yield: 1 });
-        const r = (await makeService(sim).design({ prompt: 'a divider that outputs 5V', maxRounds: 1 } as never, 'u')) as Record<string, unknown>;
+        const r = (await makeService(sim).design(
+            { prompt: 'a divider that outputs 5V', maxRounds: 1 } as never,
+            'u',
+        )) as Record<string, unknown>;
         expect(r.ok).toBe(true);
         expect(r.yield).toBeUndefined();
-        expect((sim.createMonteCarloJob as jest.Mock)).not.toHaveBeenCalled();
+        expect(sim.createMonteCarloJob as jest.Mock).not.toHaveBeenCalled();
     });
 });

@@ -98,7 +98,13 @@ describe('analysisToSpice point-budget clamping', () => {
         });
 
         it('caps an absurd points-per-decade at the budget', () => {
-            const a: AcAnalysis = { type: 'ac', variation: 'dec', points: 999_999_999, startFreq: '1', stopFreq: '1MEG' };
+            const a: AcAnalysis = {
+                type: 'ac',
+                variation: 'dec',
+                points: 999_999_999,
+                startFreq: '1',
+                stopFreq: '1MEG',
+            };
             const pts = Number(analysisToSpice(a).split(/\s+/)[2]!);
             expect(pts).toBe(MAX_SIM_POINTS);
         });
@@ -109,14 +115,24 @@ describe('default probe-width cap', () => {
     // Build a resistor ladder gnd-(V1)-n1-R1-n2-R2-...-n(N) → N non-ground nets → N default voltage probes.
     function ladder(nodeCount: number): CircuitJson {
         const components: Component[] = [
-            { id: 'V1', type: 'voltage_source', designator: 'V1', value: 'DC 5', pins: [
-                { pinId: '+', netId: 'n1' },
-                { pinId: '-', netId: '0' },
-            ] },
+            {
+                id: 'V1',
+                type: 'voltage_source',
+                designator: 'V1',
+                value: 'DC 5',
+                pins: [
+                    { pinId: '+', netId: 'n1' },
+                    { pinId: '-', netId: '0' },
+                ],
+            },
         ];
         for (let i = 1; i < nodeCount; i++) {
             components.push({
-                id: `R${i}`, type: 'resistor', designator: `R${i}`, value: '1k', pins: [
+                id: `R${i}`,
+                type: 'resistor',
+                designator: `R${i}`,
+                value: '1k',
+                pins: [
                     { pinId: '1', netId: `n${i}` },
                     { pinId: '2', netId: `n${i + 1}` },
                 ],

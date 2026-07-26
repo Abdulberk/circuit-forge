@@ -2,16 +2,27 @@
  * ERC (Electrical Rule Check) Checker
  * Validates circuits for common electrical issues
  */
-import { buildZenerModel, normalizeControlledSourceGain, parseTransformerParams, parseTransmissionLineParams } from '../models/library';
+import {
+    buildZenerModel,
+    normalizeControlledSourceGain,
+    parseTransformerParams,
+    parseTransmissionLineParams,
+} from '../models/library';
 import { sourceHighLevel, sourceLowLevel } from '../netlist/digital';
 import type { CircuitJson, Component } from '../types/circuit';
-import { isDigitalType, isLogicGateType, isSingleInputGate, digitalPinRole, SEQUENTIAL_TYPES, COMPONENT_PINS } from '../types/circuit';
+import {
+    isDigitalType,
+    isLogicGateType,
+    isSingleInputGate,
+    digitalPinRole,
+    SEQUENTIAL_TYPES,
+    COMPONENT_PINS,
+} from '../types/circuit';
 import { ErcCode, ErcSeverity, ErcResult, ErcIssue } from '../types/erc';
 import { isESeriesValue, snapValueString } from '../utils/eseries';
 import { parseSpiceValue } from '../utils/unit-parser';
 
 import { ERC_DESCRIPTIONS, ERC_SEVERITIES } from './codes';
-
 
 /**
  * Expected pin counts for each component type
@@ -81,12 +92,7 @@ export function runErc(circuit: CircuitJson): ErcResult {
 /**
  * Create an ERC issue
  */
-function createIssue(
-    code: ErcCode,
-    relatedIds: string[],
-    details?: string,
-    severityOverride?: ErcSeverity,
-): ErcIssue {
+function createIssue(code: ErcCode, relatedIds: string[], details?: string, severityOverride?: ErcSeverity): ErcIssue {
     return {
         code,
         severity: severityOverride || ERC_SEVERITIES[code],
@@ -214,8 +220,7 @@ function checkFloatingNodes(circuit: CircuitJson): ErcIssue[] {
             // positive). This is the long-defined-but-unused ERC010 (FLOATING_NODE).
             const pinsHere = netPins.get(net.id) || [];
             const noDcPath =
-                pinsHere.length > 0 &&
-                pinsHere.every((p) => p.type === 'capacitor' || p.type === 'current_source');
+                pinsHere.length > 0 && pinsHere.every((p) => p.type === 'capacitor' || p.type === 'current_source');
             if (noDcPath) {
                 issues.push(
                     createIssue(
@@ -303,7 +308,11 @@ function checkDigitalConnectivity(circuit: CircuitJson): ErcIssue[] {
             for (const req of canonical.filter((p) => !optional.has(p))) {
                 if (!c.pins.some((p) => p.pinId === req)) {
                     issues.push(
-                        createIssue(ErcCode.DIGITAL_PIN_SHAPE, [c.id], `${c.designator || c.id} (${c.type}): missing required pin '${req}'`),
+                        createIssue(
+                            ErcCode.DIGITAL_PIN_SHAPE,
+                            [c.id],
+                            `${c.designator || c.id} (${c.type}): missing required pin '${req}'`,
+                        ),
                     );
                 }
             }
@@ -311,11 +320,23 @@ function checkDigitalConnectivity(circuit: CircuitJson): ErcIssue[] {
             const ids = c.pins.map((p) => p.pinId.toLowerCase());
             const dups = [...new Set(ids.filter((id, i) => ids.indexOf(id) !== i))];
             if (dups.length > 0) {
-                issues.push(createIssue(ErcCode.DIGITAL_PIN_SHAPE, [c.id], `${c.designator || c.id} (${c.type}): duplicate pin id(s) ${dups.join(', ')}`));
+                issues.push(
+                    createIssue(
+                        ErcCode.DIGITAL_PIN_SHAPE,
+                        [c.id],
+                        `${c.designator || c.id} (${c.type}): duplicate pin id(s) ${dups.join(', ')}`,
+                    ),
+                );
             }
             const strays = [...new Set(c.pins.map((p) => p.pinId).filter((id) => !allowed.has(id.toLowerCase())))];
             if (strays.length > 0) {
-                issues.push(createIssue(ErcCode.DIGITAL_PIN_SHAPE, [c.id], `${c.designator || c.id} (${c.type}): unexpected pin(s) ${strays.join(', ')} — ${c.type} pins are ${canonical.join('/')}`));
+                issues.push(
+                    createIssue(
+                        ErcCode.DIGITAL_PIN_SHAPE,
+                        [c.id],
+                        `${c.designator || c.id} (${c.type}): unexpected pin(s) ${strays.join(', ')} — ${c.type} pins are ${canonical.join('/')}`,
+                    ),
+                );
             }
         }
     }
@@ -356,7 +377,8 @@ function checkDigitalConnectivity(circuit: CircuitJson): ErcIssue[] {
                 // A vcvs/vccs c+/c- pin only SENSES its net (high-impedance input); it does not DRIVE it.
                 // Counting it as a driver would falsely flag MIXED_DRIVER_CONFLICT when an E/G source senses
                 // a logic output (a valid comparator / level-sense pattern the generator handles correctly).
-                const senseOnly = (c.type === 'vcvs' || c.type === 'vccs') && (pin.pinId === 'c+' || pin.pinId === 'c-');
+                const senseOnly =
+                    (c.type === 'vcvs' || c.type === 'vccs') && (pin.pinId === 'c+' || pin.pinId === 'c-');
                 if (ACTIVE_ANALOG.has(c.type) && !senseOnly) x.analogSrc += 1;
             }
         }
@@ -369,7 +391,13 @@ function checkDigitalConnectivity(circuit: CircuitJson): ErcIssue[] {
         // legitimate shared-bus pattern (drivers release to high-Z) — relax contention for that case only.
         // One pushing output mixed with tristates still contends (the pushing one never releases).
         if (x.src >= 2 && x.triSrc < x.src) {
-            issues.push(createIssue(ErcCode.DIGITAL_BUS_CONTENTION, [netId], `${label} is driven by ${x.src} digital outputs (${x.src - x.triSrc} non-tristate)`));
+            issues.push(
+                createIssue(
+                    ErcCode.DIGITAL_BUS_CONTENTION,
+                    [netId],
+                    `${label} is driven by ${x.src} digital outputs (${x.src - x.triSrc} non-tristate)`,
+                ),
+            );
         }
         if (x.src >= 1 && x.analogSrc >= 1) {
             issues.push(createIssue(ErcCode.MIXED_DRIVER_CONFLICT, [netId], label));
@@ -391,7 +419,8 @@ function checkDigitalConnectivity(circuit: CircuitJson): ErcIssue[] {
     const levels: number[] = [];
     let sawNegative = false;
     for (const c of circuit.components) {
-        const isVoltageDriver = c.type === 'voltage_source' || (c.type === 'bsource' && /^\s*V\s*=/i.test(c.value ?? ''));
+        const isVoltageDriver =
+            c.type === 'voltage_source' || (c.type === 'bsource' && /^\s*V\s*=/i.test(c.value ?? ''));
         if (!isVoltageDriver || !c.pins.some((p) => digitalNets.has(p.netId))) continue;
         const hi = sourceHighLevel(c.value);
         if (hi !== null && hi > 0) levels.push(hi); // a positive logic-HIGH level
@@ -462,7 +491,16 @@ function checkComponentValues(circuit: CircuitJson): ErcIssue[] {
 
     // Components that require values (a zener's `value` is its breakdown voltage — without it no model
     // can be generated, so it's a hard error like a missing passive value).
-    const requiresValue = ['resistor', 'capacitor', 'inductor', 'voltage_source', 'current_source', 'zener', 'vcvs', 'vccs'];
+    const requiresValue = [
+        'resistor',
+        'capacitor',
+        'inductor',
+        'voltage_source',
+        'current_source',
+        'zener',
+        'vcvs',
+        'vccs',
+    ];
 
     // Diode has a built-in default model (DDEFAULT) — a missing model is only a warning.
     const modelWithDefault = ['diode'];
@@ -503,10 +541,12 @@ function checkComponentValues(circuit: CircuitJson): ErcIssue[] {
             }
             // Dimensional-unit sanity: ngspice reads only the NUMBER, so a resistor written "4.7uF" silently
             // becomes 4.7 uΩ. A bare number or the matching unit is fine; a contradicting R/C/L unit is the bug.
-            const expectedUnit = ({ resistor: 'Ω', capacitor: 'F', inductor: 'H' } as Record<string, string>)[component.type];
+            const expectedUnit = ({ resistor: 'Ω', capacitor: 'F', inductor: 'H' } as Record<string, string>)[
+                component.type
+            ];
             const u = parsed.unit;
             if (expectedUnit && u && u !== expectedUnit && (u === 'Ω' || u === 'F' || u === 'H')) {
-                const name: Record<string, string> = { 'Ω': 'ohms', F: 'farads', H: 'henries' };
+                const name: Record<string, string> = { Ω: 'ohms', F: 'farads', H: 'henries' };
                 issues.push(
                     createIssue(
                         ErcCode.WRONG_VALUE_UNIT,
@@ -858,9 +898,7 @@ function checkGroundReachability(circuit: CircuitJson): ErcIssue[] {
         }
     }
 
-    const islandNets = circuit.nets.filter(
-        (net) => !reachable.has(net.id) && (analogPinCount.get(net.id) ?? 0) >= 2,
-    );
+    const islandNets = circuit.nets.filter((net) => !reachable.has(net.id) && (analogPinCount.get(net.id) ?? 0) >= 2);
     if (islandNets.length === 0) return [];
 
     const islandIds = new Set(islandNets.map((n) => n.id));

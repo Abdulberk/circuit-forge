@@ -3,7 +3,15 @@
  * not?) and the reapStaleDesignJobs SWEEP (it reaps only the genuine orphans, conditionally, and survives a
  * per-row error). The module's startDesignReaper pulls in config/prisma/redis at import, so those are stubbed.
  */
-jest.mock('../config', () => ({ config: { REDIS_URL: 'redis://x', DESIGN_QUEUE_NAME: 'design', REAPER_INTERVAL_MS: 60000, DESIGN_REAP_GRACE_MS: 60000, DESIGN_REAP_RUNNING_DEADLINE_MS: 1_800_000 } }));
+jest.mock('../config', () => ({
+    config: {
+        REDIS_URL: 'redis://x',
+        DESIGN_QUEUE_NAME: 'design',
+        REAPER_INTERVAL_MS: 60000,
+        DESIGN_REAP_GRACE_MS: 60000,
+        DESIGN_REAP_RUNNING_DEADLINE_MS: 1_800_000,
+    },
+}));
 jest.mock('../prisma/client', () => ({ prisma: {} }));
 jest.mock('../logger', () => ({ logger: { info: jest.fn(), warn: jest.fn() } }));
 jest.mock('bullmq', () => ({ Queue: jest.fn() }));
@@ -14,7 +22,11 @@ import { reapDecision, reapStaleDesignJobs, type ReapableRow } from './reaper';
 const NOW = 1_000_000_000;
 const DEADLINE = 1_800_000; // 30 min
 const row = (over: Partial<ReapableRow> = {}): ReapableRow => ({
-    id: 'd1', status: 'RUNNING', startedAt: new Date(NOW - 1000), createdAt: new Date(NOW - 120_000), ...over,
+    id: 'd1',
+    status: 'RUNNING',
+    startedAt: new Date(NOW - 1000),
+    createdAt: new Date(NOW - 120_000),
+    ...over,
 });
 
 describe('reapDecision (pure)', () => {
@@ -40,8 +52,14 @@ describe('reapDecision (pure)', () => {
     });
 
     it('REAPS a missing queue job — QUEUED = insert↔enqueue orphan, RUNNING = dead worker', () => {
-        expect(reapDecision(row({ status: 'QUEUED' }), 'missing', NOW, DEADLINE)).toMatchObject({ reap: true, reason: expect.stringMatching(/orphaned before/i) });
-        expect(reapDecision(row({ status: 'RUNNING' }), 'missing', NOW, DEADLINE)).toMatchObject({ reap: true, reason: expect.stringMatching(/worker stopped/i) });
+        expect(reapDecision(row({ status: 'QUEUED' }), 'missing', NOW, DEADLINE)).toMatchObject({
+            reap: true,
+            reason: expect.stringMatching(/orphaned before/i),
+        });
+        expect(reapDecision(row({ status: 'RUNNING' }), 'missing', NOW, DEADLINE)).toMatchObject({
+            reap: true,
+            reason: expect.stringMatching(/worker stopped/i),
+        });
         // 'unknown' (queue can't resolve the job) is treated like missing → reaped.
         expect(reapDecision(row({ status: 'RUNNING' }), 'unknown', NOW, DEADLINE).reap).toBe(true);
     });
@@ -67,11 +85,19 @@ describe('reapStaleDesignJobs (sweep)', () => {
         ];
         const updateMany = jest.fn((_args: unknown) => Promise.resolve({ count: 1 }));
         const findMany = jest.fn((_args: unknown) => Promise.resolve(rows));
-        const queue = fakeQueue({ 'orphan-queued': null, 'healthy-active': 'active', 'dead-worker': 'failed', 'still-waiting': 'waiting' });
+        const queue = fakeQueue({
+            'orphan-queued': null,
+            'healthy-active': 'active',
+            'dead-worker': 'failed',
+            'still-waiting': 'waiting',
+        });
 
         const res = await reapStaleDesignJobs({
             prisma: { designJob: { findMany, updateMany } },
-            queue, nowMs: NOW, graceMs: 60_000, runningDeadlineMs: DEADLINE,
+            queue,
+            nowMs: NOW,
+            graceMs: 60_000,
+            runningDeadlineMs: DEADLINE,
         });
 
         expect(res).toEqual({ examined: 4, reaped: 2 });
@@ -83,7 +109,9 @@ describe('reapStaleDesignJobs (sweep)', () => {
             expect((c[0] as { data: { status: string } }).data.status).toBe('FAILED');
         }
         // the grace filter is applied (findMany scopes to rows older than now-grace)
-        expect((findMany.mock.calls[0]![0] as { where: { createdAt: { lt: Date } } }).where.createdAt.lt).toEqual(new Date(NOW - 60_000));
+        expect((findMany.mock.calls[0]![0] as { where: { createdAt: { lt: Date } } }).where.createdAt.lt).toEqual(
+            new Date(NOW - 60_000),
+        );
     });
 
     it('a per-row error does not abort the sweep (the other orphans are still reaped)', async () => {
@@ -100,7 +128,10 @@ describe('reapStaleDesignJobs (sweep)', () => {
         };
         const res = await reapStaleDesignJobs({
             prisma: { designJob: { findMany: () => Promise.resolve(rows), updateMany } },
-            queue, nowMs: NOW, graceMs: 0, runningDeadlineMs: DEADLINE,
+            queue,
+            nowMs: NOW,
+            graceMs: 0,
+            runningDeadlineMs: DEADLINE,
         });
         expect(res.reaped).toBe(1);
         expect((updateMany.mock.calls[0]![0] as { where: { id: string } }).where.id).toBe('orphan');
@@ -112,7 +143,10 @@ describe('reapStaleDesignJobs (sweep)', () => {
         const queue = { getJob: jest.fn((_id: string) => Promise.resolve(null)) }; // missing → decision says reap
         const res = await reapStaleDesignJobs({
             prisma: { designJob: { findMany: () => Promise.resolve(rows), updateMany } },
-            queue, nowMs: NOW, graceMs: 0, runningDeadlineMs: DEADLINE,
+            queue,
+            nowMs: NOW,
+            graceMs: 0,
+            runningDeadlineMs: DEADLINE,
         });
         expect(res.reaped).toBe(0); // decision said reap, but the conditional write hit 0 rows → not counted
     });

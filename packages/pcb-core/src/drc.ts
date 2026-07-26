@@ -104,7 +104,9 @@ export function drcToChecks(report: ParsedDrc): DrcCheck[] {
         severity: v.severity,
         message: v.description,
         location: v.items[0]?.pos ?? null,
-        refs: [...new Set(v.items.map((it) => parseItemDesc(it.description)?.designator).filter((d): d is string => !!d))],
+        refs: [
+            ...new Set(v.items.map((it) => parseItemDesc(it.description)?.designator).filter((d): d is string => !!d)),
+        ],
     }));
 }
 
@@ -138,7 +140,10 @@ export function airwiresFromDrc(report: ParsedDrc, geo: LayoutGeometry): { airwi
     for (const entry of report.unconnected) {
         const parsed = entry.items.map((it) => parseItemDesc(it.description));
         const net = parsed.find((p) => p?.net)?.net ?? '';
-        if (!net || parsed.length < 2 || !parsed[0] || !parsed[1]) { unmatched++; continue; }
+        if (!net || parsed.length < 2 || !parsed[0] || !parsed[1]) {
+            unmatched++;
+            continue;
+        }
         const from = locate(parsed[0], net);
         const to = locate(parsed[1], net);
         if (from && to) airwires.push({ net, from, to });

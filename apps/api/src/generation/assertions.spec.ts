@@ -19,11 +19,23 @@ import type { SimMeasurement } from './circuit-simulator.service';
 import type { AssertionDto } from './dto';
 
 const OUT = `v(${sanitizeNodeName('out')})`; // the SPICE node a probe "out" resolves to
-const meas = (node: string, over: Partial<SimMeasurement>): SimMeasurement => ({ node, min: 0, max: 0, final: 0, pp: 0, avg: 0, rms: 0, ...over });
+const meas = (node: string, over: Partial<SimMeasurement>): SimMeasurement => ({
+    node,
+    min: 0,
+    max: 0,
+    final: 0,
+    pp: 0,
+    avg: 0,
+    rms: 0,
+    ...over,
+});
 
 describe('evaluateAssertions', () => {
     it('passes a met criterion and reports zero distance', () => {
-        const [r] = evaluateAssertions([meas(OUT, { final: 5 })], [{ probe: 'out', metric: 'final', op: 'approx', value: 5, tol: 0.1 }]);
+        const [r] = evaluateAssertions(
+            [meas(OUT, { final: 5 })],
+            [{ probe: 'out', metric: 'final', op: 'approx', value: 5, tol: 0.1 }],
+        );
         expect(r!.pass).toBe(true);
         expect(r!.actual).toBe(5);
         expect(r!.distance).toBe(0);
@@ -31,11 +43,17 @@ describe('evaluateAssertions', () => {
 
     it('fails an unmet criterion with a SIGNED distance — catastrophic vs marginal are distinguishable', () => {
         // gain ~3 against a "gain 10" spec (pp ≥ 9.5-ish) → catastrophic
-        const cat = evaluateAssertions([meas(OUT, { pp: 3 })], [{ probe: 'out', metric: 'pp', op: 'gte', value: 10, label: 'gain' }])[0]!;
+        const cat = evaluateAssertions(
+            [meas(OUT, { pp: 3 })],
+            [{ probe: 'out', metric: 'pp', op: 'gte', value: 10, label: 'gain' }],
+        )[0]!;
         expect(cat.pass).toBe(false);
         expect(cat.distance).toBe(-7);
         // 4.99 against ≥ 5 → marginal
-        const marg = evaluateAssertions([meas(OUT, { final: 4.99 })], [{ probe: 'out', metric: 'final', op: 'gte', value: 5 }])[0]!;
+        const marg = evaluateAssertions(
+            [meas(OUT, { final: 4.99 })],
+            [{ probe: 'out', metric: 'final', op: 'gte', value: 5 }],
+        )[0]!;
         expect(marg.pass).toBe(false);
         expect(marg.distance).toBeCloseTo(-0.01, 5);
         // describeFailure surfaces the magnitude so the AI fix loop can tell them apart
@@ -44,7 +62,10 @@ describe('evaluateAssertions', () => {
     });
 
     it('a probe not present in the output is unmet (actual + distance null), not silently passed', () => {
-        const [r] = evaluateAssertions([meas(OUT, { final: 5 })], [{ probe: 'nope', metric: 'final', op: 'gt', value: 0 }]);
+        const [r] = evaluateAssertions(
+            [meas(OUT, { final: 5 })],
+            [{ probe: 'nope', metric: 'final', op: 'gt', value: 0 }],
+        );
         expect(r!.actual).toBeNull();
         expect(r!.distance).toBeNull();
         expect(r!.pass).toBe(false);
@@ -52,7 +73,11 @@ describe('evaluateAssertions', () => {
     });
 
     it('simOk=false → every criterion is unmet (you cannot certify an unmeasured spec)', () => {
-        const [r] = evaluateAssertions([meas(OUT, { final: 5 })], [{ probe: 'out', metric: 'final', op: 'approx', value: 5 }], false);
+        const [r] = evaluateAssertions(
+            [meas(OUT, { final: 5 })],
+            [{ probe: 'out', metric: 'final', op: 'approx', value: 5 }],
+            false,
+        );
         expect(r!.pass).toBe(false);
         expect(r!.actual).toBeNull();
     });
@@ -78,10 +103,13 @@ describe('compareAssertion operators', () => {
 
 describe('evaluateAssertions — edge cases', () => {
     it('evaluates each criterion INDEPENDENTLY (mixed pass/fail in one call)', () => {
-        const rs = evaluateAssertions([meas(OUT, { final: 5, pp: 0 })], [
-            { probe: 'out', metric: 'final', op: 'approx', value: 5, tol: 0.1 }, // pass
-            { probe: 'out', metric: 'pp', op: 'gte', value: 10 }, // fail
-        ]);
+        const rs = evaluateAssertions(
+            [meas(OUT, { final: 5, pp: 0 })],
+            [
+                { probe: 'out', metric: 'final', op: 'approx', value: 5, tol: 0.1 }, // pass
+                { probe: 'out', metric: 'pp', op: 'gte', value: 10 }, // fail
+            ],
+        );
         expect(rs.map((r) => r.pass)).toEqual([true, false]);
     });
 
@@ -91,7 +119,10 @@ describe('evaluateAssertions — edge cases', () => {
     });
 
     it('negative target → signed distance is still correct', () => {
-        const r = evaluateAssertions([meas(OUT, { final: -3 })], [{ probe: 'out', metric: 'final', op: 'lte', value: -5 }])[0]!;
+        const r = evaluateAssertions(
+            [meas(OUT, { final: -3 })],
+            [{ probe: 'out', metric: 'final', op: 'lte', value: -5 }],
+        )[0]!;
         // -3 <= -5 is false; distance = actual - target = -3 - (-5) = +2
         expect(r.pass).toBe(false);
         expect(r.distance).toBe(2);
@@ -149,10 +180,16 @@ describe('evaluateAssertions — current criterion matches its @<dev>[i] measure
 
     it('a current criterion does NOT accidentally match a voltage node, and vice-versa', () => {
         // voltage node present, but a current criterion has no current measurement → not found
-        const cur = evaluateAssertions([meas(OUT, { final: 5 })], [{ probe: 'i(R1)', metric: 'final', op: 'gt', value: 0 }])[0]!;
+        const cur = evaluateAssertions(
+            [meas(OUT, { final: 5 })],
+            [{ probe: 'i(R1)', metric: 'final', op: 'gt', value: 0 }],
+        )[0]!;
         expect(cur.actual).toBeNull();
         // current measurement present, but a voltage criterion on "out" has no voltage measurement → not found
-        const volt = evaluateAssertions([meas('@r1[i]', { final: 0.01 })], [{ probe: 'out', metric: 'final', op: 'gt', value: 0 }])[0]!;
+        const volt = evaluateAssertions(
+            [meas('@r1[i]', { final: 0.01 })],
+            [{ probe: 'out', metric: 'final', op: 'gt', value: 0 }],
+        )[0]!;
         expect(volt.actual).toBeNull();
     });
 
@@ -165,7 +202,10 @@ describe('evaluateAssertions — current criterion matches its @<dev>[i] measure
         expect(r.actual).toBeCloseTo(0.01, 5); // |−0.01| reported as the magnitude
         expect(r.pass).toBe(true);
         // a voltage is NOT abs'd — a −5V node stays −5V
-        const v = evaluateAssertions([meas(OUT, { final: -5 })], [{ probe: 'out', metric: 'final', op: 'approx', value: 5, tol: 0.1 }])[0]!;
+        const v = evaluateAssertions(
+            [meas(OUT, { final: -5 })],
+            [{ probe: 'out', metric: 'final', op: 'approx', value: 5, tol: 0.1 }],
+        )[0]!;
         expect(v.actual).toBe(-5);
         expect(v.pass).toBe(false);
     });
@@ -276,6 +316,9 @@ describe('uncoveredRequiredDimensions — the verified-coverage gate', () => {
         expect(uncoveredRequiredDimensions('1 kHz cutoff filter', [...voltageCrit, ...cutoffCrit])).toEqual([]);
     });
     it('flags BOTH a current and a frequency target left to voltage proxies', () => {
-        expect(uncoveredRequiredDimensions('20 mA bias and a 1 kHz cutoff', voltageCrit).sort()).toEqual(['current', 'frequency']);
+        expect(uncoveredRequiredDimensions('20 mA bias and a 1 kHz cutoff', voltageCrit).sort()).toEqual([
+            'current',
+            'frequency',
+        ]);
     });
 });

@@ -46,10 +46,7 @@ describe('Auth Integration Tests', () => {
         });
 
         it('should register a new user successfully', async () => {
-            const response = await request(app.getHttpServer())
-                .post('/auth/register')
-                .send(testUser)
-                .expect(201);
+            const response = await request(app.getHttpServer()).post('/auth/register').send(testUser).expect(201);
 
             expect(response.body).toHaveProperty('accessToken');
             expect(response.body).toHaveProperty('refreshToken');
@@ -61,16 +58,10 @@ describe('Auth Integration Tests', () => {
 
         it('should reject duplicate email', async () => {
             // First registration
-            await request(app.getHttpServer())
-                .post('/auth/register')
-                .send(testUser)
-                .expect(201);
+            await request(app.getHttpServer()).post('/auth/register').send(testUser).expect(201);
 
             // Duplicate registration
-            await request(app.getHttpServer())
-                .post('/auth/register')
-                .send(testUser)
-                .expect(409);
+            await request(app.getHttpServer()).post('/auth/register').send(testUser).expect(409);
         });
 
         it('should reject invalid email format', async () => {
@@ -88,10 +79,7 @@ describe('Auth Integration Tests', () => {
         });
 
         it('should reject missing required fields', async () => {
-            await request(app.getHttpServer())
-                .post('/auth/register')
-                .send({ email: testUser.email })
-                .expect(400);
+            await request(app.getHttpServer()).post('/auth/register').send({ email: testUser.email }).expect(400);
         });
     });
 
@@ -103,9 +91,7 @@ describe('Auth Integration Tests', () => {
         };
 
         beforeAll(async () => {
-            await request(app.getHttpServer())
-                .post('/auth/register')
-                .send(testUser);
+            await request(app.getHttpServer()).post('/auth/register').send(testUser);
         });
 
         afterAll(async () => {
@@ -158,9 +144,7 @@ describe('Auth Integration Tests', () => {
         };
 
         beforeAll(async () => {
-            const response = await request(app.getHttpServer())
-                .post('/auth/register')
-                .send(testUser);
+            const response = await request(app.getHttpServer()).post('/auth/register').send(testUser);
             refreshToken = response.body.refreshToken;
         });
 
@@ -197,9 +181,7 @@ describe('Auth Integration Tests', () => {
         };
 
         beforeAll(async () => {
-            const response = await request(app.getHttpServer())
-                .post('/auth/register')
-                .send(testUser);
+            const response = await request(app.getHttpServer()).post('/auth/register').send(testUser);
             accessToken = response.body.accessToken;
         });
 
@@ -210,23 +192,15 @@ describe('Auth Integration Tests', () => {
         });
 
         it('should allow access with valid token', async () => {
-            await request(app.getHttpServer())
-                .get('/orgs')
-                .set('Authorization', `Bearer ${accessToken}`)
-                .expect(200);
+            await request(app.getHttpServer()).get('/orgs').set('Authorization', `Bearer ${accessToken}`).expect(200);
         });
 
         it('should reject access without token', async () => {
-            await request(app.getHttpServer())
-                .get('/orgs')
-                .expect(401);
+            await request(app.getHttpServer()).get('/orgs').expect(401);
         });
 
         it('should reject access with invalid token', async () => {
-            await request(app.getHttpServer())
-                .get('/orgs')
-                .set('Authorization', 'Bearer invalid-token')
-                .expect(401);
+            await request(app.getHttpServer()).get('/orgs').set('Authorization', 'Bearer invalid-token').expect(401);
         });
     });
 });

@@ -17,7 +17,7 @@ import { OrgsService } from './orgs.service';
 @UseGuards(JwtAuthGuard)
 @Controller('orgs')
 export class OrgsController {
-    constructor(private readonly orgsService: OrgsService) { }
+    constructor(private readonly orgsService: OrgsService) {}
 
     @Get()
     @ApiOperation({ summary: 'List user organizations' })

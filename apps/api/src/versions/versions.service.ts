@@ -13,9 +13,13 @@ export class VersionsService {
     constructor(
         private readonly prisma: PrismaService,
         private readonly projectsService: ProjectsService,
-    ) { }
+    ) {}
 
-    async findAllForProject(projectId: string, userId: string, page: { limit: number; offset: number }): Promise<Paginated<unknown>> {
+    async findAllForProject(
+        projectId: string,
+        userId: string,
+        page: { limit: number; offset: number },
+    ): Promise<Paginated<unknown>> {
         await this.projectsService.findOne(projectId, userId);
         const where = { projectId };
         const [items, total] = await Promise.all([

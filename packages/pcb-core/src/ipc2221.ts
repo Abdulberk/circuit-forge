@@ -40,8 +40,18 @@ export function ipc2221WidthMm(input: IpcWidthInput): IpcWidthResult {
     const notes: string[] = [];
     let clamped = false;
     const clamp = (v: number, lo: number, hi: number, name: string): number => {
-        if (v < lo) { notes.push(`${name}=${v} below IPC-2221 envelope [${lo},${hi}] — clamped to ${lo}`); clamped = true; return lo; }
-        if (v > hi) { notes.push(`${name}=${v} above IPC-2221 envelope [${lo},${hi}] — clamped to ${hi} (use a plane/bus, not a track)`); clamped = true; return hi; }
+        if (v < lo) {
+            notes.push(`${name}=${v} below IPC-2221 envelope [${lo},${hi}] — clamped to ${lo}`);
+            clamped = true;
+            return lo;
+        }
+        if (v > hi) {
+            notes.push(
+                `${name}=${v} above IPC-2221 envelope [${lo},${hi}] — clamped to ${hi} (use a plane/bus, not a track)`,
+            );
+            clamped = true;
+            return hi;
+        }
         return v;
     };
 
@@ -53,7 +63,9 @@ export function ipc2221WidthMm(input: IpcWidthInput): IpcWidthResult {
     const areaMil2 = Math.pow(I / (k * Math.pow(dT, 0.44)), 1 / 0.725);
     let widthMil = areaMil2 / (1.378 * oz);
     if (widthMil > ENVELOPE.maxWidthMil) {
-        notes.push(`width ${widthMil.toFixed(0)} mil exceeds the IPC-2221 chart max ${ENVELOPE.maxWidthMil} mil — clamped (route as a copper pour/bus)`);
+        notes.push(
+            `width ${widthMil.toFixed(0)} mil exceeds the IPC-2221 chart max ${ENVELOPE.maxWidthMil} mil — clamped (route as a copper pour/bus)`,
+        );
         widthMil = ENVELOPE.maxWidthMil;
         clamped = true;
     }

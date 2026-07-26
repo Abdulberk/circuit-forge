@@ -21,7 +21,6 @@ import { GenerationService } from './generation.service';
 import { VerificationController } from './verification.controller';
 import { VerificationService } from './verification.service';
 
-
 @Module({
     // ConfigService is available globally (ConfigModule.forRoot({ isGlobal: true })).
     // SimulationModule provides SimulationService for the agentic design loop.
@@ -54,6 +53,13 @@ import { VerificationService } from './verification.service';
         }),
     ],
     controllers: [GenerationController, DesignController, DesignJobsController, VerificationController],
-    providers: [GenerationService, DesignService, DesignJobService, VerificationService, CatalogGroundingService, CircuitSimulatorService],
+    providers: [
+        GenerationService,
+        DesignService,
+        DesignJobService,
+        VerificationService,
+        CatalogGroundingService,
+        CircuitSimulatorService,
+    ],
 })
 export class GenerationModule {}

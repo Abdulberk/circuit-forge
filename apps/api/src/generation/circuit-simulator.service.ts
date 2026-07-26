@@ -145,14 +145,30 @@ export class CircuitSimulatorService {
     async simulate(circuitInput: unknown, analysis?: AnalysisConfig, extraProbes?: string[]): Promise<SimSummary> {
         const ngspicePath = this.config.get<string>('NGSPICE_PATH');
         if (!ngspicePath) {
-            return { simStatus: 'skipped', ercErrors: [], ercWarnings: [], measurements: [], nodeCount: 0, runError: 'simulation not configured' };
+            return {
+                simStatus: 'skipped',
+                ercErrors: [],
+                ercWarnings: [],
+                measurements: [],
+                nodeCount: 0,
+                runError: 'simulation not configured',
+            };
         }
 
         // 1) Validate the model-proposed circuit against the schema.
         const validated = safeValidateCircuitJson(circuitInput);
         if (!validated.success) {
-            const issues = validated.error.errors.map((e) => `${e.path.join('.') || '(root)'}: ${e.message}`).join('; ');
-            return { simStatus: 'failed', ercErrors: [], ercWarnings: [], measurements: [], nodeCount: 0, runError: `invalid circuit: ${issues}` };
+            const issues = validated.error.errors
+                .map((e) => `${e.path.join('.') || '(root)'}: ${e.message}`)
+                .join('; ');
+            return {
+                simStatus: 'failed',
+                ercErrors: [],
+                ercWarnings: [],
+                measurements: [],
+                nodeCount: 0,
+                runError: `invalid circuit: ${issues}`,
+            };
         }
         const circuit = validated.data as CircuitJson;
 
@@ -161,8 +177,12 @@ export class CircuitSimulatorService {
 
         // 3) ERC (always runs, even if ngspice later fails — the model wants both signals).
         const erc = runErc(circuit);
-        const ercErrors = erc.issues.filter((i) => i.severity === 'error').map((i) => ({ code: i.code, message: i.message, relatedIds: i.relatedIds }));
-        const ercWarnings = erc.issues.filter((i) => i.severity === 'warning').map((i) => ({ code: i.code, message: i.message, relatedIds: i.relatedIds }));
+        const ercErrors = erc.issues
+            .filter((i) => i.severity === 'error')
+            .map((i) => ({ code: i.code, message: i.message, relatedIds: i.relatedIds }));
+        const ercWarnings = erc.issues
+            .filter((i) => i.severity === 'warning')
+            .map((i) => ({ code: i.code, message: i.message, relatedIds: i.relatedIds }));
 
         const an: AnalysisConfig = analysis ?? { type: 'op' };
 
@@ -172,7 +192,15 @@ export class CircuitSimulatorService {
             // Branch-current assertion probes (i(R1)) aren't in the voltage-only defaults — UNION them in.
             netlist = generateNetlist(circuit, an, extraProbes?.length ? { extraProbes } : {});
         } catch (e) {
-            return { simStatus: 'failed', ercErrors, ercWarnings, measurements: [], nodeCount: 0, analysisType: an.type, runError: `netlist generation failed: ${e instanceof Error ? e.message : String(e)}` };
+            return {
+                simStatus: 'failed',
+                ercErrors,
+                ercWarnings,
+                measurements: [],
+                nodeCount: 0,
+                analysisType: an.type,
+                runError: `netlist generation failed: ${e instanceof Error ? e.message : String(e)}`,
+            };
         }
 
         // 5-7) Run ngspice in an isolated temp dir, parse the output — under the GLOBAL semaphore, so a
@@ -181,7 +209,15 @@ export class CircuitSimulatorService {
         // within the wait window we report 'skipped' (the AI loop continues with ERC-only feedback).
         const gotSlot = await this.semaphore.acquire(this.queueWaitMs());
         if (!gotSlot) {
-            return { simStatus: 'skipped', ercErrors, ercWarnings, measurements: [], nodeCount: 0, analysisType: an.type, runError: 'simulation capacity is saturated — proceeding on ERC results only (try again shortly)' };
+            return {
+                simStatus: 'skipped',
+                ercErrors,
+                ercWarnings,
+                measurements: [],
+                nodeCount: 0,
+                analysisType: an.type,
+                runError: 'simulation capacity is saturated — proceeding on ERC results only (try again shortly)',
+            };
         }
         const dir = path.join(os.tmpdir(), 'cf-sim', randomUUID());
         try {
@@ -190,19 +226,52 @@ export class CircuitSimulatorService {
             await fs.writeFile(path.join(dir, 'circuit.cir'), sanitized);
 
             const { stdout, stderr, exitCode, timedOut } = await this.runNgspice(ngspicePath, dir);
-            if (timedOut) return { simStatus: 'failed', ercErrors, ercWarnings, measurements: [], nodeCount: 0, analysisType: an.type, runError: 'simulation timed out' };
+            if (timedOut)
+                return {
+                    simStatus: 'failed',
+                    ercErrors,
+                    ercWarnings,
+                    measurements: [],
+                    nodeCount: 0,
+                    analysisType: an.type,
+                    runError: 'simulation timed out',
+                };
             if (exitCode !== 0) {
-                return { simStatus: 'failed', ercErrors, ercWarnings, measurements: [], nodeCount: 0, analysisType: an.type, runError: this.distillNgspiceError(stderr, exitCode) };
+                return {
+                    simStatus: 'failed',
+                    ercErrors,
+                    ercWarnings,
+                    measurements: [],
+                    nodeCount: 0,
+                    analysisType: an.type,
+                    runError: this.distillNgspiceError(stderr, exitCode),
+                };
             }
 
             let csv: string;
             try {
                 csv = await fs.readFile(path.join(dir, 'output.csv'), 'utf-8');
             } catch {
-                return { simStatus: 'failed', ercErrors, ercWarnings, measurements: [], nodeCount: 0, analysisType: an.type, runError: 'ngspice produced no output (likely a non-converging or degenerate circuit)' };
+                return {
+                    simStatus: 'failed',
+                    ercErrors,
+                    ercWarnings,
+                    measurements: [],
+                    nodeCount: 0,
+                    analysisType: an.type,
+                    runError: 'ngspice produced no output (likely a non-converging or degenerate circuit)',
+                };
             }
             if (Buffer.byteLength(csv) > DEFAULT_MAX_OUTPUT_BYTES) {
-                return { simStatus: 'failed', ercErrors, ercWarnings, measurements: [], nodeCount: 0, analysisType: an.type, runError: 'simulation output too large to summarize' };
+                return {
+                    simStatus: 'failed',
+                    ercErrors,
+                    ercWarnings,
+                    measurements: [],
+                    nodeCount: 0,
+                    analysisType: an.type,
+                    runError: 'simulation output too large to summarize',
+                };
             }
 
             const probes = extractProbes(sanitized);
@@ -213,7 +282,10 @@ export class CircuitSimulatorService {
             // run as "ok" would mislead the model — treat ending well short of stopTime as a failure.
             if (an.type === 'tran') {
                 const parsedStop = parseSpiceValue(an.stopTime);
-                const { endedEarly, lastTime } = assessTransientCompleteness(result.series, parsedStop.isValid ? parsedStop.value : 0);
+                const { endedEarly, lastTime } = assessTransientCompleteness(
+                    result.series,
+                    parsedStop.isValid ? parsedStop.value : 0,
+                );
                 if (endedEarly) {
                     return {
                         simStatus: 'failed',
@@ -246,7 +318,11 @@ export class CircuitSimulatorService {
                 if (wantsFourier) attachFourierThd(allMeasurements, parseFourierLog(listing));
                 // Pass the requested tf output node as a fallback so a valid gain still binds if ngspice's
                 // `output_impedance_at_<node>` echo is missing/truncated (else outputNode='' → binds to nothing).
-                if (wantsTf) attachTransferFunction(allMeasurements, parseTransferFunction(listing, sanitized.match(/^\s*tf\s+(\S+)/im)?.[1]));
+                if (wantsTf)
+                    attachTransferFunction(
+                        allMeasurements,
+                        parseTransferFunction(listing, sanitized.match(/^\s*tf\s+(\S+)/im)?.[1]),
+                    );
             }
 
             // Cap the per-node list (token budget for a wide circuit) AFTER attaching so the metrics survive.
@@ -260,7 +336,15 @@ export class CircuitSimulatorService {
                 analysisType: an.type,
             };
         } catch (e) {
-            return { simStatus: 'failed', ercErrors, ercWarnings, measurements: [], nodeCount: 0, analysisType: an.type, runError: e instanceof Error ? e.message : String(e) };
+            return {
+                simStatus: 'failed',
+                ercErrors,
+                ercWarnings,
+                measurements: [],
+                nodeCount: 0,
+                analysisType: an.type,
+                runError: e instanceof Error ? e.message : String(e),
+            };
         } finally {
             this.semaphore.release();
             await fs.rm(dir, { recursive: true, force: true }).catch(() => undefined);
@@ -275,7 +359,11 @@ export class CircuitSimulatorService {
      * convergence failures (bad netlist, timeout) and successful runs pass straight through unchanged,
      * so the proven happy path costs exactly one run.
      */
-    async simulateWithRemedies(circuitInput: unknown, analysis?: AnalysisConfig, extraProbes?: string[]): Promise<SimSummary> {
+    async simulateWithRemedies(
+        circuitInput: unknown,
+        analysis?: AnalysisConfig,
+        extraProbes?: string[],
+    ): Promise<SimSummary> {
         const base = await this.simulate(circuitInput, analysis, extraProbes);
         if (base.simStatus !== 'failed') return base;
 
@@ -288,7 +376,10 @@ export class CircuitSimulatorService {
         const tried: string[] = [];
 
         for (const remedy of ladder) {
-            const mergedAnalysis = { ...baseAnalysis, options: { ...baseOptions, ...remedy.options } } as AnalysisConfig;
+            const mergedAnalysis = {
+                ...baseAnalysis,
+                options: { ...baseOptions, ...remedy.options },
+            } as AnalysisConfig;
             const retry = await this.simulate(circuitInput, mergedAnalysis, extraProbes);
             if (retry.simStatus === 'ok') {
                 return {
@@ -323,7 +414,13 @@ export class CircuitSimulatorService {
 
         return {
             ...base,
-            convergence: { recovered: false, kind: diag.kind, diagnosis: diag.explanation, attempts: tried.length, triedRemedies: tried },
+            convergence: {
+                recovered: false,
+                kind: diag.kind,
+                diagnosis: diag.explanation,
+                attempts: tried.length,
+                triedRemedies: tried,
+            },
         };
     }
 
@@ -344,11 +441,18 @@ export class CircuitSimulatorService {
     }
 
     /** Spawn ngspice in batch mode, mirroring the worker (apps/worker-sim/src/simulation/runner.ts). */
-    private runNgspice(ngspicePath: string, cwd: string): Promise<{ stdout: string; stderr: string; exitCode: number | null; timedOut: boolean }> {
+    private runNgspice(
+        ngspicePath: string,
+        cwd: string,
+    ): Promise<{ stdout: string; stderr: string; exitCode: number | null; timedOut: boolean }> {
         const timeoutMs = Number(this.config.get<string>('SIM_TIMEOUT_MS')) || DEFAULT_TIMEOUT_MS;
         // OS resource limits (Linux prod) so an untrusted/verify-design circuit can't exhaust the host;
         // direct spawn on Windows dev / SIM_SANDBOX=none.
-        const { file, args } = sandboxedCommand(ngspicePath, ['-b', '-o', 'stdout.log', 'circuit.cir'], this.sandboxConfig(timeoutMs));
+        const { file, args } = sandboxedCommand(
+            ngspicePath,
+            ['-b', '-o', 'stdout.log', 'circuit.cir'],
+            this.sandboxConfig(timeoutMs),
+        );
         return new Promise((resolve) => {
             const proc: ChildProcess = spawn(file, args, {
                 cwd,
@@ -362,11 +466,24 @@ export class CircuitSimulatorService {
             // where the `fourier`/`tf` control commands may print their tables (BUILD-DEPENDENT: stdout pipe OR
             // the `-o` log). Capture it (bounded; the listing is small, not the dataset) so a thd/gain criterion
             // can read those metrics regardless of which sink this ngspice build uses — same as the worker.
-            proc.stdout?.on('data', (d: Buffer) => { stdout += d.toString(); });
-            proc.stderr?.on('data', (d: Buffer) => { stderr += d.toString(); });
-            const timer = setTimeout(() => { timedOut = true; proc.kill('SIGKILL'); }, timeoutMs);
-            proc.on('close', (code) => { clearTimeout(timer); resolve({ stdout, stderr, exitCode: code, timedOut }); });
-            proc.on('error', (err) => { clearTimeout(timer); resolve({ stdout, stderr: stderr + err.message, exitCode: 1, timedOut: false }); });
+            proc.stdout?.on('data', (d: Buffer) => {
+                stdout += d.toString();
+            });
+            proc.stderr?.on('data', (d: Buffer) => {
+                stderr += d.toString();
+            });
+            const timer = setTimeout(() => {
+                timedOut = true;
+                proc.kill('SIGKILL');
+            }, timeoutMs);
+            proc.on('close', (code) => {
+                clearTimeout(timer);
+                resolve({ stdout, stderr, exitCode: code, timedOut });
+            });
+            proc.on('error', (err) => {
+                clearTimeout(timer);
+                resolve({ stdout, stderr: stderr + err.message, exitCode: 1, timedOut: false });
+            });
         });
     }
 
@@ -375,7 +492,9 @@ export class CircuitSimulatorService {
         const line = stderr
             .split('\n')
             .map((l) => l.trim())
-            .find((l) => /singular matrix|no convergence|Timestep too small|Unable to find|fatal|aborted|no such/i.test(l));
+            .find((l) =>
+                /singular matrix|no convergence|Timestep too small|Unable to find|fatal|aborted|no such/i.test(l),
+            );
         return line ? `ngspice error: ${line}` : `ngspice exited with code ${exitCode}`;
     }
 }

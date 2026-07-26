@@ -47,13 +47,26 @@ export async function runCornerBatch(input: CornerBatchInput): Promise<CornerBat
     // Union the SAME criterion probes the nominal verify path saves (branch currents), so a current criterion is
     // measured at every corner instead of reading "probe not found" → every corner falsely failing.
     const extraProbes = extraProbesForCriteria(input.criteria);
-    const result = await withVariantJobDir(input.jobId, 'corner', input.analysis, extraProbes, input.modelFiles, async (runVariant) => {
-        const r = await runWorstCase(input.circuit, input.criteria, input.corner, runVariant);
-        logger.info(
-            { jobId: input.jobId, cornered: r.componentsCornered, evaluated: r.evaluated, passAllCorners: r.passAllCorners, omitted: r.omitted.length },
-            'Worst-case corner batch complete',
-        );
-        return r;
-    });
+    const result = await withVariantJobDir(
+        input.jobId,
+        'corner',
+        input.analysis,
+        extraProbes,
+        input.modelFiles,
+        async (runVariant) => {
+            const r = await runWorstCase(input.circuit, input.criteria, input.corner, runVariant);
+            logger.info(
+                {
+                    jobId: input.jobId,
+                    cornered: r.componentsCornered,
+                    evaluated: r.evaluated,
+                    passAllCorners: r.passAllCorners,
+                    omitted: r.omitted.length,
+                },
+                'Worst-case corner batch complete',
+            );
+            return r;
+        },
+    );
     return { ...result, runtimeMs: Date.now() - startTime };
 }

@@ -25,7 +25,7 @@ export class HealthController {
     constructor(
         private readonly prisma: PrismaService,
         private readonly readinessService: ReadinessService,
-    ) { }
+    ) {}
 
     /** Run one dependency check, capturing latency and any error. Never throws — a failing dependency
      *  must not mask the others, so each check is isolated and reported independently. */

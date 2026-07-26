@@ -18,12 +18,43 @@ const v = (netId: string, final: number): SimMeasurement => ({
 const DIVIDER: CircuitJson = {
     version: '1.0',
     components: [
-        { id: 'v1', type: 'voltage_source', designator: 'V1', value: 'DC 10', pins: [{ pinId: '+', netId: 'in' }, { pinId: '-', netId: 'gnd' }] },
-        { id: 'r1', type: 'resistor', designator: 'R1', value: '1k', pins: [{ pinId: '1', netId: 'in' }, { pinId: '2', netId: 'out' }] },
-        { id: 'r2', type: 'resistor', designator: 'R2', value: '1k', pins: [{ pinId: '1', netId: 'out' }, { pinId: '2', netId: 'gnd' }] },
+        {
+            id: 'v1',
+            type: 'voltage_source',
+            designator: 'V1',
+            value: 'DC 10',
+            pins: [
+                { pinId: '+', netId: 'in' },
+                { pinId: '-', netId: 'gnd' },
+            ],
+        },
+        {
+            id: 'r1',
+            type: 'resistor',
+            designator: 'R1',
+            value: '1k',
+            pins: [
+                { pinId: '1', netId: 'in' },
+                { pinId: '2', netId: 'out' },
+            ],
+        },
+        {
+            id: 'r2',
+            type: 'resistor',
+            designator: 'R2',
+            value: '1k',
+            pins: [
+                { pinId: '1', netId: 'out' },
+                { pinId: '2', netId: 'gnd' },
+            ],
+        },
         { id: 'gnd', type: 'ground', designator: 'GND1', pins: [{ pinId: '1', netId: 'gnd' }] },
     ],
-    nets: [{ id: 'in', name: 'in' }, { id: 'out', name: 'out' }, { id: 'gnd', name: 'gnd', isGround: true }],
+    nets: [
+        { id: 'in', name: 'in' },
+        { id: 'out', name: 'out' },
+        { id: 'gnd', name: 'gnd', isGround: true },
+    ],
 };
 const DIVIDER_MEAS = [v('in', 10), v('out', 5)]; // ground (0V) is not probed
 
@@ -97,8 +128,22 @@ describe('computeResistorPower', () => {
     it('returns undefined when the circuit has no resistors', () => {
         const noR: CircuitJson = {
             version: '1.0',
-            components: [{ id: 'v1', type: 'voltage_source', designator: 'V1', value: 'DC 5', pins: [{ pinId: '+', netId: 'a' }, { pinId: '-', netId: 'gnd' }] }],
-            nets: [{ id: 'a', name: 'a' }, { id: 'gnd', name: 'gnd', isGround: true }],
+            components: [
+                {
+                    id: 'v1',
+                    type: 'voltage_source',
+                    designator: 'V1',
+                    value: 'DC 5',
+                    pins: [
+                        { pinId: '+', netId: 'a' },
+                        { pinId: '-', netId: 'gnd' },
+                    ],
+                },
+            ],
+            nets: [
+                { id: 'a', name: 'a' },
+                { id: 'gnd', name: 'gnd', isGround: true },
+            ],
         };
         expect(computeResistorPower(noR, [v('a', 5)])).toBeUndefined();
     });

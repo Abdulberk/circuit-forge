@@ -14,7 +14,6 @@ import { prisma, disconnectPrisma } from './prisma/client';
 import { createSimulationWorker } from './simulation/processor';
 import { probeBwrap, isBwrapEnabled } from './simulation/sandbox';
 
-
 let worker: ReturnType<typeof createSimulationWorker> | null = null;
 let designWorker: Worker | null = null;
 let designReaper: { stop: () => Promise<void> } | null = null;
@@ -88,7 +87,9 @@ async function main(): Promise<void> {
                       ),
         });
     } else {
-        logger.info('bubblewrap isolation disabled (SIM_BWRAP not set); ngspice runs under the rlimit + non-root hardening');
+        logger.info(
+            'bubblewrap isolation disabled (SIM_BWRAP not set); ngspice runs under the rlimit + non-root hardening',
+        );
     }
 
     // Create and start the simulation worker.
@@ -104,7 +105,9 @@ async function main(): Promise<void> {
         // running it on every design-capable instance is safe.
         designReaper = startDesignReaper();
     } else {
-        logger.info('LLM_API_KEY not set — design worker + reaper NOT started (this worker processes simulations only)');
+        logger.info(
+            'LLM_API_KEY not set — design worker + reaper NOT started (this worker processes simulations only)',
+        );
     }
 
     // Setup shutdown handlers

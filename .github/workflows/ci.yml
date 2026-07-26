@@ -94,6 +94,11 @@ jobs:
       - name: Lint
         run: pnpm lint
 
+      # Formatting. Also dead until now — the config had never been applied, so this could not have
+      # passed on any commit in the repo's history. Cheap to keep honest now that it does.
+      - name: Format check
+        run: pnpm format:check
+
       - name: Tests (unit + integration)
         run: pnpm test
 

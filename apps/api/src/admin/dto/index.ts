@@ -4,7 +4,18 @@
  */
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import { SimJobStatus, DesignJobStatus, PlatformRole, OrgRole } from '@prisma/client';
-import { IsBoolean, IsDateString, IsEnum, IsIn, IsInt, IsOptional, IsString, IsUUID, MaxLength, Min } from 'class-validator';
+import {
+    IsBoolean,
+    IsDateString,
+    IsEnum,
+    IsIn,
+    IsInt,
+    IsOptional,
+    IsString,
+    IsUUID,
+    MaxLength,
+    Min,
+} from 'class-validator';
 
 import { PaginationQueryDto } from '../../common/dto/pagination.dto';
 import { PURGEABLE_STATUSES, type PurgeableStatus } from '../admin-queue.service';
@@ -94,7 +105,9 @@ export class LockUserDto extends ReasonDto {
     @IsBoolean()
     locked!: boolean;
 
-    @ApiPropertyOptional({ description: 'ISO datetime the lock expires; omit when locking for a far-future (indefinite) lock' })
+    @ApiPropertyOptional({
+        description: 'ISO datetime the lock expires; omit when locking for a far-future (indefinite) lock',
+    })
     @IsOptional()
     @IsDateString()
     until?: string;
@@ -193,7 +206,10 @@ export class SetQuotaOverrideDto extends ReasonDto {
 export class ActionReasonDto extends ReasonDto {}
 
 export class PurgeQueueDto extends ReasonDto {
-    @ApiProperty({ enum: PURGEABLE_STATUSES, description: 'Which terminal job records to purge (completed/failed history)' })
+    @ApiProperty({
+        enum: PURGEABLE_STATUSES,
+        description: 'Which terminal job records to purge (completed/failed history)',
+    })
     @IsIn(PURGEABLE_STATUSES as unknown as string[])
     status!: PurgeableStatus;
 }
@@ -204,7 +220,10 @@ export class PurgeQueueDto extends ReasonDto {
  * without deleting anything.
  */
 export class SweepOrphanModelsDto extends ReasonDto {
-    @ApiPropertyOptional({ default: 7, description: 'Grace window: only unreferenced objects OLDER than this many days are swept' })
+    @ApiPropertyOptional({
+        default: 7,
+        description: 'Grace window: only unreferenced objects OLDER than this many days are swept',
+    })
     @IsOptional()
     @IsInt()
     @Min(0)

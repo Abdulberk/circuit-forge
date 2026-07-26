@@ -22,7 +22,9 @@ describe('assessTransientCompleteness', () => {
     it('is exactly bounded by TRANSIENT_COMPLETE_FRACTION', () => {
         const stop = 1;
         // Just under the fraction → early; at/above → complete.
-        expect(assessTransientCompleteness(series(TRANSIENT_COMPLETE_FRACTION * stop - 1e-6), stop).endedEarly).toBe(true);
+        expect(assessTransientCompleteness(series(TRANSIENT_COMPLETE_FRACTION * stop - 1e-6), stop).endedEarly).toBe(
+            true,
+        );
         expect(assessTransientCompleteness(series(TRANSIENT_COMPLETE_FRACTION * stop), stop).endedEarly).toBe(false);
     });
 

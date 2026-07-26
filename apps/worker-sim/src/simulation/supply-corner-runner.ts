@@ -47,13 +47,26 @@ export async function runSupplyCornerBatch(input: SupplyCornerBatchInput): Promi
     // criterion is measured at every corner instead of reading "probe not found" → falsely failing. Node
     // voltages (incl. the rails, needed for drift) are already saved by the generator's default probes.
     const extraProbes = extraProbesForCriteria(input.criteria);
-    const result = await withVariantJobDir(input.jobId, 'supplycorner', input.analysis, extraProbes, input.modelFiles, async (runVariant) => {
-        const r = await runSupplyCorner(input.circuit, input.criteria, input.spec, runVariant);
-        logger.info(
-            { jobId: input.jobId, applicable: r.applicable, rails: r.rails.length, evaluated: r.evaluated, passAllCorners: r.passAllCorners },
-            'Supply-voltage corner batch complete',
-        );
-        return r;
-    });
+    const result = await withVariantJobDir(
+        input.jobId,
+        'supplycorner',
+        input.analysis,
+        extraProbes,
+        input.modelFiles,
+        async (runVariant) => {
+            const r = await runSupplyCorner(input.circuit, input.criteria, input.spec, runVariant);
+            logger.info(
+                {
+                    jobId: input.jobId,
+                    applicable: r.applicable,
+                    rails: r.rails.length,
+                    evaluated: r.evaluated,
+                    passAllCorners: r.passAllCorners,
+                },
+                'Supply-voltage corner batch complete',
+            );
+            return r;
+        },
+    );
     return { ...result, runtimeMs: Date.now() - startTime };
 }

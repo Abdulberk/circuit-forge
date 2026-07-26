@@ -28,7 +28,12 @@ export function solverOptionTokens(options: SolverOptions | undefined): string[]
         if (v && SPICE_NUM.test(v)) tokens.push(`${key}=${v}`);
     }
     if (options.method === 'trap' || options.method === 'gear') tokens.push(`method=${options.method}`);
-    if (typeof options.itl4 === 'number' && Number.isInteger(options.itl4) && options.itl4 > 0 && options.itl4 <= 10000) {
+    if (
+        typeof options.itl4 === 'number' &&
+        Number.isInteger(options.itl4) &&
+        options.itl4 > 0 &&
+        options.itl4 <= 10000
+    ) {
         tokens.push(`itl4=${options.itl4}`);
     }
     return tokens;
@@ -66,7 +71,10 @@ export function applySolverOptions(netlist: string, options: SolverOptions): str
         const kept: string[] = [];
         const seenKeys = new Set<string>();
         for (const idx of optionIdxs) {
-            const toks = lines[idx]!.trim().replace(/^\.options\s*/i, '').split(/\s+/).filter(Boolean);
+            const toks = lines[idx]!.trim()
+                .replace(/^\.options\s*/i, '')
+                .split(/\s+/)
+                .filter(Boolean);
             for (const tok of toks) {
                 const key = tok.split('=')[0]!.toLowerCase();
                 if (remedyKeys.has(key) || seenKeys.has(key)) continue;

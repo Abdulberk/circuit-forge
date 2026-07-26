@@ -12,10 +12,19 @@ const s3Client = new S3Client({
     forcePathStyle: config.S3_FORCE_PATH_STYLE,
 });
 
-export async function uploadFile(key: string, data: Buffer | string, contentType = 'application/octet-stream'): Promise<void> {
+export async function uploadFile(
+    key: string,
+    data: Buffer | string,
+    contentType = 'application/octet-stream',
+): Promise<void> {
     const upload = new Upload({
         client: s3Client,
-        params: { Bucket: config.S3_BUCKET, Key: key, Body: typeof data === 'string' ? Buffer.from(data) : data, ContentType: contentType },
+        params: {
+            Bucket: config.S3_BUCKET,
+            Key: key,
+            Body: typeof data === 'string' ? Buffer.from(data) : data,
+            ContentType: contentType,
+        },
     });
     await upload.done();
     logger.info({ key, size: Buffer.byteLength(data) }, 'Uploaded to S3');

@@ -91,14 +91,19 @@ async function executeAndMeasure(
 
 /** ROBUST scalar metrics (THD from fourier, gain from tf) live in the LISTING, not the CSV — fold them onto the
  *  measurements so a thd/gain criterion is evaluated PER RUN. Read the listing once, only when either is requested. */
-async function foldListingMetrics(measurements: SimMeasurement[], analysis: AnalysisConfig, logPath: string): Promise<void> {
+async function foldListingMetrics(
+    measurements: SimMeasurement[],
+    analysis: AnalysisConfig,
+    logPath: string,
+): Promise<void> {
     const needsListing = (analysis.type === 'tran' && analysis.fourier) || (analysis.type === 'op' && analysis.tf);
     if (!needsListing) return;
     const listing = await fs.readFile(logPath, 'utf-8').catch(() => '');
     if (analysis.type === 'tran') attachFourierThd(measurements, parseFourierLog(listing));
     // Fallback to the requested tf output so a valid gain still binds if ngspice's `output_impedance_at_<node>`
     // echo is missing/truncated (else outputNode='' matches no node).
-    if (analysis.type === 'op') attachTransferFunction(measurements, parseTransferFunction(listing, analysis.tf?.output));
+    if (analysis.type === 'op')
+        attachTransferFunction(measurements, parseTransferFunction(listing, analysis.tf?.output));
 }
 
 const jobPaths = (jobDir: string) => ({
@@ -116,7 +121,10 @@ export function makeVariantRunner(
     return async (variant: CircuitJson): Promise<SimMeasurement[] | null> => {
         let netlist: string | null;
         try {
-            netlist = sanitizeNetlist(generateNetlist(variant, analysis, extraProbes?.length ? { extraProbes } : {}), jobDir);
+            netlist = sanitizeNetlist(
+                generateNetlist(variant, analysis, extraProbes?.length ? { extraProbes } : {}),
+                jobDir,
+            );
         } catch {
             netlist = null; // a variant that won't even generate/sanitize — count errored, never crash the batch
         }
@@ -139,7 +147,10 @@ export function makeTempRunner(
     return async (temperatureC: number): Promise<SimMeasurement[] | null> => {
         let netlist: string | null;
         try {
-            netlist = sanitizeNetlist(generateNetlist(circuit, analysis, { ...(extraProbes?.length ? { extraProbes } : {}), temperatureC }), jobDir);
+            netlist = sanitizeNetlist(
+                generateNetlist(circuit, analysis, { ...(extraProbes?.length ? { extraProbes } : {}), temperatureC }),
+                jobDir,
+            );
         } catch {
             netlist = null;
         }

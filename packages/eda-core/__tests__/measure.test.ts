@@ -42,7 +42,10 @@ describe('parseMeasurements', () => {
         expect(res[1]!.qualifiers).toBeUndefined();
         expect(res[2]!.value).toBeCloseTo(4.19104, 4);
         expect(res[2]!.qualifiers).toMatchObject({ from: 0, to: expect.closeTo(5e-3, 6) });
-        expect(res[3]!.qualifiers).toMatchObject({ targ: expect.closeTo(2.303083e-3, 8), trig: expect.closeTo(1.058615e-4, 9) });
+        expect(res[3]!.qualifiers).toMatchObject({
+            targ: expect.closeTo(2.303083e-3, 8),
+            trig: expect.closeTo(1.058615e-4, 9),
+        });
     });
 
     it('IGNORES log lines whose name was not requested (no false positives from other tables)', () => {

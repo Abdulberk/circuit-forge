@@ -8,15 +8,41 @@ const svc = new NetlistService();
 const divider: CircuitJson = {
     version: '1.0',
     components: [
-        { id: 'v1', type: 'voltage_source', designator: 'V1', value: 'DC 10', pins: [
-            { pinId: '+', netId: 'vin' }, { pinId: '-', netId: 'gnd' }] },
-        { id: 'r1', type: 'resistor', designator: 'R1', value: '1k', pins: [
-            { pinId: '1', netId: 'vin' }, { pinId: '2', netId: 'mid' }] },
-        { id: 'r2', type: 'resistor', designator: 'R2', value: '1k', pins: [
-            { pinId: '1', netId: 'mid' }, { pinId: '2', netId: 'gnd' }] },
+        {
+            id: 'v1',
+            type: 'voltage_source',
+            designator: 'V1',
+            value: 'DC 10',
+            pins: [
+                { pinId: '+', netId: 'vin' },
+                { pinId: '-', netId: 'gnd' },
+            ],
+        },
+        {
+            id: 'r1',
+            type: 'resistor',
+            designator: 'R1',
+            value: '1k',
+            pins: [
+                { pinId: '1', netId: 'vin' },
+                { pinId: '2', netId: 'mid' },
+            ],
+        },
+        {
+            id: 'r2',
+            type: 'resistor',
+            designator: 'R2',
+            value: '1k',
+            pins: [
+                { pinId: '1', netId: 'mid' },
+                { pinId: '2', netId: 'gnd' },
+            ],
+        },
     ],
     nets: [
-        { id: 'vin', name: 'VIN' }, { id: 'mid', name: 'MID' }, { id: 'gnd', name: 'GND', isGround: true },
+        { id: 'vin', name: 'VIN' },
+        { id: 'mid', name: 'MID' },
+        { id: 'gnd', name: 'GND', isGround: true },
     ],
 };
 
@@ -34,8 +60,16 @@ describe('NetlistService', () => {
             ...divider,
             components: [
                 ...divider.components,
-                { id: 'd1', type: 'diode', designator: 'DA1', model: 'LEDRED', pins: [
-                    { pinId: 'anode', netId: 'mid' }, { pinId: 'cathode', netId: 'gnd' }] },
+                {
+                    id: 'd1',
+                    type: 'diode',
+                    designator: 'DA1',
+                    model: 'LEDRED',
+                    pins: [
+                        { pinId: 'anode', netId: 'mid' },
+                        { pinId: 'cathode', netId: 'gnd' },
+                    ],
+                },
             ],
         };
         const deck = svc.export(withLed);
@@ -75,7 +109,8 @@ C1 out 0 100n
     });
 
     it('surfaces generator authoring errors as 400 (e.g. AC analysis without an AC source)', () => {
-        expect(() => svc.export(divider, { type: 'ac', variation: 'dec', points: 10, startFreq: '1', stopFreq: '1k' }))
-            .toThrow(/AC magnitude/);
+        expect(() =>
+            svc.export(divider, { type: 'ac', variation: 'dec', points: 10, startFreq: '1', stopFreq: '1k' }),
+        ).toThrow(/AC magnitude/);
     });
 });

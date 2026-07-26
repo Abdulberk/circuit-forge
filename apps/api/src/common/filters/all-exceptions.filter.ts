@@ -63,7 +63,8 @@ export class AllExceptionsFilter implements ExceptionFilter {
                 const { statusCode: _ignored, error, ...rest } = body as Record<string, unknown>;
                 Object.assign(envelope, rest);
                 envelope.statusCode = status;
-                if (typeof (rest as { code?: unknown }).code === 'string') envelope.code = (rest as { code: string }).code;
+                if (typeof (rest as { code?: unknown }).code === 'string')
+                    envelope.code = (rest as { code: string }).code;
                 if (rest.message === undefined && typeof error === 'string') envelope.message = error;
             }
         } else {

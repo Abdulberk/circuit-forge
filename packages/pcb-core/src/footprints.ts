@@ -33,7 +33,10 @@ export function isLedDiode(component: Pick<Component, 'type' | 'model'>): boolea
  * through normalized rather than being rejected here (a wrong name surfaces loudly at eval time).
  */
 export function normalizeFootprint(raw: string): string {
-    return raw.trim().toLowerCase().replace(/[^a-z0-9_]/g, '');
+    return raw
+        .trim()
+        .toLowerCase()
+        .replace(/[^a-z0-9_]/g, '');
 }
 
 /** Passive size from properties.size when it is one of the known imperial codes. */

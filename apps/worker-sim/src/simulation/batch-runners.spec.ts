@@ -6,7 +6,9 @@
  *   - corner: the WorstCaseResult is passed through with a measured runtime.
  * A bug here either runs a runaway sweep, silently under-reports points as complete, or mis-times a batch.
  */
-jest.mock('../config', () => ({ config: { MC_N_DEFAULT: 300, MC_CI_HALFWIDTH_STOP: 0.03, MC_BATCH_BUDGET_MS: 60000 } }));
+jest.mock('../config', () => ({
+    config: { MC_N_DEFAULT: 300, MC_CI_HALFWIDTH_STOP: 0.03, MC_BATCH_BUDGET_MS: 60000 },
+}));
 jest.mock('../logger', () => ({ logger: { info: jest.fn() } }));
 
 const runMonteCarlo = jest.fn();
@@ -44,8 +46,23 @@ beforeEach(() => {
     jest.clearAllMocks();
     jobDirCalls.length = 0;
     (config as { MC_BATCH_BUDGET_MS: number }).MC_BATCH_BUDGET_MS = 60000;
-    runParametricSweep.mockResolvedValue({ parameter: 'R1', evaluated: 1, passed: 1, failed: 0, errored: 0, passAll: true });
-    runWorstCase.mockResolvedValue({ componentsCornered: 2, evaluated: 4, passed: 4, failed: 0, errored: 0, passAllCorners: true, omitted: [] });
+    runParametricSweep.mockResolvedValue({
+        parameter: 'R1',
+        evaluated: 1,
+        passed: 1,
+        failed: 0,
+        errored: 0,
+        passAll: true,
+    });
+    runWorstCase.mockResolvedValue({
+        componentsCornered: 2,
+        evaluated: 4,
+        passed: 4,
+        failed: 0,
+        errored: 0,
+        passAllCorners: true,
+        omitted: [],
+    });
     runMonteCarlo.mockResolvedValue({ yield: 1, evaluated: 10, ran: 10, passed: 10, failed: 0, errored: 0 });
 });
 

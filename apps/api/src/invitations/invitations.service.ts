@@ -5,7 +5,13 @@
  * recipe. Membership creation on accept is audited under the invitee (adminActorId null — not a platform
  * action), recording the inviter in meta.
  */
-import { Injectable, NotFoundException, ForbiddenException, BadRequestException, ConflictException } from '@nestjs/common';
+import {
+    Injectable,
+    NotFoundException,
+    ForbiddenException,
+    BadRequestException,
+    ConflictException,
+} from '@nestjs/common';
 import { OrgRole } from '@prisma/client';
 
 import { AuditService } from '../common/audit/audit.service';
@@ -50,15 +56,44 @@ export class InvitationsService {
         const invite = await this.prisma.$transaction(async (tx) => {
             const row = await tx.orgInvitation.upsert({
                 where: { orgId_email: { orgId, email: normEmail } },
-                create: { orgId, email: normEmail, role, tokenHash: hash, invitedByUserId: actorId, expiresAt, status: 'PENDING' },
-                update: { role, tokenHash: hash, invitedByUserId: actorId, expiresAt, status: 'PENDING', acceptedAt: null, acceptedByUserId: null },
-                select: { id: true, email: true, role: true, status: true, invitedByUserId: true, expiresAt: true, createdAt: true },
+                create: {
+                    orgId,
+                    email: normEmail,
+                    role,
+                    tokenHash: hash,
+                    invitedByUserId: actorId,
+                    expiresAt,
+                    status: 'PENDING',
+                },
+                update: {
+                    role,
+                    tokenHash: hash,
+                    invitedByUserId: actorId,
+                    expiresAt,
+                    status: 'PENDING',
+                    acceptedAt: null,
+                    acceptedByUserId: null,
+                },
+                select: {
+                    id: true,
+                    email: true,
+                    role: true,
+                    status: true,
+                    invitedByUserId: true,
+                    expiresAt: true,
+                    createdAt: true,
+                },
             });
             await tx.auditLog.create({
                 data: this.audit.buildData({
-                    action: 'org.member.invite', entityType: 'OrgInvitation', entityId: row.id,
-                    orgId, userId: null, adminActorId: null,
-                    after: { email: normEmail, role }, extra: { actorUserId: actorId },
+                    action: 'org.member.invite',
+                    entityType: 'OrgInvitation',
+                    entityId: row.id,
+                    orgId,
+                    userId: null,
+                    adminActorId: null,
+                    after: { email: normEmail, role },
+                    extra: { actorUserId: actorId },
                 }),
             });
             return row;
@@ -80,7 +115,16 @@ export class InvitationsService {
             this.prisma.orgInvitation.findMany({
                 where,
                 orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
-                select: { id: true, email: true, role: true, status: true, invitedByUserId: true, expiresAt: true, acceptedAt: true, createdAt: true },
+                select: {
+                    id: true,
+                    email: true,
+                    role: true,
+                    status: true,
+                    invitedByUserId: true,
+                    expiresAt: true,
+                    acceptedAt: true,
+                    createdAt: true,
+                },
                 skip: page.offset,
                 take: page.limit,
             }),
@@ -101,9 +145,15 @@ export class InvitationsService {
             await tx.orgInvitation.update({ where: { id: invite.id }, data: { status: 'REVOKED' } });
             await tx.auditLog.create({
                 data: this.audit.buildData({
-                    action: 'org.member.invite_revoke', entityType: 'OrgInvitation', entityId: invite.id,
-                    orgId, userId: null, adminActorId: null,
-                    before: { email: invite.email, status: 'PENDING' }, after: { status: 'REVOKED' }, extra: { actorUserId: actorId },
+                    action: 'org.member.invite_revoke',
+                    entityType: 'OrgInvitation',
+                    entityId: invite.id,
+                    orgId,
+                    userId: null,
+                    adminActorId: null,
+                    before: { email: invite.email, status: 'PENDING' },
+                    after: { status: 'REVOKED' },
+                    extra: { actorUserId: actorId },
                 }),
             });
         });
@@ -117,12 +167,22 @@ export class InvitationsService {
     async accept(token: string, userId: string): Promise<{ orgId: string; role: OrgRole }> {
         const invite = await this.prisma.orgInvitation.findFirst({
             where: { tokenHash: hashLinkToken(token) },
-            select: { id: true, orgId: true, email: true, role: true, status: true, expiresAt: true, invitedByUserId: true },
+            select: {
+                id: true,
+                orgId: true,
+                email: true,
+                role: true,
+                status: true,
+                expiresAt: true,
+                invitedByUserId: true,
+            },
         });
         if (!invite) throw new NotFoundException('Invitation not found');
         if (invite.status !== 'PENDING') throw new BadRequestException('This invitation is no longer valid.');
         if (invite.expiresAt.getTime() < Date.now()) {
-            await this.prisma.orgInvitation.update({ where: { id: invite.id }, data: { status: 'EXPIRED' } }).catch(() => undefined);
+            await this.prisma.orgInvitation
+                .update({ where: { id: invite.id }, data: { status: 'EXPIRED' } })
+                .catch(() => undefined);
             throw new BadRequestException('This invitation has expired.');
         }
         const user = await this.prisma.user.findUnique({ where: { id: userId }, select: { email: true } });
@@ -149,9 +209,14 @@ export class InvitationsService {
             });
             await tx.auditLog.create({
                 data: this.audit.buildData({
-                    action: 'org.member.add', entityType: 'OrgMembership', entityId: membership.id,
-                    orgId: invite.orgId, userId, adminActorId: null,
-                    after: { role: membership.role }, extra: { via: 'invitation', invitedByUserId: invite.invitedByUserId },
+                    action: 'org.member.add',
+                    entityType: 'OrgMembership',
+                    entityId: membership.id,
+                    orgId: invite.orgId,
+                    userId,
+                    adminActorId: null,
+                    after: { role: membership.role },
+                    extra: { via: 'invitation', invitedByUserId: invite.invitedByUserId },
                 }),
             });
             return { orgId: invite.orgId, role: membership.role };

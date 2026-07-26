@@ -26,13 +26,7 @@ module.exports = {
     // `*.js` covers this file too: it is not in tsconfig.eslint.json, so type-aware linting
     // would fail on it with "file not included in project" — and linting the lint config with
     // TypeScript rules buys nothing.
-    ignorePatterns: [
-        'node_modules',
-        'dist',
-        'coverage',
-        '.next',
-        '*.js',
-    ],
+    ignorePatterns: ['node_modules', 'dist', 'coverage', '.next', '*.js'],
     settings: {
         'import/resolver': {
             typescript: {
@@ -71,14 +65,7 @@ module.exports = {
         'import/order': [
             'error',
             {
-                groups: [
-                    'builtin',
-                    'external',
-                    'internal',
-                    'parent',
-                    'sibling',
-                    'index',
-                ],
+                groups: ['builtin', 'external', 'internal', 'parent', 'sibling', 'index'],
                 'newlines-between': 'always',
                 alphabetize: {
                     order: 'asc',

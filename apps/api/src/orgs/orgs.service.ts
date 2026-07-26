@@ -33,7 +33,7 @@ export class OrgsService {
     constructor(
         private readonly prisma: PrismaService,
         private readonly audit: AuditService,
-    ) { }
+    ) {}
 
     async findAllForUser(userId: string) {
         const memberships = await this.prisma.orgMembership.findMany({
@@ -125,7 +125,13 @@ export class OrgsService {
             }),
             this.prisma.orgMembership.count({ where }),
         ]);
-        const items = rows.map((m) => ({ userId: m.userId, email: m.user.email, name: m.user.name, role: m.role, createdAt: m.createdAt }));
+        const items = rows.map((m) => ({
+            userId: m.userId,
+            email: m.user.email,
+            name: m.user.name,
+            role: m.role,
+            createdAt: m.createdAt,
+        }));
         return paginated(items, total, page.limit, page.offset);
     }
 
@@ -135,7 +141,14 @@ export class OrgsService {
      * mint or unseat owners), and the org must never lose its last OWNER. Writes a tenant audit row (the acting
      * user in meta.actorUserId; adminActorId stays null — this is NOT a platform-admin action).
      */
-    async updateMemberRole(orgId: string, targetUserId: string, newRole: OrgRole, actorId: string, actorRole: OrgRole, reason?: string) {
+    async updateMemberRole(
+        orgId: string,
+        targetUserId: string,
+        newRole: OrgRole,
+        actorId: string,
+        actorRole: OrgRole,
+        reason?: string,
+    ) {
         const target = await this.prisma.orgMembership.findUnique({
             where: { orgId_userId: { orgId, userId: targetUserId } },
             select: { id: true, role: true },
@@ -151,12 +164,22 @@ export class OrgsService {
         }
 
         await this.prisma.$transaction(async (tx) => {
-            await tx.orgMembership.update({ where: { orgId_userId: { orgId, userId: targetUserId } }, data: { role: newRole } });
+            await tx.orgMembership.update({
+                where: { orgId_userId: { orgId, userId: targetUserId } },
+                data: { role: newRole },
+            });
             await tx.auditLog.create({
                 data: this.audit.buildData({
-                    action: 'org.member.role_change', entityType: 'OrgMembership', entityId: target.id,
-                    orgId, userId: targetUserId, adminActorId: null, reason: reason ?? null,
-                    before: { role: target.role }, after: { role: newRole }, extra: { actorUserId: actorId },
+                    action: 'org.member.role_change',
+                    entityType: 'OrgMembership',
+                    entityId: target.id,
+                    orgId,
+                    userId: targetUserId,
+                    adminActorId: null,
+                    reason: reason ?? null,
+                    before: { role: target.role },
+                    after: { role: newRole },
+                    extra: { actorUserId: actorId },
                 }),
             });
         });
@@ -185,9 +208,16 @@ export class OrgsService {
             await tx.orgMembership.delete({ where: { orgId_userId: { orgId, userId: targetUserId } } });
             await tx.auditLog.create({
                 data: this.audit.buildData({
-                    action: 'org.member.remove', entityType: 'OrgMembership', entityId: target.id,
-                    orgId, userId: targetUserId, adminActorId: null, reason: reason ?? null,
-                    before: { role: target.role }, after: null, extra: { actorUserId: actorId },
+                    action: 'org.member.remove',
+                    entityType: 'OrgMembership',
+                    entityId: target.id,
+                    orgId,
+                    userId: targetUserId,
+                    adminActorId: null,
+                    reason: reason ?? null,
+                    before: { role: target.role },
+                    after: null,
+                    extra: { actorUserId: actorId },
                 }),
             });
         });
@@ -223,26 +253,46 @@ export class OrgsService {
                 orderBy: [{ createdAt: 'desc' }, { id: 'desc' }], // id tiebreak → deterministic paging
                 // Explicit select: NEVER return the raw row — `meta` carries operator PII we must not leak.
                 select: {
-                    id: true, orgId: true, userId: true, adminActorId: true,
-                    action: true, entityType: true, entityId: true, meta: true, createdAt: true,
+                    id: true,
+                    orgId: true,
+                    userId: true,
+                    adminActorId: true,
+                    action: true,
+                    entityType: true,
+                    entityId: true,
+                    meta: true,
+                    createdAt: true,
                 },
                 skip: page.offset,
                 take: page.limit,
             }),
             this.prisma.auditLog.count({ where }),
         ]);
-        return paginated(rows.map((r) => this.redactAuditRowForTenant(r)), total, page.limit, page.offset);
+        return paginated(
+            rows.map((r) => this.redactAuditRowForTenant(r)),
+            total,
+            page.limit,
+            page.offset,
+        );
     }
 
     /** Project a raw AuditLog row down to the tenant-safe shape by WHITELIST (never spread `meta`, or a future
      *  meta.* key would silently leak). Exposes the operator's presence as a boolean, not their identity. */
     private redactAuditRowForTenant(row: {
-        id: string; orgId: string | null; userId: string | null; adminActorId: string | null;
-        action: string; entityType: string; entityId: string; meta: Prisma.JsonValue | null; createdAt: Date;
+        id: string;
+        orgId: string | null;
+        userId: string | null;
+        adminActorId: string | null;
+        action: string;
+        entityType: string;
+        entityId: string;
+        meta: Prisma.JsonValue | null;
+        createdAt: Date;
     }): TenantAuditRow {
-        const meta = (row.meta && typeof row.meta === 'object' && !Array.isArray(row.meta))
-            ? (row.meta as Record<string, unknown>)
-            : {};
+        const meta =
+            row.meta && typeof row.meta === 'object' && !Array.isArray(row.meta)
+                ? (row.meta as Record<string, unknown>)
+                : {};
         const byPlatformAdmin = row.adminActorId != null;
         // `reason` is free text. Show it for the org's OWN actions (their note), and for the ONE operator action
         // whose reason is a designed tenant-facing field (suspension → also shown in the ORG_SUSPENDED banner).

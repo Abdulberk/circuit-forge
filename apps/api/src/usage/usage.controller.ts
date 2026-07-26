@@ -21,7 +21,10 @@ export class UsageController {
     ) {}
 
     @Get('orgs/:orgId/usage')
-    @ApiOperation({ summary: 'Current-month usage (sim jobs/runtime/in-flight, storage, parts calls) + configured limits (null = unlimited)' })
+    @ApiOperation({
+        summary:
+            'Current-month usage (sim jobs/runtime/in-flight, storage, parts calls) + configured limits (null = unlimited)',
+    })
     async getUsage(@Param('orgId', ParseUUIDPipe) orgId: string, @CurrentUser() user: { id: string }) {
         await this.orgs.checkMembership(orgId, user.id);
         return this.usage.getOrgUsage(orgId, user.id);

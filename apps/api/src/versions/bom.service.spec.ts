@@ -16,8 +16,17 @@ const circuit: CircuitJson = {
             footprint: '0603',
             mpn: 'RC0603FR-07330RL',
             manufacturer: 'YAGEO',
-            sourcing: { supplier: 'tme', supplierId: 'RC0603FR-07330R', unitCost: 0.07, currency: 'EUR', stock: 105378 },
-            pins: [{ pinId: '1', netId: 'a' }, { pinId: '2', netId: 'b' }],
+            sourcing: {
+                supplier: 'tme',
+                supplierId: 'RC0603FR-07330R',
+                unitCost: 0.07,
+                currency: 'EUR',
+                stock: 105378,
+            },
+            pins: [
+                { pinId: '1', netId: 'a' },
+                { pinId: '2', netId: 'b' },
+            ],
         })),
         {
             id: 'd1',
@@ -26,14 +35,20 @@ const circuit: CircuitJson = {
             mpn: '1N4148',
             manufacturer: 'ONSEMI',
             sourcing: { supplier: 'tme', supplierId: '1N4148', unitCost: 0.02, currency: 'EUR', stock: 0 },
-            pins: [{ pinId: 'anode', netId: 'a' }, { pinId: 'cathode', netId: 'b' }],
+            pins: [
+                { pinId: 'anode', netId: 'a' },
+                { pinId: 'cathode', netId: 'b' },
+            ],
         },
         {
             id: 'c1',
             type: 'capacitor' as const,
             designator: 'C1',
             value: '100n',
-            pins: [{ pinId: '1', netId: 'b' }, { pinId: '2', netId: 'g' }],
+            pins: [
+                { pinId: '1', netId: 'b' },
+                { pinId: '2', netId: 'g' },
+            ],
         },
         { id: 'g1', type: 'ground' as const, designator: 'GND1', pins: [{ pinId: '1', netId: 'g' }] },
     ],

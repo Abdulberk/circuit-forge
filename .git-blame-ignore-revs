@@ -1,0 +1,11 @@
+# Commits that only moved whitespace. `git blame` should skip straight past them to the commit
+# that last changed the code itself.
+#
+# GitHub honours this file automatically. Locally, opt in once per clone:
+#
+#     git config blame.ignoreRevsFile .git-blame-ignore-revs
+#
+# Only add a revision here if it is PURELY mechanical formatting — no behaviour, no renames.
+
+# style: format the codebase with Prettier, and align the config with how the code is written
+af890a312a4964789e2067d2d2284450300d073a

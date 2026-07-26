@@ -18,23 +18,48 @@ describe('Org invitations (invite → accept)', () => {
     let prisma: PrismaService;
     let server: import('http').Server;
 
-    let owner = '', ownerId = '', orgA = '';
-    let adminTok = '', adminId = '';
-    let memberTok = '', memberId = '', memberEmail = '';
-    let inviteeTok = '', inviteeId = '', inviteeEmail = '';
-    let otherTok = '', otherId = '', otherEmail = '';
-    let expTok = '', expId = '', expEmail = '';
+    let owner = '',
+        ownerId = '',
+        orgA = '';
+    let adminTok = '',
+        adminId = '';
+    let memberTok = '',
+        memberId = '',
+        memberEmail = '';
+    let inviteeTok = '',
+        inviteeId = '',
+        inviteeEmail = '';
+    let otherTok = '',
+        otherId = '',
+        otherEmail = '';
+    let expTok = '',
+        expId = '',
+        expEmail = '';
 
-    const invite = (org: string, tok: string, body: object) => request(server).post(`/orgs/${org}/invitations`).set('Authorization', `Bearer ${tok}`).send(body);
-    const listInv = (org: string, tok: string, q = '') => request(server).get(`/orgs/${org}/invitations${q}`).set('Authorization', `Bearer ${tok}`);
-    const accept = (tok: string, token: string) => request(server).post('/invitations/accept').set('Authorization', `Bearer ${tok}`).send({ token });
+    const invite = (org: string, tok: string, body: object) =>
+        request(server).post(`/orgs/${org}/invitations`).set('Authorization', `Bearer ${tok}`).send(body);
+    const listInv = (org: string, tok: string, q = '') =>
+        request(server).get(`/orgs/${org}/invitations${q}`).set('Authorization', `Bearer ${tok}`);
+    const accept = (tok: string, token: string) =>
+        request(server).post('/invitations/accept').set('Authorization', `Bearer ${tok}`).send({ token });
 
     // Seed a PENDING invitation with a known raw token (accept-path fixtures — raw token isn't API-exposed).
-    const seedInvite = (email: string, rawToken: string, opts: { expiresAt?: Date; role?: 'OWNER' | 'ADMIN' | 'MEMBER' } = {}) =>
-        prisma.orgInvitation.create({ data: {
-            orgId: orgA, email: email.toLowerCase(), role: opts.role ?? 'MEMBER', tokenHash: hashLinkToken(rawToken),
-            status: 'PENDING', invitedByUserId: ownerId, expiresAt: opts.expiresAt ?? new Date(Date.now() + 3_600_000),
-        } });
+    const seedInvite = (
+        email: string,
+        rawToken: string,
+        opts: { expiresAt?: Date; role?: 'OWNER' | 'ADMIN' | 'MEMBER' } = {},
+    ) =>
+        prisma.orgInvitation.create({
+            data: {
+                orgId: orgA,
+                email: email.toLowerCase(),
+                role: opts.role ?? 'MEMBER',
+                tokenHash: hashLinkToken(rawToken),
+                status: 'PENDING',
+                invitedByUserId: ownerId,
+                expiresAt: opts.expiresAt ?? new Date(Date.now() + 3_600_000),
+            },
+        });
 
     beforeAll(async () => {
         const moduleFixture: TestingModule = await Test.createTestingModule({ imports: [AppModule] }).compile();
@@ -46,21 +71,50 @@ describe('Org invitations (invite → accept)', () => {
 
         const reg = async (p: string) => {
             const email = `${p}-${Date.now()}@test.com`;
-            const body = (await request(server).post('/auth/register').send({ email, password: 'SecurePassword123!', name: p }).expect(201)).body;
+            const body = (
+                await request(server)
+                    .post('/auth/register')
+                    .send({ email, password: 'SecurePassword123!', name: p })
+                    .expect(201)
+            ).body;
             return { tok: body.accessToken, id: body.user.id, email };
         };
-        const o = await reg('inv-owner'); owner = o.tok; ownerId = o.id;
-        const a = await reg('inv-admin'); adminTok = a.tok; adminId = a.id;
-        const m = await reg('inv-member'); memberTok = m.tok; memberId = m.id; memberEmail = m.email;
-        const iv = await reg('inv-invitee'); inviteeTok = iv.tok; inviteeId = iv.id; inviteeEmail = iv.email;
-        const ot = await reg('inv-other'); otherTok = ot.tok; otherId = ot.id; otherEmail = ot.email;
-        const ex = await reg('inv-expired'); expTok = ex.tok; expId = ex.id; expEmail = ex.email;
+        const o = await reg('inv-owner');
+        owner = o.tok;
+        ownerId = o.id;
+        const a = await reg('inv-admin');
+        adminTok = a.tok;
+        adminId = a.id;
+        const m = await reg('inv-member');
+        memberTok = m.tok;
+        memberId = m.id;
+        memberEmail = m.email;
+        const iv = await reg('inv-invitee');
+        inviteeTok = iv.tok;
+        inviteeId = iv.id;
+        inviteeEmail = iv.email;
+        const ot = await reg('inv-other');
+        otherTok = ot.tok;
+        otherId = ot.id;
+        otherEmail = ot.email;
+        const ex = await reg('inv-expired');
+        expTok = ex.tok;
+        expId = ex.id;
+        expEmail = ex.email;
 
-        orgA = (await request(server).post('/orgs').set('Authorization', `Bearer ${owner}`).send({ name: 'Inv Org A' }).expect(201)).body.id;
-        await prisma.orgMembership.createMany({ data: [
-            { orgId: orgA, userId: adminId, role: 'ADMIN' },
-            { orgId: orgA, userId: memberId, role: 'MEMBER' },
-        ] });
+        orgA = (
+            await request(server)
+                .post('/orgs')
+                .set('Authorization', `Bearer ${owner}`)
+                .send({ name: 'Inv Org A' })
+                .expect(201)
+        ).body.id;
+        await prisma.orgMembership.createMany({
+            data: [
+                { orgId: orgA, userId: adminId, role: 'ADMIN' },
+                { orgId: orgA, userId: memberId, role: 'MEMBER' },
+            ],
+        });
     });
 
     afterAll(async () => {
@@ -68,7 +122,9 @@ describe('Org invitations (invite → accept)', () => {
         await prisma.auditLog.deleteMany({ where: { orgId: orgA } }).catch(() => undefined);
         await prisma.orgMembership.deleteMany({ where: { orgId: orgA } }).catch(() => undefined);
         await prisma.organization.deleteMany({ where: { id: orgA } }).catch(() => undefined);
-        await prisma.user.deleteMany({ where: { id: { in: [ownerId, adminId, memberId, inviteeId, otherId, expId] } } }).catch(() => undefined);
+        await prisma.user
+            .deleteMany({ where: { id: { in: [ownerId, adminId, memberId, inviteeId, otherId, expId] } } })
+            .catch(() => undefined);
         await app.close();
     });
 
@@ -79,7 +135,10 @@ describe('Org invitations (invite → accept)', () => {
         const row = await prisma.orgInvitation.findFirst({ where: { orgId: orgA, email: 'new1@test.com' } });
         expect(row).toMatchObject({ status: 'PENDING', invitedByUserId: ownerId });
         expect(typeof row!.tokenHash).toBe('string');
-        const audit = await prisma.auditLog.findFirst({ where: { orgId: orgA, action: 'org.member.invite' }, orderBy: { createdAt: 'desc' } });
+        const audit = await prisma.auditLog.findFirst({
+            where: { orgId: orgA, action: 'org.member.invite' },
+            orderBy: { createdAt: 'desc' },
+        });
         expect(audit?.adminActorId).toBeNull();
         expect((audit!.meta as Record<string, any>).actorUserId).toBe(ownerId);
     });
@@ -104,11 +163,20 @@ describe('Org invitations (invite → accept)', () => {
     it('revoke: a pending invite can be revoked once; re-revoke → 400; unknown → 404', async () => {
         const created = await invite(orgA, owner, { email: 'revoke-me@test.com', role: 'MEMBER' }).expect(201);
         const id = created.body.id;
-        await request(server).delete(`/orgs/${orgA}/invitations/${id}`).set('Authorization', `Bearer ${owner}`).expect(204);
+        await request(server)
+            .delete(`/orgs/${orgA}/invitations/${id}`)
+            .set('Authorization', `Bearer ${owner}`)
+            .expect(204);
         const row = await prisma.orgInvitation.findUnique({ where: { id } });
         expect(row?.status).toBe('REVOKED');
-        await request(server).delete(`/orgs/${orgA}/invitations/${id}`).set('Authorization', `Bearer ${owner}`).expect(400);
-        await request(server).delete(`/orgs/${orgA}/invitations/00000000-0000-0000-0000-000000000000`).set('Authorization', `Bearer ${owner}`).expect(404);
+        await request(server)
+            .delete(`/orgs/${orgA}/invitations/${id}`)
+            .set('Authorization', `Bearer ${owner}`)
+            .expect(400);
+        await request(server)
+            .delete(`/orgs/${orgA}/invitations/00000000-0000-0000-0000-000000000000`)
+            .set('Authorization', `Bearer ${owner}`)
+            .expect(404);
     });
 
     it('ACCEPT: the invited user joins the org; invite marked ACCEPTED; membership + audit written; token is single-use', async () => {
@@ -116,11 +184,16 @@ describe('Org invitations (invite → accept)', () => {
         const r = await accept(inviteeTok, 'tok-accept').expect(200);
         expect(r.body).toMatchObject({ orgId: orgA, role: 'MEMBER' });
 
-        const membership = await prisma.orgMembership.findUnique({ where: { orgId_userId: { orgId: orgA, userId: inviteeId } } });
+        const membership = await prisma.orgMembership.findUnique({
+            where: { orgId_userId: { orgId: orgA, userId: inviteeId } },
+        });
         expect(membership?.role).toBe('MEMBER');
         const inv = await prisma.orgInvitation.findFirst({ where: { orgId: orgA, email: inviteeEmail.toLowerCase() } });
         expect(inv).toMatchObject({ status: 'ACCEPTED', acceptedByUserId: inviteeId });
-        const audit = await prisma.auditLog.findFirst({ where: { orgId: orgA, action: 'org.member.add', userId: inviteeId }, orderBy: { createdAt: 'desc' } });
+        const audit = await prisma.auditLog.findFirst({
+            where: { orgId: orgA, action: 'org.member.add', userId: inviteeId },
+            orderBy: { createdAt: 'desc' },
+        });
         expect(audit?.adminActorId).toBeNull();
         expect((audit!.meta as Record<string, any>).via).toBe('invitation');
 
@@ -154,16 +227,22 @@ describe('Org invitations (invite → accept)', () => {
 
     it('re-inviting the same email UPSERTS one row — a revoked invite is refreshed back to PENDING', async () => {
         const c1 = await invite(orgA, owner, { email: 'refresh@test.com', role: 'MEMBER' }).expect(201);
-        await request(server).delete(`/orgs/${orgA}/invitations/${c1.body.id}`).set('Authorization', `Bearer ${owner}`).expect(204);
+        await request(server)
+            .delete(`/orgs/${orgA}/invitations/${c1.body.id}`)
+            .set('Authorization', `Bearer ${owner}`)
+            .expect(204);
         const c2 = await invite(orgA, owner, { email: 'refresh@test.com', role: 'ADMIN' }).expect(201);
-        expect(c2.body.id).toBe(c1.body.id);       // same row, not a duplicate
-        expect(c2.body.status).toBe('PENDING');     // revoked → refreshed
-        expect(c2.body.role).toBe('ADMIN');         // role updated on re-invite
+        expect(c2.body.id).toBe(c1.body.id); // same row, not a duplicate
+        expect(c2.body.status).toBe('PENDING'); // revoked → refreshed
+        expect(c2.body.role).toBe('ADMIN'); // role updated on re-invite
     });
 
     it('a REVOKED invite cannot be accepted even by the right email → 400 (atomic status guard)', async () => {
         await seedInvite(otherEmail, 'tok-revoked', { role: 'MEMBER' });
-        await prisma.orgInvitation.updateMany({ where: { orgId: orgA, email: otherEmail.toLowerCase() }, data: { status: 'REVOKED' } });
+        await prisma.orgInvitation.updateMany({
+            where: { orgId: orgA, email: otherEmail.toLowerCase() },
+            data: { status: 'REVOKED' },
+        });
         await accept(otherTok, 'tok-revoked').expect(400);
         // and no membership was created as a side effect
         const m = await prisma.orgMembership.findUnique({ where: { orgId_userId: { orgId: orgA, userId: otherId } } });

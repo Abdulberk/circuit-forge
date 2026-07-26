@@ -5,16 +5,15 @@ module.exports = {
     roots: ['<rootDir>/src', '<rootDir>/__tests__'],
     testMatch: ['**/*.test.ts', '**/*.spec.ts'],
     moduleFileExtensions: ['ts', 'js', 'json'],
-    collectCoverageFrom: [
-        'src/**/*.ts',
-        '!src/**/*.d.ts',
-        '!src/index.ts',
-    ],
+    collectCoverageFrom: ['src/**/*.ts', '!src/**/*.d.ts', '!src/index.ts'],
     coverageDirectory: 'coverage',
     coverageReporters: ['text', 'lcov', 'html'],
     transform: {
-        '^.+\\.ts$': ['ts-jest', {
-            tsconfig: 'tsconfig.json',
-        }],
+        '^.+\\.ts$': [
+            'ts-jest',
+            {
+                tsconfig: 'tsconfig.json',
+            },
+        ],
     },
 };

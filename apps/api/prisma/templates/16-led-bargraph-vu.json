@@ -1,612 +1,597 @@
 {
-  "name": "LED Bargraph VU Meter (4-LED)",
-  "description": "An LM3914-style audio level meter: a 1kHz audio signal with rising amplitude feeds an op-amp peak detector (22ms hold), whose envelope is compared against a 4-tap resistor reference ladder (0.5/1.5/2.5/3.5V) by 4 comparators, each driving an LED (3 green + 1 red peak LED). Run the transient — LEDs light cumulatively 1→2→3→4 as the level rises (~8.3mA green, 9.4mA red when lit). Like real bargraphs, the boundary LED flickers briefly at threshold (no hysteresis — faithful LM3914 behavior). (ngspice-validated: every window unambiguously lit/dark.)",
-  "tags": [
-    "display",
-    "led",
-    "bargraph",
-    "vu-meter",
-    "audio",
-    "comparator",
-    "sensor"
-  ],
-  "analysisConfig": {
-    "analysis": {
-      "type": "tran",
-      "stopTime": "80m",
-      "stepTime": "20u"
+    "name": "LED Bargraph VU Meter (4-LED)",
+    "description": "An LM3914-style audio level meter: a 1kHz audio signal with rising amplitude feeds an op-amp peak detector (22ms hold), whose envelope is compared against a 4-tap resistor reference ladder (0.5/1.5/2.5/3.5V) by 4 comparators, each driving an LED (3 green + 1 red peak LED). Run the transient — LEDs light cumulatively 1→2→3→4 as the level rises (~8.3mA green, 9.4mA red when lit). Like real bargraphs, the boundary LED flickers briefly at threshold (no hysteresis — faithful LM3914 behavior). (ngspice-validated: every window unambiguously lit/dark.)",
+    "tags": ["display", "led", "bargraph", "vu-meter", "audio", "comparator", "sensor"],
+    "analysisConfig": {
+        "analysis": {
+            "type": "tran",
+            "stopTime": "80m",
+            "stepTime": "20u"
+        },
+        "probes": ["i(R7)", "i(R8)", "i(R9)", "i(R10)", "v(level)", "v(env)"]
     },
-    "probes": [
-      "i(R7)",
-      "i(R8)",
-      "i(R9)",
-      "i(R10)",
-      "v(level)",
-      "v(env)"
-    ]
-  },
-  "circuitJson": {
-    "version": "1.0",
-    "components": [
-      {
-        "id": "v_audio",
-        "type": "voltage_source",
-        "designator": "V1",
-        "value": "SIN(0 1 1k)",
-        "pins": [
-          {
-            "pinId": "+",
-            "netId": "araw"
-          },
-          {
-            "pinId": "-",
-            "netId": "0"
-          }
-        ]
-      },
-      {
-        "id": "v_env",
-        "type": "voltage_source",
-        "designator": "V2",
-        "value": "PULSE(0 4.5 0 76m 1m 20m 200m)",
-        "pins": [
-          {
-            "pinId": "+",
-            "netId": "env"
-          },
-          {
-            "pinId": "-",
-            "netId": "0"
-          }
-        ]
-      },
-      {
-        "id": "b_mod",
-        "type": "bsource",
-        "designator": "B1",
-        "value": "V=v(araw)*v(env)",
-        "pins": [
-          {
-            "pinId": "+",
-            "netId": "audio"
-          },
-          {
-            "pinId": "-",
-            "netId": "0"
-          }
-        ]
-      },
-      {
-        "id": "v_vcc",
-        "type": "voltage_source",
-        "designator": "V3",
-        "value": "DC 5",
-        "pins": [
-          {
-            "pinId": "+",
-            "netId": "vcc"
-          },
-          {
-            "pinId": "-",
-            "netId": "0"
-          }
-        ]
-      },
-      {
-        "id": "v_vee",
-        "type": "voltage_source",
-        "designator": "V4",
-        "value": "DC -5",
-        "pins": [
-          {
-            "pinId": "+",
-            "netId": "vee"
-          },
-          {
-            "pinId": "-",
-            "netId": "0"
-          }
-        ]
-      },
-      {
-        "id": "u_pk",
-        "type": "subckt",
-        "designator": "U1",
-        "model": "OPAMPGEN",
-        "pins": [
-          {
-            "pinId": "out",
-            "netId": "pk"
-          },
-          {
-            "pinId": "in+",
-            "netId": "audio"
-          },
-          {
-            "pinId": "in-",
-            "netId": "level"
-          },
-          {
-            "pinId": "vcc",
-            "netId": "vcc"
-          },
-          {
-            "pinId": "vee",
-            "netId": "vee"
-          }
-        ]
-      },
-      {
-        "id": "d_pk",
-        "type": "diode",
-        "designator": "D5",
-        "model": "DSIG",
-        "pins": [
-          {
-            "pinId": "anode",
-            "netId": "pk"
-          },
-          {
-            "pinId": "cathode",
-            "netId": "level"
-          }
-        ]
-      },
-      {
-        "id": "c_hold",
-        "type": "capacitor",
-        "designator": "C1",
-        "value": "1u",
-        "pins": [
-          {
-            "pinId": "1",
-            "netId": "level"
-          },
-          {
-            "pinId": "2",
-            "netId": "0"
-          }
-        ]
-      },
-      {
-        "id": "r_bleed",
-        "type": "resistor",
-        "designator": "R1",
-        "value": "22k",
-        "pins": [
-          {
-            "pinId": "1",
-            "netId": "level"
-          },
-          {
-            "pinId": "2",
-            "netId": "0"
-          }
-        ]
-      },
-      {
-        "id": "r_lad4",
-        "type": "resistor",
-        "designator": "R2",
-        "value": "1.5k",
-        "pins": [
-          {
-            "pinId": "1",
-            "netId": "vcc"
-          },
-          {
-            "pinId": "2",
-            "netId": "t4"
-          }
-        ]
-      },
-      {
-        "id": "r_lad3",
-        "type": "resistor",
-        "designator": "R3",
-        "value": "1k",
-        "pins": [
-          {
-            "pinId": "1",
-            "netId": "t4"
-          },
-          {
-            "pinId": "2",
-            "netId": "t3"
-          }
-        ]
-      },
-      {
-        "id": "r_lad2",
-        "type": "resistor",
-        "designator": "R4",
-        "value": "1k",
-        "pins": [
-          {
-            "pinId": "1",
-            "netId": "t3"
-          },
-          {
-            "pinId": "2",
-            "netId": "t2"
-          }
-        ]
-      },
-      {
-        "id": "r_lad1",
-        "type": "resistor",
-        "designator": "R5",
-        "value": "1k",
-        "pins": [
-          {
-            "pinId": "1",
-            "netId": "t2"
-          },
-          {
-            "pinId": "2",
-            "netId": "t1"
-          }
-        ]
-      },
-      {
-        "id": "r_lad0",
-        "type": "resistor",
-        "designator": "R6",
-        "value": "500",
-        "pins": [
-          {
-            "pinId": "1",
-            "netId": "t1"
-          },
-          {
-            "pinId": "2",
-            "netId": "0"
-          }
-        ]
-      },
-      {
-        "id": "u_c1",
-        "type": "subckt",
-        "designator": "U2",
-        "model": "OPAMPGEN",
-        "pins": [
-          {
-            "pinId": "out",
-            "netId": "c1"
-          },
-          {
-            "pinId": "in+",
-            "netId": "level"
-          },
-          {
-            "pinId": "in-",
-            "netId": "t1"
-          },
-          {
-            "pinId": "vcc",
-            "netId": "vcc"
-          },
-          {
-            "pinId": "vee",
-            "netId": "0"
-          }
-        ]
-      },
-      {
-        "id": "u_c2",
-        "type": "subckt",
-        "designator": "U3",
-        "model": "OPAMPGEN",
-        "pins": [
-          {
-            "pinId": "out",
-            "netId": "c2"
-          },
-          {
-            "pinId": "in+",
-            "netId": "level"
-          },
-          {
-            "pinId": "in-",
-            "netId": "t2"
-          },
-          {
-            "pinId": "vcc",
-            "netId": "vcc"
-          },
-          {
-            "pinId": "vee",
-            "netId": "0"
-          }
-        ]
-      },
-      {
-        "id": "u_c3",
-        "type": "subckt",
-        "designator": "U4",
-        "model": "OPAMPGEN",
-        "pins": [
-          {
-            "pinId": "out",
-            "netId": "c3"
-          },
-          {
-            "pinId": "in+",
-            "netId": "level"
-          },
-          {
-            "pinId": "in-",
-            "netId": "t3"
-          },
-          {
-            "pinId": "vcc",
-            "netId": "vcc"
-          },
-          {
-            "pinId": "vee",
-            "netId": "0"
-          }
-        ]
-      },
-      {
-        "id": "u_c4",
-        "type": "subckt",
-        "designator": "U5",
-        "model": "OPAMPGEN",
-        "pins": [
-          {
-            "pinId": "out",
-            "netId": "c4"
-          },
-          {
-            "pinId": "in+",
-            "netId": "level"
-          },
-          {
-            "pinId": "in-",
-            "netId": "t4"
-          },
-          {
-            "pinId": "vcc",
-            "netId": "vcc"
-          },
-          {
-            "pinId": "vee",
-            "netId": "0"
-          }
-        ]
-      },
-      {
-        "id": "r_led1",
-        "type": "resistor",
-        "designator": "R7",
-        "value": "330",
-        "pins": [
-          {
-            "pinId": "1",
-            "netId": "c1"
-          },
-          {
-            "pinId": "2",
-            "netId": "a1"
-          }
-        ]
-      },
-      {
-        "id": "r_led2",
-        "type": "resistor",
-        "designator": "R8",
-        "value": "330",
-        "pins": [
-          {
-            "pinId": "1",
-            "netId": "c2"
-          },
-          {
-            "pinId": "2",
-            "netId": "a2"
-          }
-        ]
-      },
-      {
-        "id": "r_led3",
-        "type": "resistor",
-        "designator": "R9",
-        "value": "330",
-        "pins": [
-          {
-            "pinId": "1",
-            "netId": "c3"
-          },
-          {
-            "pinId": "2",
-            "netId": "a3"
-          }
-        ]
-      },
-      {
-        "id": "r_led4",
-        "type": "resistor",
-        "designator": "R10",
-        "value": "330",
-        "pins": [
-          {
-            "pinId": "1",
-            "netId": "c4"
-          },
-          {
-            "pinId": "2",
-            "netId": "a4"
-          }
-        ]
-      },
-      {
-        "id": "led1",
-        "type": "diode",
-        "designator": "D1",
-        "model": "LEDGRN",
-        "pins": [
-          {
-            "pinId": "anode",
-            "netId": "a1"
-          },
-          {
-            "pinId": "cathode",
-            "netId": "0"
-          }
-        ]
-      },
-      {
-        "id": "led2",
-        "type": "diode",
-        "designator": "D2",
-        "model": "LEDGRN",
-        "pins": [
-          {
-            "pinId": "anode",
-            "netId": "a2"
-          },
-          {
-            "pinId": "cathode",
-            "netId": "0"
-          }
-        ]
-      },
-      {
-        "id": "led3",
-        "type": "diode",
-        "designator": "D3",
-        "model": "LEDGRN",
-        "pins": [
-          {
-            "pinId": "anode",
-            "netId": "a3"
-          },
-          {
-            "pinId": "cathode",
-            "netId": "0"
-          }
-        ]
-      },
-      {
-        "id": "led4",
-        "type": "diode",
-        "designator": "D4",
-        "model": "LEDRED",
-        "pins": [
-          {
-            "pinId": "anode",
-            "netId": "a4"
-          },
-          {
-            "pinId": "cathode",
-            "netId": "0"
-          }
-        ]
-      }
-    ],
-    "nets": [
-      {
-        "id": "0",
-        "name": "GND",
-        "isGround": true
-      },
-      {
-        "id": "araw",
-        "name": "AUDIO_RAW"
-      },
-      {
-        "id": "env",
-        "name": "ENVELOPE"
-      },
-      {
-        "id": "audio",
-        "name": "AUDIO"
-      },
-      {
-        "id": "vcc",
-        "name": "VCC"
-      },
-      {
-        "id": "vee",
-        "name": "VEE"
-      },
-      {
-        "id": "pk",
-        "name": "PK"
-      },
-      {
-        "id": "level",
-        "name": "LEVEL"
-      },
-      {
-        "id": "t1",
-        "name": "TH1"
-      },
-      {
-        "id": "t2",
-        "name": "TH2"
-      },
-      {
-        "id": "t3",
-        "name": "TH3"
-      },
-      {
-        "id": "t4",
-        "name": "TH4"
-      },
-      {
-        "id": "c1",
-        "name": "CMP1"
-      },
-      {
-        "id": "c2",
-        "name": "CMP2"
-      },
-      {
-        "id": "c3",
-        "name": "CMP3"
-      },
-      {
-        "id": "c4",
-        "name": "CMP4"
-      },
-      {
-        "id": "a1",
-        "name": "LED1A"
-      },
-      {
-        "id": "a2",
-        "name": "LED2A"
-      },
-      {
-        "id": "a3",
-        "name": "LED3A"
-      },
-      {
-        "id": "a4",
-        "name": "LED4A"
-      }
-    ],
-    "models": [
-      {
-        "name": "DSIG",
-        "device": "diode",
-        "body": ".model DSIG D(IS=2.5e-9 RS=0.5 N=1.0 CJO=4p TT=5n BV=75)"
-      },
-      {
-        "name": "LEDGRN",
-        "device": "diode",
-        "body": ".model LEDGRN D(IS=1e-22 N=2.0 RS=2 CJO=10p)"
-      },
-      {
-        "name": "LEDRED",
-        "device": "diode",
-        "body": ".model LEDRED D(IS=1e-20 N=1.8 RS=2 CJO=10p)"
-      }
-    ],
-    "metadata": {
-      "name": "LED Bargraph VU Meter (4-LED)"
+    "circuitJson": {
+        "version": "1.0",
+        "components": [
+            {
+                "id": "v_audio",
+                "type": "voltage_source",
+                "designator": "V1",
+                "value": "SIN(0 1 1k)",
+                "pins": [
+                    {
+                        "pinId": "+",
+                        "netId": "araw"
+                    },
+                    {
+                        "pinId": "-",
+                        "netId": "0"
+                    }
+                ]
+            },
+            {
+                "id": "v_env",
+                "type": "voltage_source",
+                "designator": "V2",
+                "value": "PULSE(0 4.5 0 76m 1m 20m 200m)",
+                "pins": [
+                    {
+                        "pinId": "+",
+                        "netId": "env"
+                    },
+                    {
+                        "pinId": "-",
+                        "netId": "0"
+                    }
+                ]
+            },
+            {
+                "id": "b_mod",
+                "type": "bsource",
+                "designator": "B1",
+                "value": "V=v(araw)*v(env)",
+                "pins": [
+                    {
+                        "pinId": "+",
+                        "netId": "audio"
+                    },
+                    {
+                        "pinId": "-",
+                        "netId": "0"
+                    }
+                ]
+            },
+            {
+                "id": "v_vcc",
+                "type": "voltage_source",
+                "designator": "V3",
+                "value": "DC 5",
+                "pins": [
+                    {
+                        "pinId": "+",
+                        "netId": "vcc"
+                    },
+                    {
+                        "pinId": "-",
+                        "netId": "0"
+                    }
+                ]
+            },
+            {
+                "id": "v_vee",
+                "type": "voltage_source",
+                "designator": "V4",
+                "value": "DC -5",
+                "pins": [
+                    {
+                        "pinId": "+",
+                        "netId": "vee"
+                    },
+                    {
+                        "pinId": "-",
+                        "netId": "0"
+                    }
+                ]
+            },
+            {
+                "id": "u_pk",
+                "type": "subckt",
+                "designator": "U1",
+                "model": "OPAMPGEN",
+                "pins": [
+                    {
+                        "pinId": "out",
+                        "netId": "pk"
+                    },
+                    {
+                        "pinId": "in+",
+                        "netId": "audio"
+                    },
+                    {
+                        "pinId": "in-",
+                        "netId": "level"
+                    },
+                    {
+                        "pinId": "vcc",
+                        "netId": "vcc"
+                    },
+                    {
+                        "pinId": "vee",
+                        "netId": "vee"
+                    }
+                ]
+            },
+            {
+                "id": "d_pk",
+                "type": "diode",
+                "designator": "D5",
+                "model": "DSIG",
+                "pins": [
+                    {
+                        "pinId": "anode",
+                        "netId": "pk"
+                    },
+                    {
+                        "pinId": "cathode",
+                        "netId": "level"
+                    }
+                ]
+            },
+            {
+                "id": "c_hold",
+                "type": "capacitor",
+                "designator": "C1",
+                "value": "1u",
+                "pins": [
+                    {
+                        "pinId": "1",
+                        "netId": "level"
+                    },
+                    {
+                        "pinId": "2",
+                        "netId": "0"
+                    }
+                ]
+            },
+            {
+                "id": "r_bleed",
+                "type": "resistor",
+                "designator": "R1",
+                "value": "22k",
+                "pins": [
+                    {
+                        "pinId": "1",
+                        "netId": "level"
+                    },
+                    {
+                        "pinId": "2",
+                        "netId": "0"
+                    }
+                ]
+            },
+            {
+                "id": "r_lad4",
+                "type": "resistor",
+                "designator": "R2",
+                "value": "1.5k",
+                "pins": [
+                    {
+                        "pinId": "1",
+                        "netId": "vcc"
+                    },
+                    {
+                        "pinId": "2",
+                        "netId": "t4"
+                    }
+                ]
+            },
+            {
+                "id": "r_lad3",
+                "type": "resistor",
+                "designator": "R3",
+                "value": "1k",
+                "pins": [
+                    {
+                        "pinId": "1",
+                        "netId": "t4"
+                    },
+                    {
+                        "pinId": "2",
+                        "netId": "t3"
+                    }
+                ]
+            },
+            {
+                "id": "r_lad2",
+                "type": "resistor",
+                "designator": "R4",
+                "value": "1k",
+                "pins": [
+                    {
+                        "pinId": "1",
+                        "netId": "t3"
+                    },
+                    {
+                        "pinId": "2",
+                        "netId": "t2"
+                    }
+                ]
+            },
+            {
+                "id": "r_lad1",
+                "type": "resistor",
+                "designator": "R5",
+                "value": "1k",
+                "pins": [
+                    {
+                        "pinId": "1",
+                        "netId": "t2"
+                    },
+                    {
+                        "pinId": "2",
+                        "netId": "t1"
+                    }
+                ]
+            },
+            {
+                "id": "r_lad0",
+                "type": "resistor",
+                "designator": "R6",
+                "value": "500",
+                "pins": [
+                    {
+                        "pinId": "1",
+                        "netId": "t1"
+                    },
+                    {
+                        "pinId": "2",
+                        "netId": "0"
+                    }
+                ]
+            },
+            {
+                "id": "u_c1",
+                "type": "subckt",
+                "designator": "U2",
+                "model": "OPAMPGEN",
+                "pins": [
+                    {
+                        "pinId": "out",
+                        "netId": "c1"
+                    },
+                    {
+                        "pinId": "in+",
+                        "netId": "level"
+                    },
+                    {
+                        "pinId": "in-",
+                        "netId": "t1"
+                    },
+                    {
+                        "pinId": "vcc",
+                        "netId": "vcc"
+                    },
+                    {
+                        "pinId": "vee",
+                        "netId": "0"
+                    }
+                ]
+            },
+            {
+                "id": "u_c2",
+                "type": "subckt",
+                "designator": "U3",
+                "model": "OPAMPGEN",
+                "pins": [
+                    {
+                        "pinId": "out",
+                        "netId": "c2"
+                    },
+                    {
+                        "pinId": "in+",
+                        "netId": "level"
+                    },
+                    {
+                        "pinId": "in-",
+                        "netId": "t2"
+                    },
+                    {
+                        "pinId": "vcc",
+                        "netId": "vcc"
+                    },
+                    {
+                        "pinId": "vee",
+                        "netId": "0"
+                    }
+                ]
+            },
+            {
+                "id": "u_c3",
+                "type": "subckt",
+                "designator": "U4",
+                "model": "OPAMPGEN",
+                "pins": [
+                    {
+                        "pinId": "out",
+                        "netId": "c3"
+                    },
+                    {
+                        "pinId": "in+",
+                        "netId": "level"
+                    },
+                    {
+                        "pinId": "in-",
+                        "netId": "t3"
+                    },
+                    {
+                        "pinId": "vcc",
+                        "netId": "vcc"
+                    },
+                    {
+                        "pinId": "vee",
+                        "netId": "0"
+                    }
+                ]
+            },
+            {
+                "id": "u_c4",
+                "type": "subckt",
+                "designator": "U5",
+                "model": "OPAMPGEN",
+                "pins": [
+                    {
+                        "pinId": "out",
+                        "netId": "c4"
+                    },
+                    {
+                        "pinId": "in+",
+                        "netId": "level"
+                    },
+                    {
+                        "pinId": "in-",
+                        "netId": "t4"
+                    },
+                    {
+                        "pinId": "vcc",
+                        "netId": "vcc"
+                    },
+                    {
+                        "pinId": "vee",
+                        "netId": "0"
+                    }
+                ]
+            },
+            {
+                "id": "r_led1",
+                "type": "resistor",
+                "designator": "R7",
+                "value": "330",
+                "pins": [
+                    {
+                        "pinId": "1",
+                        "netId": "c1"
+                    },
+                    {
+                        "pinId": "2",
+                        "netId": "a1"
+                    }
+                ]
+            },
+            {
+                "id": "r_led2",
+                "type": "resistor",
+                "designator": "R8",
+                "value": "330",
+                "pins": [
+                    {
+                        "pinId": "1",
+                        "netId": "c2"
+                    },
+                    {
+                        "pinId": "2",
+                        "netId": "a2"
+                    }
+                ]
+            },
+            {
+                "id": "r_led3",
+                "type": "resistor",
+                "designator": "R9",
+                "value": "330",
+                "pins": [
+                    {
+                        "pinId": "1",
+                        "netId": "c3"
+                    },
+                    {
+                        "pinId": "2",
+                        "netId": "a3"
+                    }
+                ]
+            },
+            {
+                "id": "r_led4",
+                "type": "resistor",
+                "designator": "R10",
+                "value": "330",
+                "pins": [
+                    {
+                        "pinId": "1",
+                        "netId": "c4"
+                    },
+                    {
+                        "pinId": "2",
+                        "netId": "a4"
+                    }
+                ]
+            },
+            {
+                "id": "led1",
+                "type": "diode",
+                "designator": "D1",
+                "model": "LEDGRN",
+                "pins": [
+                    {
+                        "pinId": "anode",
+                        "netId": "a1"
+                    },
+                    {
+                        "pinId": "cathode",
+                        "netId": "0"
+                    }
+                ]
+            },
+            {
+                "id": "led2",
+                "type": "diode",
+                "designator": "D2",
+                "model": "LEDGRN",
+                "pins": [
+                    {
+                        "pinId": "anode",
+                        "netId": "a2"
+                    },
+                    {
+                        "pinId": "cathode",
+                        "netId": "0"
+                    }
+                ]
+            },
+            {
+                "id": "led3",
+                "type": "diode",
+                "designator": "D3",
+                "model": "LEDGRN",
+                "pins": [
+                    {
+                        "pinId": "anode",
+                        "netId": "a3"
+                    },
+                    {
+                        "pinId": "cathode",
+                        "netId": "0"
+                    }
+                ]
+            },
+            {
+                "id": "led4",
+                "type": "diode",
+                "designator": "D4",
+                "model": "LEDRED",
+                "pins": [
+                    {
+                        "pinId": "anode",
+                        "netId": "a4"
+                    },
+                    {
+                        "pinId": "cathode",
+                        "netId": "0"
+                    }
+                ]
+            }
+        ],
+        "nets": [
+            {
+                "id": "0",
+                "name": "GND",
+                "isGround": true
+            },
+            {
+                "id": "araw",
+                "name": "AUDIO_RAW"
+            },
+            {
+                "id": "env",
+                "name": "ENVELOPE"
+            },
+            {
+                "id": "audio",
+                "name": "AUDIO"
+            },
+            {
+                "id": "vcc",
+                "name": "VCC"
+            },
+            {
+                "id": "vee",
+                "name": "VEE"
+            },
+            {
+                "id": "pk",
+                "name": "PK"
+            },
+            {
+                "id": "level",
+                "name": "LEVEL"
+            },
+            {
+                "id": "t1",
+                "name": "TH1"
+            },
+            {
+                "id": "t2",
+                "name": "TH2"
+            },
+            {
+                "id": "t3",
+                "name": "TH3"
+            },
+            {
+                "id": "t4",
+                "name": "TH4"
+            },
+            {
+                "id": "c1",
+                "name": "CMP1"
+            },
+            {
+                "id": "c2",
+                "name": "CMP2"
+            },
+            {
+                "id": "c3",
+                "name": "CMP3"
+            },
+            {
+                "id": "c4",
+                "name": "CMP4"
+            },
+            {
+                "id": "a1",
+                "name": "LED1A"
+            },
+            {
+                "id": "a2",
+                "name": "LED2A"
+            },
+            {
+                "id": "a3",
+                "name": "LED3A"
+            },
+            {
+                "id": "a4",
+                "name": "LED4A"
+            }
+        ],
+        "models": [
+            {
+                "name": "DSIG",
+                "device": "diode",
+                "body": ".model DSIG D(IS=2.5e-9 RS=0.5 N=1.0 CJO=4p TT=5n BV=75)"
+            },
+            {
+                "name": "LEDGRN",
+                "device": "diode",
+                "body": ".model LEDGRN D(IS=1e-22 N=2.0 RS=2 CJO=10p)"
+            },
+            {
+                "name": "LEDRED",
+                "device": "diode",
+                "body": ".model LEDRED D(IS=1e-20 N=1.8 RS=2 CJO=10p)"
+            }
+        ],
+        "metadata": {
+            "name": "LED Bargraph VU Meter (4-LED)"
+        }
     }
-  }
 }

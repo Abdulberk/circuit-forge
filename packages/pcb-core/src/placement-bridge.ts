@@ -141,7 +141,11 @@ export function extractPlacementParts(
             missing.push(name);
             continue;
         }
-        const pads = (portsBySrcComp.get(srcId) ?? []).map((p) => ({ x: round3(p.x - center.x), y: round3(p.y - center.y), net: p.net }));
+        const pads = (portsBySrcComp.get(srcId) ?? []).map((p) => ({
+            x: round3(p.x - center.x),
+            y: round3(p.y - center.y),
+            net: p.net,
+        }));
         parts.push({
             id: name,
             w: round3(extent.hx * 2),

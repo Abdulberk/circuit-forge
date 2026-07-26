@@ -1,12 +1,7 @@
 /**
  * Netlist Module Exports
  */
-export {
-    generateNetlist,
-    getNodeNames,
-    validateNetlist,
-    type NetlistOptions,
-} from './generator';
+export { generateNetlist, getNodeNames, validateNetlist, type NetlistOptions } from './generator';
 export {
     sanitizeNodeName,
     validateIncludePaths,

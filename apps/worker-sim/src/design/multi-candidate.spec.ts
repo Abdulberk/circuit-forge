@@ -11,33 +11,72 @@ const runYieldAnalysis = jest.fn();
 // to the winner result — so a representative stub keeps this flow test fast/deterministic. (Its real behaviour
 // is unit-tested in llm-core's design-core.spec.) Omitting it here is what made the worker `test` job go red.
 jest.mock('@circuitforge/llm-core', () => ({
-    runDesignLoop, screenCandidate, selectFinalists, runYieldAnalysis,
+    runDesignLoop,
+    screenCandidate,
+    selectFinalists,
+    runYieldAnalysis,
     classifyRobustness: (y?: { yield?: number; evaluated?: number }) => ({
-        tier: 'robust', profile: 'consumer', yield: y?.yield ?? null, yieldLowerBound: 0.92, evaluated: y?.evaluated ?? null, note: 'stub',
+        tier: 'robust',
+        profile: 'consumer',
+        yield: y?.yield ?? null,
+        yieldLowerBound: 0.92,
+        evaluated: y?.evaluated ?? null,
+        note: 'stub',
     }),
 }));
-jest.mock('./pools', () => ({ llmSem: { run: (fn: () => unknown) => fn() }, ngspiceSem: { run: (fn: () => unknown) => fn() } }));
+jest.mock('./pools', () => ({
+    llmSem: { run: (fn: () => unknown) => fn() },
+    ngspiceSem: { run: (fn: () => unknown) => fn() },
+}));
 jest.mock('../logger', () => ({ logger: { info: jest.fn(), warn: jest.fn(), error: jest.fn() } }));
 
 import { runMultiCandidateDesign } from './multi-candidate';
 
-const deps = { llmConfig: { apiKey: 'k' }, runSim: {}, ground: {}, userId: 'u', pollTimeoutMs: 1000, mcEnabled: true } as never;
+const deps = {
+    llmConfig: { apiKey: 'k' },
+    runSim: {},
+    ground: {},
+    userId: 'u',
+    pollTimeoutMs: 1000,
+    mcEnabled: true,
+} as never;
 const input = { prompt: 'a divider', maxRounds: 2 } as never;
 
 const screenOf = (temp: number) => ({
     circuit: { components: [{ id: 'r', type: 'resistor' }], nets: [{ id: 'n', name: 'n' }], _temp: temp },
-    analysisConfig: { type: 'op' }, acceptanceCriteria: [], assertions: [], simHealthy: true, pointsCount: 1,
-    specsMet: false, closeness: temp, simStatus: 'SUCCEEDED',
+    analysisConfig: { type: 'op' },
+    acceptanceCriteria: [],
+    assertions: [],
+    simHealthy: true,
+    pointsCount: 1,
+    specsMet: false,
+    closeness: temp,
+    simStatus: 'SUCCEEDED',
 });
 const loopResultOf = (seed: unknown) => ({
-    ok: true, verified: true, circuit: seed ?? { components: [], nets: [] }, analysisConfig: { type: 'op' },
-    rounds: 2, history: [], simulation: { status: 'SUCCEEDED', result: { series: [{ name: 'out', points: Array(20000).fill({ x: 0, y: 0 }) }] } },
-    acceptanceCriteria: [], assertions: [{ pass: true }],
+    ok: true,
+    verified: true,
+    circuit: seed ?? { components: [], nets: [] },
+    analysisConfig: { type: 'op' },
+    rounds: 2,
+    history: [],
+    simulation: {
+        status: 'SUCCEEDED',
+        result: { series: [{ name: 'out', points: Array(20000).fill({ x: 0, y: 0 }) }] },
+    },
+    acceptanceCriteria: [],
+    assertions: [{ pass: true }],
 });
 
 beforeEach(() => {
-    runDesignLoop.mockReset().mockImplementation((i: { seedCircuit?: unknown }) => Promise.resolve(loopResultOf(i.seedCircuit)));
-    screenCandidate.mockReset().mockImplementation((_i: unknown, d: { llmConfig: { temperature: number } }) => Promise.resolve(screenOf(d.llmConfig.temperature)));
+    runDesignLoop
+        .mockReset()
+        .mockImplementation((i: { seedCircuit?: unknown }) => Promise.resolve(loopResultOf(i.seedCircuit)));
+    screenCandidate
+        .mockReset()
+        .mockImplementation((_i: unknown, d: { llmConfig: { temperature: number } }) =>
+            Promise.resolve(screenOf(d.llmConfig.temperature)),
+        );
     selectFinalists.mockReset().mockImplementation((s: unknown[], k: number) => s.slice(0, k)); // pure-ish stand-in
     runYieldAnalysis.mockReset().mockResolvedValue({ yield: 0.95, evaluated: 120 });
 });
@@ -55,7 +94,9 @@ describe('runMultiCandidateDesign', () => {
         const res = await runMultiCandidateDesign(input, deps, { n: 4, k: 2, llmBudget: 12 });
         // 4 screens, each with a DISTINCT prompt (diversity via topology directives, not temperature)
         expect(screenCandidate).toHaveBeenCalledTimes(4);
-        const constraintsSeen = new Set(screenCandidate.mock.calls.map((c) => (c[0] as { constraints?: string }).constraints));
+        const constraintsSeen = new Set(
+            screenCandidate.mock.calls.map((c) => (c[0] as { constraints?: string }).constraints),
+        );
         expect(constraintsSeen.size).toBe(4);
         // K=2 finalists run the FULL loop, each SEEDED (not regenerating)
         expect(runDesignLoop).toHaveBeenCalledTimes(2);

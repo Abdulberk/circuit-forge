@@ -37,41 +37,161 @@ function makeConfig(ngspice: string = NGSPICE): ConfigService {
 const RC_LOWPASS: CircuitJson = {
     version: '1.0',
     components: [
-        { id: 'v1', type: 'voltage_source', designator: 'V1', value: 'SIN(0 5 1k)', pins: [{ pinId: '+', netId: 'in' }, { pinId: '-', netId: 'gnd' }] },
-        { id: 'r1', type: 'resistor', designator: 'R1', value: '1.6k', pins: [{ pinId: '1', netId: 'in' }, { pinId: '2', netId: 'out' }] },
-        { id: 'c1', type: 'capacitor', designator: 'C1', value: '100n', pins: [{ pinId: '1', netId: 'out' }, { pinId: '2', netId: 'gnd' }] },
+        {
+            id: 'v1',
+            type: 'voltage_source',
+            designator: 'V1',
+            value: 'SIN(0 5 1k)',
+            pins: [
+                { pinId: '+', netId: 'in' },
+                { pinId: '-', netId: 'gnd' },
+            ],
+        },
+        {
+            id: 'r1',
+            type: 'resistor',
+            designator: 'R1',
+            value: '1.6k',
+            pins: [
+                { pinId: '1', netId: 'in' },
+                { pinId: '2', netId: 'out' },
+            ],
+        },
+        {
+            id: 'c1',
+            type: 'capacitor',
+            designator: 'C1',
+            value: '100n',
+            pins: [
+                { pinId: '1', netId: 'out' },
+                { pinId: '2', netId: 'gnd' },
+            ],
+        },
         { id: 'gnd', type: 'ground', designator: 'GND1', pins: [{ pinId: '1', netId: 'gnd' }] },
     ],
-    nets: [{ id: 'in', name: 'in' }, { id: 'out', name: 'out' }, { id: 'gnd', name: 'gnd', isGround: true }],
+    nets: [
+        { id: 'in', name: 'in' },
+        { id: 'out', name: 'out' },
+        { id: 'gnd', name: 'gnd', isGround: true },
+    ],
 };
 
 /** A plain 1k/1k resistive divider off a DC source — Vout/Vin = 0.5, so a `.tf` gain has a known value. */
 const RES_DIVIDER: CircuitJson = {
     version: '1.0',
     components: [
-        { id: 'v1', type: 'voltage_source', designator: 'V1', value: 'DC 6', pins: [{ pinId: '+', netId: 'in' }, { pinId: '-', netId: 'gnd' }] },
-        { id: 'r1', type: 'resistor', designator: 'R1', value: '1k', pins: [{ pinId: '1', netId: 'in' }, { pinId: '2', netId: 'out' }] },
-        { id: 'r2', type: 'resistor', designator: 'R2', value: '1k', pins: [{ pinId: '1', netId: 'out' }, { pinId: '2', netId: 'gnd' }] },
+        {
+            id: 'v1',
+            type: 'voltage_source',
+            designator: 'V1',
+            value: 'DC 6',
+            pins: [
+                { pinId: '+', netId: 'in' },
+                { pinId: '-', netId: 'gnd' },
+            ],
+        },
+        {
+            id: 'r1',
+            type: 'resistor',
+            designator: 'R1',
+            value: '1k',
+            pins: [
+                { pinId: '1', netId: 'in' },
+                { pinId: '2', netId: 'out' },
+            ],
+        },
+        {
+            id: 'r2',
+            type: 'resistor',
+            designator: 'R2',
+            value: '1k',
+            pins: [
+                { pinId: '1', netId: 'out' },
+                { pinId: '2', netId: 'gnd' },
+            ],
+        },
         { id: 'gnd', type: 'ground', designator: 'GND1', pins: [{ pinId: '1', netId: 'gnd' }] },
     ],
-    nets: [{ id: 'in', name: 'in' }, { id: 'out', name: 'out' }, { id: 'gnd', name: 'gnd', isGround: true }],
+    nets: [
+        { id: 'in', name: 'in' },
+        { id: 'out', name: 'out' },
+        { id: 'gnd', name: 'gnd', isGround: true },
+    ],
 };
 
 /** NPN common-emitter amp referencing a generic model NAME only (no body) — the body must be auto-attached. */
 const NPN_AMP: CircuitJson = {
     version: '1.0',
     components: [
-        { id: 'vcc', type: 'voltage_source', designator: 'V1', value: 'DC 12', pins: [{ pinId: '+', netId: 'vcc' }, { pinId: '-', netId: 'gnd' }] },
-        { id: 'rc', type: 'resistor', designator: 'RC1', value: '2.2k', pins: [{ pinId: '1', netId: 'vcc' }, { pinId: '2', netId: 'col' }] },
-        { id: 'rb1', type: 'resistor', designator: 'RB1', value: '100k', pins: [{ pinId: '1', netId: 'vcc' }, { pinId: '2', netId: 'base' }] },
-        { id: 'rb2', type: 'resistor', designator: 'RB2', value: '18k', pins: [{ pinId: '1', netId: 'base' }, { pinId: '2', netId: 'gnd' }] },
-        { id: 're', type: 'resistor', designator: 'RE1', value: '470', pins: [{ pinId: '1', netId: 'emit' }, { pinId: '2', netId: 'gnd' }] },
-        { id: 'q1', type: 'bjt', designator: 'Q1', model: 'QGENNPN', pins: [{ pinId: 'c', netId: 'col' }, { pinId: 'b', netId: 'base' }, { pinId: 'e', netId: 'emit' }] },
+        {
+            id: 'vcc',
+            type: 'voltage_source',
+            designator: 'V1',
+            value: 'DC 12',
+            pins: [
+                { pinId: '+', netId: 'vcc' },
+                { pinId: '-', netId: 'gnd' },
+            ],
+        },
+        {
+            id: 'rc',
+            type: 'resistor',
+            designator: 'RC1',
+            value: '2.2k',
+            pins: [
+                { pinId: '1', netId: 'vcc' },
+                { pinId: '2', netId: 'col' },
+            ],
+        },
+        {
+            id: 'rb1',
+            type: 'resistor',
+            designator: 'RB1',
+            value: '100k',
+            pins: [
+                { pinId: '1', netId: 'vcc' },
+                { pinId: '2', netId: 'base' },
+            ],
+        },
+        {
+            id: 'rb2',
+            type: 'resistor',
+            designator: 'RB2',
+            value: '18k',
+            pins: [
+                { pinId: '1', netId: 'base' },
+                { pinId: '2', netId: 'gnd' },
+            ],
+        },
+        {
+            id: 're',
+            type: 'resistor',
+            designator: 'RE1',
+            value: '470',
+            pins: [
+                { pinId: '1', netId: 'emit' },
+                { pinId: '2', netId: 'gnd' },
+            ],
+        },
+        {
+            id: 'q1',
+            type: 'bjt',
+            designator: 'Q1',
+            model: 'QGENNPN',
+            pins: [
+                { pinId: 'c', netId: 'col' },
+                { pinId: 'b', netId: 'base' },
+                { pinId: 'e', netId: 'emit' },
+            ],
+        },
         { id: 'gnd', type: 'ground', designator: 'GND1', pins: [{ pinId: '1', netId: 'gnd' }] },
     ],
     nets: [
-        { id: 'vcc', name: 'vcc' }, { id: 'col', name: 'col' }, { id: 'base', name: 'base' },
-        { id: 'emit', name: 'emit' }, { id: 'gnd', name: 'gnd', isGround: true },
+        { id: 'vcc', name: 'vcc' },
+        { id: 'col', name: 'col' },
+        { id: 'base', name: 'base' },
+        { id: 'emit', name: 'emit' },
+        { id: 'gnd', name: 'gnd', isGround: true },
     ],
 };
 
@@ -79,10 +199,31 @@ const NPN_AMP: CircuitJson = {
 const NO_GROUND: CircuitJson = {
     version: '1.0',
     components: [
-        { id: 'v1', type: 'voltage_source', designator: 'V1', value: 'DC 5', pins: [{ pinId: '+', netId: 'a' }, { pinId: '-', netId: 'b' }] },
-        { id: 'r1', type: 'resistor', designator: 'R1', value: '1k', pins: [{ pinId: '1', netId: 'a' }, { pinId: '2', netId: 'b' }] },
+        {
+            id: 'v1',
+            type: 'voltage_source',
+            designator: 'V1',
+            value: 'DC 5',
+            pins: [
+                { pinId: '+', netId: 'a' },
+                { pinId: '-', netId: 'b' },
+            ],
+        },
+        {
+            id: 'r1',
+            type: 'resistor',
+            designator: 'R1',
+            value: '1k',
+            pins: [
+                { pinId: '1', netId: 'a' },
+                { pinId: '2', netId: 'b' },
+            ],
+        },
     ],
-    nets: [{ id: 'a', name: 'a' }, { id: 'b', name: 'b' }],
+    nets: [
+        { id: 'a', name: 'a' },
+        { id: 'b', name: 'b' },
+    ],
 };
 
 (NGSPICE ? describe : describe.skip)('CircuitSimulatorService (real ngspice, offline)', () => {
@@ -156,7 +297,12 @@ const NO_GROUND: CircuitJson = {
         // criterion on the /verify-design dev/live fallback could never be certified. It now parses the listing
         // (stdout pipe + -o log, build-independent) like the worker. A clean 1kHz sine through a mild RC has low
         // but finite THD — assert it is POPULATED and physical, not an exact value (build/step-dependent).
-        const r = await svc.simulate(RC_LOWPASS, { type: 'tran', stopTime: '5m', stepTime: '5u', fourier: { fundamentalFreq: '1k', probes: ['v(out)'] } });
+        const r = await svc.simulate(RC_LOWPASS, {
+            type: 'tran',
+            stopTime: '5m',
+            stepTime: '5u',
+            fourier: { fundamentalFreq: '1k', probes: ['v(out)'] },
+        });
         expect(r.simStatus).toBe('ok');
         const out = r.measurements.find((m) => m.node.toLowerCase().includes('out'));
         expect(out).toBeTruthy();
@@ -193,11 +339,9 @@ const NO_GROUND: CircuitJson = {
 
     it('CROSS-SEAM: verify() (no userId → inline) evaluates a gain criterion against the folded tf value', async () => {
         const verifier = new VerificationService(svc);
-        const ev = await verifier.verify(
-            RES_DIVIDER,
-            { type: 'op', tf: { output: 'v(out)', inputSource: 'V1' } },
-            [{ probe: 'out', metric: 'gain', op: 'approx', value: 0.5, tol: 0.05 }],
-        );
+        const ev = await verifier.verify(RES_DIVIDER, { type: 'op', tf: { output: 'v(out)', inputSource: 'V1' } }, [
+            { probe: 'out', metric: 'gain', op: 'approx', value: 0.5, tol: 0.05 },
+        ]);
         const a = ev.assertions[0]!;
         expect(a.actual).toBeCloseTo(0.5, 2); // 1k/1k divider gain folded through the seam
         expect(a.pass).toBe(true);
@@ -212,12 +356,43 @@ const NO_GROUND: CircuitJson = {
         const malicious: CircuitJson = {
             version: '1.0',
             components: [
-                { id: 'v1', type: 'voltage_source', designator: 'V1', value: 'DC 5', pins: [{ pinId: '+', netId: 'in' }, { pinId: '-', netId: 'gnd' }] },
-                { id: 'b1', type: 'bsource', designator: 'B1', value: 'V=v(in)\n.shell echo pwned', pins: [{ pinId: '+', netId: 'out' }, { pinId: '-', netId: 'gnd' }] },
-                { id: 'r1', type: 'resistor', designator: 'R1', value: '1k', pins: [{ pinId: '1', netId: 'out' }, { pinId: '2', netId: 'gnd' }] },
+                {
+                    id: 'v1',
+                    type: 'voltage_source',
+                    designator: 'V1',
+                    value: 'DC 5',
+                    pins: [
+                        { pinId: '+', netId: 'in' },
+                        { pinId: '-', netId: 'gnd' },
+                    ],
+                },
+                {
+                    id: 'b1',
+                    type: 'bsource',
+                    designator: 'B1',
+                    value: 'V=v(in)\n.shell echo pwned',
+                    pins: [
+                        { pinId: '+', netId: 'out' },
+                        { pinId: '-', netId: 'gnd' },
+                    ],
+                },
+                {
+                    id: 'r1',
+                    type: 'resistor',
+                    designator: 'R1',
+                    value: '1k',
+                    pins: [
+                        { pinId: '1', netId: 'out' },
+                        { pinId: '2', netId: 'gnd' },
+                    ],
+                },
                 { id: 'gnd', type: 'ground', designator: 'GND1', pins: [{ pinId: '1', netId: 'gnd' }] },
             ],
-            nets: [{ id: 'in', name: 'in' }, { id: 'out', name: 'out' }, { id: 'gnd', name: 'gnd', isGround: true }],
+            nets: [
+                { id: 'in', name: 'in' },
+                { id: 'out', name: 'out' },
+                { id: 'gnd', name: 'gnd', isGround: true },
+            ],
         };
         const r = await svc.simulate(malicious, { type: 'op' });
         expect(['ok', 'failed']).toContain(r.simStatus); // returned a summary, did not throw

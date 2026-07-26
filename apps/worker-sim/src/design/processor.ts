@@ -53,7 +53,10 @@ function buildLlmConfig() {
         // (tool-LESS), so this is the CONTROL case: exactly one request per generate/fix (attempt=1,
         // tools=false) — the baseline to compare the grounded api:* paths against. Tagged 'worker'.
         onLlmRequest: (info: { iter: number; attempt: number; toolsOffered: boolean }) =>
-            logger.info({ path: 'worker', iter: info.iter, attempt: info.attempt, toolsOffered: info.toolsOffered }, 'llm.request'),
+            logger.info(
+                { path: 'worker', iter: info.iter, attempt: info.attempt, toolsOffered: info.toolsOffered },
+                'llm.request',
+            ),
     };
 }
 
@@ -78,7 +81,9 @@ export function createDesignWorker(): Worker<DesignJobPayload> {
     );
 
     worker.on('completed', (job) => logger.info({ jobId: job.data.jobId }, 'Design job completed'));
-    worker.on('failed', (job, err) => logger.error({ jobId: job?.data.jobId, error: err.message }, 'Design job failed'));
+    worker.on('failed', (job, err) =>
+        logger.error({ jobId: job?.data.jobId, error: err.message }, 'Design job failed'),
+    );
     worker.on('error', (err) => logger.error({ error: err.message }, 'Design worker error'));
 
     logger.info({ queue: config.DESIGN_QUEUE_NAME, concurrency: config.DESIGN_CONCURRENCY }, 'Design worker started');
@@ -124,7 +129,10 @@ async function processDesignJob(job: Job<DesignJobPayload>): Promise<void> {
                 // claimed a job, fail it terminally with a clear message. We own the (RUNNING) row now, so the
                 // write is safe from the API's QUEUED-gated failure-flip.
                 if (!config.LLM_API_KEY) {
-                    await finish(jobId, { status: 'FAILED', errorMessage: 'AI circuit generation is not configured on the worker (LLM_API_KEY is not set).' });
+                    await finish(jobId, {
+                        status: 'FAILED',
+                        errorMessage: 'AI circuit generation is not configured on the worker (LLM_API_KEY is not set).',
+                    });
                     span.setAttribute('design.outcome', 'misconfigured');
                     return;
                 }
@@ -178,8 +186,8 @@ async function processDesignJob(job: Job<DesignJobPayload>): Promise<void> {
                     err instanceof CircuitGenerationError
                         ? err.message
                         : err instanceof Error
-                            ? err.message
-                            : String(err);
+                          ? err.message
+                          : String(err);
                 logger.error({ jobId, error: message }, 'Design job failed');
                 span.recordException(err instanceof Error ? err : new Error(message));
                 span.setStatus({ code: SpanStatusCode.ERROR, message });
@@ -211,6 +219,9 @@ async function finish(
             },
         });
     } catch (e) {
-        logger.error({ jobId, error: e instanceof Error ? e.message : String(e) }, 'Could not persist terminal design-job row');
+        logger.error(
+            { jobId, error: e instanceof Error ? e.message : String(e) },
+            'Could not persist terminal design-job row',
+        );
     }
 }

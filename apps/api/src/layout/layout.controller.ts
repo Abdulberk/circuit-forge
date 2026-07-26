@@ -32,7 +32,8 @@ export class LayoutController {
 
     @Get()
     @ApiOperation({
-        summary: 'List your layout jobs (newest first), optionally filtered by ?versionId= or ?projectId=. ' +
+        summary:
+            'List your layout jobs (newest first), optionally filtered by ?versionId= or ?projectId=. ' +
             'Use ?versionId= to re-find the PCB(s) for a saved circuit after a page reload.',
     })
     async list(@Query() query: ListLayoutsQueryDto, @CurrentUser() user: { id: string }) {
@@ -44,7 +45,9 @@ export class LayoutController {
     }
 
     @Get(':id')
-    @ApiOperation({ summary: 'Poll a layout job: status + (when finished) the shaped result + presigned artifact URLs.' })
+    @ApiOperation({
+        summary: 'Poll a layout job: status + (when finished) the shaped result + presigned artifact URLs.',
+    })
     async status(@Param('id', ParseUUIDPipe) id: string, @CurrentUser() user: { id: string }) {
         return this.layouts.getForUser(id, user.id);
     }

@@ -13,15 +13,21 @@ function logSweep(fStart: number, fStop: number, ppd = 20): number[] {
     return out;
 }
 
-const lowPass = (fc: number) => (f: number): FreqMagPoint => ({ x: f, y: 1 / Math.sqrt(1 + (f / fc) ** 2) });
-const highPass = (fc: number) => (f: number): FreqMagPoint => {
-    const r = f / fc;
-    return { x: f, y: r / Math.sqrt(1 + r ** 2) };
-};
-const bandPass = (f0: number, q: number) => (f: number): FreqMagPoint => ({
-    x: f,
-    y: 1 / Math.sqrt(1 + (q * (f / f0 - f0 / f)) ** 2),
-});
+const lowPass =
+    (fc: number) =>
+    (f: number): FreqMagPoint => ({ x: f, y: 1 / Math.sqrt(1 + (f / fc) ** 2) });
+const highPass =
+    (fc: number) =>
+    (f: number): FreqMagPoint => {
+        const r = f / fc;
+        return { x: f, y: r / Math.sqrt(1 + r ** 2) };
+    };
+const bandPass =
+    (f0: number, q: number) =>
+    (f: number): FreqMagPoint => ({
+        x: f,
+        y: 1 / Math.sqrt(1 + (q * (f / f0 - f0 / f)) ** 2),
+    });
 
 describe('cutoffFrequency', () => {
     it('locates the −3 dB corner of a first-order LOW-PASS within a few % of the analytic fc', () => {
@@ -70,7 +76,10 @@ describe('cutoffFrequency', () => {
     });
     it('ignores non-physical samples (f ≤ 0, NaN/Inf)', () => {
         const dirty: FreqMagPoint[] = [
-            { x: 0, y: 1 }, { x: -5, y: 1 }, { x: NaN, y: 1 }, { x: 100, y: Infinity },
+            { x: 0, y: 1 },
+            { x: -5, y: 1 },
+            { x: NaN, y: 1 },
+            { x: 100, y: Infinity },
             ...logSweep(10, 100_000).map(lowPass(1000)),
         ];
         const got = cutoffFrequency(dirty);

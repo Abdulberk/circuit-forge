@@ -10,7 +10,14 @@ import type { CircuitJson, UiJson } from '@circuit-forge/eda-core';
 
 import { generateTscircuitCode, type AdapterResult } from './adapter';
 import { evaluateTscircuit } from './evaluate';
-import { boardExtraProps, reportViaCompliance, injectZone, kicadProjectJson, JLC_FAB_PROFILE, type FabProfile } from './fab-profile';
+import {
+    boardExtraProps,
+    reportViaCompliance,
+    injectZone,
+    kicadProjectJson,
+    JLC_FAB_PROFILE,
+    type FabProfile,
+} from './fab-profile';
 import { ipc2221WidthMm } from './ipc2221';
 import { classifyCircuit, type LayoutabilityResult, type LayoutDiagnostic } from './layoutability';
 import { generateGerbers, generateKicadPcb, buildBomCsv, buildPnpCsv, type GerberOutputs } from './outputs';
@@ -18,7 +25,14 @@ import { checkConnectivityParity, type ParityResult, type TscElement } from './p
 import { placeParts, computeHpwl, type PlacementInput, type PlacementOutput } from './placement';
 import { extractPlacementParts, gridPositions, buildNetWeights, deriveExtraEdges } from './placement-bridge';
 import type { PlacementRunner } from './placement-engine';
-import { exportDsn, mergeSes, stripRouting, enlargeBoard, findFullyUnroutedNets, type FreeroutingRunner } from './route';
+import {
+    exportDsn,
+    mergeSes,
+    stripRouting,
+    enlargeBoard,
+    findFullyUnroutedNets,
+    type FreeroutingRunner,
+} from './route';
 
 export interface LayoutOptions {
     ui?: UiJson;
@@ -164,7 +178,8 @@ export async function layoutCircuit(circuit: CircuitJson, opts: LayoutOptions = 
     const gridEvaluated = evaluated;
     const advancedPlacement = opts.placer === 'auto' || opts.placer === 'rust';
     const placementRunnerReady = opts.placer !== 'rust' || !!opts.rustPlace;
-    const canLadder = advancedPlacement && placementRunnerReady && opts.router === 'quality' && !!opts.freeroute && !!opts.notaryDrc;
+    const canLadder =
+        advancedPlacement && placementRunnerReady && opts.router === 'quality' && !!opts.freeroute && !!opts.notaryDrc;
     if (advancedPlacement && !canLadder) {
         // no routing oracle (fast router / no notary): single attempt, HPWL-gated adoption
         const auto = await attemptAutoPlacement(circuit, opts, layout, adapted, evaluated, profile, undefined);
@@ -224,11 +239,24 @@ export async function layoutCircuit(circuit: CircuitJson, opts: LayoutOptions = 
     const assembled = await assembleKicadPcb(routedBoard, profile);
     const kicadPcb = assembled.kicadPcb;
     if (assembled.pour === 'ok') {
-        diagnostics.push({ code: 'PCB032', severity: 'info', message: 'GND pour injected on B.Cu — the notary fills it via --refill-zones (KiCad 10).' });
+        diagnostics.push({
+            code: 'PCB032',
+            severity: 'info',
+            message: 'GND pour injected on B.Cu — the notary fills it via --refill-zones (KiCad 10).',
+        });
     } else if (assembled.pour === 'unsafe-unnetted-copper') {
-        diagnostics.push({ code: 'PCB033', severity: 'info', message: 'GND pour skipped: kicad converter emits copper segments without net assignment — a fill against un-netted copper would false-short.' });
+        diagnostics.push({
+            code: 'PCB033',
+            severity: 'info',
+            message:
+                'GND pour skipped: kicad converter emits copper segments without net assignment — a fill against un-netted copper would false-short.',
+        });
     } else if (assembled.pour === 'no-net') {
-        diagnostics.push({ code: 'PCB033', severity: 'info', message: 'gndPour requested but no GND net exists on the board — pour skipped.' });
+        diagnostics.push({
+            code: 'PCB033',
+            severity: 'info',
+            message: 'gndPour requested but no GND net exists on the board — pour skipped.',
+        });
     }
 
     return {
@@ -273,7 +301,13 @@ function errRefs(err: Record<string, unknown>): string[] {
 }
 function passThroughError(err: { type: string; [k: string]: unknown }, tool: string): LayoutDiagnostic {
     const refs = errRefs(err);
-    return { code: 'PCB031', severity: 'error', message: `${tool}: ${errText(err)}`, errorType: err.type, refs: refs.length ? refs : undefined };
+    return {
+        code: 'PCB031',
+        severity: 'error',
+        message: `${tool}: ${errText(err)}`,
+        errorType: err.type,
+        refs: refs.length ? refs : undefined,
+    };
 }
 
 /** Result of the Lever-2 auto-placement attempt (adopted:false ⇒ the grid pass stays untouched). */
@@ -305,19 +339,30 @@ async function attemptAutoPlacement(
     const diags: LayoutDiagnostic[] = [];
     const placementLabel = opts.placer === 'rust' ? 'rust-placement' : 'auto-placement';
     const keepGrid = (why: string, severity: 'info' | 'warning' = 'info'): AutoPlacementAttempt => {
-        diags.push({ code: 'PCB051', severity, message: `${placementLabel} not adopted — ${why} (grid placement kept; floor guarantee).` });
+        diags.push({
+            code: 'PCB051',
+            severity,
+            message: `${placementLabel} not adopted — ${why} (grid placement kept; floor guarantee).`,
+        });
         return { adopted: false, diagnostics: diags };
     };
 
     const { parts, missing } = extractPlacementParts(gridEvaluated, adapted.namesById, layout);
     if (missing.length) {
-        diags.push({ code: 'PCB050', severity: 'info', message: `${placementLabel}: ${missing.length} part(s) without resolvable geometry keep their grid spot (${missing.join(', ')}).` });
+        diags.push({
+            code: 'PCB050',
+            severity: 'info',
+            message: `${placementLabel}: ${missing.length} part(s) without resolvable geometry keep their grid spot (${missing.join(', ')}).`,
+        });
     }
     if (parts.length < 2) return keepGrid('fewer than 2 parts with resolvable geometry');
 
     const netWeights = buildNetWeights(circuit, adapted.netNameById);
     const extraEdges = deriveExtraEdges(circuit, adapted.namesById);
-    const gridPos = gridPositions(gridEvaluated, parts.map((p) => p.id));
+    const gridPos = gridPositions(
+        gridEvaluated,
+        parts.map((p) => p.id),
+    );
     const hpwlGrid = computeHpwl(parts, gridPos);
 
     const placementInput: PlacementInput = {
@@ -339,13 +384,21 @@ async function attemptAutoPlacement(
         } catch (e) {
             return keepGrid(`Rust placement runner failed: ${String(e).slice(0, 180)}`, 'warning');
         }
-        diags.push({ code: 'PCB050', severity: 'info', message: `rust-placement engine completed in ${Date.now() - started}ms (process + JSON included).` });
+        diags.push({
+            code: 'PCB050',
+            severity: 'info',
+            message: `rust-placement engine completed in ${Date.now() - started}ms (process + JSON included).`,
+        });
     } else {
         placed = placeParts(placementInput);
     }
-    for (const note of placed.notes) diags.push({ code: 'PCB050', severity: 'info', message: `${placementLabel}: ${note}` });
+    for (const note of placed.notes)
+        diags.push({ code: 'PCB050', severity: 'info', message: `${placementLabel}: ${note}` });
     if (!placed.ok) return keepGrid('legalization failed even after board growth', 'warning');
-    if (!adoptOnValidity && placed.hpwl >= hpwlGrid) return keepGrid(`HPWL did not improve (${placementLabel} ${placed.hpwl.toFixed(1)}mm vs grid ${hpwlGrid.toFixed(1)}mm)`);
+    if (!adoptOnValidity && placed.hpwl >= hpwlGrid)
+        return keepGrid(
+            `HPWL did not improve (${placementLabel} ${placed.hpwl.toFixed(1)}mm vs grid ${hpwlGrid.toFixed(1)}mm)`,
+        );
 
     // pass 2: regenerate with verbatim mm placements + the fitted board, then re-verify EVERYTHING
     const adapted2 = generateTscircuitCode(circuit, opts.ui, layout, {
@@ -363,10 +416,17 @@ async function attemptAutoPlacement(
     const isRouteClass = (t: string) => /trace|rout/i.test(t);
     const blocking = errors2.filter((e) => !(routeTolerated && isRouteClass(e.type)));
     if (blocking.length > 0) {
-        return keepGrid(`pass-2 eval reported ${blocking.length} blocking error(s), first: ${blocking[0]!.type}`, 'warning');
+        return keepGrid(
+            `pass-2 eval reported ${blocking.length} blocking error(s), first: ${blocking[0]!.type}`,
+            'warning',
+        );
     }
     if (errors2.length > 0) {
-        diags.push({ code: 'PCB050', severity: 'info', message: `${placementLabel}: pass-2 local route incomplete (${errors2.length} route error(s)) — freerouting re-routes; the DRC oracle decides.` });
+        diags.push({
+            code: 'PCB050',
+            severity: 'info',
+            message: `${placementLabel}: pass-2 local route incomplete (${errors2.length} route error(s)) — freerouting re-routes; the DRC oracle decides.`,
+        });
         evaluated2 = evaluated2.filter((e) => !e.type.endsWith('_error'));
     }
     const parity2 = checkConnectivityParity(evaluated2, adapted2.expectations);
@@ -384,7 +444,10 @@ async function attemptAutoPlacement(
 
 /** Build the manufacturable .kicad_pcb (traces + optional GND pour) — shared by the final output and the
  *  DRC-oracle retry so the notary judges exactly what ships. */
-async function assembleKicadPcb(board: TscElement[], profile: FabProfile): Promise<{ kicadPcb: string; pour: 'ok' | 'unsafe-unnetted-copper' | 'no-net' | 'off' }> {
+async function assembleKicadPcb(
+    board: TscElement[],
+    profile: FabProfile,
+): Promise<{ kicadPcb: string; pour: 'ok' | 'unsafe-unnetted-copper' | 'no-net' | 'off' }> {
     const raw = await generateKicadPcb(board);
     if (!profile.gndPour) return { kicadPcb: raw, pour: 'off' };
     const zone = injectZone(raw, 'GND', 'B.Cu');
@@ -414,21 +477,39 @@ function computeIpcWidths(
             });
         }
         if (r.clamped) {
-            diagnostics.push({ code: 'PCB041', severity: 'warning', message: `net ${net} IPC-2221 sizing clamped — ${r.notes.join('; ')}` });
+            diagnostics.push({
+                code: 'PCB041',
+                severity: 'warning',
+                message: `net ${net} IPC-2221 sizing clamped — ${r.notes.join('; ')}`,
+            });
         }
     }
     return widths;
 }
 
 /** After a quality route, confirm each widened net actually carries a trace at (≈) its target width. */
-function verifyPerNetWidths(board: TscElement[], perNetWidthMm: Record<string, number>, diagnostics: LayoutDiagnostic[]): void {
+function verifyPerNetWidths(
+    board: TscElement[],
+    perNetWidthMm: Record<string, number>,
+    diagnostics: LayoutDiagnostic[],
+): void {
     const wide = Object.entries(perNetWidthMm).filter(([, mm]) => mm > 0);
     if (wide.length === 0) return;
-    const srcTraceById = new Map(board.filter((e) => e.type === 'source_trace').map((e) => [(e as { source_trace_id?: string }).source_trace_id, e]));
-    const netNameById = new Map(board.filter((e) => e.type === 'source_net').map((e) => [(e as { source_net_id?: string }).source_net_id, (e as { name?: string }).name]));
+    const srcTraceById = new Map(
+        board
+            .filter((e) => e.type === 'source_trace')
+            .map((e) => [(e as { source_trace_id?: string }).source_trace_id, e]),
+    );
+    const netNameById = new Map(
+        board
+            .filter((e) => e.type === 'source_net')
+            .map((e) => [(e as { source_net_id?: string }).source_net_id, (e as { name?: string }).name]),
+    );
     const maxWidthByNet = new Map<string, number>();
     for (const t of board.filter((e) => e.type === 'pcb_trace')) {
-        const st = srcTraceById.get((t as { source_trace_id?: string }).source_trace_id) as { connected_source_net_ids?: string[] } | undefined;
+        const st = srcTraceById.get((t as { source_trace_id?: string }).source_trace_id) as
+            | { connected_source_net_ids?: string[] }
+            | undefined;
         const name = st?.connected_source_net_ids?.[0] ? netNameById.get(st.connected_source_net_ids[0]) : undefined;
         if (!name) continue;
         const w = Math.max(...((t as { route?: Array<{ width?: number }> }).route ?? []).map((p) => p.width ?? 0), 0);
@@ -485,8 +566,11 @@ async function applyQualityRoute(
         diagnostics.push({
             code: 'PCB030',
             severity: 'info',
-            message: `quality route (freerouting) applied — ${traces} trace(s), ${vias} via(s) at margin ${best.marginMm}mm` +
-                (best.mode === 'drc' ? ' — DRC-clean confirmed by the notary oracle.' : '; the notary confirms full connectivity.'),
+            message:
+                `quality route (freerouting) applied — ${traces} trace(s), ${vias} via(s) at margin ${best.marginMm}mm` +
+                (best.mode === 'drc'
+                    ? ' — DRC-clean confirmed by the notary oracle.'
+                    : '; the notary confirms full connectivity.'),
         });
         return { routedBoard: best.routedBoard!, qualityApplied: true, clean: best.mode === 'drc' };
     } catch (e) {
@@ -510,7 +594,13 @@ async function routeBestMargin(
     opts: LayoutOptions,
     profile: FabProfile,
     perNetWidthMm: Record<string, number>,
-): Promise<{ routedBoard: TscElement[] | null; accepted: boolean; marginMm: number; tried: number; mode: 'drc' | 'presence' }> {
+): Promise<{
+    routedBoard: TscElement[] | null;
+    accepted: boolean;
+    marginMm: number;
+    tried: number;
+    mode: 'drc' | 'presence';
+}> {
     const freeroute = opts.freeroute!;
     const notaryDrc = opts.notaryDrc;
     const mode = notaryDrc ? 'drc' : 'presence';
@@ -524,7 +614,8 @@ async function routeBestMargin(
         if (notaryDrc) {
             const routed = await mergeSes(routingBase, dsn, ses);
             const { kicadPcb } = await assembleKicadPcb(routed, profile);
-            if (await notaryDrc(kicadPcb, kicadProjectJson(profile))) return { routedBoard: routed, accepted: true, marginMm, tried, mode };
+            if (await notaryDrc(kicadPcb, kicadProjectJson(profile)))
+                return { routedBoard: routed, accepted: true, marginMm, tried, mode };
         } else if (findFullyUnroutedNets(dsn, ses).length === 0) {
             return { routedBoard: await mergeSes(routingBase, dsn, ses), accepted: true, marginMm, tried, mode };
         }
@@ -586,7 +677,14 @@ export { generateTscircuitCode, sanitizeName, buildNetNames } from './adapter';
 export type { AdapterResult, PinExpectation, AdapterOptions } from './adapter';
 export { checkConnectivityParity } from './parity';
 export type { ParityResult, TscElement } from './parity';
-export { JLC_FAB_PROFILE, FAB_TIERS, boardExtraProps, kicadProjectJson, injectZone, reportViaCompliance } from './fab-profile';
+export {
+    JLC_FAB_PROFILE,
+    FAB_TIERS,
+    boardExtraProps,
+    kicadProjectJson,
+    injectZone,
+    reportViaCompliance,
+} from './fab-profile';
 export type { FabProfile, ZoneInjectionResult } from './fab-profile';
 export { generateGerbers, generateKicadPcb, buildBomCsv, buildPnpCsv } from './outputs';
 export type { GerberOutputs } from './outputs';
@@ -607,4 +705,11 @@ export type { PlacementRunner } from './placement-engine';
 // Re-export the eda-core scope manifest so the pcb-worker (which depends only on pcb-core) can emit the
 // layout verdict's disclosure fragment without a direct eda-core dependency.
 export { buildLayoutScope, buildManifest, CHECK_IDS, CHECK_LABELS } from '@circuit-forge/eda-core';
-export type { ScopeManifest, CheckId, CheckStatus, CheckGradation, CheckEntry, DeterminedEntry } from '@circuit-forge/eda-core';
+export type {
+    ScopeManifest,
+    CheckId,
+    CheckStatus,
+    CheckGradation,
+    CheckEntry,
+    DeterminedEntry,
+} from '@circuit-forge/eda-core';

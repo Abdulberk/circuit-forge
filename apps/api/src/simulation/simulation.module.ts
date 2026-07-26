@@ -48,4 +48,4 @@ import { SimulationService } from './simulation.service';
     providers: [SimulationService],
     exports: [SimulationService],
 })
-export class SimulationModule { }
+export class SimulationModule {}

@@ -85,7 +85,9 @@ describe('AuthService.login — lockout & timing', () => {
         mockedVerify.mockResolvedValue(false);
         const { svc, update } = makeService({ failedLoginCount: 2 });
         await expect(svc.login('a@b.com', 'bad')).rejects.toBeInstanceOf(UnauthorizedException);
-        expect(update).toHaveBeenCalledWith(expect.objectContaining({ data: expect.objectContaining({ failedLoginCount: 3 }) }));
+        expect(update).toHaveBeenCalledWith(
+            expect.objectContaining({ data: expect.objectContaining({ failedLoginCount: 3 }) }),
+        );
         expect(update.mock.calls[0]![0].data.lockedUntil).toBeUndefined();
     });
 
@@ -103,7 +105,9 @@ describe('AuthService.login — lockout & timing', () => {
         mockedVerify.mockResolvedValue(true);
         const { svc, update } = makeService({ failedLoginCount: 3 });
         await svc.login('a@b.com', 'good');
-        expect(update).toHaveBeenCalledWith(expect.objectContaining({ data: { failedLoginCount: 0, lockedUntil: null } }));
+        expect(update).toHaveBeenCalledWith(
+            expect.objectContaining({ data: { failedLoginCount: 0, lockedUntil: null } }),
+        );
     });
 
     it('does NOT write on a clean first-attempt success', async () => {
@@ -137,12 +141,25 @@ describe('AuthService.login — lockout & timing', () => {
     it('blocks login when REQUIRE_EMAIL_VERIFICATION=true and the user is unverified', async () => {
         mockedVerify.mockResolvedValue(true);
         const prisma = {
-            user: { findUnique: jest.fn(async () => ({ id: 'u1', email: 'a@b.com', name: 'A', passwordHash: 'h', failedLoginCount: 0, lockedUntil: null, emailVerified: false })), update: jest.fn() },
+            user: {
+                findUnique: jest.fn(async () => ({
+                    id: 'u1',
+                    email: 'a@b.com',
+                    name: 'A',
+                    passwordHash: 'h',
+                    failedLoginCount: 0,
+                    lockedUntil: null,
+                    emailVerified: false,
+                })),
+                update: jest.fn(),
+            },
         } as unknown as PrismaService;
         const svc = new AuthService(
             prisma,
             { signAsync: jest.fn(async () => 't') } as unknown as JwtService,
-            { get: jest.fn((k: string) => (k === 'REQUIRE_EMAIL_VERIFICATION' ? 'true' : undefined)) } as unknown as ConfigService,
+            {
+                get: jest.fn((k: string) => (k === 'REQUIRE_EMAIL_VERIFICATION' ? 'true' : undefined)),
+            } as unknown as ConfigService,
             emailStub(),
         );
         const err = await svc.login('a@b.com', 'good').catch((e) => e);
@@ -178,7 +195,9 @@ describe('AuthService — email verification & password reset', () => {
         expect(where).toHaveProperty('emailVerificationTokenHash');
         expect(where.emailVerificationTokenHash).not.toBe('rawtoken');
         expect(update).toHaveBeenCalledWith(
-            expect.objectContaining({ data: expect.objectContaining({ emailVerified: true, emailVerificationTokenHash: null }) }),
+            expect.objectContaining({
+                data: expect.objectContaining({ emailVerified: true, emailVerificationTokenHash: null }),
+            }),
         );
     });
 
@@ -236,7 +255,9 @@ describe('AuthService — refresh rotation & server-side logout', () => {
             ...tables,
         } as unknown as PrismaService;
         // refresh() wraps claim+issue in a transaction; the stub runs the callback with the same stub.
-        (prisma as unknown as { $transaction: unknown }).$transaction = jest.fn(async (fn: (tx: unknown) => unknown) => fn(prisma));
+        (prisma as unknown as { $transaction: unknown }).$transaction = jest.fn(async (fn: (tx: unknown) => unknown) =>
+            fn(prisma),
+        );
         const jwt = {
             signAsync: jest.fn(async () => 'newtoken'),
             verify: jest.fn(verifyImpl ?? (() => ({ sub: 'u1', email: 'a@b.com', jti: 'jti-1' }))),
@@ -303,8 +324,8 @@ describe('AuthService — refresh rotation & server-side logout', () => {
 
     it('a lost concurrent-claim race 401s WITHOUT revoking the family', async () => {
         const { svc, tables } = makeRotation(liveRow('old-token'));
-        tables.refreshToken.updateMany = jest.fn(async (arg: { where: Record<string, unknown> }) =>
-            'jti' in arg.where ? { count: 0 } : { count: 1 }, // claim fails; family ops would succeed
+        tables.refreshToken.updateMany = jest.fn(
+            async (arg: { where: Record<string, unknown> }) => ('jti' in arg.where ? { count: 0 } : { count: 1 }), // claim fails; family ops would succeed
         ) as never;
         await expect(svc.refresh('old-token')).rejects.toBeInstanceOf(UnauthorizedException);
         // only the claim ran — no family revocation for a clean race

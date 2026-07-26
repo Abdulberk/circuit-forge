@@ -1,497 +1,489 @@
 {
-  "name": "7-Segment LED Display Counter",
-  "description": "A complete LED display subsystem: a 2-bit ripple counter (2 D flip-flops) drives gate logic that decodes the count to a real common-cathode 7-segment LED display (7 red LEDs with a realistic Vf≈1.9V model, 330Ω series resistors, ~9mA per segment). Run a transient (400µs, 200n step) and watch the segment currents: the display counts 1 → 2 → 3 → 0, one digit per 100µs clock period. Probe i(RA1)…i(RG1) for the segments. (Validated on ngspice: every digit phase shows the exact standard segment pattern.)",
-  "tags": [
-    "display",
-    "led",
-    "7-segment",
-    "digital",
-    "counter",
-    "decoder",
-    "mixed-signal"
-  ],
-  "circuitJson": {
-    "version": "1.0",
-    "components": [
-      {
-        "id": "vdd",
-        "type": "voltage_source",
-        "designator": "V1",
-        "value": "DC 5",
-        "pins": [
-          {
-            "pinId": "+",
-            "netId": "vddn"
-          },
-          {
-            "pinId": "-",
-            "netId": "0"
-          }
-        ]
-      },
-      {
-        "id": "vclk",
-        "type": "voltage_source",
-        "designator": "V2",
-        "value": "PULSE(0 5 0 10n 10n 50u 100u)",
-        "pins": [
-          {
-            "pinId": "+",
-            "netId": "clk"
-          },
-          {
-            "pinId": "-",
-            "netId": "0"
-          }
-        ]
-      },
-      {
-        "id": "ff0",
-        "type": "dff",
-        "designator": "U1",
-        "pins": [
-          {
-            "pinId": "d",
-            "netId": "q0b"
-          },
-          {
-            "pinId": "clk",
-            "netId": "clk"
-          },
-          {
-            "pinId": "q",
-            "netId": "q0"
-          },
-          {
-            "pinId": "qb",
-            "netId": "q0b"
-          }
-        ]
-      },
-      {
-        "id": "ff1",
-        "type": "dff",
-        "designator": "U2",
-        "pins": [
-          {
-            "pinId": "d",
-            "netId": "q1b"
-          },
-          {
-            "pinId": "clk",
-            "netId": "q0b"
-          },
-          {
-            "pinId": "q",
-            "netId": "q1"
-          },
-          {
-            "pinId": "qb",
-            "netId": "q1b"
-          }
-        ]
-      },
-      {
-        "id": "inv0",
-        "type": "logic_not",
-        "designator": "U3",
-        "pins": [
-          {
-            "pinId": "in1",
-            "netId": "q0"
-          },
-          {
-            "pinId": "out",
-            "netId": "nb0"
-          }
-        ]
-      },
-      {
-        "id": "inv1",
-        "type": "logic_not",
-        "designator": "U4",
-        "pins": [
-          {
-            "pinId": "in1",
-            "netId": "q1"
-          },
-          {
-            "pinId": "out",
-            "netId": "nb1"
-          }
-        ]
-      },
-      {
-        "id": "ora",
-        "type": "logic_or",
-        "designator": "U5",
-        "pins": [
-          {
-            "pinId": "in1",
-            "netId": "q1"
-          },
-          {
-            "pinId": "in2",
-            "netId": "nb0"
-          },
-          {
-            "pinId": "out",
-            "netId": "ya"
-          }
-        ]
-      },
-      {
-        "id": "orc",
-        "type": "logic_or",
-        "designator": "U6",
-        "pins": [
-          {
-            "pinId": "in1",
-            "netId": "nb1"
-          },
-          {
-            "pinId": "in2",
-            "netId": "q0"
-          },
-          {
-            "pinId": "out",
-            "netId": "yc"
-          }
-        ]
-      },
-      {
-        "id": "norf",
-        "type": "logic_nor",
-        "designator": "U7",
-        "pins": [
-          {
-            "pinId": "in1",
-            "netId": "q0"
-          },
-          {
-            "pinId": "in2",
-            "netId": "q1"
-          },
-          {
-            "pinId": "out",
-            "netId": "yf"
-          }
-        ]
-      },
-      {
-        "id": "ra",
-        "type": "resistor",
-        "designator": "RA1",
-        "value": "330",
-        "pins": [
-          {
-            "pinId": "1",
-            "netId": "ya"
-          },
-          {
-            "pinId": "2",
-            "netId": "la"
-          }
-        ]
-      },
-      {
-        "id": "da",
-        "type": "diode",
-        "designator": "DA1",
-        "model": "LEDRED",
-        "pins": [
-          {
-            "pinId": "anode",
-            "netId": "la"
-          },
-          {
-            "pinId": "cathode",
-            "netId": "0"
-          }
-        ]
-      },
-      {
-        "id": "rb",
-        "type": "resistor",
-        "designator": "RB1",
-        "value": "330",
-        "pins": [
-          {
-            "pinId": "1",
-            "netId": "vddn"
-          },
-          {
-            "pinId": "2",
-            "netId": "lb"
-          }
-        ]
-      },
-      {
-        "id": "db",
-        "type": "diode",
-        "designator": "DB1",
-        "model": "LEDRED",
-        "pins": [
-          {
-            "pinId": "anode",
-            "netId": "lb"
-          },
-          {
-            "pinId": "cathode",
-            "netId": "0"
-          }
-        ]
-      },
-      {
-        "id": "rc",
-        "type": "resistor",
-        "designator": "RC1",
-        "value": "330",
-        "pins": [
-          {
-            "pinId": "1",
-            "netId": "yc"
-          },
-          {
-            "pinId": "2",
-            "netId": "lc"
-          }
-        ]
-      },
-      {
-        "id": "dc",
-        "type": "diode",
-        "designator": "DC1",
-        "model": "LEDRED",
-        "pins": [
-          {
-            "pinId": "anode",
-            "netId": "lc"
-          },
-          {
-            "pinId": "cathode",
-            "netId": "0"
-          }
-        ]
-      },
-      {
-        "id": "rd",
-        "type": "resistor",
-        "designator": "RD1",
-        "value": "330",
-        "pins": [
-          {
-            "pinId": "1",
-            "netId": "ya"
-          },
-          {
-            "pinId": "2",
-            "netId": "ld"
-          }
-        ]
-      },
-      {
-        "id": "dd",
-        "type": "diode",
-        "designator": "DD1",
-        "model": "LEDRED",
-        "pins": [
-          {
-            "pinId": "anode",
-            "netId": "ld"
-          },
-          {
-            "pinId": "cathode",
-            "netId": "0"
-          }
-        ]
-      },
-      {
-        "id": "re",
-        "type": "resistor",
-        "designator": "RE1",
-        "value": "330",
-        "pins": [
-          {
-            "pinId": "1",
-            "netId": "nb0"
-          },
-          {
-            "pinId": "2",
-            "netId": "le"
-          }
-        ]
-      },
-      {
-        "id": "de",
-        "type": "diode",
-        "designator": "DE1",
-        "model": "LEDRED",
-        "pins": [
-          {
-            "pinId": "anode",
-            "netId": "le"
-          },
-          {
-            "pinId": "cathode",
-            "netId": "0"
-          }
-        ]
-      },
-      {
-        "id": "rf",
-        "type": "resistor",
-        "designator": "RF1",
-        "value": "330",
-        "pins": [
-          {
-            "pinId": "1",
-            "netId": "yf"
-          },
-          {
-            "pinId": "2",
-            "netId": "lf"
-          }
-        ]
-      },
-      {
-        "id": "df",
-        "type": "diode",
-        "designator": "DF1",
-        "model": "LEDRED",
-        "pins": [
-          {
-            "pinId": "anode",
-            "netId": "lf"
-          },
-          {
-            "pinId": "cathode",
-            "netId": "0"
-          }
-        ]
-      },
-      {
-        "id": "rg",
-        "type": "resistor",
-        "designator": "RG1",
-        "value": "330",
-        "pins": [
-          {
-            "pinId": "1",
-            "netId": "q1"
-          },
-          {
-            "pinId": "2",
-            "netId": "lg"
-          }
-        ]
-      },
-      {
-        "id": "dg",
-        "type": "diode",
-        "designator": "DG1",
-        "model": "LEDRED",
-        "pins": [
-          {
-            "pinId": "anode",
-            "netId": "lg"
-          },
-          {
-            "pinId": "cathode",
-            "netId": "0"
-          }
-        ]
-      }
-    ],
-    "nets": [
-      {
-        "id": "vddn",
-        "name": "vddn"
-      },
-      {
-        "id": "clk",
-        "name": "clk"
-      },
-      {
-        "id": "q0",
-        "name": "q0"
-      },
-      {
-        "id": "q0b",
-        "name": "q0b"
-      },
-      {
-        "id": "q1",
-        "name": "q1"
-      },
-      {
-        "id": "q1b",
-        "name": "q1b"
-      },
-      {
-        "id": "nb0",
-        "name": "nb0"
-      },
-      {
-        "id": "nb1",
-        "name": "nb1"
-      },
-      {
-        "id": "ya",
-        "name": "ya"
-      },
-      {
-        "id": "yc",
-        "name": "yc"
-      },
-      {
-        "id": "yf",
-        "name": "yf"
-      },
-      {
-        "id": "la",
-        "name": "la"
-      },
-      {
-        "id": "lb",
-        "name": "lb"
-      },
-      {
-        "id": "lc",
-        "name": "lc"
-      },
-      {
-        "id": "ld",
-        "name": "ld"
-      },
-      {
-        "id": "le",
-        "name": "le"
-      },
-      {
-        "id": "lf",
-        "name": "lf"
-      },
-      {
-        "id": "lg",
-        "name": "lg"
-      },
-      {
-        "id": "0",
-        "name": "0",
-        "isGround": true
-      }
-    ],
-    "models": [
-      {
-        "name": "LEDRED",
-        "device": "diode",
-        "body": ".model LEDRED D(IS=1e-20 N=1.8 RS=2 CJO=10p)"
-      }
-    ],
-    "metadata": {
-      "name": "7-Segment LED Display Counter",
-      "description": "2-bit counter + decoder + 7-seg LED, counts 1-2-3-0"
+    "name": "7-Segment LED Display Counter",
+    "description": "A complete LED display subsystem: a 2-bit ripple counter (2 D flip-flops) drives gate logic that decodes the count to a real common-cathode 7-segment LED display (7 red LEDs with a realistic Vf≈1.9V model, 330Ω series resistors, ~9mA per segment). Run a transient (400µs, 200n step) and watch the segment currents: the display counts 1 → 2 → 3 → 0, one digit per 100µs clock period. Probe i(RA1)…i(RG1) for the segments. (Validated on ngspice: every digit phase shows the exact standard segment pattern.)",
+    "tags": ["display", "led", "7-segment", "digital", "counter", "decoder", "mixed-signal"],
+    "circuitJson": {
+        "version": "1.0",
+        "components": [
+            {
+                "id": "vdd",
+                "type": "voltage_source",
+                "designator": "V1",
+                "value": "DC 5",
+                "pins": [
+                    {
+                        "pinId": "+",
+                        "netId": "vddn"
+                    },
+                    {
+                        "pinId": "-",
+                        "netId": "0"
+                    }
+                ]
+            },
+            {
+                "id": "vclk",
+                "type": "voltage_source",
+                "designator": "V2",
+                "value": "PULSE(0 5 0 10n 10n 50u 100u)",
+                "pins": [
+                    {
+                        "pinId": "+",
+                        "netId": "clk"
+                    },
+                    {
+                        "pinId": "-",
+                        "netId": "0"
+                    }
+                ]
+            },
+            {
+                "id": "ff0",
+                "type": "dff",
+                "designator": "U1",
+                "pins": [
+                    {
+                        "pinId": "d",
+                        "netId": "q0b"
+                    },
+                    {
+                        "pinId": "clk",
+                        "netId": "clk"
+                    },
+                    {
+                        "pinId": "q",
+                        "netId": "q0"
+                    },
+                    {
+                        "pinId": "qb",
+                        "netId": "q0b"
+                    }
+                ]
+            },
+            {
+                "id": "ff1",
+                "type": "dff",
+                "designator": "U2",
+                "pins": [
+                    {
+                        "pinId": "d",
+                        "netId": "q1b"
+                    },
+                    {
+                        "pinId": "clk",
+                        "netId": "q0b"
+                    },
+                    {
+                        "pinId": "q",
+                        "netId": "q1"
+                    },
+                    {
+                        "pinId": "qb",
+                        "netId": "q1b"
+                    }
+                ]
+            },
+            {
+                "id": "inv0",
+                "type": "logic_not",
+                "designator": "U3",
+                "pins": [
+                    {
+                        "pinId": "in1",
+                        "netId": "q0"
+                    },
+                    {
+                        "pinId": "out",
+                        "netId": "nb0"
+                    }
+                ]
+            },
+            {
+                "id": "inv1",
+                "type": "logic_not",
+                "designator": "U4",
+                "pins": [
+                    {
+                        "pinId": "in1",
+                        "netId": "q1"
+                    },
+                    {
+                        "pinId": "out",
+                        "netId": "nb1"
+                    }
+                ]
+            },
+            {
+                "id": "ora",
+                "type": "logic_or",
+                "designator": "U5",
+                "pins": [
+                    {
+                        "pinId": "in1",
+                        "netId": "q1"
+                    },
+                    {
+                        "pinId": "in2",
+                        "netId": "nb0"
+                    },
+                    {
+                        "pinId": "out",
+                        "netId": "ya"
+                    }
+                ]
+            },
+            {
+                "id": "orc",
+                "type": "logic_or",
+                "designator": "U6",
+                "pins": [
+                    {
+                        "pinId": "in1",
+                        "netId": "nb1"
+                    },
+                    {
+                        "pinId": "in2",
+                        "netId": "q0"
+                    },
+                    {
+                        "pinId": "out",
+                        "netId": "yc"
+                    }
+                ]
+            },
+            {
+                "id": "norf",
+                "type": "logic_nor",
+                "designator": "U7",
+                "pins": [
+                    {
+                        "pinId": "in1",
+                        "netId": "q0"
+                    },
+                    {
+                        "pinId": "in2",
+                        "netId": "q1"
+                    },
+                    {
+                        "pinId": "out",
+                        "netId": "yf"
+                    }
+                ]
+            },
+            {
+                "id": "ra",
+                "type": "resistor",
+                "designator": "RA1",
+                "value": "330",
+                "pins": [
+                    {
+                        "pinId": "1",
+                        "netId": "ya"
+                    },
+                    {
+                        "pinId": "2",
+                        "netId": "la"
+                    }
+                ]
+            },
+            {
+                "id": "da",
+                "type": "diode",
+                "designator": "DA1",
+                "model": "LEDRED",
+                "pins": [
+                    {
+                        "pinId": "anode",
+                        "netId": "la"
+                    },
+                    {
+                        "pinId": "cathode",
+                        "netId": "0"
+                    }
+                ]
+            },
+            {
+                "id": "rb",
+                "type": "resistor",
+                "designator": "RB1",
+                "value": "330",
+                "pins": [
+                    {
+                        "pinId": "1",
+                        "netId": "vddn"
+                    },
+                    {
+                        "pinId": "2",
+                        "netId": "lb"
+                    }
+                ]
+            },
+            {
+                "id": "db",
+                "type": "diode",
+                "designator": "DB1",
+                "model": "LEDRED",
+                "pins": [
+                    {
+                        "pinId": "anode",
+                        "netId": "lb"
+                    },
+                    {
+                        "pinId": "cathode",
+                        "netId": "0"
+                    }
+                ]
+            },
+            {
+                "id": "rc",
+                "type": "resistor",
+                "designator": "RC1",
+                "value": "330",
+                "pins": [
+                    {
+                        "pinId": "1",
+                        "netId": "yc"
+                    },
+                    {
+                        "pinId": "2",
+                        "netId": "lc"
+                    }
+                ]
+            },
+            {
+                "id": "dc",
+                "type": "diode",
+                "designator": "DC1",
+                "model": "LEDRED",
+                "pins": [
+                    {
+                        "pinId": "anode",
+                        "netId": "lc"
+                    },
+                    {
+                        "pinId": "cathode",
+                        "netId": "0"
+                    }
+                ]
+            },
+            {
+                "id": "rd",
+                "type": "resistor",
+                "designator": "RD1",
+                "value": "330",
+                "pins": [
+                    {
+                        "pinId": "1",
+                        "netId": "ya"
+                    },
+                    {
+                        "pinId": "2",
+                        "netId": "ld"
+                    }
+                ]
+            },
+            {
+                "id": "dd",
+                "type": "diode",
+                "designator": "DD1",
+                "model": "LEDRED",
+                "pins": [
+                    {
+                        "pinId": "anode",
+                        "netId": "ld"
+                    },
+                    {
+                        "pinId": "cathode",
+                        "netId": "0"
+                    }
+                ]
+            },
+            {
+                "id": "re",
+                "type": "resistor",
+                "designator": "RE1",
+                "value": "330",
+                "pins": [
+                    {
+                        "pinId": "1",
+                        "netId": "nb0"
+                    },
+                    {
+                        "pinId": "2",
+                        "netId": "le"
+                    }
+                ]
+            },
+            {
+                "id": "de",
+                "type": "diode",
+                "designator": "DE1",
+                "model": "LEDRED",
+                "pins": [
+                    {
+                        "pinId": "anode",
+                        "netId": "le"
+                    },
+                    {
+                        "pinId": "cathode",
+                        "netId": "0"
+                    }
+                ]
+            },
+            {
+                "id": "rf",
+                "type": "resistor",
+                "designator": "RF1",
+                "value": "330",
+                "pins": [
+                    {
+                        "pinId": "1",
+                        "netId": "yf"
+                    },
+                    {
+                        "pinId": "2",
+                        "netId": "lf"
+                    }
+                ]
+            },
+            {
+                "id": "df",
+                "type": "diode",
+                "designator": "DF1",
+                "model": "LEDRED",
+                "pins": [
+                    {
+                        "pinId": "anode",
+                        "netId": "lf"
+                    },
+                    {
+                        "pinId": "cathode",
+                        "netId": "0"
+                    }
+                ]
+            },
+            {
+                "id": "rg",
+                "type": "resistor",
+                "designator": "RG1",
+                "value": "330",
+                "pins": [
+                    {
+                        "pinId": "1",
+                        "netId": "q1"
+                    },
+                    {
+                        "pinId": "2",
+                        "netId": "lg"
+                    }
+                ]
+            },
+            {
+                "id": "dg",
+                "type": "diode",
+                "designator": "DG1",
+                "model": "LEDRED",
+                "pins": [
+                    {
+                        "pinId": "anode",
+                        "netId": "lg"
+                    },
+                    {
+                        "pinId": "cathode",
+                        "netId": "0"
+                    }
+                ]
+            }
+        ],
+        "nets": [
+            {
+                "id": "vddn",
+                "name": "vddn"
+            },
+            {
+                "id": "clk",
+                "name": "clk"
+            },
+            {
+                "id": "q0",
+                "name": "q0"
+            },
+            {
+                "id": "q0b",
+                "name": "q0b"
+            },
+            {
+                "id": "q1",
+                "name": "q1"
+            },
+            {
+                "id": "q1b",
+                "name": "q1b"
+            },
+            {
+                "id": "nb0",
+                "name": "nb0"
+            },
+            {
+                "id": "nb1",
+                "name": "nb1"
+            },
+            {
+                "id": "ya",
+                "name": "ya"
+            },
+            {
+                "id": "yc",
+                "name": "yc"
+            },
+            {
+                "id": "yf",
+                "name": "yf"
+            },
+            {
+                "id": "la",
+                "name": "la"
+            },
+            {
+                "id": "lb",
+                "name": "lb"
+            },
+            {
+                "id": "lc",
+                "name": "lc"
+            },
+            {
+                "id": "ld",
+                "name": "ld"
+            },
+            {
+                "id": "le",
+                "name": "le"
+            },
+            {
+                "id": "lf",
+                "name": "lf"
+            },
+            {
+                "id": "lg",
+                "name": "lg"
+            },
+            {
+                "id": "0",
+                "name": "0",
+                "isGround": true
+            }
+        ],
+        "models": [
+            {
+                "name": "LEDRED",
+                "device": "diode",
+                "body": ".model LEDRED D(IS=1e-20 N=1.8 RS=2 CJO=10p)"
+            }
+        ],
+        "metadata": {
+            "name": "7-Segment LED Display Counter",
+            "description": "2-bit counter + decoder + 7-seg LED, counts 1-2-3-0"
+        }
     }
-  }
 }

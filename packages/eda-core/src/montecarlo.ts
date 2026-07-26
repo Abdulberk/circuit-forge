@@ -28,7 +28,12 @@ function gaussian(u1: number, u2: number): number {
  *   - 'uniform': flat ±tol — more conservative (samples the corners as often as the centre).
  * A non-positive tolerance returns the nominal unchanged.
  */
-export function perturbValue(nominal: number, tolerance: number, rand: () => number, dist: TolDistribution = 'gaussian'): number {
+export function perturbValue(
+    nominal: number,
+    tolerance: number,
+    rand: () => number,
+    dist: TolDistribution = 'gaussian',
+): number {
     if (!(tolerance > 0)) return nominal;
     if (dist === 'uniform') return nominal * (1 + tolerance * (2 * rand() - 1));
     const z = gaussian(rand(), rand());
@@ -41,7 +46,11 @@ export function perturbValue(nominal: number, tolerance: number, rand: () => num
  * parseable positive numeric value (R/C/L/source magnitudes). The SPICE unit (Ω/F/H) is preserved. Components
  * with no tolerance — or a non-numeric value (a SIN()/PULSE() source, a model name) — pass through unchanged.
  */
-export function perturbCircuit(circuit: CircuitJson, rand: () => number, dist: TolDistribution = 'gaussian'): CircuitJson {
+export function perturbCircuit(
+    circuit: CircuitJson,
+    rand: () => number,
+    dist: TolDistribution = 'gaussian',
+): CircuitJson {
     const components = circuit.components.map((c) => {
         if (!c.tolerance || c.tolerance <= 0 || !c.value) return c;
         const mag = parseComponentMagnitude(c.value);
@@ -56,7 +65,12 @@ export function perturbCircuit(circuit: CircuitJson, rand: () => number, dist: T
  * separately by the caller); a single RNG stream is shared across all variants so the same seed reproduces the
  * exact same set. A circuit with no toleranced components yields N identical copies (yield is then 0% or 100%).
  */
-export function monteCarloVariants(circuit: CircuitJson, n: number, seed = 1, dist: TolDistribution = 'gaussian'): CircuitJson[] {
+export function monteCarloVariants(
+    circuit: CircuitJson,
+    n: number,
+    seed = 1,
+    dist: TolDistribution = 'gaussian',
+): CircuitJson[] {
     const rand = mulberry32(seed);
     const variants: CircuitJson[] = [];
     for (let i = 0; i < n; i++) variants.push(perturbCircuit(circuit, rand, dist));
@@ -184,7 +198,7 @@ function wilson95(passed: number, n: number): { low: number; high: number } {
     const p = passed / n;
     const denom = 1 + z2 / n;
     const center = (p + z2 / (2 * n)) / denom;
-    const half = (z * Math.sqrt(p * (1 - p) / n + z2 / (4 * n * n))) / denom;
+    const half = (z * Math.sqrt((p * (1 - p)) / n + z2 / (4 * n * n))) / denom;
     return { low: Math.max(0, center - half), high: Math.min(1, center + half) };
 }
 
@@ -273,7 +287,11 @@ export function classifyRobustness(
 
     if (lo === null) {
         return {
-            tier: 'unknown', profile: profileName, yield: yld, yieldLowerBound: null, evaluated,
+            tier: 'unknown',
+            profile: profileName,
+            yield: yld,
+            yieldLowerBound: null,
+            evaluated,
             note: 'Robustness not assessed (no toleranced parts or no Monte-Carlo) — verified at NOMINAL component values only.',
         };
     }
@@ -283,7 +301,7 @@ export function classifyRobustness(
         tier === 'robust'
             ? `Robust — at least ${pct(bars.robustMin)} of units expected to meet spec under component tolerances ${tail}.`
             : tier === 'marginal'
-                ? `Marginal — ~${pct(lo)} expected yield, below the ${pct(bars.robustMin)} production bar. Tighten component tolerances (e.g. ±1% parts) or re-center values ${tail}.`
-                : `At risk — only ~${pct(lo)} expected yield; passes at nominal but is NOT production-robust ${tail}.`;
+              ? `Marginal — ~${pct(lo)} expected yield, below the ${pct(bars.robustMin)} production bar. Tighten component tolerances (e.g. ±1% parts) or re-center values ${tail}.`
+              : `At risk — only ~${pct(lo)} expected yield; passes at nominal but is NOT production-robust ${tail}.`;
     return { tier, profile: profileName, yield: yld, yieldLowerBound: lo, evaluated, note };
 }

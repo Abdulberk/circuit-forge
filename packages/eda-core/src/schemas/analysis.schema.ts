@@ -6,25 +6,26 @@ import { z } from 'zod';
 /**
  * SPICE value format - number with optional suffix
  */
-export const SpiceValueSchema = z.string().regex(
-    /^[+-]?\d*\.?\d+(?:[eE][+-]?\d+)?\s*[a-zA-Z]*$/,
-    'Invalid SPICE value format',
-);
+export const SpiceValueSchema = z
+    .string()
+    .regex(/^[+-]?\d*\.?\d+(?:[eE][+-]?\d+)?\s*[a-zA-Z]*$/, 'Invalid SPICE value format');
 
 /**
  * Probe schema — v(node) or i(device). Defined here (before the analysis schemas) so analyses can reuse it.
  */
-export const ProbeSchema = z.string().regex(
-    /^[vi]\([a-zA-Z0-9_]+(?:,[a-zA-Z0-9_]+)?\)$/i,
-    'Invalid probe format. Use v(node) or i(device)',
-);
+export const ProbeSchema = z
+    .string()
+    .regex(/^[vi]\([a-zA-Z0-9_]+(?:,[a-zA-Z0-9_]+)?\)$/i, 'Invalid probe format. Use v(node) or i(device)');
 
 /**
  * `.meas` measurement spec — built into a validated `.meas` card by the generator (never raw passthrough).
  * name is restricted to a SPICE-safe identifier; value/edge apply only to type "when".
  */
 export const MeasureSpecSchema = z.object({
-    name: z.string().regex(/^[A-Za-z][A-Za-z0-9_]*$/, 'Invalid measure name (letters/digits/underscore)').max(40),
+    name: z
+        .string()
+        .regex(/^[A-Za-z][A-Za-z0-9_]*$/, 'Invalid measure name (letters/digits/underscore)')
+        .max(40),
     type: z.enum(['max', 'min', 'pp', 'avg', 'rms', 'integ', 'when']),
     probe: ProbeSchema,
     value: z.number().finite().optional(),

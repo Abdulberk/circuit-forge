@@ -45,7 +45,7 @@ describe('ErcChecker', () => {
             const result = runErc(circuit);
 
             expect(result.passed).toBe(false);
-            expect(result.issues.some(i => i.code === ErcCode.NO_GROUND)).toBe(true);
+            expect(result.issues.some((i) => i.code === ErcCode.NO_GROUND)).toBe(true);
         });
 
         it('should pass when ground node (0) exists', () => {
@@ -61,15 +61,12 @@ describe('ErcChecker', () => {
                         { pinId: '2', netId: '0' },
                     ]),
                 ],
-                nets: [
-                    createNet('vcc', 'vcc'),
-                    createNet('0', '0'),
-                ],
+                nets: [createNet('vcc', 'vcc'), createNet('0', '0')],
             };
 
             const result = runErc(circuit);
 
-            expect(result.issues.some(i => i.code === ErcCode.NO_GROUND)).toBe(false);
+            expect(result.issues.some((i) => i.code === ErcCode.NO_GROUND)).toBe(false);
         });
 
         it('should accept isGround flag as ground', () => {
@@ -89,7 +86,7 @@ describe('ErcChecker', () => {
 
             const result = runErc(circuit);
 
-            expect(result.issues.some(i => i.code === ErcCode.NO_GROUND)).toBe(false);
+            expect(result.issues.some((i) => i.code === ErcCode.NO_GROUND)).toBe(false);
         });
     });
 
@@ -107,17 +104,13 @@ describe('ErcChecker', () => {
                         { pinId: '2', netId: 'floating_node' },
                     ]),
                 ],
-                nets: [
-                    createNet('vcc', 'vcc'),
-                    createNet('0', '0'),
-                    createNet('floating_node', 'floating_node'),
-                ],
+                nets: [createNet('vcc', 'vcc'), createNet('0', '0'), createNet('floating_node', 'floating_node')],
             };
 
             const result = runErc(circuit);
 
-            expect(result.issues.some(i => i.code === ErcCode.NET_HAS_SINGLE_PIN)).toBe(true);
-            const floatingIssue = result.issues.find(i => i.code === ErcCode.NET_HAS_SINGLE_PIN);
+            expect(result.issues.some((i) => i.code === ErcCode.NET_HAS_SINGLE_PIN)).toBe(true);
+            const floatingIssue = result.issues.find((i) => i.code === ErcCode.NET_HAS_SINGLE_PIN);
             expect(floatingIssue?.relatedIds).toContain('floating_node');
         });
 
@@ -138,16 +131,12 @@ describe('ErcChecker', () => {
                         { pinId: '2', netId: '0' },
                     ]),
                 ],
-                nets: [
-                    createNet('vcc', 'vcc'),
-                    createNet('mid', 'mid'),
-                    createNet('0', '0'),
-                ],
+                nets: [createNet('vcc', 'vcc'), createNet('mid', 'mid'), createNet('0', '0')],
             };
 
             const result = runErc(circuit);
 
-            expect(result.issues.some(i => i.code === ErcCode.NET_HAS_SINGLE_PIN)).toBe(false);
+            expect(result.issues.some((i) => i.code === ErcCode.NET_HAS_SINGLE_PIN)).toBe(false);
         });
 
         it('flags a node with no DC path (only capacitor connections) as FLOATING_NODE', () => {
@@ -174,8 +163,8 @@ describe('ErcChecker', () => {
             };
 
             const result = runErc(circuit);
-            const floating = result.issues.filter(i => i.code === ErcCode.FLOATING_NODE);
-            expect(floating.some(i => i.relatedIds.includes('mid'))).toBe(true);
+            const floating = result.issues.filter((i) => i.code === ErcCode.FLOATING_NODE);
+            expect(floating.some((i) => i.relatedIds.includes('mid'))).toBe(true);
         });
 
         it('does NOT flag a node that has a resistor (DC path) alongside a capacitor', () => {
@@ -200,7 +189,7 @@ describe('ErcChecker', () => {
             };
 
             const result = runErc(circuit);
-            expect(result.issues.some(i => i.code === ErcCode.FLOATING_NODE)).toBe(false);
+            expect(result.issues.some((i) => i.code === ErcCode.FLOATING_NODE)).toBe(false);
         });
     });
 
@@ -218,15 +207,12 @@ describe('ErcChecker', () => {
                         { pinId: '-', netId: '0' },
                     ]),
                 ],
-                nets: [
-                    createNet('vcc', 'vcc'),
-                    createNet('0', '0'),
-                ],
+                nets: [createNet('vcc', 'vcc'), createNet('0', '0')],
             };
 
             const result = runErc(circuit);
 
-            expect(result.issues.some(i => i.code === ErcCode.PARALLEL_VOLTAGE_SOURCES)).toBe(true);
+            expect(result.issues.some((i) => i.code === ErcCode.PARALLEL_VOLTAGE_SOURCES)).toBe(true);
         });
 
         it('should not flag single voltage source', () => {
@@ -242,15 +228,12 @@ describe('ErcChecker', () => {
                         { pinId: '2', netId: '0' },
                     ]),
                 ],
-                nets: [
-                    createNet('vcc', 'vcc'),
-                    createNet('0', '0'),
-                ],
+                nets: [createNet('vcc', 'vcc'), createNet('0', '0')],
             };
 
             const result = runErc(circuit);
 
-            expect(result.issues.some(i => i.code === ErcCode.VOLTAGE_SOURCE_SHORT)).toBe(false);
+            expect(result.issues.some((i) => i.code === ErcCode.VOLTAGE_SOURCE_SHORT)).toBe(false);
         });
 
         it('flags a vcvs output paralleled with a voltage source on the same net (over-determined)', () => {
@@ -279,7 +262,7 @@ describe('ErcChecker', () => {
 
             const result = runErc(circuit);
 
-            expect(result.issues.some(i => i.code === ErcCode.PARALLEL_VOLTAGE_SOURCES)).toBe(true);
+            expect(result.issues.some((i) => i.code === ErcCode.PARALLEL_VOLTAGE_SOURCES)).toBe(true);
         });
 
         it('does NOT flag a single vcvs driving its own net while sensing another (no parallel)', () => {
@@ -308,7 +291,7 @@ describe('ErcChecker', () => {
 
             const result = runErc(circuit);
 
-            expect(result.issues.some(i => i.code === ErcCode.PARALLEL_VOLTAGE_SOURCES)).toBe(false);
+            expect(result.issues.some((i) => i.code === ErcCode.PARALLEL_VOLTAGE_SOURCES)).toBe(false);
         });
 
         it('flags a source shorted across two DIFFERENT ground nets (audit #6)', () => {
@@ -325,7 +308,7 @@ describe('ErcChecker', () => {
                 nets: [createNet('gnd1', 'gnd1', true), createNet('gnd2', 'gnd2', true)],
             };
             const result = runErc(circuit);
-            expect(result.issues.some(i => i.code === ErcCode.VOLTAGE_SOURCE_SHORT)).toBe(true);
+            expect(result.issues.some((i) => i.code === ErcCode.VOLTAGE_SOURCE_SHORT)).toBe(true);
         });
 
         it('flags parallel sources across DIFFERENT ground nets with conflicting values (audit #7)', () => {
@@ -346,7 +329,7 @@ describe('ErcChecker', () => {
                 nets: [createNet('sig', 'sig'), createNet('gnd1', 'gnd1', true), createNet('gnd2', 'gnd2', true)],
             };
             const result = runErc(circuit);
-            expect(result.issues.some(i => i.code === ErcCode.PARALLEL_VOLTAGE_SOURCES)).toBe(true);
+            expect(result.issues.some((i) => i.code === ErcCode.PARALLEL_VOLTAGE_SOURCES)).toBe(true);
         });
 
         it('flags an ANTI-PARALLEL equal-magnitude pair (+5 vs −5 across a↔0) — audit #7 polarity', () => {
@@ -367,7 +350,7 @@ describe('ErcChecker', () => {
                 nets: [createNet('a', 'a'), createNet('0', '0', true)],
             };
             const result = runErc(circuit);
-            expect(result.issues.some(i => i.code === ErcCode.PARALLEL_VOLTAGE_SOURCES)).toBe(true);
+            expect(result.issues.some((i) => i.code === ErcCode.PARALLEL_VOLTAGE_SOURCES)).toBe(true);
         });
 
         it('does NOT flag two genuinely identical parallel sources (redundancy, not conflict)', () => {
@@ -387,7 +370,7 @@ describe('ErcChecker', () => {
                 nets: [createNet('a', 'a'), createNet('0', '0', true)],
             };
             const result = runErc(circuit);
-            expect(result.issues.some(i => i.code === ErcCode.PARALLEL_VOLTAGE_SOURCES)).toBe(false);
+            expect(result.issues.some((i) => i.code === ErcCode.PARALLEL_VOLTAGE_SOURCES)).toBe(false);
         });
     });
 
@@ -418,7 +401,7 @@ describe('ErcChecker', () => {
                 nets: [createNet('vcc', 'vcc'), createNet('0', '0', true), createNet('a', 'a'), createNet('b', 'b')],
             };
             const result = runErc(circuit);
-            const island = result.issues.find(i => i.code === ErcCode.ISOLATED_SUBCIRCUIT);
+            const island = result.issues.find((i) => i.code === ErcCode.ISOLATED_SUBCIRCUIT);
             expect(island).toBeDefined();
             expect(island!.relatedIds).toEqual(expect.arrayContaining(['a', 'b']));
             // the grounded nets are NOT named as islands
@@ -445,7 +428,7 @@ describe('ErcChecker', () => {
                 nets: [createNet('vcc', 'vcc'), createNet('out', 'out'), createNet('0', '0', true)],
             };
             const result = runErc(circuit);
-            expect(result.issues.some(i => i.code === ErcCode.ISOLATED_SUBCIRCUIT)).toBe(false);
+            expect(result.issues.some((i) => i.code === ErcCode.ISOLATED_SUBCIRCUIT)).toBe(false);
         });
     });
 
@@ -458,15 +441,12 @@ describe('ErcChecker', () => {
                         { pinId: '1', netId: 'vcc' }, // Missing pin 2
                     ]),
                 ],
-                nets: [
-                    createNet('vcc', 'vcc'),
-                    createNet('0', '0'),
-                ],
+                nets: [createNet('vcc', 'vcc'), createNet('0', '0')],
             };
 
             const result = runErc(circuit);
 
-            expect(result.issues.some(i => i.code === ErcCode.PIN_COUNT_MISMATCH)).toBe(true);
+            expect(result.issues.some((i) => i.code === ErcCode.PIN_COUNT_MISMATCH)).toBe(true);
         });
 
         it('should validate voltage source has both pins', () => {
@@ -477,15 +457,12 @@ describe('ErcChecker', () => {
                         { pinId: '+', netId: 'vcc' }, // Missing negative
                     ]),
                 ],
-                nets: [
-                    createNet('vcc', 'vcc'),
-                    createNet('0', '0'),
-                ],
+                nets: [createNet('vcc', 'vcc'), createNet('0', '0')],
             };
 
             const result = runErc(circuit);
 
-            expect(result.issues.some(i => i.code === ErcCode.PIN_COUNT_MISMATCH)).toBe(true);
+            expect(result.issues.some((i) => i.code === ErcCode.PIN_COUNT_MISMATCH)).toBe(true);
         });
     });
 
@@ -503,10 +480,7 @@ describe('ErcChecker', () => {
                         { pinId: '2', netId: '0' },
                     ]),
                 ],
-                nets: [
-                    createNet('vcc', 'vcc'),
-                    createNet('0', '0'),
-                ],
+                nets: [createNet('vcc', 'vcc'), createNet('0', '0')],
             };
 
             const result = runErc(circuit);
@@ -526,15 +500,12 @@ describe('ErcChecker', () => {
                         { pinId: '2', netId: 'gnd' },
                     ]),
                 ],
-                nets: [
-                    createNet('floating', 'floating'),
-                    createNet('gnd', 'gnd'),
-                ],
+                nets: [createNet('floating', 'floating'), createNet('gnd', 'gnd')],
             };
 
             const result = runErc(circuit);
 
-            result.issues.forEach(issue => {
+            result.issues.forEach((issue) => {
                 expect(['error', 'warning', 'info']).toContain(issue.severity);
             });
         });
@@ -551,7 +522,7 @@ describe('ErcChecker', () => {
             const result = runErc(circuit);
 
             // Empty circuit should have no ground error and empty circuit error
-            expect(result.issues.some(i => i.code === ErcCode.EMPTY_CIRCUIT)).toBe(true);
+            expect(result.issues.some((i) => i.code === ErcCode.EMPTY_CIRCUIT)).toBe(true);
         });
     });
 
@@ -573,17 +544,13 @@ describe('ErcChecker', () => {
                         { pinId: '2', netId: '0' },
                     ]),
                 ],
-                nets: [
-                    createNet('in', 'in'),
-                    createNet('out', 'out'),
-                    createNet('0', '0'),
-                ],
+                nets: [createNet('in', 'in'), createNet('out', 'out'), createNet('0', '0')],
             };
 
             const result = runErc(circuit);
 
             expect(result.passed).toBe(true);
-            expect(result.issues.filter(i => i.severity === 'error')).toHaveLength(0);
+            expect(result.issues.filter((i) => i.severity === 'error')).toHaveLength(0);
         });
     });
 });

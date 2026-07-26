@@ -17,6 +17,10 @@ import { startTelemetry } from './telemetry';
 
 if (process.env.NODE_ENV !== 'test') {
     const loadEnvFile = (process as { loadEnvFile?: (p?: string) => void }).loadEnvFile;
-    try { loadEnvFile?.(path.resolve(process.cwd(), '../../.env')); } catch { /* no root .env — env from the real environment */ }
+    try {
+        loadEnvFile?.(path.resolve(process.cwd(), '../../.env'));
+    } catch {
+        /* no root .env — env from the real environment */
+    }
     startTelemetry('circuit-forge-worker');
 }

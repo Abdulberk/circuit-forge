@@ -103,10 +103,22 @@ class AnthropicModelClient implements ModelClient {
             system: [{ type: 'text', text: req.system, cache_control: { type: 'ephemeral' } }],
             messages: req.messages.map(toAnthropicMessage),
             ...(req.tools?.length
-                ? { tools: req.tools.map((t) => ({ name: t.name, description: t.description, input_schema: t.inputSchema as Anthropic.Tool.InputSchema })) }
+                ? {
+                      tools: req.tools.map((t) => ({
+                          name: t.name,
+                          description: t.description,
+                          input_schema: t.inputSchema as Anthropic.Tool.InputSchema,
+                      })),
+                  }
                 : {}),
         };
-        const fire = (attempt: 1 | 2) => { try { onRequest?.(attempt); } catch { /* telemetry must not abort */ } };
+        const fire = (attempt: 1 | 2) => {
+            try {
+                onRequest?.(attempt);
+            } catch {
+                /* telemetry must not abort */
+            }
+        };
         fire(1);
         let response: Anthropic.Message;
         try {
@@ -121,11 +133,21 @@ class AnthropicModelClient implements ModelClient {
         const toolCalls: NeutralToolCall[] = [];
         for (const block of response.content) {
             if (block.type === 'text') text += (text ? '\n' : '') + block.text;
-            else if (block.type === 'tool_use') toolCalls.push({ id: block.id, name: block.name, input: (block.input ?? {}) as Record<string, unknown> });
+            else if (block.type === 'tool_use')
+                toolCalls.push({
+                    id: block.id,
+                    name: block.name,
+                    input: (block.input ?? {}) as Record<string, unknown>,
+                });
         }
         // Guard `usage` itself: a provider (or a test stub) may omit it — the old tokensUsed() tolerated that,
         // and the token count is only a budget signal, so a missing usage must degrade to 0, never throw.
-        return { text: text.trim(), toolCalls, inputTokens: response.usage?.input_tokens ?? 0, outputTokens: response.usage?.output_tokens ?? 0 };
+        return {
+            text: text.trim(),
+            toolCalls,
+            inputTokens: response.usage?.input_tokens ?? 0,
+            outputTokens: response.usage?.output_tokens ?? 0,
+        };
     }
 }
 
@@ -137,7 +159,10 @@ export function toAnthropicMessage(m: NeutralMessage): Anthropic.MessageParam {
         for (const tc of m.toolCalls) content.push({ type: 'tool_use', id: tc.id, name: tc.name, input: tc.input });
         return { role: 'assistant', content };
     }
-    return { role: 'user', content: m.results.map((r) => ({ type: 'tool_result', tool_use_id: r.toolCallId, content: r.content })) };
+    return {
+        role: 'user',
+        content: m.results.map((r) => ({ type: 'tool_result', tool_use_id: r.toolCallId, content: r.content })),
+    };
 }
 
 // ---------------------------------------------------------------------------------------------------
@@ -145,7 +170,12 @@ export function toAnthropicMessage(m: NeutralMessage): Anthropic.MessageParam {
 // ---------------------------------------------------------------------------------------------------
 
 interface OpenAIChatResponse {
-    choices?: { message?: { content?: string | null; tool_calls?: { id: string; function: { name: string; arguments: string } }[] } }[];
+    choices?: {
+        message?: {
+            content?: string | null;
+            tool_calls?: { id: string; function: { name: string; arguments: string } }[];
+        };
+    }[];
     usage?: { prompt_tokens?: number; completion_tokens?: number };
 }
 
@@ -175,10 +205,21 @@ class OpenAIModelClient implements ModelClient {
             ...(req.maxTokens ? { max_completion_tokens: req.maxTokens } : {}),
             ...(req.temperature !== undefined ? { temperature: req.temperature } : {}),
             ...(req.tools?.length
-                ? { tools: req.tools.map((t) => ({ type: 'function', function: { name: t.name, description: t.description, parameters: t.inputSchema } })) }
+                ? {
+                      tools: req.tools.map((t) => ({
+                          type: 'function',
+                          function: { name: t.name, description: t.description, parameters: t.inputSchema },
+                      })),
+                  }
                 : {}),
         };
-        const fire = (attempt: 1 | 2) => { try { onRequest?.(attempt); } catch { /* telemetry must not abort */ } };
+        const fire = (attempt: 1 | 2) => {
+            try {
+                onRequest?.(attempt);
+            } catch {
+                /* telemetry must not abort */
+            }
+        };
         fire(1);
         let data: OpenAIChatResponse;
         try {
@@ -243,7 +284,13 @@ export function toOpenAIMessages(system: string, messages: NeutralMessage[]): un
                 role: 'assistant',
                 content: m.text || null,
                 ...(m.toolCalls.length
-                    ? { tool_calls: m.toolCalls.map((tc) => ({ id: tc.id, type: 'function', function: { name: tc.name, arguments: JSON.stringify(tc.input) } })) }
+                    ? {
+                          tool_calls: m.toolCalls.map((tc) => ({
+                              id: tc.id,
+                              type: 'function',
+                              function: { name: tc.name, arguments: JSON.stringify(tc.input) },
+                          })),
+                      }
                     : {}),
             });
         } else {
@@ -256,7 +303,10 @@ export function toOpenAIMessages(system: string, messages: NeutralMessage[]): un
 
 /** Typed HTTP error so retry logic can distinguish transient (5xx / network status 0) from a real 4xx. */
 export class OpenAiHttpError extends Error {
-    constructor(readonly status: number, message: string) {
+    constructor(
+        readonly status: number,
+        message: string,
+    ) {
         super(message);
         this.name = 'OpenAiHttpError';
     }

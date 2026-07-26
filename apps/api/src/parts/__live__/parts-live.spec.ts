@@ -46,7 +46,9 @@ function loadRealCreds(): boolean {
     const mapper = new ComponentMapper();
 
     /** Search a term, take the first hit, fetch its full product, and classify it. */
-    async function classifyFirst(q: string): Promise<{ part: CatalogPart; mapped: ReturnType<ComponentMapper['toComponent']> } | null> {
+    async function classifyFirst(
+        q: string,
+    ): Promise<{ part: CatalogPart; mapped: ReturnType<ComponentMapper['toComponent']> } | null> {
         const res = await provider.search({ q });
         const first = res.items[0];
         if (!first) return null;

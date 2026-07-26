@@ -15,4 +15,4 @@ import { VersionsService } from './versions.service';
     providers: [VersionsService, BomService],
     exports: [VersionsService],
 })
-export class VersionsModule { }
+export class VersionsModule {}

@@ -13,8 +13,6 @@ import type { VersionsService } from '../versions/versions.service';
 
 import { SimulationService } from './simulation.service';
 
-
-
 interface MockAsset {
     id: string;
     orgId: string;
@@ -81,16 +79,26 @@ describe('SimulationService — model-asset binding (createQuickSim)', () => {
     });
 
     it('rejects an unsafe model filename (bad chars / traversal) before it reaches a netlist', async () => {
-        const bad = makeService([{ id: 'a1', orgId: 'org-1', type: 'SPICE_MODEL', s3Key: 'orgs/org-1/models/uuid/bad name;rm.lib' }]);
+        const bad = makeService([
+            { id: 'a1', orgId: 'org-1', type: 'SPICE_MODEL', s3Key: 'orgs/org-1/models/uuid/bad name;rm.lib' },
+        ]);
         await expect(bad.svc.createQuickSim('x', { type: 'op' }, 'user-1', ['a1'])).rejects.toThrow(/unsafe filename/i);
-        const dots = makeService([{ id: 'a1', orgId: 'org-1', type: 'SPICE_MODEL', s3Key: 'orgs/org-1/models/uuid/..' }]);
-        await expect(dots.svc.createQuickSim('x', { type: 'op' }, 'user-1', ['a1'])).rejects.toThrow(/unsafe filename/i);
+        const dots = makeService([
+            { id: 'a1', orgId: 'org-1', type: 'SPICE_MODEL', s3Key: 'orgs/org-1/models/uuid/..' },
+        ]);
+        await expect(dots.svc.createQuickSim('x', { type: 'op' }, 'user-1', ['a1'])).rejects.toThrow(
+            /unsafe filename/i,
+        );
     });
 
     it('rejects a model filename that would clobber a worker job file (circuit.cir / output.csv)', async () => {
-        const svc1 = makeService([{ id: 'a1', orgId: 'org-1', type: 'SPICE_MODEL', s3Key: 'orgs/org-1/models/uuid/circuit.cir' }]);
+        const svc1 = makeService([
+            { id: 'a1', orgId: 'org-1', type: 'SPICE_MODEL', s3Key: 'orgs/org-1/models/uuid/circuit.cir' },
+        ]);
         await expect(svc1.svc.createQuickSim('x', { type: 'op' }, 'user-1', ['a1'])).rejects.toThrow(/reserved/i);
-        const svc2 = makeService([{ id: 'a1', orgId: 'org-1', type: 'SPICE_MODEL', s3Key: 'orgs/org-1/models/uuid/OUTPUT.CSV' }]);
+        const svc2 = makeService([
+            { id: 'a1', orgId: 'org-1', type: 'SPICE_MODEL', s3Key: 'orgs/org-1/models/uuid/OUTPUT.CSV' },
+        ]);
         await expect(svc2.svc.createQuickSim('x', { type: 'op' }, 'user-1', ['a1'])).rejects.toThrow(/reserved/i);
     });
 

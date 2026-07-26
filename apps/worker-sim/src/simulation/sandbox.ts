@@ -86,16 +86,36 @@ export function sandboxedCommand(
         const bwrapArgs = [
             // Explicit --unshare-user (NOT --unshare-all, which is --unshare-user-TRY and would SILENTLY
             // run WITHOUT a userns when the host forbids it). Fail loud instead — probeBwrap gates this.
-            '--unshare-user', '--unshare-net', '--unshare-pid', '--unshare-ipc', '--unshare-uts',
-            '--die-with-parent', '--new-session',
+            '--unshare-user',
+            '--unshare-net',
+            '--unshare-pid',
+            '--unshare-ipc',
+            '--unshare-uts',
+            '--die-with-parent',
+            '--new-session',
             // Drop the worker's env (DB/Redis/S3 creds) — ngspice never needs it — and give a minimal PATH
             // + a writable HOME under the tmpfs.
-            '--clearenv', '--setenv', 'PATH', '/usr/bin:/bin:/usr/local/bin', '--setenv', 'HOME', '/tmp',
-            '--ro-bind', '/', '/', // read-only host root: shared libs, bash, the ngspice binary
-            '--proc', '/proc', '--dev', '/dev', // fresh proc + minimal /dev (ngspice needs /dev/null)
-            '--tmpfs', '/tmp', // ngspice spools `.control` blocks here via libc tmpfile() (ignores $TMPDIR)
-            '--bind', cfg.jobDir, cfg.jobDir, // the ONLY writable real path (circuit.cir + output.csv)
-            '--chdir', cfg.jobDir,
+            '--clearenv',
+            '--setenv',
+            'PATH',
+            '/usr/bin:/bin:/usr/local/bin',
+            '--setenv',
+            'HOME',
+            '/tmp',
+            '--ro-bind',
+            '/',
+            '/', // read-only host root: shared libs, bash, the ngspice binary
+            '--proc',
+            '/proc',
+            '--dev',
+            '/dev', // fresh proc + minimal /dev (ngspice needs /dev/null)
+            '--tmpfs',
+            '/tmp', // ngspice spools `.control` blocks here via libc tmpfile() (ignores $TMPDIR)
+            '--bind',
+            cfg.jobDir,
+            cfg.jobDir, // the ONLY writable real path (circuit.cir + output.csv)
+            '--chdir',
+            cfg.jobDir,
             '--',
             ...inner,
         ];
@@ -133,14 +153,19 @@ export async function probeBwrap(opts: {
     const bin = opts.bin ?? 'bwrap';
     bwrapReady = await new Promise<boolean>((resolve) => {
         try {
-            const p = spawn(bin, ['--unshare-user', '--unshare-net', '--ro-bind', '/', '/', '--', '/bin/true'], { stdio: 'ignore' });
+            const p = spawn(bin, ['--unshare-user', '--unshare-net', '--ro-bind', '/', '/', '--', '/bin/true'], {
+                stdio: 'ignore',
+            });
             p.on('error', () => resolve(false));
             p.on('close', (code) => resolve(code === 0));
         } catch {
             resolve(false);
         }
     });
-    opts.log?.(bwrapReady, bwrapReady ? 'preflight passed' : 'preflight failed (unprivileged user namespaces blocked?)');
+    opts.log?.(
+        bwrapReady,
+        bwrapReady ? 'preflight passed' : 'preflight failed (unprivileged user namespaces blocked?)',
+    );
     return bwrapReady;
 }
 
@@ -159,14 +184,18 @@ export function resolveSandboxConfig(env: {
 }): SandboxConfig {
     const platform = env.platform ?? process.platform;
     const requested = (env.SIM_SANDBOX ?? 'auto').toLowerCase();
-    const mode: SandboxMode = requested === 'none' ? 'none' : requested === 'rlimit' ? 'rlimit' : platform === 'linux' ? 'rlimit' : 'none';
+    const mode: SandboxMode =
+        requested === 'none' ? 'none' : requested === 'rlimit' ? 'rlimit' : platform === 'linux' ? 'rlimit' : 'none';
     // CPU backstop sits comfortably above the wall-clock timeout so it never fires for a legit run.
     const cpuBackstop = Math.ceil((env.SIM_TIMEOUT_MS ?? 10000) / 1000) * 2 + 5;
     // bwrap is active only when enabled AND the startup preflight (probeBwrap) succeeded on this host.
     const bwrap = isBwrapEnabled(env.SIM_BWRAP) && bwrapReady;
     // Only accept a plain username (no shell metacharacters) — it's interpolated into the bash preamble.
     // Suppressed under bwrap: a rootless userns maps a single uid, so there's no second user to drop to.
-    const user = !bwrap && env.SIM_SANDBOX_USER && /^[a-z_][a-z0-9_-]*$/.test(env.SIM_SANDBOX_USER) ? env.SIM_SANDBOX_USER : undefined;
+    const user =
+        !bwrap && env.SIM_SANDBOX_USER && /^[a-z_][a-z0-9_-]*$/.test(env.SIM_SANDBOX_USER)
+            ? env.SIM_SANDBOX_USER
+            : undefined;
     return {
         mode,
         ...(user ? { user } : {}),

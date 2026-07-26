@@ -99,7 +99,17 @@ export function summarizeSeries(s: DataSeries, analysisType?: string): SimMeasur
         // Return NaN, NOT 0: a 0 would silently SATISFY a spec (e.g. "v(x) < 1" passes on 0) on data we never
         // actually measured. NaN makes the evaluator treat the probe as unmeasurable (actual = null), never a pass.
         const n = Number.NaN;
-        return { node: s.name, min: n, max: n, final: n, pp: n, avg: n, rms: n, raw: { min: n, max: n, final: n, pp: n, avg: n, rms: n }, ...(ac ? { cutoff: null } : {}) };
+        return {
+            node: s.name,
+            min: n,
+            max: n,
+            final: n,
+            pp: n,
+            avg: n,
+            rms: n,
+            raw: { min: n, max: n, final: n, pp: n, avg: n, rms: n },
+            ...(ac ? { cutoff: null } : {}),
+        };
     }
     const round = (n: number) => Number(n.toPrecision(4));
     const rawPp = max - min;

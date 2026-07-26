@@ -13,8 +13,6 @@ export interface PlatformActor {
     platformRole: PlatformRole;
 }
 
-export const CurrentPlatformActor = createParamDecorator(
-    (_data: unknown, ctx: ExecutionContext): PlatformActor => {
-        return ctx.switchToHttp().getRequest().platformActor;
-    },
-);
+export const CurrentPlatformActor = createParamDecorator((_data: unknown, ctx: ExecutionContext): PlatformActor => {
+    return ctx.switchToHttp().getRequest().platformActor;
+});

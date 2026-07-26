@@ -45,7 +45,14 @@ describe('tme-mapper', () => {
                 elements: [
                     { id: 35, name: 'Case', values: [{ id: 1, value: '0603' }] },
                     { id: 1, name: 'Resistance', values: [{ id: 2, value: '10k' }] },
-                    { id: 2, name: 'Kind', values: [{ id: 3, value: 'a' }, { id: 4, value: 'b' }] },
+                    {
+                        id: 2,
+                        name: 'Kind',
+                        values: [
+                            { id: 3, value: 'a' },
+                            { id: 4, value: 'b' },
+                        ],
+                    },
                 ],
             },
         });
@@ -80,7 +87,13 @@ describe('tme-mapper', () => {
             {
                 symbol: 'x',
                 stock_quantity: 100,
-                prices: { currency: 'EUR', elements: [{ amount: 1, price: 0.44 }, { amount: 10, price: 0.33 }] },
+                prices: {
+                    currency: 'EUR',
+                    elements: [
+                        { amount: 1, price: 0.44 },
+                        { amount: 10, price: 0.33 },
+                    ],
+                },
             },
             'PLN',
         );

@@ -71,7 +71,7 @@ export class AuthService {
         private readonly jwtService: JwtService,
         private readonly configService: ConfigService,
         private readonly email: EmailService,
-    ) { }
+    ) {}
 
     /** Canonical email form: trimmed + lowercased, so case/whitespace variants are one account. */
     private normalizeEmail(email: string): string {
@@ -313,14 +313,22 @@ export class AuthService {
         }
 
         const row = await this.prisma.refreshToken.findUnique({ where: { jti: payload.jti } });
-        if (!row || row.tokenHash !== this.hashToken(refreshToken) || row.revokedAt || row.expiresAt.getTime() <= Date.now()) {
+        if (
+            !row ||
+            row.tokenHash !== this.hashToken(refreshToken) ||
+            row.revokedAt ||
+            row.expiresAt.getTime() <= Date.now()
+        ) {
             throw new UnauthorizedException('Invalid refresh token');
         }
 
         if (row.usedAt) {
             await this.revokeFamily(row.familyId);
             this.audit(row.userId, 'auth.refresh_reuse_detected', { familyId: row.familyId, ...ctx });
-            this.logger.warn({ userId: row.userId, familyId: row.familyId }, 'Refresh-token reuse detected — family revoked');
+            this.logger.warn(
+                { userId: row.userId, familyId: row.familyId },
+                'Refresh-token reuse detected — family revoked',
+            );
             throw new UnauthorizedException('Invalid refresh token');
         }
 
@@ -407,11 +415,14 @@ export class AuthService {
 
         const [accessToken, refreshToken] = await Promise.all([
             this.jwtService.signAsync(base),
-            this.jwtService.signAsync({ ...base, jti }, {
-                secret: this.configService.get<string>('JWT_REFRESH_SECRET'),
-                // Single source of truth with the DB expiresAt below (keep the JWT exp == row exp).
-                expiresIn: Math.floor(REFRESH_TTL_MS / 1000),
-            }),
+            this.jwtService.signAsync(
+                { ...base, jti },
+                {
+                    secret: this.configService.get<string>('JWT_REFRESH_SECRET'),
+                    // Single source of truth with the DB expiresAt below (keep the JWT exp == row exp).
+                    expiresIn: Math.floor(REFRESH_TTL_MS / 1000),
+                },
+            ),
         ]);
 
         await db.refreshToken.create({

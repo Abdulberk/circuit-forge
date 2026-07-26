@@ -161,9 +161,7 @@ export function validateCircuitJson(data: unknown): CircuitJsonOutput {
 /**
  * Safe validate circuit JSON (returns result instead of throwing)
  */
-export function safeValidateCircuitJson(
-    data: unknown,
-): z.SafeParseReturnType<CircuitJsonInput, CircuitJsonOutput> {
+export function safeValidateCircuitJson(data: unknown): z.SafeParseReturnType<CircuitJsonInput, CircuitJsonOutput> {
     return CircuitJsonSchema.safeParse(data);
 }
 

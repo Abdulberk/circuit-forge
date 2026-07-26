@@ -1,4 +1,11 @@
-import { classifyJobOutcome, isFinalAttempt, deriveFailureStatus, buildFailureMetrics, buildSuccessMetrics, type OutcomeInput } from './outcome';
+import {
+    classifyJobOutcome,
+    isFinalAttempt,
+    deriveFailureStatus,
+    buildFailureMetrics,
+    buildSuccessMetrics,
+    type OutcomeInput,
+} from './outcome';
 
 describe('isFinalAttempt', () => {
     it('treats a single-attempt job (attempts=1) as final on the first run', () => {
@@ -94,7 +101,12 @@ describe('deriveFailureStatus — TIMED_OUT from the TYPED flag, not an error-st
 
     it('THE FRAGILITY FIX: a real fault whose error text happens to contain "timed out" is NOT misread as TIMED_OUT', () => {
         // The old `error.includes('timed out')` would wrongly return TIMED_OUT here; the typed flag does not.
-        expect(deriveFailureStatus({ timedOut: false, error: 'model note: the driver timed out earlier; matrix singular' })).toBe('FAILED');
+        expect(
+            deriveFailureStatus({
+                timedOut: false,
+                error: 'model note: the driver timed out earlier; matrix singular',
+            }),
+        ).toBe('FAILED');
     });
 
     it('robust to a reworded timeout message: still TIMED_OUT via the flag even if the string changes', () => {
@@ -104,8 +116,11 @@ describe('deriveFailureStatus — TIMED_OUT from the TYPED flag, not an error-st
 
 describe('buildFailureMetrics — the failure subset of the metrics contract', () => {
     it('tags failureClass=sim for a circuit fault and carries runtimeMs + error', () => {
-        expect(buildFailureMetrics({ runtimeMs: 42, error: 'boom', infra: false }))
-            .toEqual({ runtimeMs: 42, error: 'boom', failureClass: 'sim' });
+        expect(buildFailureMetrics({ runtimeMs: 42, error: 'boom', infra: false })).toEqual({
+            runtimeMs: 42,
+            error: 'boom',
+            failureClass: 'sim',
+        });
     });
 
     it('tags failureClass=infra when ngspice never ran', () => {
@@ -121,8 +136,9 @@ describe('buildFailureMetrics — the failure subset of the metrics contract', (
 
 describe('buildSuccessMetrics — the success subset (storedResultBytes is the storage-quota unit)', () => {
     it('carries runtimeMs, storedResultBytes, and the optional fields when present', () => {
-        expect(buildSuccessMetrics({ runtimeMs: 10, outputSizeBytes: 5000, storedResultBytes: 800, pointsCount: 1000 }))
-            .toEqual({ runtimeMs: 10, outputSizeBytes: 5000, storedResultBytes: 800, pointsCount: 1000 });
+        expect(
+            buildSuccessMetrics({ runtimeMs: 10, outputSizeBytes: 5000, storedResultBytes: 800, pointsCount: 1000 }),
+        ).toEqual({ runtimeMs: 10, outputSizeBytes: 5000, storedResultBytes: 800, pointsCount: 1000 });
     });
 
     it('omits pointsCount / outputSizeBytes / convergence when not provided (JSON-drops-undefined parity)', () => {

@@ -319,9 +319,7 @@ export interface TransmissionLineParams {
  * OR `f` (accepts `frequency`) with optional `nl` — mirroring ngspice's two lossless-line forms. Values
  * may carry trailing units (e.g. "10ns", "50ohm"). Returns null (caller skips; ERC flags) otherwise.
  */
-export function parseTransmissionLineParams(
-    props: Record<string, unknown> | undefined,
-): TransmissionLineParams | null {
+export function parseTransmissionLineParams(props: Record<string, unknown> | undefined): TransmissionLineParams | null {
     const str = (key: string): string | undefined => {
         const v = props?.[key];
         if (typeof v === 'string') return v.trim();

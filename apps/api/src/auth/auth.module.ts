@@ -13,7 +13,6 @@ import { AuthService } from './auth.service';
 import { JwtStrategy } from './strategies/jwt.strategy';
 import { LocalStrategy } from './strategies/local.strategy';
 
-
 @Module({
     imports: [
         EmailModule,
@@ -31,4 +30,4 @@ import { LocalStrategy } from './strategies/local.strategy';
     providers: [AuthService, JwtStrategy, LocalStrategy],
     exports: [AuthService],
 })
-export class AuthModule { }
+export class AuthModule {}

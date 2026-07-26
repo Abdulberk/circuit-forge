@@ -50,7 +50,10 @@ class LogTransport implements EmailTransport {
 class SesTransport implements EmailTransport {
     readonly name = 'ses';
     private client: import('@aws-sdk/client-ses').SESClient | null = null;
-    constructor(private readonly region: string, private readonly from: string) {}
+    constructor(
+        private readonly region: string,
+        private readonly from: string,
+    ) {}
     private async getClient() {
         if (!this.client) {
             const { SESClient } = await import('@aws-sdk/client-ses');
@@ -96,7 +99,13 @@ class SmtpTransport implements EmailTransport {
     }
     async send(msg: EmailMessage): Promise<void> {
         const transporter = await this.getTransporter();
-        await transporter.sendMail({ from: this.from, to: msg.to, subject: msg.subject, text: msg.text, ...(msg.html ? { html: msg.html } : {}) });
+        await transporter.sendMail({
+            from: this.from,
+            to: msg.to,
+            subject: msg.subject,
+            text: msg.text,
+            ...(msg.html ? { html: msg.html } : {}),
+        });
     }
 }
 
@@ -115,13 +124,21 @@ export function resolveEmailTransport(config: ConfigService): EmailTransport {
         if (!from || !smtpHost) return null;
         const port = Number(config.get<string>('SMTP_PORT')) || 587;
         return new SmtpTransport(
-            { host: smtpHost, port, secure: config.get<string>('SMTP_SECURE') === 'true', user: config.get<string>('SMTP_USER'), pass: config.get<string>('SMTP_PASS') },
+            {
+                host: smtpHost,
+                port,
+                secure: config.get<string>('SMTP_SECURE') === 'true',
+                user: config.get<string>('SMTP_USER'),
+                pass: config.get<string>('SMTP_PASS'),
+            },
             from,
         );
     };
 
     const fallbackToLog = (reason: string): EmailTransport => {
-        logger.warn(`EMAIL_PROVIDER="${provider}" requested but ${reason} — falling back to the log transport (no real email will be sent).`);
+        logger.warn(
+            `EMAIL_PROVIDER="${provider}" requested but ${reason} — falling back to the log transport (no real email will be sent).`,
+        );
         return new LogTransport();
     };
 
@@ -137,6 +154,8 @@ export function resolveEmailTransport(config: ConfigService): EmailTransport {
         chosen = ses() ?? smtp() ?? new LogTransport();
     }
 
-    logger.log(`Email transport: ${chosen.name}${chosen.name === 'log' ? ' (set EMAIL_PROVIDER + EMAIL_FROM to send real email)' : ` (from ${from})`}`);
+    logger.log(
+        `Email transport: ${chosen.name}${chosen.name === 'log' ? ' (set EMAIL_PROVIDER + EMAIL_FROM to send real email)' : ` (from ${from})`}`,
+    );
     return chosen;
 }

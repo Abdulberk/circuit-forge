@@ -8,13 +8,17 @@ import { PaginationQueryDto } from '../../common/dto/pagination.dto';
  * pcb-core's layoutCircuit consumes. Layout options are optional and default to pcb-core's own defaults.
  */
 export class CreateLayoutDto {
-    @ApiProperty({ description: 'OUR CircuitJson (components + nets) to lay out', type: 'object', additionalProperties: true })
+    @ApiProperty({
+        description: 'OUR CircuitJson (components + nets) to lay out',
+        type: 'object',
+        additionalProperties: true,
+    })
     @IsObject()
     circuit!: Record<string, unknown>;
 
     @ApiPropertyOptional({
         description:
-            'Tag this layout to a saved circuit version. When set, the job is created under that version\'s org, ' +
+            "Tag this layout to a saved circuit version. When set, the job is created under that version's org, " +
             'stores its project + version, and can be re-found via GET /layouts?versionId= after a reload. Omit for an ad-hoc layout of an unsaved circuit.',
         format: 'uuid',
     })
@@ -23,19 +27,28 @@ export class CreateLayoutDto {
     versionId?: string;
 
     @ApiPropertyOptional({
-        description: "Placement engine: 'grid' (default), 'auto' (TypeScript connectivity-aware), or 'rust' (out-of-process optimized engine)",
+        description:
+            "Placement engine: 'grid' (default), 'auto' (TypeScript connectivity-aware), or 'rust' (out-of-process optimized engine)",
         enum: ['grid', 'auto', 'rust'],
     })
     @IsOptional()
     @IsIn(['grid', 'auto', 'rust'])
     placer?: 'grid' | 'auto' | 'rust';
 
-    @ApiPropertyOptional({ description: 'Fab profile overrides (clearance/width/via tier)', type: 'object', additionalProperties: true })
+    @ApiPropertyOptional({
+        description: 'Fab profile overrides (clearance/width/via tier)',
+        type: 'object',
+        additionalProperties: true,
+    })
     @IsOptional()
     @IsObject()
     fabProfile?: Record<string, unknown>;
 
-    @ApiPropertyOptional({ description: 'RMS current (A) per emitted net name → IPC-2221 per-net trace width', type: 'object', additionalProperties: true })
+    @ApiPropertyOptional({
+        description: 'RMS current (A) per emitted net name → IPC-2221 per-net trace width',
+        type: 'object',
+        additionalProperties: true,
+    })
     @IsOptional()
     @IsObject()
     netCurrentsA?: Record<string, number>;

@@ -1,312 +1,295 @@
 {
-  "name": "LDR Night Light (Dark-Activated)",
-  "description": "A dark-activated night light: an LDR divider (dusk/dawn modeled as the LDR resistance sweeping 1k→100k→1k via its electrical equivalent) feeds a Schmitt comparator that drives a power LED through an NPN transistor. In \"daylight\" the LED is fully dark (nA); at dusk it snaps ON to 19.5mA in a single clean transition (zero chatter — exactly one on and one off crossing in the whole run) and turns off at dawn at a different threshold (hysteresis). The BJT saturates properly (Vce≈0.08V). (ngspice-validated.)",
-  "tags": [
-    "sensor",
-    "light",
-    "ldr",
-    "night-light",
-    "led",
-    "schmitt",
-    "bjt"
-  ],
-  "analysisConfig": {
-    "analysis": {
-      "type": "tran",
-      "stopTime": "26",
-      "stepTime": "10m"
+    "name": "LDR Night Light (Dark-Activated)",
+    "description": "A dark-activated night light: an LDR divider (dusk/dawn modeled as the LDR resistance sweeping 1k→100k→1k via its electrical equivalent) feeds a Schmitt comparator that drives a power LED through an NPN transistor. In \"daylight\" the LED is fully dark (nA); at dusk it snaps ON to 19.5mA in a single clean transition (zero chatter — exactly one on and one off crossing in the whole run) and turns off at dawn at a different threshold (hysteresis). The BJT saturates properly (Vce≈0.08V). (ngspice-validated.)",
+    "tags": ["sensor", "light", "ldr", "night-light", "led", "schmitt", "bjt"],
+    "analysisConfig": {
+        "analysis": {
+            "type": "tran",
+            "stopTime": "26",
+            "stepTime": "10m"
+        },
+        "probes": ["v(sense)", "v(inp)", "v(ref)", "v(out)", "v(base)", "v(col)", "v(lux)", "i(R7)"]
     },
-    "probes": [
-      "v(sense)",
-      "v(inp)",
-      "v(ref)",
-      "v(out)",
-      "v(base)",
-      "v(col)",
-      "v(lux)",
-      "i(R7)"
-    ]
-  },
-  "circuitJson": {
-    "version": "1.0",
-    "components": [
-      {
-        "id": "v1",
-        "type": "voltage_source",
-        "designator": "V1",
-        "value": "DC 5",
-        "pins": [
-          {
-            "pinId": "+",
-            "netId": "vcc"
-          },
-          {
-            "pinId": "-",
-            "netId": "0"
-          }
-        ]
-      },
-      {
-        "id": "v2",
-        "type": "voltage_source",
-        "designator": "V2",
-        "value": "PULSE(0 5 1 8 8 6 40)",
-        "pins": [
-          {
-            "pinId": "+",
-            "netId": "lux"
-          },
-          {
-            "pinId": "-",
-            "netId": "0"
-          }
-        ]
-      },
-      {
-        "id": "r1",
-        "type": "resistor",
-        "designator": "R1",
-        "value": "10k",
-        "pins": [
-          {
-            "pinId": "1",
-            "netId": "vcc"
-          },
-          {
-            "pinId": "2",
-            "netId": "sense"
-          }
-        ]
-      },
-      {
-        "id": "b1",
-        "type": "bsource",
-        "designator": "B1",
-        "value": "I=v(sense)/(1000*pow(100,v(lux)/5))",
-        "pins": [
-          {
-            "pinId": "+",
-            "netId": "sense"
-          },
-          {
-            "pinId": "-",
-            "netId": "0"
-          }
-        ]
-      },
-      {
-        "id": "r2",
-        "type": "resistor",
-        "designator": "R2",
-        "value": "10k",
-        "pins": [
-          {
-            "pinId": "1",
-            "netId": "vcc"
-          },
-          {
-            "pinId": "2",
-            "netId": "ref"
-          }
-        ]
-      },
-      {
-        "id": "r3",
-        "type": "resistor",
-        "designator": "R3",
-        "value": "10k",
-        "pins": [
-          {
-            "pinId": "1",
-            "netId": "ref"
-          },
-          {
-            "pinId": "2",
-            "netId": "0"
-          }
-        ]
-      },
-      {
-        "id": "r4",
-        "type": "resistor",
-        "designator": "R4",
-        "value": "10k",
-        "pins": [
-          {
-            "pinId": "1",
-            "netId": "sense"
-          },
-          {
-            "pinId": "2",
-            "netId": "inp"
-          }
-        ]
-      },
-      {
-        "id": "r5",
-        "type": "resistor",
-        "designator": "R5",
-        "value": "100k",
-        "pins": [
-          {
-            "pinId": "1",
-            "netId": "out"
-          },
-          {
-            "pinId": "2",
-            "netId": "inp"
-          }
-        ]
-      },
-      {
-        "id": "u1",
-        "type": "subckt",
-        "designator": "U1",
-        "model": "OPAMPGEN",
-        "pins": [
-          {
-            "pinId": "out",
-            "netId": "out"
-          },
-          {
-            "pinId": "in+",
-            "netId": "inp"
-          },
-          {
-            "pinId": "in-",
-            "netId": "ref"
-          },
-          {
-            "pinId": "vcc",
-            "netId": "vcc"
-          },
-          {
-            "pinId": "vee",
-            "netId": "0"
-          }
-        ]
-      },
-      {
-        "id": "r6",
-        "type": "resistor",
-        "designator": "R6",
-        "value": "1k",
-        "pins": [
-          {
-            "pinId": "1",
-            "netId": "out"
-          },
-          {
-            "pinId": "2",
-            "netId": "base"
-          }
-        ]
-      },
-      {
-        "id": "q1",
-        "type": "bjt",
-        "designator": "Q1",
-        "model": "QGENNPN",
-        "pins": [
-          {
-            "pinId": "c",
-            "netId": "col"
-          },
-          {
-            "pinId": "b",
-            "netId": "base"
-          },
-          {
-            "pinId": "e",
-            "netId": "0"
-          }
-        ]
-      },
-      {
-        "id": "d1",
-        "type": "diode",
-        "designator": "D1",
-        "model": "LEDRED",
-        "pins": [
-          {
-            "pinId": "anode",
-            "netId": "leda"
-          },
-          {
-            "pinId": "cathode",
-            "netId": "col"
-          }
-        ]
-      },
-      {
-        "id": "r7",
-        "type": "resistor",
-        "designator": "R7",
-        "value": "150",
-        "pins": [
-          {
-            "pinId": "1",
-            "netId": "vcc"
-          },
-          {
-            "pinId": "2",
-            "netId": "leda"
-          }
-        ]
-      }
-    ],
-    "nets": [
-      {
-        "id": "0",
-        "name": "GND",
-        "isGround": true
-      },
-      {
-        "id": "vcc",
-        "name": "VCC"
-      },
-      {
-        "id": "lux",
-        "name": "LUX"
-      },
-      {
-        "id": "sense",
-        "name": "SENSE"
-      },
-      {
-        "id": "ref",
-        "name": "REF"
-      },
-      {
-        "id": "inp",
-        "name": "INP"
-      },
-      {
-        "id": "out",
-        "name": "OUT"
-      },
-      {
-        "id": "base",
-        "name": "BASE"
-      },
-      {
-        "id": "col",
-        "name": "COL"
-      },
-      {
-        "id": "leda",
-        "name": "LEDA"
-      }
-    ],
-    "models": [
-      {
-        "name": "LEDRED",
-        "device": "diode",
-        "body": ".model LEDRED D(IS=1e-20 N=1.8 RS=2 CJO=10p)"
-      }
-    ],
-    "metadata": {
-      "name": "LDR Night Light (Dark-Activated)"
+    "circuitJson": {
+        "version": "1.0",
+        "components": [
+            {
+                "id": "v1",
+                "type": "voltage_source",
+                "designator": "V1",
+                "value": "DC 5",
+                "pins": [
+                    {
+                        "pinId": "+",
+                        "netId": "vcc"
+                    },
+                    {
+                        "pinId": "-",
+                        "netId": "0"
+                    }
+                ]
+            },
+            {
+                "id": "v2",
+                "type": "voltage_source",
+                "designator": "V2",
+                "value": "PULSE(0 5 1 8 8 6 40)",
+                "pins": [
+                    {
+                        "pinId": "+",
+                        "netId": "lux"
+                    },
+                    {
+                        "pinId": "-",
+                        "netId": "0"
+                    }
+                ]
+            },
+            {
+                "id": "r1",
+                "type": "resistor",
+                "designator": "R1",
+                "value": "10k",
+                "pins": [
+                    {
+                        "pinId": "1",
+                        "netId": "vcc"
+                    },
+                    {
+                        "pinId": "2",
+                        "netId": "sense"
+                    }
+                ]
+            },
+            {
+                "id": "b1",
+                "type": "bsource",
+                "designator": "B1",
+                "value": "I=v(sense)/(1000*pow(100,v(lux)/5))",
+                "pins": [
+                    {
+                        "pinId": "+",
+                        "netId": "sense"
+                    },
+                    {
+                        "pinId": "-",
+                        "netId": "0"
+                    }
+                ]
+            },
+            {
+                "id": "r2",
+                "type": "resistor",
+                "designator": "R2",
+                "value": "10k",
+                "pins": [
+                    {
+                        "pinId": "1",
+                        "netId": "vcc"
+                    },
+                    {
+                        "pinId": "2",
+                        "netId": "ref"
+                    }
+                ]
+            },
+            {
+                "id": "r3",
+                "type": "resistor",
+                "designator": "R3",
+                "value": "10k",
+                "pins": [
+                    {
+                        "pinId": "1",
+                        "netId": "ref"
+                    },
+                    {
+                        "pinId": "2",
+                        "netId": "0"
+                    }
+                ]
+            },
+            {
+                "id": "r4",
+                "type": "resistor",
+                "designator": "R4",
+                "value": "10k",
+                "pins": [
+                    {
+                        "pinId": "1",
+                        "netId": "sense"
+                    },
+                    {
+                        "pinId": "2",
+                        "netId": "inp"
+                    }
+                ]
+            },
+            {
+                "id": "r5",
+                "type": "resistor",
+                "designator": "R5",
+                "value": "100k",
+                "pins": [
+                    {
+                        "pinId": "1",
+                        "netId": "out"
+                    },
+                    {
+                        "pinId": "2",
+                        "netId": "inp"
+                    }
+                ]
+            },
+            {
+                "id": "u1",
+                "type": "subckt",
+                "designator": "U1",
+                "model": "OPAMPGEN",
+                "pins": [
+                    {
+                        "pinId": "out",
+                        "netId": "out"
+                    },
+                    {
+                        "pinId": "in+",
+                        "netId": "inp"
+                    },
+                    {
+                        "pinId": "in-",
+                        "netId": "ref"
+                    },
+                    {
+                        "pinId": "vcc",
+                        "netId": "vcc"
+                    },
+                    {
+                        "pinId": "vee",
+                        "netId": "0"
+                    }
+                ]
+            },
+            {
+                "id": "r6",
+                "type": "resistor",
+                "designator": "R6",
+                "value": "1k",
+                "pins": [
+                    {
+                        "pinId": "1",
+                        "netId": "out"
+                    },
+                    {
+                        "pinId": "2",
+                        "netId": "base"
+                    }
+                ]
+            },
+            {
+                "id": "q1",
+                "type": "bjt",
+                "designator": "Q1",
+                "model": "QGENNPN",
+                "pins": [
+                    {
+                        "pinId": "c",
+                        "netId": "col"
+                    },
+                    {
+                        "pinId": "b",
+                        "netId": "base"
+                    },
+                    {
+                        "pinId": "e",
+                        "netId": "0"
+                    }
+                ]
+            },
+            {
+                "id": "d1",
+                "type": "diode",
+                "designator": "D1",
+                "model": "LEDRED",
+                "pins": [
+                    {
+                        "pinId": "anode",
+                        "netId": "leda"
+                    },
+                    {
+                        "pinId": "cathode",
+                        "netId": "col"
+                    }
+                ]
+            },
+            {
+                "id": "r7",
+                "type": "resistor",
+                "designator": "R7",
+                "value": "150",
+                "pins": [
+                    {
+                        "pinId": "1",
+                        "netId": "vcc"
+                    },
+                    {
+                        "pinId": "2",
+                        "netId": "leda"
+                    }
+                ]
+            }
+        ],
+        "nets": [
+            {
+                "id": "0",
+                "name": "GND",
+                "isGround": true
+            },
+            {
+                "id": "vcc",
+                "name": "VCC"
+            },
+            {
+                "id": "lux",
+                "name": "LUX"
+            },
+            {
+                "id": "sense",
+                "name": "SENSE"
+            },
+            {
+                "id": "ref",
+                "name": "REF"
+            },
+            {
+                "id": "inp",
+                "name": "INP"
+            },
+            {
+                "id": "out",
+                "name": "OUT"
+            },
+            {
+                "id": "base",
+                "name": "BASE"
+            },
+            {
+                "id": "col",
+                "name": "COL"
+            },
+            {
+                "id": "leda",
+                "name": "LEDA"
+            }
+        ],
+        "models": [
+            {
+                "name": "LEDRED",
+                "device": "diode",
+                "body": ".model LEDRED D(IS=1e-20 N=1.8 RS=2 CJO=10p)"
+            }
+        ],
+        "metadata": {
+            "name": "LDR Night Light (Dark-Activated)"
+        }
     }
-  }
 }

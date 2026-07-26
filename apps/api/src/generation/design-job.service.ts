@@ -90,7 +90,9 @@ export class DesignJobService {
                 { jobId: job.id },
             );
         } catch (err) {
-            this.logger.error(`design job ${job.id} could not be enqueued: ${err instanceof Error ? err.message : String(err)}`);
+            this.logger.error(
+                `design job ${job.id} could not be enqueued: ${err instanceof Error ? err.message : String(err)}`,
+            );
             // CONDITIONAL flip — only fail the row if it is STILL QUEUED. queue.add is a Redis write whose
             // reply can be lost AFTER the job was durably stored (connection reset / socket timeout), so the
             // SEPARATE design worker may have already dequeued it and advanced it to RUNNING/SUCCEEDED. An
@@ -100,7 +102,11 @@ export class DesignJobService {
             await this.prisma.designJob
                 .updateMany({
                     where: { id: job.id, status: 'QUEUED' },
-                    data: { status: 'FAILED', errorMessage: 'Could not queue the design job; please retry.', finishedAt: new Date() },
+                    data: {
+                        status: 'FAILED',
+                        errorMessage: 'Could not queue the design job; please retry.',
+                        finishedAt: new Date(),
+                    },
                 })
                 .catch(() => undefined);
             throw new ServiceUnavailableException('Could not start the design job; please retry.');

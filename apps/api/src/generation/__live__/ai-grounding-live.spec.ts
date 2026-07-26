@@ -37,12 +37,21 @@ const NGSPICE_BIN = process.env.NGSPICE_BIN;
 
 /** Load real LLM + TME creds from the repo-root .env (overriding the fake test stubs). */
 function loadRealEnv(): boolean {
-    const have = () => !!(process.env.LLM_API_KEY && process.env.TME_TOKEN && process.env.TME_TOKEN !== 'test-tme-token');
+    const have = () =>
+        !!(process.env.LLM_API_KEY && process.env.TME_TOKEN && process.env.TME_TOKEN !== 'test-tme-token');
     if (have()) return true;
     for (const p of [resolve(process.cwd(), '../../.env'), resolve(__dirname, '../../../../../.env')]) {
         try {
             const txt = readFileSync(p, 'utf8');
-            for (const key of ['LLM_API_KEY', 'LLM_PROTOCOL', 'LLM_BASE_URL', 'LLM_MODEL', 'LLM_USER_AGENT', 'TME_TOKEN', 'TME_SECRET']) {
+            for (const key of [
+                'LLM_API_KEY',
+                'LLM_PROTOCOL',
+                'LLM_BASE_URL',
+                'LLM_MODEL',
+                'LLM_USER_AGENT',
+                'TME_TOKEN',
+                'TME_SECRET',
+            ]) {
                 const m = txt.match(new RegExp(`^${key}=(.+)$`, 'm'));
                 if (m && m[1]) process.env[key] = m[1].trim();
             }
@@ -78,7 +87,9 @@ function assertSimulatable(circuit: CircuitJson, analysis: AnalysisConfig, label
     }
     // eslint-disable-next-line no-console
     console.log(`[${label}] ngspice output (tail):\n${out.split('\n').slice(-25).join('\n')}`);
-    expect(/singular matrix|Timestep too small|aborted|doAnalyses:|Unable to find|no such vector/i.test(out)).toBe(false);
+    expect(/singular matrix|Timestep too small|aborted|doAnalyses:|Unable to find|no such vector/i.test(out)).toBe(
+        false,
+    );
 }
 
 (LIVE ? describe : describe.skip)('AI grounding LIVE e2e (real LLM + real TME)', () => {
@@ -93,7 +104,10 @@ function assertSimulatable(circuit: CircuitJson, analysis: AnalysisConfig, label
             config,
             new ComponentMapper(),
         );
-        gen = new GenerationService(config, new CatalogGroundingService(config, parts, new CircuitSimulatorService(config)));
+        gen = new GenerationService(
+            config,
+            new CatalogGroundingService(config, parts, new CircuitSimulatorService(config)),
+        );
     });
 
     jest.setTimeout(240_000);
@@ -104,7 +118,12 @@ function assertSimulatable(circuit: CircuitJson, analysis: AnalysisConfig, label
         expect(circuit.nets.length).toBeGreaterThan(0);
         const grounded = circuit.components.filter((c) => c.mpn && c.sourcing);
         const summary = circuit.components.map((c) => ({
-            designator: c.designator, type: c.type, value: c.value, model: c.model, mpn: c.mpn, sourcing: c.sourcing,
+            designator: c.designator,
+            type: c.type,
+            value: c.value,
+            model: c.model,
+            mpn: c.mpn,
+            sourcing: c.sourcing,
         }));
         // eslint-disable-next-line no-console
         console.log(`[${label}] grounded circuit:`, JSON.stringify(summary, null, 2));
@@ -150,10 +169,14 @@ function assertSimulatable(circuit: CircuitJson, analysis: AnalysisConfig, label
                 'Each stage toggles by feeding its own Q-bar back to its D input, and each stage is clocked ' +
                 "by the previous stage's Q. Show the three count bits over time.",
         } as never);
-        const digital = result.circuit.components.filter((c) => c.type === 'dff' || String(c.type).startsWith('logic_'));
+        const digital = result.circuit.components.filter(
+            (c) => c.type === 'dff' || String(c.type).startsWith('logic_'),
+        );
         // eslint-disable-next-line no-console
-        console.log(`[ripple-counter] analysis=${result.analysisConfig.type}; digital parts:`,
-            digital.map((c) => `${c.designator}:${c.type}`).join(', ') || '(none)');
+        console.log(
+            `[ripple-counter] analysis=${result.analysisConfig.type}; digital parts:`,
+            digital.map((c) => `${c.designator}:${c.type}`).join(', ') || '(none)',
+        );
         // The prompt teaching worked: the AI reached for the digital vocabulary it now knows about.
         expect(digital.length).toBeGreaterThan(0);
         expect(digital.some((c) => c.type === 'dff')).toBe(true);

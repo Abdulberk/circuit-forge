@@ -3,10 +3,23 @@ import type { SimMeasurement } from '../src/analysis/measurements';
 import type { TransferFunctionResult } from '../src/types/simulation';
 
 const meas = (node: string, over: Partial<SimMeasurement> = {}): SimMeasurement => ({
-    node, min: 0, max: 0, final: 0, pp: 0, avg: 0, rms: 0,
-    raw: { min: 0, max: 0, final: 0, pp: 0, avg: 0, rms: 0 }, ...over,
+    node,
+    min: 0,
+    max: 0,
+    final: 0,
+    pp: 0,
+    avg: 0,
+    rms: 0,
+    raw: { min: 0, max: 0, final: 0, pp: 0, avg: 0, rms: 0 },
+    ...over,
 });
-const tf = (outputNode: string, gain: number): TransferFunctionResult => ({ gain, outputNode, outputImpedanceOhms: null, inputSource: 'v1', inputImpedanceOhms: null });
+const tf = (outputNode: string, gain: number): TransferFunctionResult => ({
+    gain,
+    outputNode,
+    outputImpedanceOhms: null,
+    inputSource: 'v1',
+    inputImpedanceOhms: null,
+});
 
 describe('attachTransferFunction', () => {
     it('folds the gain onto the output-node measurement (by node key)', () => {
@@ -56,7 +69,7 @@ describe('evaluateAssertions — gain metric (the verdict gate)', () => {
     it('end-to-end: attachTransferFunction → evaluateAssertions gates correctly', () => {
         const ms = [meas('v(out)')];
         attachTransferFunction(ms, tf('v(out)', 2)); // 1+Rf/Rg = 2 non-inverting amp
-        expect(evaluateAssertions(ms, [{ ...crit, value: 1.5 }])[0]!.pass).toBe(true);  // gain ≥ 1.5 ✓
-        expect(evaluateAssertions(ms, [crit])[0]!.pass).toBe(false);                    // gain ≥ 10 ✗
+        expect(evaluateAssertions(ms, [{ ...crit, value: 1.5 }])[0]!.pass).toBe(true); // gain ≥ 1.5 ✓
+        expect(evaluateAssertions(ms, [crit])[0]!.pass).toBe(false); // gain ≥ 10 ✗
     });
 });

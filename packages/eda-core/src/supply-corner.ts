@@ -75,7 +75,12 @@ function walkNetForDrivers(circuit: CircuitJson, net: string, w: RailWalk): void
  */
 export function driversOf(circuit: CircuitJson, netId: string): Component[] {
     const gnd = new Set(circuit.nets.filter((n) => n.isGround).map((n) => n.id));
-    const w: RailWalk = { visited: new Set<string>([netId, ...gnd]), queue: [netId], drivers: [], seen: new Set<string>() };
+    const w: RailWalk = {
+        visited: new Set<string>([netId, ...gnd]),
+        queue: [netId],
+        drivers: [],
+        seen: new Set<string>(),
+    };
     for (let net = w.queue.shift(); net !== undefined; net = w.queue.shift()) walkNetForDrivers(circuit, net, w);
     return w.drivers;
 }
@@ -100,13 +105,22 @@ export function validatePowerRails(circuit: CircuitJson): RailValidation[] {
     return circuit.nets
         .filter((n) => n.isPower)
         .map((n): RailValidation => {
-            if (n.isGround) return { netId: n.id, status: 'deferred', reason: 'marked isPower but ALSO isGround — contradictory' };
+            if (n.isGround)
+                return { netId: n.id, status: 'deferred', reason: 'marked isPower but ALSO isGround — contradictory' };
             const drivers = driversOf(circuit, n.id);
             if (drivers.length === 0) {
-                return { netId: n.id, status: 'deferred', reason: 'no DC power source drives this net — marked isPower but structurally not power-driven (a reference/bias net, or floating)' };
+                return {
+                    netId: n.id,
+                    status: 'deferred',
+                    reason: 'no DC power source drives this net — marked isPower but structurally not power-driven (a reference/bias net, or floating)',
+                };
             }
             if (drivers.length > 1) {
-                return { netId: n.id, status: 'deferred', reason: `ambiguous — ${drivers.length} candidate driving sources (${drivers.map((d) => d.designator).join(', ')}); cannot pick THE supply without guessing` };
+                return {
+                    netId: n.id,
+                    status: 'deferred',
+                    reason: `ambiguous — ${drivers.length} candidate driving sources (${drivers.map((d) => d.designator).join(', ')}); cannot pick THE supply without guessing`,
+                };
             }
             // Evidence CONFIRMS or is merely ABSENT (single consumer, indirect drive) → TRUST the declaration,
             // exactly as a tool trusts a designer-placed power symbol. Only contradiction (above) defers.
@@ -165,7 +179,11 @@ interface SupplyDriver {
 }
 
 /** The trusted rails' driving sources (deduped — two rails can share one source), capped. */
-function supplyDrivers(circuit: CircuitJson, rails: RailValidation[], cap: number): { drivers: SupplyDriver[]; omitted: string[] } {
+function supplyDrivers(
+    circuit: CircuitJson,
+    rails: RailValidation[],
+    cap: number,
+): { drivers: SupplyDriver[]; omitted: string[] } {
     const byDesignator = new Map<string, Component>();
     for (const c of circuit.components) if (c.designator) byDesignator.set(c.designator, c);
     const seen = new Set<string>();
@@ -179,12 +197,24 @@ function supplyDrivers(circuit: CircuitJson, rails: RailValidation[], cap: numbe
         seen.add(r.driverDesignator);
         all.push({ component: c, nominal: mag.value, rebuild: mag.rebuild });
     }
-    return { drivers: all.slice(0, cap), omitted: all.slice(cap).map((d) => d.component.designator).filter(Boolean) };
+    return {
+        drivers: all.slice(0, cap),
+        omitted: all
+            .slice(cap)
+            .map((d) => d.component.designator)
+            .filter(Boolean),
+    };
 }
 
 /** The reference (all-nominal) circuit + the 2^k ±tolerance supply corners. corner:null marks the nominal run. */
-function supplyVariants(circuit: CircuitJson, drivers: SupplyDriver[], tol: number): Array<{ corner: Record<string, 'lo' | 'hi'> | null; circuit: CircuitJson }> {
-    const variants: Array<{ corner: Record<string, 'lo' | 'hi'> | null; circuit: CircuitJson }> = [{ corner: null, circuit }];
+function supplyVariants(
+    circuit: CircuitJson,
+    drivers: SupplyDriver[],
+    tol: number,
+): Array<{ corner: Record<string, 'lo' | 'hi'> | null; circuit: CircuitJson }> {
+    const variants: Array<{ corner: Record<string, 'lo' | 'hi'> | null; circuit: CircuitJson }> = [
+        { corner: null, circuit },
+    ];
     const k = drivers.length;
     for (let mask = 0; mask < 1 << k; mask++) {
         const corner: Record<string, 'lo' | 'hi'> = {};
@@ -195,7 +225,13 @@ function supplyVariants(circuit: CircuitJson, drivers: SupplyDriver[], tol: numb
             corner[d.component.designator] = hi ? 'hi' : 'lo';
             overrides.set(d.component, d.rebuild(d.nominal * (hi ? 1 + tol : 1 - tol)));
         }
-        variants.push({ corner, circuit: { ...circuit, components: circuit.components.map((c) => (overrides.has(c) ? { ...c, value: overrides.get(c)! } : c)) } });
+        variants.push({
+            corner,
+            circuit: {
+                ...circuit,
+                components: circuit.components.map((c) => (overrides.has(c) ? { ...c, value: overrides.get(c)! } : c)),
+            },
+        });
     }
     return variants;
 }
@@ -208,7 +244,12 @@ const scalarOf = (m: SimMeasurement): number | undefined => {
 type WorstMap = Map<string, { value: number; corner: Record<string, 'lo' | 'hi'> }>;
 
 /** Record the largest per-node deviation from the NOMINAL reference seen at any corner. */
-function trackWorst(measurements: SimMeasurement[], corner: Record<string, 'lo' | 'hi'>, nominal: Map<string, number>, worst: WorstMap): void {
+function trackWorst(
+    measurements: SimMeasurement[],
+    corner: Record<string, 'lo' | 'hi'>,
+    nominal: Map<string, number>,
+    worst: WorstMap,
+): void {
     for (const m of measurements) {
         const v = scalarOf(m);
         if (v === undefined) continue;
@@ -220,7 +261,13 @@ function trackWorst(measurements: SimMeasurement[], corner: Record<string, 'lo' 
 }
 
 /** One corner's outcome from the CRITERIA's OWN metrics (evaluateAssertions) — never from the drift scalar. */
-function cornerOutcome(measurements: SimMeasurement[] | null, corner: Record<string, 'lo' | 'hi'>, criteria: AcceptanceCriterion[], nets: CircuitJson['nets'], hasLimits: boolean): SupplyCornerPoint {
+function cornerOutcome(
+    measurements: SimMeasurement[] | null,
+    corner: Record<string, 'lo' | 'hi'>,
+    criteria: AcceptanceCriterion[],
+    nets: CircuitJson['nets'],
+    hasLimits: boolean,
+): SupplyCornerPoint {
     if (!measurements) return { corner, outcome: 'errored' };
     if (!hasLimits) return { corner, outcome: 'no-limit' };
     const results = evaluateAssertions(measurements, criteria, true, nets);
@@ -252,7 +299,12 @@ function captureNominal(measurements: SimMeasurement[] | null, nominal: Map<stri
 }
 
 /** Three-way tally (errored ≠ fail); evaluated = pass + fail. */
-function tallyOutcomes(points: SupplyCornerPoint[]): { evaluated: number; passed: number; failed: number; errored: number } {
+function tallyOutcomes(points: SupplyCornerPoint[]): {
+    evaluated: number;
+    passed: number;
+    failed: number;
+    errored: number;
+} {
     const passed = points.filter((p) => p.outcome === 'pass').length;
     const failed = points.filter((p) => p.outcome === 'fail').length;
     const errored = points.filter((p) => p.outcome === 'errored').length;
@@ -278,7 +330,17 @@ export async function runSupplyCorner(
     const base = { rails, omitted, tolerance: spec.tolerance, rangeLabel: spec.rangeLabel, hasLimits };
     if (drivers.length === 0) {
         // No trusted, perturbable supply → not-applicable. rails[] still carries each deferral's reason (visible).
-        return { applicable: false, ...base, points: [], evaluated: 0, passed: 0, failed: 0, errored: 0, passAllCorners: false, drift: [] };
+        return {
+            applicable: false,
+            ...base,
+            points: [],
+            evaluated: 0,
+            passed: 0,
+            failed: 0,
+            errored: 0,
+            passAllCorners: false,
+            drift: [],
+        };
     }
 
     const variants = supplyVariants(circuit, drivers, spec.tolerance);
@@ -307,5 +369,15 @@ export async function runSupplyCorner(
     const { evaluated, passed, failed, errored } = tallyOutcomes(points);
     const passAllCorners = hasLimits && evaluated > 0 && failed === 0 && errored === 0 && omitted.length === 0;
 
-    return { applicable: true, ...base, points, evaluated, passed, failed, errored, passAllCorners, drift: computeSupplyDrift(nominal, worst) };
+    return {
+        applicable: true,
+        ...base,
+        points,
+        evaluated,
+        passed,
+        failed,
+        errored,
+        passAllCorners,
+        drift: computeSupplyDrift(nominal, worst),
+    };
 }

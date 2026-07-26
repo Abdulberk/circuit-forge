@@ -48,7 +48,9 @@ export class CatalogGroundingService {
                 return this.simulator.simulateWithRemedies(input.circuit, input.analysis as AnalysisConfig | undefined);
             }
             if (name === 'search_parts') {
-                const q = String(input.query ?? '').trim().slice(0, 100);
+                const q = String(input.query ?? '')
+                    .trim()
+                    .slice(0, 100);
                 if (!q) return { items: [] };
                 const res = await this.parts.search({ q });
                 // Note: TME search does NOT carry stock (detail-only). The model must call
@@ -123,9 +125,7 @@ export class CatalogGroundingService {
      * mpn match — TME search is fuzzy, so a near-miss would otherwise rank an unrelated part first. On
      * no exact match we attach NOTHING (a component with no sourcing beats one with the wrong part's data).
      */
-    private async resolveSourcing(
-        mpn: string,
-    ): Promise<{ sourcing: ComponentSourcing; footprint?: string } | null> {
+    private async resolveSourcing(mpn: string): Promise<{ sourcing: ComponentSourcing; footprint?: string } | null> {
         const res = await this.parts.search({ q: mpn });
         const target = mpn.trim().toLowerCase();
         const hit = res.items.find((p) => p.mpn.trim().toLowerCase() === target);

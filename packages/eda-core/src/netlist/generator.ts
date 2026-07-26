@@ -2,7 +2,12 @@
  * SPICE Netlist Generator
  * Converts CircuitJson to ngspice-compatible netlist format
  */
-import { buildZenerModel, normalizeControlledSourceGain, parseTransformerParams, parseTransmissionLineParams } from '../models/library';
+import {
+    buildZenerModel,
+    normalizeControlledSourceGain,
+    parseTransformerParams,
+    parseTransmissionLineParams,
+} from '../models/library';
 import type { AnalysisConfig } from '../types/analysis';
 import { analysisToSpice } from '../types/analysis';
 import type { CircuitJson, Component, Net, ModelDef } from '../types/circuit';
@@ -55,11 +60,7 @@ const DEFAULT_DIODE_MODEL = `.model DDEFAULT D(IS=1e-14 N=1.05 RS=10 BV=100 IBV=
 /**
  * Generate a complete SPICE netlist from circuit JSON
  */
-export function generateNetlist(
-    circuit: CircuitJson,
-    analysis: AnalysisConfig,
-    options: NetlistOptions = {},
-): string {
+export function generateNetlist(circuit: CircuitJson, analysis: AnalysisConfig, options: NetlistOptions = {}): string {
     const lines: string[] = [];
 
     // Title
@@ -133,9 +134,7 @@ export function generateNetlist(
     const emittedModels = new Map<string, string>();
 
     // Check if we need default diode model
-    const needsDiodeModel = circuit.components.some(
-        (c) => c.type === 'diode' && !c.model,
-    );
+    const needsDiodeModel = circuit.components.some((c) => c.type === 'diode' && !c.model);
     if (needsDiodeModel) {
         lines.push('* Default diode model');
         lines.push(DEFAULT_DIODE_MODEL);
@@ -401,7 +400,9 @@ export function generateNetlist(
     const probes = [
         ...new Set(
             rawProbes
-                .map((p) => rewriteProbeNodeRefs(rewriteProbeDeviceRefs(normalizeProbe(p), designatorToInstance), netRefToNode))
+                .map((p) =>
+                    rewriteProbeNodeRefs(rewriteProbeDeviceRefs(normalizeProbe(p), designatorToInstance), netRefToNode),
+                )
                 .filter((p) => p.trim().length > 0) // a probe that reduced to nothing (e.g. v(gnd)) is dropped
                 .filter((p) => !isDigitalCurrentProbe(p, digitalDeviceRefs)) // i(<digital a-device>) has no current vector → drop (else it aborts the whole wrdata line)
                 .map((p) => {
@@ -461,7 +462,11 @@ export function generateNetlist(
         // resolve to a real node, so a ground-first differential v(0,X) is kept as the sanitized single-ended
         // v(x_X) rather than dropped — otherwise `out` would be '' and the `|| raw` fallback below would emit
         // an unsanitized net id that ngspice can't resolve.
-        const out = rewriteProbeNodeRefs(rewriteProbeDeviceRefs(effectiveAnalysis.output, designatorToInstance), netRefToNode, true).trim();
+        const out = rewriteProbeNodeRefs(
+            rewriteProbeDeviceRefs(effectiveAnalysis.output, designatorToInstance),
+            netRefToNode,
+            true,
+        ).trim();
         lines.push(analysisToSpice({ ...effectiveAnalysis, output: out || effectiveAnalysis.output }));
     } else {
         lines.push(analysisToSpice(effectiveAnalysis));
@@ -474,7 +479,10 @@ export function generateNetlist(
     // statement passthrough). REPORT-ONLY: never gates the verdict.
     if (effectiveAnalysis.type === 'tran' && effectiveAnalysis.measurements) {
         for (const ms of effectiveAnalysis.measurements) {
-            const probe = rewriteProbeNodeRefs(rewriteProbeDeviceRefs(ms.probe, designatorToInstance), netRefToNode).trim();
+            const probe = rewriteProbeNodeRefs(
+                rewriteProbeDeviceRefs(ms.probe, designatorToInstance),
+                netRefToNode,
+            ).trim();
             if (!probe) continue;
             if (ms.type === 'when') {
                 if (typeof ms.value !== 'number' || !Number.isFinite(ms.value)) continue;
@@ -503,7 +511,9 @@ export function generateNetlist(
         const fProbes = [
             ...new Set(
                 effectiveAnalysis.fourier.probes
-                    .map((p) => rewriteProbeNodeRefs(rewriteProbeDeviceRefs(p, designatorToInstance), netRefToNode).trim())
+                    .map((p) =>
+                        rewriteProbeNodeRefs(rewriteProbeDeviceRefs(p, designatorToInstance), netRefToNode).trim(),
+                    )
                     .filter((p) => /^v\(/i.test(p)),
             ),
         ];
@@ -517,12 +527,17 @@ export function generateNetlist(
     // lowercased source (`<src>#input_impedance`), matching how ngspice names them. REPORT-ONLY.
     const tfCmds: string[] = [];
     if (effectiveAnalysis.type === 'op' && effectiveAnalysis.tf) {
-        const out = rewriteProbeNodeRefs(rewriteProbeDeviceRefs(effectiveAnalysis.tf.output, designatorToInstance), netRefToNode).trim();
+        const out = rewriteProbeNodeRefs(
+            rewriteProbeDeviceRefs(effectiveAnalysis.tf.output, designatorToInstance),
+            netRefToNode,
+        ).trim();
         const src = effectiveAnalysis.tf.inputSource;
         // Only emit `tf` when the input source ACTUALLY EXISTS in the circuit — a `tf` against a missing source
         // makes ngspice error and fails the whole run, even though the op-point + series are valid. Skipping it
         // keeps the run clean (transferFunction is simply absent). REPORT-ONLY: never worth failing the sim.
-        const srcExists = circuit.components.some((c) => c.designator && c.designator.toUpperCase() === src.toUpperCase());
+        const srcExists = circuit.components.some(
+            (c) => c.designator && c.designator.toUpperCase() === src.toUpperCase(),
+        );
         if (out && srcExists && /^[A-Za-z][A-Za-z0-9]*[0-9]+$/.test(src)) {
             tfCmds.push(`  tf ${out} ${src}`);
             tfCmds.push(`  print transfer_function output_impedance_at_${out} ${src.toLowerCase()}#input_impedance`);
@@ -647,7 +662,11 @@ const SAVECURRENTS_DEVICES = new Set(['R', 'C']); // resistor, capacitor
  * Non-current probes (`v(...)`) and compound expressions pass through untouched. `emitted` is the set of
  * real (lower-cased) device names actually in the deck. Returns `{ token, savecurrents }`.
  */
-function rewriteCurrentProbeVector(probe: string, emitted: Set<string>, analysisType: string): { token: string; savecurrents: boolean } {
+function rewriteCurrentProbeVector(
+    probe: string,
+    emitted: Set<string>,
+    analysisType: string,
+): { token: string; savecurrents: boolean } {
     const m = probe.trim().match(/^i\s*\(\s*([^),]+?)\s*\)$/i);
     if (!m || m[1] === undefined) return { token: probe, savecurrents: false }; // not a sole current probe
     const name = m[1].trim();
@@ -672,7 +691,11 @@ function rewriteCurrentProbeVector(probe: string, emitted: Set<string>, analysis
  * id AND net name (id wins on collision). Each comma-separated arg is mapped independently; an arg that is
  * already a sanitized node (or otherwise unknown) is left as-is, so default/correct probes are untouched.
  */
-export function rewriteProbeNodeRefs(probe: string, map: Map<string, string>, keepGroundFirstSingleEnded = false): string {
+export function rewriteProbeNodeRefs(
+    probe: string,
+    map: Map<string, string>,
+    keepGroundFirstSingleEnded = false,
+): string {
     return probe.replace(/\bv\s*\(\s*([^)]+?)\s*\)/gi, (whole, inner: string) => {
         const parts = inner.split(',').map((p) => p.trim());
         const mapped = parts.map((p) => map.get(p.toLowerCase()) ?? p);
@@ -897,7 +920,9 @@ function componentToSpice(
                     const portCount = header[1]
                         .trim()
                         .split(/\s+/)
-                        .filter((tok) => tok.length > 0 && !tok.includes('=') && tok.toLowerCase() !== 'params:').length;
+                        .filter(
+                            (tok) => tok.length > 0 && !tok.includes('=') && tok.toLowerCase() !== 'params:',
+                        ).length;
                     if (portCount > 0 && portCount !== nodes.length) {
                         throw new Error(
                             `Subckt '${model}' (${inst}) is wired with ${nodes.length} pin(s) but its .subckt body declares ${portCount} port(s) — ` +
@@ -927,11 +952,7 @@ function orderedNodes(component: Component, nodeMap: Map<string, string>): strin
  * Resolve a component's nodes in an explicit pinId order (used for fixed-arity types via COMPONENT_PINS,
  * and for subckt instances via the macromodel's declared port order). Throws if a required pin is absent.
  */
-function nodesForPinOrder(
-    component: Component,
-    nodeMap: Map<string, string>,
-    pinIds: string[],
-): string[] {
+function nodesForPinOrder(component: Component, nodeMap: Map<string, string>, pinIds: string[]): string[] {
     return pinIds.map((pinId) => {
         const pin = component.pins.find((p) => p.pinId === pinId);
         if (!pin) {
@@ -981,11 +1002,7 @@ function rewriteExprNodeRefs(expr: string, nodeMap: Map<string, string>): string
  */
 const MAX_DEFAULT_PROBES = 64;
 
-function generateDefaultProbes(
-    circuit: CircuitJson,
-    nodeMap: Map<string, string>,
-    ms?: MixedSignalPlan,
-): string[] {
+function generateDefaultProbes(circuit: CircuitJson, nodeMap: Map<string, string>, ms?: MixedSignalPlan): string[] {
     const probes: string[] = [];
 
     for (const net of circuit.nets) {
@@ -1033,10 +1050,12 @@ export function validateNetlist(netlist: string): { valid: boolean; errors: stri
         }
 
         // Check for analysis
-        if (line.toLowerCase().startsWith('.tran') ||
+        if (
+            line.toLowerCase().startsWith('.tran') ||
             line.toLowerCase().startsWith('.ac') ||
             line.toLowerCase().startsWith('.dc') ||
-            line.toLowerCase().startsWith('.op')) {
+            line.toLowerCase().startsWith('.op')
+        ) {
             hasAnalysis = true;
         }
     }

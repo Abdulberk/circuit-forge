@@ -13,7 +13,13 @@
  */
 import type { CircuitJson, Component } from '@circuit-forge/eda-core';
 
-import { resolveFootprint, isLedDiode, soicForPinCount, footprintPadCount, type FootprintResolution } from './footprints';
+import {
+    resolveFootprint,
+    isLedDiode,
+    soicForPinCount,
+    footprintPadCount,
+    type FootprintResolution,
+} from './footprints';
 
 export type LayoutRole = 'direct' | 'chip-fallback' | 'connectorized' | 'net-only' | 'excluded';
 
@@ -89,7 +95,9 @@ export function classifyCircuit(circuit: CircuitJson, opts: LayoutabilityOptions
     }
 
     const excluded = plans.filter((p) => p.role === 'excluded');
-    const physical = plans.filter((p) => p.role === 'direct' || p.role === 'chip-fallback' || p.role === 'connectorized');
+    const physical = plans.filter(
+        (p) => p.role === 'direct' || p.role === 'chip-fallback' || p.role === 'connectorized',
+    );
 
     if (physical.length === 0) {
         diagnostics.push({

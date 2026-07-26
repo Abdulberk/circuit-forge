@@ -2,8 +2,21 @@
  * Simulation Service
  */
 import { S3Client, GetObjectCommand } from '@aws-sdk/client-s3';
-import { generateNetlist, safeValidateCircuitJson, safeValidateAnalysisConfig, downsampleResult } from '@circuit-forge/eda-core';
-import type { CircuitJson, AnalysisConfig, SimulationResult, AcceptanceCriterion, CornerSpec, TempCornerSpec, SupplyCornerSpec } from '@circuit-forge/eda-core';
+import {
+    generateNetlist,
+    safeValidateCircuitJson,
+    safeValidateAnalysisConfig,
+    downsampleResult,
+} from '@circuit-forge/eda-core';
+import type {
+    CircuitJson,
+    AnalysisConfig,
+    SimulationResult,
+    AcceptanceCriterion,
+    CornerSpec,
+    TempCornerSpec,
+    SupplyCornerSpec,
+} from '@circuit-forge/eda-core';
 import { InjectQueue } from '@nestjs/bullmq';
 import { Injectable, NotFoundException, BadRequestException, Logger } from '@nestjs/common';
 import { propagation, context as otelContext } from '@opentelemetry/api';
@@ -14,7 +27,6 @@ import { OrgsService } from '../orgs/orgs.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { UsageService } from '../usage/usage.service';
 import { VersionsService } from '../versions/versions.service';
-
 
 /** Capture the current trace context as a W3C carrier to ride on the queued job, so the worker's
  *  processing span links back to this API request (one end-to-end trace). Empty when telemetry is off. */
@@ -70,12 +82,17 @@ export class SimulationService {
         // with a 400 naming the problem instead, both for a bad request and a stale stored version.
         const validAnalysis = safeValidateAnalysisConfig(analysisConfig);
         if (!validAnalysis.success) {
-            const issues = validAnalysis.error.errors.map((e) => `${e.path.join('.') || '(root)'}: ${e.message}`).join('; ');
+            const issues = validAnalysis.error.errors
+                .map((e) => `${e.path.join('.') || '(root)'}: ${e.message}`)
+                .join('; ');
             throw new BadRequestException(`Invalid analysis config: ${issues}`);
         }
         const validCircuit = safeValidateCircuitJson(version.circuitJson);
         if (!validCircuit.success) {
-            const issues = validCircuit.error.errors.slice(0, 5).map((e) => `${e.path.join('.') || '(root)'}: ${e.message}`).join('; ');
+            const issues = validCircuit.error.errors
+                .slice(0, 5)
+                .map((e) => `${e.path.join('.') || '(root)'}: ${e.message}`)
+                .join('; ');
             throw new BadRequestException(`Version ${versionId} has an invalid circuit: ${issues}`);
         }
         const circuitJson = validCircuit.data as CircuitJson;
@@ -197,12 +214,17 @@ export class SimulationService {
 
         const validCircuit = safeValidateCircuitJson(circuit);
         if (!validCircuit.success) {
-            const issues = validCircuit.error.errors.slice(0, 5).map((e) => `${e.path.join('.') || '(root)'}: ${e.message}`).join('; ');
+            const issues = validCircuit.error.errors
+                .slice(0, 5)
+                .map((e) => `${e.path.join('.') || '(root)'}: ${e.message}`)
+                .join('; ');
             throw new BadRequestException(`Invalid circuit for Monte-Carlo: ${issues}`);
         }
         const validAnalysis = safeValidateAnalysisConfig(analysisConfig);
         if (!validAnalysis.success) {
-            const issues = validAnalysis.error.errors.map((e) => `${e.path.join('.') || '(root)'}: ${e.message}`).join('; ');
+            const issues = validAnalysis.error.errors
+                .map((e) => `${e.path.join('.') || '(root)'}: ${e.message}`)
+                .join('; ');
             throw new BadRequestException(`Invalid analysis config for Monte-Carlo: ${issues}`);
         }
 
@@ -260,12 +282,17 @@ export class SimulationService {
 
         const validCircuit = safeValidateCircuitJson(circuit);
         if (!validCircuit.success) {
-            const issues = validCircuit.error.errors.slice(0, 5).map((e) => `${e.path.join('.') || '(root)'}: ${e.message}`).join('; ');
+            const issues = validCircuit.error.errors
+                .slice(0, 5)
+                .map((e) => `${e.path.join('.') || '(root)'}: ${e.message}`)
+                .join('; ');
             throw new BadRequestException(`Invalid circuit for worst-case: ${issues}`);
         }
         const validAnalysis = safeValidateAnalysisConfig(analysisConfig);
         if (!validAnalysis.success) {
-            const issues = validAnalysis.error.errors.map((e) => `${e.path.join('.') || '(root)'}: ${e.message}`).join('; ');
+            const issues = validAnalysis.error.errors
+                .map((e) => `${e.path.join('.') || '(root)'}: ${e.message}`)
+                .join('; ');
             throw new BadRequestException(`Invalid analysis config for worst-case: ${issues}`);
         }
 
@@ -320,12 +347,17 @@ export class SimulationService {
 
         const validCircuit = safeValidateCircuitJson(circuit);
         if (!validCircuit.success) {
-            const issues = validCircuit.error.errors.slice(0, 5).map((e) => `${e.path.join('.') || '(root)'}: ${e.message}`).join('; ');
+            const issues = validCircuit.error.errors
+                .slice(0, 5)
+                .map((e) => `${e.path.join('.') || '(root)'}: ${e.message}`)
+                .join('; ');
             throw new BadRequestException(`Invalid circuit for temperature-corner: ${issues}`);
         }
         const validAnalysis = safeValidateAnalysisConfig(analysisConfig);
         if (!validAnalysis.success) {
-            const issues = validAnalysis.error.errors.map((e) => `${e.path.join('.') || '(root)'}: ${e.message}`).join('; ');
+            const issues = validAnalysis.error.errors
+                .map((e) => `${e.path.join('.') || '(root)'}: ${e.message}`)
+                .join('; ');
             throw new BadRequestException(`Invalid analysis config for temperature-corner: ${issues}`);
         }
 
@@ -379,12 +411,17 @@ export class SimulationService {
 
         const validCircuit = safeValidateCircuitJson(circuit);
         if (!validCircuit.success) {
-            const issues = validCircuit.error.errors.slice(0, 5).map((e) => `${e.path.join('.') || '(root)'}: ${e.message}`).join('; ');
+            const issues = validCircuit.error.errors
+                .slice(0, 5)
+                .map((e) => `${e.path.join('.') || '(root)'}: ${e.message}`)
+                .join('; ');
             throw new BadRequestException(`Invalid circuit for supply-corner: ${issues}`);
         }
         const validAnalysis = safeValidateAnalysisConfig(analysisConfig);
         if (!validAnalysis.success) {
-            const issues = validAnalysis.error.errors.map((e) => `${e.path.join('.') || '(root)'}: ${e.message}`).join('; ');
+            const issues = validAnalysis.error.errors
+                .map((e) => `${e.path.join('.') || '(root)'}: ${e.message}`)
+                .join('; ');
             throw new BadRequestException(`Invalid analysis config for supply-corner: ${issues}`);
         }
 
@@ -484,7 +521,15 @@ export class SimulationService {
         // row (incl. the up-to-1MB resultJson) would move tens of MB per design request for nothing.
         const job = await this.prisma.simulationJob.findUnique({
             where: { id: jobId },
-            select: { id: true, orgId: true, status: true, createdAt: true, startedAt: true, finishedAt: true, metrics: true },
+            select: {
+                id: true,
+                orgId: true,
+                status: true,
+                createdAt: true,
+                startedAt: true,
+                finishedAt: true,
+                metrics: true,
+            },
         });
 
         if (!job) {
@@ -532,7 +577,10 @@ export class SimulationService {
         if (job.resultS3Key) {
             result = await this.fetchResultFromS3(job.resultS3Key);
         } else {
-            const row = await this.prisma.simulationJob.findUnique({ where: { id: jobId }, select: { resultJson: true } });
+            const row = await this.prisma.simulationJob.findUnique({
+                where: { id: jobId },
+                select: { resultJson: true },
+            });
             result = row?.resultJson ?? null;
         }
 
@@ -573,9 +621,7 @@ export class SimulationService {
      */
     private async fetchResultFromS3(key: string): Promise<unknown> {
         try {
-            const response = await this.s3.send(
-                new GetObjectCommand({ Bucket: this.bucket, Key: key }),
-            );
+            const response = await this.s3.send(new GetObjectCommand({ Bucket: this.bucket, Key: key }));
             const body = await response.Body?.transformToString();
             return body ? JSON.parse(body) : null;
         } catch (err) {
@@ -583,9 +629,7 @@ export class SimulationService {
             // (missing/corrupt object, connectivity) is a real problem — log it instead of
             // silently returning null, which is indistinguishable from "no data" downstream.
             this.logger.error(
-                `Failed to fetch/parse S3 result at key "${key}": ${
-                    err instanceof Error ? err.message : String(err)
-                }`,
+                `Failed to fetch/parse S3 result at key "${key}": ${err instanceof Error ? err.message : String(err)}`,
             );
             return null;
         }

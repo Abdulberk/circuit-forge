@@ -77,9 +77,7 @@ describe('Simulation Integration Tests', () => {
         prisma = app.get(PrismaService);
 
         // Register and login
-        const authResponse = await request(app.getHttpServer())
-            .post('/auth/register')
-            .send(testUser);
+        const authResponse = await request(app.getHttpServer()).post('/auth/register').send(testUser);
         accessToken = authResponse.body.accessToken;
 
         // Create org
@@ -211,9 +209,7 @@ describe('Simulation Integration Tests', () => {
         });
 
         it('should reject status check without auth', async () => {
-            await request(app.getHttpServer())
-                .get(`/simulations/${jobId}`)
-                .expect(401);
+            await request(app.getHttpServer()).get(`/simulations/${jobId}`).expect(401);
         });
 
         it('should return 404 for non-existent job', async () => {

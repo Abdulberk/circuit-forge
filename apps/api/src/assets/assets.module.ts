@@ -16,4 +16,4 @@ import { AssetsService } from './assets.service';
     providers: [AssetsService],
     exports: [AssetsService],
 })
-export class AssetsModule { }
+export class AssetsModule {}

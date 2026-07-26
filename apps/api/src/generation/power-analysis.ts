@@ -151,6 +151,7 @@ export function computeResistorPower(
 
     if (components.length === 0) return undefined;
     // op/dc give a true operating point; tran/ac `final` is just the last captured timestep.
-    const basis: PowerReport['basis'] = analysisType === 'tran' || analysisType === 'ac' ? 'last-timestep' : 'operating-point';
+    const basis: PowerReport['basis'] =
+        analysisType === 'tran' || analysisType === 'ac' ? 'last-timestep' : 'operating-point';
     return { basis, components, anyOverRating: components.some((c) => c.overRating) };
 }
