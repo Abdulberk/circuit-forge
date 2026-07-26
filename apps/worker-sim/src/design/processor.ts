@@ -135,7 +135,9 @@ async function processDesignJob(job: Job<DesignJobPayload>): Promise<void> {
                     { prompt, constraints, maxRounds },
                     {
                         llmConfig: buildLlmConfig(),
-                        runSim: makeLocalSim(),
+                        // Scoped by the DesignJob id: sim ids become temp DIRECTORY names, so two
+                        // concurrent jobs must never derive the same one (see makeLocalSim).
+                        runSim: makeLocalSim(jobId),
                         ground: noopGround,
                         userId,
                         pollTimeoutMs: config.DESIGN_POLL_TIMEOUT_MS ?? 90_000,

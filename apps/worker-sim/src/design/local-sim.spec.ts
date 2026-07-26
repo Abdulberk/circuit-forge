@@ -39,7 +39,7 @@ beforeEach(() => {
 describe('makeLocalSim.createQuickSim → getStatus/getResult', () => {
     it('SUCCEEDED: status carries pointsCount; getResult exposes {result.series, metrics.pointsCount}', async () => {
         runSimulation.mockResolvedValue(okResult);
-        const sim = makeLocalSim();
+        const sim = makeLocalSim('job-a');
         const { jobId } = await sim.createQuickSim('* deck\n.end', { type: 'tran' }, 'u1');
 
         const status = await sim.getStatus(jobId, 'u1');
@@ -59,7 +59,7 @@ describe('makeLocalSim.createQuickSim → getStatus/getResult', () => {
 
     it('infra failure → FAILED + failureClass:"infra" (the loop reports inconclusive, never a design failure)', async () => {
         runSimulation.mockResolvedValue({ success: false, stdout: '', stderr: '', runtimeMs: 5, infra: true, error: 'ngspice could not be launched' });
-        const sim = makeLocalSim();
+        const sim = makeLocalSim('job-a');
         const { jobId } = await sim.createQuickSim('* deck', {}, 'u1');
         const status = await sim.getStatus(jobId, 'u1');
         expect(status.status).toBe('FAILED');
@@ -69,7 +69,7 @@ describe('makeLocalSim.createQuickSim → getStatus/getResult', () => {
 
     it('genuine ngspice fault → FAILED + failureClass:"sim" (drives the loop\'s AI-fix path)', async () => {
         runSimulation.mockResolvedValue({ success: false, stdout: '', stderr: '', runtimeMs: 5, error: 'ngspice exited with code 1' });
-        const sim = makeLocalSim();
+        const sim = makeLocalSim('job-a');
         const { jobId } = await sim.createQuickSim('* deck', {}, 'u1');
         const status = await sim.getStatus(jobId, 'u1');
         expect(status.status).toBe('FAILED');
@@ -78,7 +78,7 @@ describe('makeLocalSim.createQuickSim → getStatus/getResult', () => {
 
     it('wall-clock timeout → TIMED_OUT', async () => {
         runSimulation.mockResolvedValue({ success: false, stdout: '', stderr: '', runtimeMs: 10000, timedOut: true, error: 'Simulation timed out' });
-        const sim = makeLocalSim();
+        const sim = makeLocalSim('job-a');
         const { jobId } = await sim.createQuickSim('* deck', { type: 'tran' }, 'u1');
         expect((await sim.getStatus(jobId, 'u1')).status).toBe('TIMED_OUT');
     });
@@ -88,7 +88,7 @@ describe('makeLocalSim.createQuickSim → getStatus/getResult', () => {
             ...okResult,
             convergence: { recovered: true, kind: 'gmin_stepping', diagnosis: 'timestep too small', remedyApplied: 'gmin', attempts: 2 } as unknown as SimulationJobResult['convergence'],
         });
-        const sim = makeLocalSim();
+        const sim = makeLocalSim('job-a');
         const { jobId } = await sim.createQuickSim('* deck', { type: 'tran' }, 'u1');
         const m = (await sim.getStatus(jobId, 'u1')).metrics as { convergence?: { recovered?: boolean } };
         expect(m.convergence?.recovered).toBe(true);
@@ -101,7 +101,7 @@ describe('makeLocalSim.createMonteCarloJob', () => {
             yield: 0.94, ci95: { low: 0.9, high: 0.97 }, total: 300, evaluated: 300, passed: 282, failed: 18,
             errored: 0, ran: 300, stoppedEarly: false, budgetHit: false, runtimeMs: 5000,
         } as unknown as MonteCarloBatchResult);
-        const sim = makeLocalSim();
+        const sim = makeLocalSim('job-a');
         const { jobId } = await sim.createMonteCarloJob({} as never, { type: 'op' }, [], { n: 300 }, 'u1');
         const mc = ((await sim.getStatus(jobId, 'u1')).metrics as { monteCarlo?: { evaluated?: number; yield?: number } }).monteCarlo;
         expect(mc?.evaluated).toBe(300);
@@ -110,10 +110,60 @@ describe('makeLocalSim.createMonteCarloJob', () => {
 
     it('batch throw → FAILED + failureClass:"infra" (loop reports "yield unavailable")', async () => {
         runMonteCarloBatch.mockRejectedValue(new Error('redis gone'));
-        const sim = makeLocalSim();
+        const sim = makeLocalSim('job-a');
         const { jobId } = await sim.createMonteCarloJob({} as never, {}, [], {}, 'u1');
         const status = await sim.getStatus(jobId, 'u1');
         expect(status.status).toBe('FAILED');
         expect((status.metrics as { failureClass?: string }).failureClass).toBe('infra');
+    });
+});
+
+/**
+ * REGRESSION: two concurrent design jobs must never derive the same sim id.
+ *
+ * The id is not cosmetic — runner.ts turns it into the working DIRECTORY
+ * (`path.join(SIM_TEMP_DIR, jobId)`) and removes that directory in a `finally`. Before the scope
+ * parameter existed, the counter lived per makeLocalSim instance and processor.ts built one instance
+ * PER JOB, so every job's first simulation landed on `local-1-sim`: with DESIGN_CONCURRENCY=2 (the
+ * default) one job overwrote the other's deck and the first to finish deleted the other's live
+ * directory. The observable damage is a verdict computed from a different design's circuit.
+ */
+describe('makeLocalSim — job scoping (temp-dir collision regression)', () => {
+    it('two instances scoped by different job ids never produce the same sim id', async () => {
+        runSimulation.mockResolvedValue(okResult);
+        const a = makeLocalSim('job-a');
+        const b = makeLocalSim('job-b');
+
+        const ja = (await a.createQuickSim('* deck\n.end', { type: 'tran' }, 'u1')).jobId;
+        const jb = (await b.createQuickSim('* deck\n.end', { type: 'tran' }, 'u1')).jobId;
+
+        // The FIRST id from each instance is the collision case: both counters are at 1.
+        expect(ja).not.toBe(jb);
+        expect(ja).toContain('job-a');
+        expect(jb).toContain('job-b');
+    });
+
+    it('the scoped id is what reaches the runner — it is the temp directory name', async () => {
+        runSimulation.mockResolvedValue(okResult);
+        const sim = makeLocalSim('job-c');
+        await sim.createQuickSim('* deck\n.end', { type: 'tran' }, 'u1');
+
+        expect(runSimulation).toHaveBeenCalledWith(
+            expect.objectContaining({ jobId: expect.stringContaining('job-c') as unknown as string }),
+        );
+    });
+
+    it('Monte-Carlo ids are scoped too (same directory derivation)', async () => {
+        runMonteCarloBatch.mockResolvedValue({
+            yield: 1, evaluated: 10, passed: 10, failed: 0, errored: 0, ran: 10,
+            stoppedEarly: false, budgetHit: false, runtimeMs: 10,
+        } as unknown as MonteCarloBatchResult);
+        const a = makeLocalSim('job-d');
+        const b = makeLocalSim('job-e');
+
+        const ja = (await a.createMonteCarloJob({} as never, {}, [], {}, 'u1')).jobId;
+        const jb = (await b.createMonteCarloJob({} as never, {}, [], {}, 'u1')).jobId;
+
+        expect(ja).not.toBe(jb);
     });
 });

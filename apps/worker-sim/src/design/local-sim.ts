@@ -42,10 +42,20 @@ interface StoredOutcome {
     resultPayload: Record<string, unknown>;
 }
 
-export function makeLocalSim(): DesignRunSim {
+/**
+ * @param scope MUST be unique per concurrent design job — the DesignJob id. The returned ids become
+ *  DIRECTORY NAMES: runner.ts joins SIM_TEMP_DIR with the job id, and removes that directory in a
+ *  `finally`. A per-instance counter alone is not enough, because each design job builds its own
+ *  makeLocalSim and restarts the counter at zero — so with DESIGN_CONCURRENCY=2 (the default) every
+ *  job's FIRST simulation used the same `local-1-sim` directory: one job overwrote the other's deck,
+ *  and whichever finished first deleted the other's live working directory. A verdict computed from
+ *  another design's circuit is the worst failure this product has, so the parameter is required
+ *  rather than defaulted — a caller cannot silently reintroduce the collision.
+ */
+export function makeLocalSim(scope: string): DesignRunSim {
     const store = new Map<string, StoredOutcome>();
     let counter = 0;
-    const nextId = (kind: string) => `local-${++counter}-${kind}`;
+    const nextId = (kind: string) => `local-${scope}-${++counter}-${kind}`;
 
     return {
         async createQuickSim(netlist, analysisConfig, _userId) {
