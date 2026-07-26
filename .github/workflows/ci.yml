@@ -97,6 +97,54 @@ jobs:
       - name: Tests (unit + integration)
         run: pnpm test
 
+  rust:
+    name: pcb-placement-rs (cargo build + test)
+    # The Rust placement kernel ships as a BINARY DEPENDENCY of the PCB pipeline
+    # (apps/pcb-worker/src/runners/rust-placement.ts spawns `cf-pcb-place`), yet nothing in this repo
+    # compiled it: `cargo` appeared in no workflow, and the TS side mocks execFile, so the binary never
+    # ran in CI at all. Its 13 #[test]s pin concrete past failures — duplicate part ids collapsing to one
+    # position while still reporting ok:true, a 1e300 net weight pushing coordinates non-finite while
+    # still reporting ok:true, a 1e6mm board aborting on a 4.9TB allocation. Those classes could reach
+    # a worker on a fully green pipeline. Runs on every PR (no path filter): the crate is small and the
+    # cache keeps it around a minute, which is cheaper than reasoning about when it may be skipped.
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    defaults:
+      run:
+        working-directory: crates/pcb-placement-rs
+    steps:
+      - uses: actions/checkout@v4
+
+      # Cargo.lock IS committed, so --locked makes the build reproducible and turns an unintended
+      # dependency bump into a failure rather than a silent upgrade. Uses the runner's preinstalled
+      # toolchain (edition 2024 needs >= 1.85); rustup only runs if it is older.
+      - name: Ensure a toolchain new enough for edition 2024 (rust-version = 1.85)
+        run: |
+          cargo --version
+          rustc --version
+          MIN=1.85.0
+          HAVE=$(rustc --version | awk '{print $2}')
+          if [ "$(printf '%s\n%s\n' "$MIN" "$HAVE" | sort -V | head -1)" != "$MIN" ]; then
+            echo "::notice::rustc $HAVE is older than $MIN — updating"
+            rustup update stable && rustup default stable
+          fi
+
+      - name: Cache cargo registry + target
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            crates/pcb-placement-rs/target
+          key: cargo-${{ runner.os }}-${{ hashFiles('crates/pcb-placement-rs/Cargo.lock') }}
+          restore-keys: cargo-${{ runner.os }}-
+
+      - name: Build (locked)
+        run: cargo build --locked --release
+
+      - name: Test
+        run: cargo test --locked
+
   matrix:
     name: ngspice coverage matrix (apt / Ubuntu 24.04)
     # Runner PINNED (not ubuntu-latest) so the apt ngspice is DETERMINISTIC: ubuntu-24.04 ships ngspice-42.
