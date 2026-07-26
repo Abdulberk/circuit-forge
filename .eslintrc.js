@@ -4,6 +4,11 @@ module.exports = {
     parserOptions: {
         ecmaVersion: 2022,
         sourceType: 'module',
+        // REQUIRED by the type-aware rules below (no-floating-promises, no-misused-promises,
+        // await-thenable) — without it every one of them throws "You have used a rule which
+        // requires parserServices". See tsconfig.eslint.json for why it is not a build config.
+        project: ['./tsconfig.eslint.json'],
+        tsconfigRootDir: __dirname,
     },
     plugins: ['@typescript-eslint', 'import'],
     extends: [
@@ -18,12 +23,15 @@ module.exports = {
         node: true,
         jest: true,
     },
+    // `*.js` covers this file too: it is not in tsconfig.eslint.json, so type-aware linting
+    // would fail on it with "file not included in project" — and linting the lint config with
+    // TypeScript rules buys nothing.
     ignorePatterns: [
         'node_modules',
         'dist',
         'coverage',
+        '.next',
         '*.js',
-        '!.eslintrc.js',
     ],
     settings: {
         'import/resolver': {
