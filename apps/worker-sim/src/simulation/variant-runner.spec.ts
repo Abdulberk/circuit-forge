@@ -5,8 +5,6 @@
  * pass/fail, or a stale CSV read as the current variant's result. ngspice + eda-core are mocked — this is a pure
  * control-flow test of the runner's OWN branching (stale-CSV clear, the six null/errored exits, THD/gain fold).
  */
-import type { SimMeasurement } from '@circuit-forge/eda-core';
-
 // config validates env at import → stub only the field the runner reads.
 jest.mock('../config', () => ({ config: { SIM_MAX_OUTPUT_BYTES: 1000 } }));
 
@@ -33,6 +31,7 @@ import * as fs from 'fs/promises';
 import * as path from 'path';
 
 import * as eda from '@circuit-forge/eda-core';
+import type { SimMeasurement } from '@circuit-forge/eda-core';
 
 import { executeNgspice } from './runner';
 import { makeVariantRunner } from './variant-runner';

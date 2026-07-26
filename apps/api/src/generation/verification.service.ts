@@ -9,8 +9,32 @@
  * receipts" surface (review an existing circuit, generation optional). Stays a SYNCHRONOUS request via
  * server-side job polling.
  */
-import { runErc, generateNetlist, type AnalysisConfig, type SimulationResult, type AcceptanceCriterion, type CornerSpec } from '@circuit-forge/eda-core';
-import { safeValidateCircuitJson, buildElectricalScope, criterionDimension, checkOrientationConsistency, classifyRobustness, ROBUSTNESS_PROFILES, TEMP_CORNER_CEILING, type CircuitJson, type ScopeManifest, type OrientationReport, type YieldSummary, type RobustnessTier, type DeterminedEntry, type TempCornerSpec, type TempMetricDrift, type SupplyCornerSpec, type RailValidation, type SupplyDrift } from '@circuit-forge/eda-core';
+import {
+    runErc,
+    generateNetlist,
+    safeValidateCircuitJson,
+    buildElectricalScope,
+    criterionDimension,
+    checkOrientationConsistency,
+    classifyRobustness,
+    ROBUSTNESS_PROFILES,
+    TEMP_CORNER_CEILING,
+    type AnalysisConfig,
+    type SimulationResult,
+    type AcceptanceCriterion,
+    type CornerSpec,
+    type CircuitJson,
+    type ScopeManifest,
+    type OrientationReport,
+    type YieldSummary,
+    type RobustnessTier,
+    type DeterminedEntry,
+    type TempCornerSpec,
+    type TempMetricDrift,
+    type SupplyCornerSpec,
+    type RailValidation,
+    type SupplyDrift,
+} from '@circuit-forge/eda-core';
 import { Injectable, Optional, Logger } from '@nestjs/common';
 
 import { SimulationService } from '../simulation/simulation.service';
@@ -424,7 +448,7 @@ export class VerificationService {
             if (wc.evaluated === 0) return { unavailable: 'no toleranced components to corner — add a "tolerance" to R/C/L values' };
             return { worstCase: wc };
         } catch (e) {
-            this.logger.error(`worst-case corner run failed: ${e instanceof Error ? e.message : e}`);
+            this.logger.error(`worst-case corner run failed: ${e instanceof Error ? e.message : String(e)}`);
             return { unavailable: 'worst-case corner check could not be run (worker/queue unavailable) — try again' };
         }
     }
@@ -473,7 +497,7 @@ export class VerificationService {
                 note: budgetHit ? `${v.note} (INCOMPLETE — cut short by the time budget after ${v.evaluated} runs; raise n or retry for a gating result)` : v.note,
             };
         } catch (e) {
-            this.logger.error(`Monte-Carlo robustness run failed: ${e instanceof Error ? e.message : e}`);
+            this.logger.error(`Monte-Carlo robustness run failed: ${e instanceof Error ? e.message : String(e)}`);
             return { unavailable: 'Monte-Carlo robustness could not be run (worker/queue unavailable) — try again', toleranceBasis: opts.basis };
         }
     }
@@ -507,7 +531,7 @@ export class VerificationService {
             if (!tc) return { unavailable: 'temperature-corner check produced no result' };
             return { tempCorner: tc };
         } catch (e) {
-            this.logger.error(`temperature-corner run failed: ${e instanceof Error ? e.message : e}`);
+            this.logger.error(`temperature-corner run failed: ${e instanceof Error ? e.message : String(e)}`);
             return { unavailable: 'temperature-corner check could not be run (worker/queue unavailable) — try again' };
         }
     }
@@ -541,7 +565,7 @@ export class VerificationService {
             if (!sc) return { unavailable: 'supply-corner check produced no result' };
             return { supplyCorner: sc };
         } catch (e) {
-            this.logger.error(`supply-corner run failed: ${e instanceof Error ? e.message : e}`);
+            this.logger.error(`supply-corner run failed: ${e instanceof Error ? e.message : String(e)}`);
             return { unavailable: 'supply-corner check could not be run (worker/queue unavailable) — try again' };
         }
     }
@@ -710,7 +734,7 @@ export class VerificationService {
         } catch (e) {
             // The queue/Redis/DB was unreachable (createQuickSim / getStatus / getResult threw). Same
             // contract rule as POLL_TIMEOUT above: a transient infra outage is NOT a design fault. → inconclusive.
-            this.logger.error(`verify-design worker run failed: ${e instanceof Error ? e.message : e}`);
+            this.logger.error(`verify-design worker run failed: ${e instanceof Error ? e.message : String(e)}`);
             return { simStatus: 'skipped', ercErrors, ercWarnings, runError: 'simulation could not be run (worker/queue unavailable) — try again', ...empty };
         }
     }

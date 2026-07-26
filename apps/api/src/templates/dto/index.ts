@@ -23,7 +23,7 @@ export class CreateTemplateDto {
 
     @ApiProperty({ description: 'Circuit JSON definition' })
     @IsObject()
-    circuitJson!: Record<string, any>;
+    circuitJson!: Record<string, unknown>;
 
     @ApiPropertyOptional({
         description:
@@ -33,7 +33,7 @@ export class CreateTemplateDto {
     })
     @IsOptional()
     @IsObject()
-    analysisConfig?: Record<string, any>;
+    analysisConfig?: Record<string, unknown>;
 }
 
 export class ListTemplatesQueryDto {

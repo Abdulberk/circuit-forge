@@ -1,38 +1,40 @@
 {
-    "name": "@circuitforge/pcb-worker",
-    "version": "0.0.1",
-    "private": true,
-    "description": "PCB layout worker — runs pcb-core's quality pipeline (freerouting + kicad-cli) as a BullMQ job",
-    "main": "dist/main.js",
-    "scripts": {
-        "build": "tsc",
-        "dev": "tsx watch src/main.ts",
-        "start": "node dist/main.js",
-        "test": "jest",
-        "typecheck": "tsc --noEmit"
-    },
-    "engines": {
-        "node": ">=22"
-    },
-    "dependencies": {
-        "@aws-sdk/client-s3": "^3.500.0",
-        "@aws-sdk/lib-storage": "^3.500.0",
-        "@circuit-forge/pcb-core": "workspace:*",
-        "@prisma/client": "^5.10.0",
-        "bullmq": "^5.1.0",
-        "dotenv": "^16.4.0",
-        "ioredis": "^5.3.2",
-        "pino": "^8.18.0",
-        "pino-pretty": "^10.3.1",
-        "zod": "^3.22.0"
-    },
-    "devDependencies": {
-        "@types/jest": "^29.5.11",
-        "@types/node": "^20.11.0",
-        "jest": "^29.7.0",
-        "prisma": "^5.10.0",
-        "ts-jest": "^29.1.1",
-        "tsx": "^4.7.0",
-        "typescript": "^5.3.3"
-    }
+  "name": "@circuitforge/pcb-worker",
+  "version": "0.0.1",
+  "private": true,
+  "description": "PCB layout worker — runs pcb-core's quality pipeline (freerouting + kicad-cli) as a BullMQ job",
+  "main": "dist/main.js",
+  "scripts": {
+    "build": "tsc",
+    "lint": "eslint src --ext .ts",
+    "lint:fix": "eslint src --ext .ts --fix",
+    "dev": "tsx watch src/main.ts",
+    "start": "node dist/main.js",
+    "test": "jest",
+    "typecheck": "tsc --noEmit"
+  },
+  "engines": {
+    "node": ">=22"
+  },
+  "dependencies": {
+    "@aws-sdk/client-s3": "^3.500.0",
+    "@aws-sdk/lib-storage": "^3.500.0",
+    "@circuit-forge/pcb-core": "workspace:*",
+    "@prisma/client": "^5.10.0",
+    "bullmq": "^5.1.0",
+    "dotenv": "^16.4.0",
+    "ioredis": "^5.3.2",
+    "pino": "^8.18.0",
+    "pino-pretty": "^10.3.1",
+    "zod": "^3.22.0"
+  },
+  "devDependencies": {
+    "@types/jest": "^29.5.11",
+    "@types/node": "^20.11.0",
+    "jest": "^29.7.0",
+    "prisma": "^5.10.0",
+    "ts-jest": "^29.1.1",
+    "tsx": "^4.7.0",
+    "typescript": "^5.3.3"
+  }
 }

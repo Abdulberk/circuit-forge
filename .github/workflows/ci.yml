@@ -85,6 +85,15 @@ jobs:
       - name: Typecheck
         run: pnpm typecheck
 
+      # Type-aware lint. This gate was DEAD until 2026-07-26: parserOptions.project was missing, so every
+      # rule from recommended-requiring-type-checking threw on load and `pnpm lint` aborted in every
+      # workspace — and CI never ran it, so nobody saw. It is wired here now that it exits clean.
+      # What it gates: floating/misused promises (silent job loss in a queue worker is exactly this class),
+      # new `any`, import hygiene, no-debugger, prefer-const. `any` PROPAGATION is intentionally a warning —
+      # see the rationale in .eslintrc.js.
+      - name: Lint
+        run: pnpm lint
+
       - name: Tests (unit + integration)
         run: pnpm test
 

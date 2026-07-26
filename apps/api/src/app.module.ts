@@ -23,9 +23,9 @@ import { PrismaModule } from './prisma/prisma.module';
 import { ProjectsModule } from './projects/projects.module';
 import { SimulationModule } from './simulation/simulation.module';
 import { TemplatesModule } from './templates/templates.module';
+import { UsageModule } from './usage/usage.module';
 import { VersionsModule } from './versions/versions.module';
 import { WorkingCopyModule } from './working-copy/working-copy.module';
-import { UsageModule } from './usage/usage.module';
 
 @Module({
     imports: [

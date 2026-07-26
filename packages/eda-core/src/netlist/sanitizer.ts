@@ -131,7 +131,7 @@ const DANGEROUS_COMMANDS = new Set([
     'pre_osdi', // pre-run OSDI load
 ]);
 
-/** Commands whose FIRST argument is a destination/​source FILE that must stay inside the job dir (validated
+/** Commands whose FIRST argument is a destination/source FILE that must stay inside the job dir (validated
  *  like `.include`). Our generated decks use `wrdata output.csv …` (a safe relative path); a crafted
  *  `wrdata /etc/cron.d/x …` would otherwise write outside the sandbox. */
 const FILE_PATH_COMMANDS = new Set(['wrdata', 'write', 'wrs', 'sconvert', 'rawfile']);

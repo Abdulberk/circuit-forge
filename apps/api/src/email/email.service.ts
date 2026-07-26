@@ -61,7 +61,7 @@ export class EmailService {
         try {
             await this.transport.send({ to, subject: content.subject, text: content.text, html: content.html });
         } catch (e) {
-            this.logger.error(`email send failed (transport=${this.transport.name}, to=<${to}>): ${e instanceof Error ? e.message : e}`);
+            this.logger.error(`email send failed (transport=${this.transport.name}, to=<${to}>): ${e instanceof Error ? e.message : String(e)}`);
         }
     }
 }

@@ -12,7 +12,9 @@ export class OptionalJwtAuthGuard extends AuthGuard('jwt') {
         return super.canActivate(context);
     }
 
-    handleRequest(err: any, user: any) {
+    // Passport hands these through untyped; `unknown` is the honest shape — the body only tests
+    // truthiness and passes the user straight back to the request.
+    handleRequest<TUser = unknown>(err: unknown, user: TUser): TUser | null {
         // Don't throw on missing/invalid token
         // Just return null user
         if (err || !user) {

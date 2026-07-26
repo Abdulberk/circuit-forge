@@ -456,7 +456,7 @@ export class SimulationService {
         for (const a of assets) {
             const filename = a.s3Key.split('/').pop() ?? '';
             // Must be a bare, sandbox-safe filename — it is written into the job dir and `.include`d.
-            if (!/^[A-Za-z0-9_.\-]+$/.test(filename) || filename.includes('..')) {
+            if (!/^[A-Za-z0-9_.-]+$/.test(filename) || filename.includes('..')) {
                 throw new BadRequestException(`Model asset has an unsafe filename: "${filename}"`);
             }
             // Never let an uploaded file clobber the worker's own job files (the runner writes the
@@ -571,7 +571,7 @@ export class SimulationService {
      * Returns the parsed SimulationResult ({ meta, series }), or null if it cannot be
      * fetched/parsed — callers already treat a null result as "data unavailable".
      */
-    private async fetchResultFromS3(key: string): Promise<unknown | null> {
+    private async fetchResultFromS3(key: string): Promise<unknown> {
         try {
             const response = await this.s3.send(
                 new GetObjectCommand({ Bucket: this.bucket, Key: key }),
