@@ -42,11 +42,7 @@ describe('NetlistGenerator', () => {
                         { pinId: '2', netId: '0' },
                     ]),
                 ],
-                nets: [
-                    createNet('vcc', 'vcc'),
-                    createNet('out', 'out'),
-                    createNet('0', '0', true),
-                ],
+                nets: [createNet('vcc', 'vcc'), createNet('out', 'out'), createNet('0', '0', true)],
             };
 
             const analysis: TranAnalysis = {
@@ -75,8 +71,14 @@ describe('NetlistGenerator', () => {
                 ],
                 nets: [createNet('vp', 'vp'), createNet('0', '0', true)],
             });
-            const forward = mk([{ pinId: '+', netId: 'vp' }, { pinId: '-', netId: '0' }]);
-            const reversed = mk([{ pinId: '-', netId: '0' }, { pinId: '+', netId: 'vp' }]);
+            const forward = mk([
+                { pinId: '+', netId: 'vp' },
+                { pinId: '-', netId: '0' },
+            ]);
+            const reversed = mk([
+                { pinId: '-', netId: '0' },
+                { pinId: '+', netId: 'vp' },
+            ]);
             const lineOf = (c: CircuitJson) =>
                 generateNetlist(c, { type: 'op' } as OpAnalysis)
                     .split('\n')
@@ -98,10 +100,7 @@ describe('NetlistGenerator', () => {
                         { pinId: '-', netId: '0' },
                     ]),
                 ],
-                nets: [
-                    createNet('vcc', 'vcc'),
-                    createNet('0', '0', true),
-                ],
+                nets: [createNet('vcc', 'vcc'), createNet('0', '0', true)],
             };
 
             const analysis: TranAnalysis = { type: 'tran', stopTime: '1m' };
@@ -125,10 +124,7 @@ describe('NetlistGenerator', () => {
                         { pinId: 'cathode', netId: '0' },
                     ]),
                 ],
-                nets: [
-                    createNet('vcc', 'vcc'),
-                    createNet('0', '0', true),
-                ],
+                nets: [createNet('vcc', 'vcc'), createNet('0', '0', true)],
             };
 
             const analysis: TranAnalysis = { type: 'tran', stopTime: '1m' };
@@ -148,10 +144,7 @@ describe('NetlistGenerator', () => {
                         { pinId: '-', netId: '0' },
                     ]),
                 ],
-                nets: [
-                    createNet('vcc', 'vcc'),
-                    createNet('0', '0', true),
-                ],
+                nets: [createNet('vcc', 'vcc'), createNet('0', '0', true)],
             };
 
             const analysis: TranAnalysis = { type: 'tran', stopTime: '1m' };
@@ -169,9 +162,18 @@ describe('NetlistGenerator', () => {
             const circuit: CircuitJson = {
                 version: '1.0',
                 components: [
-                    createComponent('V1', 'voltage_source', 'V1', 'DC 5', [{ pinId: '+', netId: 'in' }, { pinId: '-', netId: '0' }]),
-                    createComponent('R1', 'resistor', 'R1', '1k', [{ pinId: '1', netId: 'in' }, { pinId: '2', netId: 'out' }]),
-                    createComponent('R2', 'resistor', 'R2', '1k', [{ pinId: '1', netId: 'out' }, { pinId: '2', netId: '0' }]),
+                    createComponent('V1', 'voltage_source', 'V1', 'DC 5', [
+                        { pinId: '+', netId: 'in' },
+                        { pinId: '-', netId: '0' },
+                    ]),
+                    createComponent('R1', 'resistor', 'R1', '1k', [
+                        { pinId: '1', netId: 'in' },
+                        { pinId: '2', netId: 'out' },
+                    ]),
+                    createComponent('R2', 'resistor', 'R2', '1k', [
+                        { pinId: '1', netId: 'out' },
+                        { pinId: '2', netId: '0' },
+                    ]),
                 ],
                 nets: [createNet('in', 'in'), createNet('out', 'out'), createNet('0', '0', true)],
             };
@@ -241,10 +243,7 @@ describe('NetlistGenerator', () => {
                         { pinId: '-', netId: '0' },
                     ]),
                 ],
-                nets: [
-                    createNet('in', 'in'),
-                    createNet('0', '0', true),
-                ],
+                nets: [createNet('in', 'in'), createNet('0', '0', true)],
             };
 
             const analysis: AcAnalysis = {
@@ -269,10 +268,7 @@ describe('NetlistGenerator', () => {
                         { pinId: '-', netId: '0' },
                     ]),
                 ],
-                nets: [
-                    createNet('in', 'in'),
-                    createNet('0', '0', true),
-                ],
+                nets: [createNet('in', 'in'), createNet('0', '0', true)],
             };
 
             const analysis: DcAnalysis = {
@@ -297,10 +293,7 @@ describe('NetlistGenerator', () => {
                         { pinId: '-', netId: '0' },
                     ]),
                 ],
-                nets: [
-                    createNet('vcc', 'vcc'),
-                    createNet('0', '0', true),
-                ],
+                nets: [createNet('vcc', 'vcc'), createNet('0', '0', true)],
             };
 
             const analysis: OpAnalysis = { type: 'op' };
@@ -319,10 +312,7 @@ describe('NetlistGenerator', () => {
                         { pinId: '-', netId: '0' },
                     ]),
                 ],
-                nets: [
-                    createNet('vcc', 'vcc'),
-                    createNet('0', '0', true),
-                ],
+                nets: [createNet('vcc', 'vcc'), createNet('0', '0', true)],
             };
 
             const analysis: TranAnalysis = { type: 'tran', stopTime: '1m' };
@@ -455,7 +445,11 @@ describe('NetlistGenerator', () => {
                 ],
                 nets: [createNet('in', 'in'), createNet('0', '0', true)],
             };
-            const netlist = generateNetlist(c, { type: 'tran', stopTime: '1m', options: { reltol: '0.01' } }, { probes: ['i(R1)'] });
+            const netlist = generateNetlist(
+                c,
+                { type: 'tran', stopTime: '1m', options: { reltol: '0.01' } },
+                { probes: ['i(R1)'] },
+            );
             const opt = netlist.split('\n').find((l) => l.startsWith('.options'))!;
             expect(opt).toBe('.options reltol=0.01 savecurrents');
         });
@@ -478,14 +472,17 @@ describe('NetlistGenerator', () => {
                 nets: [createNet('in', 'in'), createNet('0', '0', true)],
             };
             // identical strings
-            expect(generateNetlist(c, { type: 'ac', variation: 'dec', points: 10, startFreq: '1k', stopFreq: '1k' }))
-                .toContain('.ac lin 1 1k 1k');
+            expect(
+                generateNetlist(c, { type: 'ac', variation: 'dec', points: 10, startFreq: '1k', stopFreq: '1k' }),
+            ).toContain('.ac lin 1 1k 1k');
             // equal VALUES spelled differently ('1000' == '1k')
-            expect(generateNetlist(c, { type: 'ac', variation: 'oct', points: 5, startFreq: '1000', stopFreq: '1k' }))
-                .toContain('.ac lin 1 1000 1k');
+            expect(
+                generateNetlist(c, { type: 'ac', variation: 'oct', points: 5, startFreq: '1000', stopFreq: '1k' }),
+            ).toContain('.ac lin 1 1000 1k');
             // a real sweep is untouched
-            expect(generateNetlist(c, { type: 'ac', variation: 'dec', points: 10, startFreq: '1', stopFreq: '1meg' }))
-                .toContain('.ac dec 10 1 1meg');
+            expect(
+                generateNetlist(c, { type: 'ac', variation: 'dec', points: 10, startFreq: '1', stopFreq: '1meg' }),
+            ).toContain('.ac dec 10 1 1meg');
         });
 
         it('throws when an AC analysis has no AC-magnitude source (would be all-zero)', () => {
@@ -529,12 +526,22 @@ describe('NetlistGenerator', () => {
             });
             // 2 pins against a 3-port body → throw.
             expect(() =>
-                generateNetlist(mk([{ pinId: 'a', netId: 'in' }, { pinId: 'b', netId: 'out' }]), { type: 'op' }),
+                generateNetlist(
+                    mk([
+                        { pinId: 'a', netId: 'in' },
+                        { pinId: 'b', netId: 'out' },
+                    ]),
+                    { type: 'op' },
+                ),
             ).toThrow(/declares 3 port/);
             // Correct 3-pin instance → no throw.
             expect(() =>
                 generateNetlist(
-                    mk([{ pinId: 'a', netId: 'in' }, { pinId: 'b', netId: 'out' }, { pinId: 'c', netId: '0' }]),
+                    mk([
+                        { pinId: 'a', netId: 'in' },
+                        { pinId: 'b', netId: 'out' },
+                        { pinId: 'c', netId: '0' },
+                    ]),
                     { type: 'op' },
                 ),
             ).not.toThrow();
@@ -670,9 +677,13 @@ describe('NetlistGenerator', () => {
                 ],
                 nets: [createNet('a', 'a'), createNet('0', '0', true)],
             };
-            const netlist = generateNetlist(circuit, { type: 'tran', stopTime: '1m' }, {
-                probes: ['i(FB1)', 'v(a)', 'i(V1)'],
-            });
+            const netlist = generateNetlist(
+                circuit,
+                { type: 'tran', stopTime: '1m' },
+                {
+                    probes: ['i(FB1)', 'v(a)', 'i(V1)'],
+                },
+            );
             expect(netlist).toMatch(/^LFB1 /m); // device emitted prefixed
             expect(netlist).toMatch(/wrdata .*i\(LFB1\)/); // probe remapped to the emitted name
             expect(netlist).not.toMatch(/i\(FB1\)/); // the un-prefixed reference must not survive
@@ -708,9 +719,13 @@ describe('NetlistGenerator', () => {
                 ],
                 nets: [createNet('a', 'a'), createNet('b', 'b'), createNet('mid', 'mid'), createNet('0', '0', true)],
             };
-            const netlist = generateNetlist(circuit, { type: 'tran', stopTime: '1m' }, {
-                probes: ['v(mid)', 'i(R1)', 'i(C1)', 'i(D1)', 'i(V1)'],
-            });
+            const netlist = generateNetlist(
+                circuit,
+                { type: 'tran', stopTime: '1m' },
+                {
+                    probes: ['v(mid)', 'i(R1)', 'i(C1)', 'i(D1)', 'i(V1)'],
+                },
+            );
             const wr = netlist.split('\n').find((l) => l.includes('wrdata'))!;
             expect(netlist).toMatch(/^\.options savecurrents$/m); // emitted once because R/C currents are probed
             expect(wr).toMatch(/@R1\[i\]/); // resistor current via the device-current vector
@@ -754,9 +769,13 @@ describe('NetlistGenerator', () => {
                 nets: [createNet('vcc', 'vcc'), createNet('col', 'col'), createNet('0', '0', true)],
                 models: [{ name: 'QGENNPN', device: 'bjt', body: '.model QGENNPN NPN(BF=100)' }],
             };
-            const netlist = generateNetlist(circuit, { type: 'tran', stopTime: '1m' }, {
-                probes: ['v(col)', 'i(Q1)'],
-            });
+            const netlist = generateNetlist(
+                circuit,
+                { type: 'tran', stopTime: '1m' },
+                {
+                    probes: ['v(col)', 'i(Q1)'],
+                },
+            );
             const wr = netlist.split('\n').find((l) => l.includes('wrdata'))!;
             expect(wr).toMatch(/v\(ncol\)/); // co-probe survives
             expect(wr).not.toMatch(/i\(Q1\)/); // ambiguous transistor current dropped
@@ -794,7 +813,11 @@ describe('NetlistGenerator', () => {
             expect(wr).not.toMatch(/@C1\[i\]/); // C current dropped in AC
             expect(acNet).not.toMatch(/savecurrents/); // not emitted when both R/C probes were dropped
             // Control: the SAME probes in tran ARE rewritten to the device-current vector.
-            const tranNet = generateNetlist(circuit, { type: 'tran', stopTime: '1m' }, { probes: ['v(out)', 'i(R1)', 'i(C1)'] });
+            const tranNet = generateNetlist(
+                circuit,
+                { type: 'tran', stopTime: '1m' },
+                { probes: ['v(out)', 'i(R1)', 'i(C1)'] },
+            );
             expect(tranNet).toMatch(/@R1\[i\]/);
             expect(tranNet).toMatch(/@C1\[i\]/);
         });
@@ -865,12 +888,18 @@ describe('NetlistGenerator', () => {
                         { pinId: '+', netId: 'pri' },
                         { pinId: '-', netId: '0' },
                     ]),
-                    { id: 'T1', type: 'transformer', designator: 'T1', properties: props, pins: [
-                        { pinId: 'p+', netId: 'pri' },
-                        { pinId: 'p-', netId: '0' },
-                        { pinId: 's+', netId: 'sec' },
-                        { pinId: 's-', netId: '0' },
-                    ] },
+                    {
+                        id: 'T1',
+                        type: 'transformer',
+                        designator: 'T1',
+                        properties: props,
+                        pins: [
+                            { pinId: 'p+', netId: 'pri' },
+                            { pinId: 'p-', netId: '0' },
+                            { pinId: 's+', netId: 'sec' },
+                            { pinId: 's-', netId: '0' },
+                        ],
+                    },
                     createComponent('RL', 'resistor', 'RL', '1k', [
                         { pinId: '1', netId: 'sec' },
                         { pinId: '2', netId: '0' },
@@ -932,7 +961,9 @@ describe('NetlistGenerator', () => {
                 ],
                 nets: [createNet('in', 'in'), createNet('mid', 'mid'), createNet('0', '0', true)],
             };
-            expect(() => generateNetlist(circuit, { type: 'tran', stopTime: '1m' })).toThrow(/[Dd]uplicate device name/);
+            expect(() => generateNetlist(circuit, { type: 'tran', stopTime: '1m' })).toThrow(
+                /[Dd]uplicate device name/,
+            );
         });
 
         it('remaps caller-supplied v(<net>) probes to the sanitized node (id, name, reserved word, differential)', () => {
@@ -958,9 +989,13 @@ describe('NetlistGenerator', () => {
                 ],
                 nets: [createNet('rail', 'rail'), createNet('out', 'out'), createNet('0', '0', true)],
             };
-            const netlist = generateNetlist(circuit, { type: 'tran', stopTime: '1m' }, {
-                probes: ['v(rail)', 'v(out)', 'v(rail,out)', 'v(nrail)', 'i(V1)'],
-            });
+            const netlist = generateNetlist(
+                circuit,
+                { type: 'tran', stopTime: '1m' },
+                {
+                    probes: ['v(rail)', 'v(out)', 'v(rail,out)', 'v(nrail)', 'i(V1)'],
+                },
+            );
             const wr = netlist.split('\n').find((l) => l.includes('wrdata'))!;
             expect(wr).toContain('v(nrail)'); // net id "rail" -> node "nrail"
             expect(wr).toContain('v(x_out)'); // reserved-word net "out" -> node "x_out"
@@ -992,9 +1027,13 @@ describe('NetlistGenerator', () => {
                 ],
                 nets: [createNet('out', 'out'), createNet('mid', 'mid'), createNet('gnd', 'gnd', true)],
             };
-            const netlist = generateNetlist(circuit, { type: 'tran', stopTime: '1m' }, {
-                probes: ['v(mid)', 'v(out,gnd)', 'v(gnd)'],
-            });
+            const netlist = generateNetlist(
+                circuit,
+                { type: 'tran', stopTime: '1m' },
+                {
+                    probes: ['v(mid)', 'v(out,gnd)', 'v(gnd)'],
+                },
+            );
             const wr = netlist.split('\n').find((l) => l.includes('wrdata'))!;
             expect(wr).toContain('v(nmid)'); // ordinary probe kept
             expect(wr).toContain('v(x_out)'); // v(out,gnd) reduced to single-ended v(out)->v(x_out)
@@ -1040,11 +1079,7 @@ describe('NetlistGenerator', () => {
             const circuit: CircuitJson = {
                 version: '1.0',
                 components: [],
-                nets: [
-                    createNet('vcc', 'vcc'),
-                    createNet('out', 'out'),
-                    createNet('0', '0', true),
-                ],
+                nets: [createNet('vcc', 'vcc'), createNet('out', 'out'), createNet('0', '0', true)],
             };
 
             const nodes = getNodeNames(circuit);
@@ -1076,7 +1111,7 @@ V1 in 0 DC 5
             const result = validateNetlist(netlist);
 
             expect(result.valid).toBe(false);
-            expect(result.errors.some(e => e.includes('.end'))).toBe(true);
+            expect(result.errors.some((e) => e.includes('.end'))).toBe(true);
         });
 
         it('should detect missing analysis', () => {
@@ -1087,7 +1122,7 @@ V1 in 0 DC 5
             const result = validateNetlist(netlist);
 
             expect(result.valid).toBe(false);
-            expect(result.errors.some(e => e.includes('analysis'))).toBe(true);
+            expect(result.errors.some((e) => e.includes('analysis'))).toBe(true);
         });
     });
 });

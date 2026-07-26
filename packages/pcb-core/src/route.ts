@@ -29,7 +29,9 @@ export async function exportDsn(
     const raw = convertCircuitJsonToDsnString(circuitJson as never);
     const rotated = fixPlaceRotations(raw, circuitJson);
     const ruled = applyFabRulesToDsn(rotated, profile);
-    return perNetWidthMm && Object.keys(perNetWidthMm).length > 0 ? applyPerNetWidths(ruled, perNetWidthMm, profile) : ruled;
+    return perNetWidthMm && Object.keys(perNetWidthMm).length > 0
+        ? applyPerNetWidths(ruled, perNetWidthMm, profile)
+        : ruled;
 }
 
 /**
@@ -90,7 +92,7 @@ export function fixPlaceRotations(dsn: string, circuitJson: TscElement[]): strin
         if (!m) continue;
         const theta = rotOf(m[2]!);
         donorRot ??= theta;
-        const dsnRot = ((theta - donorRot) % 360 + 360) % 360;
+        const dsnRot = (((theta - donorRot) % 360) + 360) % 360;
         lines[i] = line.replace(m[0], `${m[1]}${m[2]}${m[3]}front${m[4]}${dsnRot}`);
     }
     return lines.join('\n');
@@ -118,12 +120,19 @@ export function applyFabRulesToDsn(dsn: string, profile: FabProfile = JLC_FAB_PR
     // Idempotent: raising width/clearance is `max` (stable), but the via-clearance types would DUPLICATE
     // on a second pass (the rewritten bare `(clearance N)` still matches) — so append them only when the
     // DSN hasn't already been ruled.
-    const viaTypes = dsn.includes('(type via_via)') ? '' : ' ' + VIA_CLEARANCE_TYPES.map((t) => `(clearance ${viaClr} (type ${t}))`).join(' ');
-    return dsn
-        .replace(/\(width (\d+(?:\.\d+)?)\)/g, (_m, n: string) => `(width ${Math.max(Number(n), widthUm)})`)
-        // bare `(clearance N)` only — the `)` must follow the number, so typed forms like
-        // `(clearance 50 (type smd_smd))` are skipped. Append the via clearance types beside each.
-        .replace(/\(clearance (\d+(?:\.\d+)?)\)/g, (_m, n: string) => `(clearance ${Math.max(Number(n), clearanceUm)})${viaTypes}`);
+    const viaTypes = dsn.includes('(type via_via)')
+        ? ''
+        : ' ' + VIA_CLEARANCE_TYPES.map((t) => `(clearance ${viaClr} (type ${t}))`).join(' ');
+    return (
+        dsn
+            .replace(/\(width (\d+(?:\.\d+)?)\)/g, (_m, n: string) => `(width ${Math.max(Number(n), widthUm)})`)
+            // bare `(clearance N)` only — the `)` must follow the number, so typed forms like
+            // `(clearance 50 (type smd_smd))` are skipped. Append the via clearance types beside each.
+            .replace(
+                /\(clearance (\d+(?:\.\d+)?)\)/g,
+                (_m, n: string) => `(clearance ${Math.max(Number(n), clearanceUm)})${viaTypes}`,
+            )
+    );
 }
 
 /** Balanced-paren s-expression starting at the first `kw` occurrence (from `from`); null if none. */
@@ -134,7 +143,10 @@ function balancedSexpr(s: string, kw: string, from = 0): { start: number; end: n
     for (let i = a; i < s.length; i++) {
         const c = s[i];
         if (c === '(') depth++;
-        else if (c === ')') { depth--; if (depth === 0) return { start: a, end: i + 1, text: s.slice(a, i + 1) }; }
+        else if (c === ')') {
+            depth--;
+            if (depth === 0) return { start: a, end: i + 1, text: s.slice(a, i + 1) };
+        }
     }
     return null;
 }
@@ -147,15 +159,22 @@ function balancedSexpr(s: string, kw: string, from = 0): { start: number; end: n
  * suffix. Widths ≤ the base floor stay in kicad_default. This is how IPC-2221 per-net widths reach the
  * router. (Quote tokens are matched with `[^"]*` — `+` cross-pairs around the empty class-name `""`.)
  */
-export function applyPerNetWidths(dsn: string, widthMmByEmitted: Record<string, number>, profile: FabProfile = JLC_FAB_PROFILE): string {
+export function applyPerNetWidths(
+    dsn: string,
+    widthMmByEmitted: Record<string, number>,
+    profile: FabProfile = JLC_FAB_PROFILE,
+): string {
     const blk = balancedSexpr(dsn, '(class "kicad_default"');
     if (!blk) return dsn;
     const headerLine = blk.text.slice(0, blk.text.indexOf('\n'));
-    const nets = [...headerLine.matchAll(/"([^"]*)"/g)].map((m) => m[1]!).filter((s) => s !== 'kicad_default' && s !== '');
+    const nets = [...headerLine.matchAll(/"([^"]*)"/g)]
+        .map((m) => m[1]!)
+        .filter((s) => s !== 'kicad_default' && s !== '');
     const circuit = balancedSexpr(blk.text, '(circuit')?.text ?? '(circuit\n      )';
     const floorUm = Math.round(profile.minTraceWidthMm * 1000);
     const viaClr = viaClearanceUm(profile);
-    const clearance = `(clearance ${Math.round(profile.minClearanceMm * 1000)}) ` +
+    const clearance =
+        `(clearance ${Math.round(profile.minClearanceMm * 1000)}) ` +
         VIA_CLEARANCE_TYPES.map((t) => `(clearance ${viaClr} (type ${t}))`).join(' ');
     const emittedOf = (n: string) => n.replace(/_source_net_\d+$/, '');
 
@@ -168,7 +187,9 @@ export function applyPerNetWidths(dsn: string, widthMmByEmitted: Record<string, 
     }
     const mkClass = (name: string, ns: string[], um: number) =>
         `    (class "${name}" ${ns.map((n) => `"${n}"`).join(' ')}\n      ${circuit}\n      (rule\n        (width ${um})\n        ${clearance}\n      )\n    )`;
-    const classes = [...groups.entries()].map(([um, ns]) => mkClass(um === floorUm ? 'kicad_default' : `w${um}`, ns, um));
+    const classes = [...groups.entries()].map(([um, ns]) =>
+        mkClass(um === floorUm ? 'kicad_default' : `w${um}`, ns, um),
+    );
     return dsn.slice(0, blk.start) + classes.join('\n') + dsn.slice(blk.end);
 }
 
@@ -211,7 +232,11 @@ export async function mergeSes(original: TscElement[], dsn: string, ses: string)
     // track then gets the WRONG net label (proven live 3 Tem 2026: 14/18 endpoints mis-netted on
     // opamp-mixed; DRC only passed because it re-infers connectivity from geometry). With the reference the
     // net labels resolve correctly, so the delivered netlist matches the copper.
-    const reconstructed = mod.convertDsnSessionToCircuitJson(mod.parseDsnToDsnJson(dsn) as never, mod.parseDsnToDsnJson(ses) as never, base as never) as TscElement[];
+    const reconstructed = mod.convertDsnSessionToCircuitJson(
+        mod.parseDsnToDsnJson(dsn) as never,
+        mod.parseDsnToDsnJson(ses) as never,
+        base as never,
+    ) as TscElement[];
     const routing = reconstructed.filter((e) => e.type === 'pcb_trace' || e.type === 'pcb_via');
     return [...base, ...routing];
 }

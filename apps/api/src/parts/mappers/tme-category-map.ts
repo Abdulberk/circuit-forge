@@ -171,5 +171,7 @@ export function isLedCategory(categoryId: string | undefined, categoryName: stri
     if (categoryId && TME_LED_CATEGORY_IDS.has(categoryId)) return true;
     // Fallback for unmapped LED leaves: the category NAME (not the description, which mentions LED for
     // accessories too) clearly identifying an LED family.
-    return !!categoryName && /\bLEDs?\b/i.test(categoryName) && !/driver|holder|lens|spacer|display/i.test(categoryName);
+    return (
+        !!categoryName && /\bLEDs?\b/i.test(categoryName) && !/driver|holder|lens|spacer|display/i.test(categoryName)
+    );
 }

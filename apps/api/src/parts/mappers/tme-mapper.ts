@@ -2,12 +2,7 @@
  * Pure mappers: raw TME v2 response shapes -> supplier-agnostic domain types.
  * All TME-specific shape knowledge lives here and in TmeProvider.
  */
-import type {
-    CatalogParameter,
-    CategoryNode,
-    ManufacturerRef,
-    PriceBreak,
-} from '../provider/part-provider.interface';
+import type { CatalogParameter, CategoryNode, ManufacturerRef, PriceBreak } from '../provider/part-provider.interface';
 
 const SUPPLIER = 'tme';
 

@@ -3,7 +3,14 @@
  * BullMQ processor for handling simulation jobs
  */
 import { downsampleResult } from '@circuit-forge/eda-core';
-import type { CircuitJson, AnalysisConfig, AcceptanceCriterion, CornerSpec, TempCornerSpec, SupplyCornerSpec } from '@circuit-forge/eda-core';
+import type {
+    CircuitJson,
+    AnalysisConfig,
+    AcceptanceCriterion,
+    CornerSpec,
+    TempCornerSpec,
+    SupplyCornerSpec,
+} from '@circuit-forge/eda-core';
 import { propagation, context as otelContext, trace, SpanStatusCode } from '@opentelemetry/api';
 import { Prisma } from '@prisma/client';
 import { Job, Worker } from 'bullmq';
@@ -17,12 +24,16 @@ import { downloadFile, uploadJsonResult } from '../storage/s3-client';
 
 import { runCornerBatch } from './corner-runner';
 import { runMonteCarloBatch } from './montecarlo-runner';
-import { classifyJobOutcome, isFinalAttempt, deriveFailureStatus, buildFailureMetrics, buildSuccessMetrics } from './outcome';
+import {
+    classifyJobOutcome,
+    isFinalAttempt,
+    deriveFailureStatus,
+    buildFailureMetrics,
+    buildSuccessMetrics,
+} from './outcome';
 import { runSimulation, type SimulationJobResult } from './runner';
 import { runSupplyCornerBatch } from './supply-corner-runner';
 import { runTempCornerBatch } from './temp-corner-runner';
-
-
 
 /**
  * Thrown to push an INFRA failure back to BullMQ for retry (or final failure). By the time it's thrown,
@@ -250,9 +261,7 @@ async function processJob(job: Job<SimulationJobPayload>): Promise<void> {
                             { jobId, attempt: job.attemptsMade + 1, error: result.error },
                             'Infra failure — will retry',
                         );
-                        throw new RetryableInfraError(
-                            result.error ?? 'simulation infrastructure failure (will retry)',
-                        );
+                        throw new RetryableInfraError(result.error ?? 'simulation infrastructure failure (will retry)');
                 }
             } catch (error) {
                 const errorMessage = error instanceof Error ? error.message : String(error);
@@ -314,7 +323,15 @@ async function handleMonteCarlo(
     const mc = job.data.montecarlo!;
     try {
         const summary = await runMonteCarloBatch(
-            { jobId, circuit: mc.circuit, analysis: mc.analysis, criteria: mc.criteria, n: mc.n, seed: mc.seed, modelFiles },
+            {
+                jobId,
+                circuit: mc.circuit,
+                analysis: mc.analysis,
+                criteria: mc.criteria,
+                n: mc.n,
+                seed: mc.seed,
+                modelFiles,
+            },
             // Checkpoint progress so a mid-batch death surfaces how far it got (best-effort; ignore errors).
             (ran) => void job.updateProgress({ ran }).catch(() => undefined),
         );
@@ -369,7 +386,14 @@ async function handleCorner(
     const { jobId } = job.data;
     const wc = job.data.corner!;
     try {
-        const result = await runCornerBatch({ jobId, circuit: wc.circuit, analysis: wc.analysis, criteria: wc.criteria, corner: wc.spec, modelFiles });
+        const result = await runCornerBatch({
+            jobId,
+            circuit: wc.circuit,
+            analysis: wc.analysis,
+            criteria: wc.criteria,
+            corner: wc.spec,
+            modelFiles,
+        });
         recordSim({ status: 'succeeded', durationMs: result.runtimeMs });
         await prisma.simulationJob.update({
             where: { id: jobId },
@@ -419,7 +443,14 @@ async function handleTempCorner(
     const { jobId } = job.data;
     const tc = job.data.tempCorner!;
     try {
-        const result = await runTempCornerBatch({ jobId, circuit: tc.circuit, analysis: tc.analysis, criteria: tc.criteria, spec: tc.spec, modelFiles });
+        const result = await runTempCornerBatch({
+            jobId,
+            circuit: tc.circuit,
+            analysis: tc.analysis,
+            criteria: tc.criteria,
+            spec: tc.spec,
+            modelFiles,
+        });
         recordSim({ status: 'succeeded', durationMs: result.runtimeMs });
         await prisma.simulationJob.update({
             where: { id: jobId },
@@ -472,7 +503,14 @@ async function handleSupplyCorner(
     const { jobId } = job.data;
     const sc = job.data.supplyCorner!;
     try {
-        const result = await runSupplyCornerBatch({ jobId, circuit: sc.circuit, analysis: sc.analysis, criteria: sc.criteria, spec: sc.spec, modelFiles });
+        const result = await runSupplyCornerBatch({
+            jobId,
+            circuit: sc.circuit,
+            analysis: sc.analysis,
+            criteria: sc.criteria,
+            spec: sc.spec,
+            modelFiles,
+        });
         recordSim({ status: 'succeeded', durationMs: result.runtimeMs });
         await prisma.simulationJob.update({
             where: { id: jobId },
@@ -539,7 +577,8 @@ async function handleSuccess(jobId: string, result: SimulationJobResult): Promis
     let storedResult = bounded;
 
     // If still large after bounding, store in S3.
-    if (bounded && resultSize > 1024 * 1024) { // > 1MB
+    if (bounded && resultSize > 1024 * 1024) {
+        // > 1MB
         resultS3Key = await uploadJsonResult(jobId, bounded);
         storedResult = undefined;
         logger.info({ jobId, s3Key: resultS3Key, size: resultSize }, 'Large result stored in S3');

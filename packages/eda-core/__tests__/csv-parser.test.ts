@@ -29,7 +29,7 @@ describe('CsvParser', () => {
             const result = parseCsv(csv, ['v(in)', 'v(out)', 'i(r1)'], 'tran');
 
             expect(result.series).toHaveLength(3);
-            expect(result.series.map(s => s.name)).toEqual(['v(in)', 'v(out)', 'i(r1)']);
+            expect(result.series.map((s) => s.name)).toEqual(['v(in)', 'v(out)', 'i(r1)']);
         });
 
         it('should handle tab-separated values', () => {
@@ -114,7 +114,7 @@ describe('CsvParser', () => {
         });
 
         it('should handle Windows line endings', () => {
-            const csv = "0 0\r\n1e-6 0.5\r\n2e-6 1.0";
+            const csv = '0 0\r\n1e-6 0.5\r\n2e-6 1.0';
 
             const result = parseCsv(csv, ['v(out)'], 'tran');
 

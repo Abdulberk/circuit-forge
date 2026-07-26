@@ -45,16 +45,29 @@ export async function runTempCornerBatch(input: TempCornerBatchInput): Promise<T
     // UNION the same criterion-derived probes the nominal verify path saves (branch currents), so a current
     // criterion is measured at every temperature instead of reading "probe not found" → falsely failing.
     const extraProbes = extraProbesForCriteria(input.criteria);
-    const result = await withVariantJobDir(input.jobId, 'tempcorner', input.analysis, extraProbes, input.modelFiles, async (_runVariant, jobDir) => {
-        // The temperature runner varies the ambient `.temp` on the FIXED circuit (not component values), so it
-        // uses makeTempRunner rather than the variant runner withVariantJobDir prepared. Same job dir + core.
-        const runAtTemp = makeTempRunner(jobDir, input.circuit, input.analysis, extraProbes);
-        const r = await runTempCorner(input.circuit, input.criteria, input.spec, runAtTemp);
-        logger.info(
-            { jobId: input.jobId, applicable: r.applicable, evaluated: r.evaluated, passAllTemps: r.passAllTemps, temps: r.temperaturesC },
-            'Temperature-corner batch complete',
-        );
-        return r;
-    });
+    const result = await withVariantJobDir(
+        input.jobId,
+        'tempcorner',
+        input.analysis,
+        extraProbes,
+        input.modelFiles,
+        async (_runVariant, jobDir) => {
+            // The temperature runner varies the ambient `.temp` on the FIXED circuit (not component values), so it
+            // uses makeTempRunner rather than the variant runner withVariantJobDir prepared. Same job dir + core.
+            const runAtTemp = makeTempRunner(jobDir, input.circuit, input.analysis, extraProbes);
+            const r = await runTempCorner(input.circuit, input.criteria, input.spec, runAtTemp);
+            logger.info(
+                {
+                    jobId: input.jobId,
+                    applicable: r.applicable,
+                    evaluated: r.evaluated,
+                    passAllTemps: r.passAllTemps,
+                    temps: r.temperaturesC,
+                },
+                'Temperature-corner batch complete',
+            );
+            return r;
+        },
+    );
     return { ...result, runtimeMs: Date.now() - startTime };
 }

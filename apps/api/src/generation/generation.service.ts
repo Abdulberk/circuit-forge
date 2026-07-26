@@ -101,9 +101,7 @@ export class GenerationService {
     private requireLlmConfig(): GenerateCircuitConfig {
         const apiKey = this.config.get<string>('LLM_API_KEY');
         if (!apiKey) {
-            throw new ServiceUnavailableException(
-                'AI circuit generation is not configured (LLM_API_KEY is not set).',
-            );
+            throw new ServiceUnavailableException('AI circuit generation is not configured (LLM_API_KEY is not set).');
         }
         return {
             apiKey,
@@ -136,9 +134,7 @@ export class GenerationService {
     private requireValidCircuit(input: unknown): CircuitJson {
         const r = safeValidateCircuitJson(input);
         if (!r.success) {
-            const issues = r.error.errors
-                .map((e) => `${e.path.join('.') || '(root)'}: ${e.message}`)
-                .join('; ');
+            const issues = r.error.errors.map((e) => `${e.path.join('.') || '(root)'}: ${e.message}`).join('; ');
             throw new BadRequestException(`Invalid circuit: ${issues}`);
         }
         return r.data as CircuitJson;

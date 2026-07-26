@@ -44,9 +44,7 @@ export class NetlistService {
             analysis: parsed.analysis,
             title: parsed.title,
             schemaValid: v.success,
-            schemaIssues: v.success
-                ? []
-                : v.error.errors.map((e) => `${e.path.join('.') || '(root)'}: ${e.message}`),
+            schemaIssues: v.success ? [] : v.error.errors.map((e) => `${e.path.join('.') || '(root)'}: ${e.message}`),
             errors: parsed.errors,
             warnings: parsed.warnings,
         };

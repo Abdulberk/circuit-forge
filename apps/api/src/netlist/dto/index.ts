@@ -22,7 +22,10 @@ export class ExportNetlistDto {
     @IsObject()
     analysisConfig?: Record<string, unknown>;
 
-    @ApiPropertyOptional({ description: 'Explicit probes (v(net)/i(dev)); defaults to one voltage probe per node.', type: [String] })
+    @ApiPropertyOptional({
+        description: 'Explicit probes (v(net)/i(dev)); defaults to one voltage probe per node.',
+        type: [String],
+    })
     @IsOptional()
     @IsArray()
     @ArrayMaxSize(100)

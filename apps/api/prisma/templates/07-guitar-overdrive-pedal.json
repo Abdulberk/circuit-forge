@@ -1,355 +1,348 @@
 {
-  "name": "Guitar Overdrive Pedal (Soft-Clip)",
-  "description": "A Tube-Screamer-style overdrive pedal: a single-supply op-amp non-inverting gain stage (×11.85) with anti-parallel diodes in the feedback for soft clipping, mid-rail bias, input/output coupling, and a tone-shaping RC. Run a transient with a guitar-level sine — the peaks compress to one diode-drop (incremental gain falls to ×1.2 at the crests), the classic warm overdrive. (Validated on ngspice.)",
-  "tags": [
-    "audio",
-    "guitar",
-    "overdrive",
-    "distortion",
-    "opamp",
-    "clipping"
-  ],
-  "circuitJson": {
-    "version": "1.0",
-    "components": [
-      {
-        "id": "V9",
-        "type": "voltage_source",
-        "designator": "V9",
-        "value": "DC 9",
-        "pins": [
-          {
-            "pinId": "+",
-            "netId": "vcc"
-          },
-          {
-            "pinId": "-",
-            "netId": "0"
-          }
-        ]
-      },
-      {
-        "id": "VIN",
-        "type": "voltage_source",
-        "designator": "V1",
-        "value": "SIN(0 0.1 1k)",
-        "pins": [
-          {
-            "pinId": "+",
-            "netId": "in"
-          },
-          {
-            "pinId": "-",
-            "netId": "0"
-          }
-        ]
-      },
-      {
-        "id": "Rb1",
-        "type": "resistor",
-        "designator": "Rb1",
-        "value": "10k",
-        "pins": [
-          {
-            "pinId": "1",
-            "netId": "vcc"
-          },
-          {
-            "pinId": "2",
-            "netId": "vbias"
-          }
-        ]
-      },
-      {
-        "id": "Rb2",
-        "type": "resistor",
-        "designator": "Rb2",
-        "value": "10k",
-        "pins": [
-          {
-            "pinId": "1",
-            "netId": "vbias"
-          },
-          {
-            "pinId": "2",
-            "netId": "0"
-          }
-        ]
-      },
-      {
-        "id": "Cb",
-        "type": "capacitor",
-        "designator": "C1",
-        "value": "47u",
-        "pins": [
-          {
-            "pinId": "1",
-            "netId": "vbias"
-          },
-          {
-            "pinId": "2",
-            "netId": "0"
-          }
-        ]
-      },
-      {
-        "id": "Cin",
-        "type": "capacitor",
-        "designator": "C2",
-        "value": "100n",
-        "pins": [
-          {
-            "pinId": "1",
-            "netId": "in"
-          },
-          {
-            "pinId": "2",
-            "netId": "np"
-          }
-        ]
-      },
-      {
-        "id": "Rg1",
-        "type": "resistor",
-        "designator": "Rg1",
-        "value": "1Meg",
-        "pins": [
-          {
-            "pinId": "1",
-            "netId": "np"
-          },
-          {
-            "pinId": "2",
-            "netId": "vbias"
-          }
-        ]
-      },
-      {
-        "id": "U1",
-        "type": "subckt",
-        "designator": "U1",
-        "model": "OPAMPGEN",
-        "pins": [
-          {
-            "pinId": "out",
-            "netId": "oa"
-          },
-          {
-            "pinId": "in+",
-            "netId": "np"
-          },
-          {
-            "pinId": "in-",
-            "netId": "nm"
-          },
-          {
-            "pinId": "vcc",
-            "netId": "vcc"
-          },
-          {
-            "pinId": "vee",
-            "netId": "0"
-          }
-        ]
-      },
-      {
-        "id": "Rg",
-        "type": "resistor",
-        "designator": "R3",
-        "value": "4.7k",
-        "pins": [
-          {
-            "pinId": "1",
-            "netId": "nm"
-          },
-          {
-            "pinId": "2",
-            "netId": "ncg"
-          }
-        ]
-      },
-      {
-        "id": "Cg",
-        "type": "capacitor",
-        "designator": "C3",
-        "value": "1u",
-        "pins": [
-          {
-            "pinId": "1",
-            "netId": "ncg"
-          },
-          {
-            "pinId": "2",
-            "netId": "vbias"
-          }
-        ]
-      },
-      {
-        "id": "Rf",
-        "type": "resistor",
-        "designator": "R4",
-        "value": "51k",
-        "pins": [
-          {
-            "pinId": "1",
-            "netId": "nm"
-          },
-          {
-            "pinId": "2",
-            "netId": "oa"
-          }
-        ]
-      },
-      {
-        "id": "D1",
-        "type": "diode",
-        "designator": "D1",
-        "model": "DCLIP",
-        "pins": [
-          {
-            "pinId": "anode",
-            "netId": "nm"
-          },
-          {
-            "pinId": "cathode",
-            "netId": "oa"
-          }
-        ]
-      },
-      {
-        "id": "D2",
-        "type": "diode",
-        "designator": "D2",
-        "model": "DCLIP",
-        "pins": [
-          {
-            "pinId": "anode",
-            "netId": "oa"
-          },
-          {
-            "pinId": "cathode",
-            "netId": "nm"
-          }
-        ]
-      },
-      {
-        "id": "Cout",
-        "type": "capacitor",
-        "designator": "C4",
-        "value": "220n",
-        "pins": [
-          {
-            "pinId": "1",
-            "netId": "oa"
-          },
-          {
-            "pinId": "2",
-            "netId": "nt"
-          }
-        ]
-      },
-      {
-        "id": "Rt",
-        "type": "resistor",
-        "designator": "R5",
-        "value": "4.7k",
-        "pins": [
-          {
-            "pinId": "1",
-            "netId": "nt"
-          },
-          {
-            "pinId": "2",
-            "netId": "out"
-          }
-        ]
-      },
-      {
-        "id": "Ct",
-        "type": "capacitor",
-        "designator": "C5",
-        "value": "10n",
-        "pins": [
-          {
-            "pinId": "1",
-            "netId": "out"
-          },
-          {
-            "pinId": "2",
-            "netId": "0"
-          }
-        ]
-      },
-      {
-        "id": "Rload",
-        "type": "resistor",
-        "designator": "R6",
-        "value": "100k",
-        "pins": [
-          {
-            "pinId": "1",
-            "netId": "out"
-          },
-          {
-            "pinId": "2",
-            "netId": "0"
-          }
-        ]
-      }
-    ],
-    "nets": [
-      {
-        "id": "0",
-        "name": "GND",
-        "isGround": true
-      },
-      {
-        "id": "vcc",
-        "name": "VCC9"
-      },
-      {
-        "id": "in",
-        "name": "IN"
-      },
-      {
-        "id": "vbias",
-        "name": "VBIAS"
-      },
-      {
-        "id": "np",
-        "name": "NONINV"
-      },
-      {
-        "id": "nm",
-        "name": "INV"
-      },
-      {
-        "id": "ncg",
-        "name": "NCG"
-      },
-      {
-        "id": "oa",
-        "name": "OPAMP_OUT"
-      },
-      {
-        "id": "nt",
-        "name": "NT"
-      },
-      {
-        "id": "out",
-        "name": "OUT"
-      }
-    ],
-    "models": [
-      {
-        "name": "DCLIP",
-        "device": "diode",
-        "body": ".model DCLIP D(IS=2.5e-9 N=1.0 RS=0.5 CJO=4p)"
-      }
-    ],
-    "metadata": {
-      "name": "Guitar Overdrive Pedal (Soft-Clip)",
-      "description": "A Tube-Screamer-style overdrive pedal: a single-supply op-amp non-inverting gain stage (×11.85) with anti-parallel diodes in the feedback for soft clipping, mid-rail bias, input/output coupling, and a tone-shaping RC. Run a transient with a guitar-level sine — the peaks compress to one diode-drop (incremental gain falls to ×1.2 at the crests), the classic warm overdrive. (Validated on ngspice.)"
+    "name": "Guitar Overdrive Pedal (Soft-Clip)",
+    "description": "A Tube-Screamer-style overdrive pedal: a single-supply op-amp non-inverting gain stage (×11.85) with anti-parallel diodes in the feedback for soft clipping, mid-rail bias, input/output coupling, and a tone-shaping RC. Run a transient with a guitar-level sine — the peaks compress to one diode-drop (incremental gain falls to ×1.2 at the crests), the classic warm overdrive. (Validated on ngspice.)",
+    "tags": ["audio", "guitar", "overdrive", "distortion", "opamp", "clipping"],
+    "circuitJson": {
+        "version": "1.0",
+        "components": [
+            {
+                "id": "V9",
+                "type": "voltage_source",
+                "designator": "V9",
+                "value": "DC 9",
+                "pins": [
+                    {
+                        "pinId": "+",
+                        "netId": "vcc"
+                    },
+                    {
+                        "pinId": "-",
+                        "netId": "0"
+                    }
+                ]
+            },
+            {
+                "id": "VIN",
+                "type": "voltage_source",
+                "designator": "V1",
+                "value": "SIN(0 0.1 1k)",
+                "pins": [
+                    {
+                        "pinId": "+",
+                        "netId": "in"
+                    },
+                    {
+                        "pinId": "-",
+                        "netId": "0"
+                    }
+                ]
+            },
+            {
+                "id": "Rb1",
+                "type": "resistor",
+                "designator": "Rb1",
+                "value": "10k",
+                "pins": [
+                    {
+                        "pinId": "1",
+                        "netId": "vcc"
+                    },
+                    {
+                        "pinId": "2",
+                        "netId": "vbias"
+                    }
+                ]
+            },
+            {
+                "id": "Rb2",
+                "type": "resistor",
+                "designator": "Rb2",
+                "value": "10k",
+                "pins": [
+                    {
+                        "pinId": "1",
+                        "netId": "vbias"
+                    },
+                    {
+                        "pinId": "2",
+                        "netId": "0"
+                    }
+                ]
+            },
+            {
+                "id": "Cb",
+                "type": "capacitor",
+                "designator": "C1",
+                "value": "47u",
+                "pins": [
+                    {
+                        "pinId": "1",
+                        "netId": "vbias"
+                    },
+                    {
+                        "pinId": "2",
+                        "netId": "0"
+                    }
+                ]
+            },
+            {
+                "id": "Cin",
+                "type": "capacitor",
+                "designator": "C2",
+                "value": "100n",
+                "pins": [
+                    {
+                        "pinId": "1",
+                        "netId": "in"
+                    },
+                    {
+                        "pinId": "2",
+                        "netId": "np"
+                    }
+                ]
+            },
+            {
+                "id": "Rg1",
+                "type": "resistor",
+                "designator": "Rg1",
+                "value": "1Meg",
+                "pins": [
+                    {
+                        "pinId": "1",
+                        "netId": "np"
+                    },
+                    {
+                        "pinId": "2",
+                        "netId": "vbias"
+                    }
+                ]
+            },
+            {
+                "id": "U1",
+                "type": "subckt",
+                "designator": "U1",
+                "model": "OPAMPGEN",
+                "pins": [
+                    {
+                        "pinId": "out",
+                        "netId": "oa"
+                    },
+                    {
+                        "pinId": "in+",
+                        "netId": "np"
+                    },
+                    {
+                        "pinId": "in-",
+                        "netId": "nm"
+                    },
+                    {
+                        "pinId": "vcc",
+                        "netId": "vcc"
+                    },
+                    {
+                        "pinId": "vee",
+                        "netId": "0"
+                    }
+                ]
+            },
+            {
+                "id": "Rg",
+                "type": "resistor",
+                "designator": "R3",
+                "value": "4.7k",
+                "pins": [
+                    {
+                        "pinId": "1",
+                        "netId": "nm"
+                    },
+                    {
+                        "pinId": "2",
+                        "netId": "ncg"
+                    }
+                ]
+            },
+            {
+                "id": "Cg",
+                "type": "capacitor",
+                "designator": "C3",
+                "value": "1u",
+                "pins": [
+                    {
+                        "pinId": "1",
+                        "netId": "ncg"
+                    },
+                    {
+                        "pinId": "2",
+                        "netId": "vbias"
+                    }
+                ]
+            },
+            {
+                "id": "Rf",
+                "type": "resistor",
+                "designator": "R4",
+                "value": "51k",
+                "pins": [
+                    {
+                        "pinId": "1",
+                        "netId": "nm"
+                    },
+                    {
+                        "pinId": "2",
+                        "netId": "oa"
+                    }
+                ]
+            },
+            {
+                "id": "D1",
+                "type": "diode",
+                "designator": "D1",
+                "model": "DCLIP",
+                "pins": [
+                    {
+                        "pinId": "anode",
+                        "netId": "nm"
+                    },
+                    {
+                        "pinId": "cathode",
+                        "netId": "oa"
+                    }
+                ]
+            },
+            {
+                "id": "D2",
+                "type": "diode",
+                "designator": "D2",
+                "model": "DCLIP",
+                "pins": [
+                    {
+                        "pinId": "anode",
+                        "netId": "oa"
+                    },
+                    {
+                        "pinId": "cathode",
+                        "netId": "nm"
+                    }
+                ]
+            },
+            {
+                "id": "Cout",
+                "type": "capacitor",
+                "designator": "C4",
+                "value": "220n",
+                "pins": [
+                    {
+                        "pinId": "1",
+                        "netId": "oa"
+                    },
+                    {
+                        "pinId": "2",
+                        "netId": "nt"
+                    }
+                ]
+            },
+            {
+                "id": "Rt",
+                "type": "resistor",
+                "designator": "R5",
+                "value": "4.7k",
+                "pins": [
+                    {
+                        "pinId": "1",
+                        "netId": "nt"
+                    },
+                    {
+                        "pinId": "2",
+                        "netId": "out"
+                    }
+                ]
+            },
+            {
+                "id": "Ct",
+                "type": "capacitor",
+                "designator": "C5",
+                "value": "10n",
+                "pins": [
+                    {
+                        "pinId": "1",
+                        "netId": "out"
+                    },
+                    {
+                        "pinId": "2",
+                        "netId": "0"
+                    }
+                ]
+            },
+            {
+                "id": "Rload",
+                "type": "resistor",
+                "designator": "R6",
+                "value": "100k",
+                "pins": [
+                    {
+                        "pinId": "1",
+                        "netId": "out"
+                    },
+                    {
+                        "pinId": "2",
+                        "netId": "0"
+                    }
+                ]
+            }
+        ],
+        "nets": [
+            {
+                "id": "0",
+                "name": "GND",
+                "isGround": true
+            },
+            {
+                "id": "vcc",
+                "name": "VCC9"
+            },
+            {
+                "id": "in",
+                "name": "IN"
+            },
+            {
+                "id": "vbias",
+                "name": "VBIAS"
+            },
+            {
+                "id": "np",
+                "name": "NONINV"
+            },
+            {
+                "id": "nm",
+                "name": "INV"
+            },
+            {
+                "id": "ncg",
+                "name": "NCG"
+            },
+            {
+                "id": "oa",
+                "name": "OPAMP_OUT"
+            },
+            {
+                "id": "nt",
+                "name": "NT"
+            },
+            {
+                "id": "out",
+                "name": "OUT"
+            }
+        ],
+        "models": [
+            {
+                "name": "DCLIP",
+                "device": "diode",
+                "body": ".model DCLIP D(IS=2.5e-9 N=1.0 RS=0.5 CJO=4p)"
+            }
+        ],
+        "metadata": {
+            "name": "Guitar Overdrive Pedal (Soft-Clip)",
+            "description": "A Tube-Screamer-style overdrive pedal: a single-supply op-amp non-inverting gain stage (×11.85) with anti-parallel diodes in the feedback for soft clipping, mid-rail bias, input/output coupling, and a tone-shaping RC. Run a transient with a guitar-level sine — the peaks compress to one diode-drop (incremental gain falls to ×1.2 at the crests), the classic warm overdrive. (Validated on ngspice.)"
+        }
     }
-  }
 }

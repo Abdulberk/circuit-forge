@@ -43,7 +43,16 @@ describe('summarizeSeries', () => {
         // UNMEASURABLE verdict (actual:null) instead of a silent pass. Assert the COMPLETE shape (Jest toEqual
         // treats NaN as equal to NaN) so a future drift back to 0 is caught.
         const n = Number.NaN;
-        const noData = { node: 'v(x)', min: n, max: n, final: n, pp: n, avg: n, rms: n, raw: { min: n, max: n, final: n, pp: n, avg: n, rms: n } };
+        const noData = {
+            node: 'v(x)',
+            min: n,
+            max: n,
+            final: n,
+            pp: n,
+            avg: n,
+            rms: n,
+            raw: { min: n, max: n, final: n, pp: n, avg: n, rms: n },
+        };
         expect(summarizeSeries({ name: 'v(x)', points: [] } as DataSeries)).toEqual(noData);
         expect(summarizeSeries({ name: 'v(x)', points: [{ x: 0, y: Number.NaN }] } as DataSeries)).toEqual(noData);
     });

@@ -1,5 +1,14 @@
 {
-  "extends": "./tsconfig.json",
-  "// note": "Standard NestJS build/test split (what `nest new` scaffolds): nest build AND `nest start --watch` compile the APP only, excluding test files — those are compiled by jest (jest.config.js). nest-cli.json points here; tsconfig.json stays spec-inclusive for the IDE / `tsc --noEmit`. Without this, nest --watch pulls every *.spec.ts into the app program, which blocks the dev server on test-only type errors.",
-  "exclude": ["node_modules", "dist", "test", "**/*.spec.ts", "**/*.test.ts", "**/__live__/**", "**/__tests__/**", "**/__mocks__/**"]
+    "extends": "./tsconfig.json",
+    "// note": "Standard NestJS build/test split (what `nest new` scaffolds): nest build AND `nest start --watch` compile the APP only, excluding test files — those are compiled by jest (jest.config.js). nest-cli.json points here; tsconfig.json stays spec-inclusive for the IDE / `tsc --noEmit`. Without this, nest --watch pulls every *.spec.ts into the app program, which blocks the dev server on test-only type errors.",
+    "exclude": [
+        "node_modules",
+        "dist",
+        "test",
+        "**/*.spec.ts",
+        "**/*.test.ts",
+        "**/__live__/**",
+        "**/__tests__/**",
+        "**/__mocks__/**"
+    ]
 }

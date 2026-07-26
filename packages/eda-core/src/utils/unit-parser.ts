@@ -59,7 +59,7 @@ export interface ParsedValue {
 /**
  * Parse a SPICE-style value string to a number
  * Supports suffixes like K, MEG, M, U, N, P, F
- * 
+ *
  * Examples:
  * - "1K" -> 1000
  * - "10MEG" -> 10000000

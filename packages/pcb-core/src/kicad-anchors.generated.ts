@@ -13,959 +13,743 @@ export interface KicadAnchor {
 }
 
 export const KICAD_ANCHORS: Record<string, KicadAnchor> = {
-    "TO-220-3_Vertical": {
-        file: "Package_TO_SOT_THT.pretty/TO-220-3_Vertical.kicad_mod",
+    'TO-220-3_Vertical': {
+        file: 'Package_TO_SOT_THT.pretty/TO-220-3_Vertical.kicad_mod',
         pads: [
             {
-                n: "1",
+                n: '1',
                 x: 0,
-                y: 0
+                y: 0,
             },
             {
-                n: "2",
+                n: '2',
                 x: 2.54,
-                y: 0
+                y: 0,
             },
             {
-                n: "3",
+                n: '3',
                 x: 5.08,
-                y: 0
-            }
+                y: 0,
+            },
         ],
-        nativeOffset: [
-            0,
-            0,
-            0
-        ],
-        nativeRotate: [
-            0,
-            0,
-            0
-        ]
+        nativeOffset: [0, 0, 0],
+        nativeRotate: [0, 0, 0],
     },
-    "SOT-23": {
-        file: "Package_TO_SOT_SMD.pretty/SOT-23.kicad_mod",
+    'SOT-23': {
+        file: 'Package_TO_SOT_SMD.pretty/SOT-23.kicad_mod',
         pads: [
             {
-                n: "1",
+                n: '1',
                 x: -0.9375,
-                y: -0.95
+                y: -0.95,
             },
             {
-                n: "2",
+                n: '2',
                 x: -0.9375,
-                y: 0.95
+                y: 0.95,
             },
             {
-                n: "3",
+                n: '3',
                 x: 0.9375,
-                y: 0
-            }
+                y: 0,
+            },
         ],
-        nativeOffset: [
-            0,
-            0,
-            0
-        ],
-        nativeRotate: [
-            0,
-            0,
-            0
-        ]
+        nativeOffset: [0, 0, 0],
+        nativeRotate: [0, 0, 0],
     },
-    "TO-92": {
-        file: "Package_TO_SOT_THT.pretty/TO-92.kicad_mod",
+    'TO-92': {
+        file: 'Package_TO_SOT_THT.pretty/TO-92.kicad_mod',
         pads: [
             {
-                n: "1",
+                n: '1',
                 x: 0,
-                y: 0
+                y: 0,
             },
             {
-                n: "2",
+                n: '2',
                 x: 1.27,
-                y: -1.27
+                y: -1.27,
             },
             {
-                n: "3",
+                n: '3',
                 x: 2.54,
-                y: 0
-            }
+                y: 0,
+            },
         ],
-        nativeOffset: [
-            0,
-            0,
-            0
-        ],
-        nativeRotate: [
-            0,
-            0,
-            0
-        ]
+        nativeOffset: [0, 0, 0],
+        nativeRotate: [0, 0, 0],
     },
-    "D_SOD-123": {
-        file: "Diode_SMD.pretty/D_SOD-123.kicad_mod",
+    'D_SOD-123': {
+        file: 'Diode_SMD.pretty/D_SOD-123.kicad_mod',
         pads: [
             {
-                n: "1",
+                n: '1',
                 x: -1.65,
-                y: 0
+                y: 0,
             },
             {
-                n: "2",
+                n: '2',
                 x: 1.65,
-                y: 0
-            }
+                y: 0,
+            },
         ],
-        nativeOffset: [
-            0,
-            0,
-            0
-        ],
-        nativeRotate: [
-            0,
-            0,
-            0
-        ]
+        nativeOffset: [0, 0, 0],
+        nativeRotate: [0, 0, 0],
     },
-    "LED_D5.0mm": {
-        file: "LED_THT.pretty/LED_D5.0mm.kicad_mod",
+    'LED_D5.0mm': {
+        file: 'LED_THT.pretty/LED_D5.0mm.kicad_mod',
         pads: [
             {
-                n: "1",
+                n: '1',
                 x: 0,
-                y: 0
+                y: 0,
             },
             {
-                n: "2",
+                n: '2',
                 x: 2.54,
-                y: 0
-            }
+                y: 0,
+            },
         ],
-        nativeOffset: [
-            0,
-            0,
-            0
-        ],
-        nativeRotate: [
-            0,
-            0,
-            0
-        ]
+        nativeOffset: [0, 0, 0],
+        nativeRotate: [0, 0, 0],
     },
-    "SOIC-8_3.9x4.9mm_P1.27mm": {
-        file: "Package_SO.pretty/SOIC-8_3.9x4.9mm_P1.27mm.kicad_mod",
+    'SOIC-8_3.9x4.9mm_P1.27mm': {
+        file: 'Package_SO.pretty/SOIC-8_3.9x4.9mm_P1.27mm.kicad_mod',
         pads: [
             {
-                n: "1",
+                n: '1',
                 x: -2.475,
-                y: -1.905
+                y: -1.905,
             },
             {
-                n: "2",
+                n: '2',
                 x: -2.475,
-                y: -0.635
+                y: -0.635,
             },
             {
-                n: "3",
+                n: '3',
                 x: -2.475,
-                y: 0.635
+                y: 0.635,
             },
             {
-                n: "4",
+                n: '4',
                 x: -2.475,
-                y: 1.905
+                y: 1.905,
             },
             {
-                n: "5",
+                n: '5',
                 x: 2.475,
-                y: 1.905
+                y: 1.905,
             },
             {
-                n: "6",
+                n: '6',
                 x: 2.475,
-                y: 0.635
+                y: 0.635,
             },
             {
-                n: "7",
+                n: '7',
                 x: 2.475,
-                y: -0.635
+                y: -0.635,
             },
             {
-                n: "8",
+                n: '8',
                 x: 2.475,
-                y: -1.905
-            }
+                y: -1.905,
+            },
         ],
-        nativeOffset: [
-            0,
-            0,
-            0
-        ],
-        nativeRotate: [
-            0,
-            0,
-            0
-        ]
+        nativeOffset: [0, 0, 0],
+        nativeRotate: [0, 0, 0],
     },
-    "SOIC-14_3.9x8.7mm_P1.27mm": {
-        file: "Package_SO.pretty/SOIC-14_3.9x8.7mm_P1.27mm.kicad_mod",
+    'SOIC-14_3.9x8.7mm_P1.27mm': {
+        file: 'Package_SO.pretty/SOIC-14_3.9x8.7mm_P1.27mm.kicad_mod',
         pads: [
             {
-                n: "1",
+                n: '1',
                 x: -2.475,
-                y: -3.81
+                y: -3.81,
             },
             {
-                n: "2",
+                n: '2',
                 x: -2.475,
-                y: -2.54
+                y: -2.54,
             },
             {
-                n: "3",
+                n: '3',
                 x: -2.475,
-                y: -1.27
+                y: -1.27,
             },
             {
-                n: "4",
+                n: '4',
                 x: -2.475,
-                y: 0
+                y: 0,
             },
             {
-                n: "5",
+                n: '5',
                 x: -2.475,
-                y: 1.27
+                y: 1.27,
             },
             {
-                n: "6",
+                n: '6',
                 x: -2.475,
-                y: 2.54
+                y: 2.54,
             },
             {
-                n: "7",
+                n: '7',
                 x: -2.475,
-                y: 3.81
+                y: 3.81,
             },
             {
-                n: "8",
+                n: '8',
                 x: 2.475,
-                y: 3.81
+                y: 3.81,
             },
             {
-                n: "9",
+                n: '9',
                 x: 2.475,
-                y: 2.54
+                y: 2.54,
             },
             {
-                n: "10",
+                n: '10',
                 x: 2.475,
-                y: 1.27
+                y: 1.27,
             },
             {
-                n: "11",
+                n: '11',
                 x: 2.475,
-                y: 0
+                y: 0,
             },
             {
-                n: "12",
+                n: '12',
                 x: 2.475,
-                y: -1.27
+                y: -1.27,
             },
             {
-                n: "13",
+                n: '13',
                 x: 2.475,
-                y: -2.54
+                y: -2.54,
             },
             {
-                n: "14",
+                n: '14',
                 x: 2.475,
-                y: -3.81
-            }
+                y: -3.81,
+            },
         ],
-        nativeOffset: [
-            0,
-            0,
-            0
-        ],
-        nativeRotate: [
-            0,
-            0,
-            0
-        ]
+        nativeOffset: [0, 0, 0],
+        nativeRotate: [0, 0, 0],
     },
-    "SOIC-16_3.9x9.9mm_P1.27mm": {
-        file: "Package_SO.pretty/SOIC-16_3.9x9.9mm_P1.27mm.kicad_mod",
+    'SOIC-16_3.9x9.9mm_P1.27mm': {
+        file: 'Package_SO.pretty/SOIC-16_3.9x9.9mm_P1.27mm.kicad_mod',
         pads: [
             {
-                n: "1",
+                n: '1',
                 x: -2.475,
-                y: -4.445
+                y: -4.445,
             },
             {
-                n: "2",
+                n: '2',
                 x: -2.475,
-                y: -3.175
+                y: -3.175,
             },
             {
-                n: "3",
+                n: '3',
                 x: -2.475,
-                y: -1.905
+                y: -1.905,
             },
             {
-                n: "4",
+                n: '4',
                 x: -2.475,
-                y: -0.635
+                y: -0.635,
             },
             {
-                n: "5",
+                n: '5',
                 x: -2.475,
-                y: 0.635
+                y: 0.635,
             },
             {
-                n: "6",
+                n: '6',
                 x: -2.475,
-                y: 1.905
+                y: 1.905,
             },
             {
-                n: "7",
+                n: '7',
                 x: -2.475,
-                y: 3.175
+                y: 3.175,
             },
             {
-                n: "8",
+                n: '8',
                 x: -2.475,
-                y: 4.445
+                y: 4.445,
             },
             {
-                n: "9",
+                n: '9',
                 x: 2.475,
-                y: 4.445
+                y: 4.445,
             },
             {
-                n: "10",
+                n: '10',
                 x: 2.475,
-                y: 3.175
+                y: 3.175,
             },
             {
-                n: "11",
+                n: '11',
                 x: 2.475,
-                y: 1.905
+                y: 1.905,
             },
             {
-                n: "12",
+                n: '12',
                 x: 2.475,
-                y: 0.635
+                y: 0.635,
             },
             {
-                n: "13",
+                n: '13',
                 x: 2.475,
-                y: -0.635
+                y: -0.635,
             },
             {
-                n: "14",
+                n: '14',
                 x: 2.475,
-                y: -1.905
+                y: -1.905,
             },
             {
-                n: "15",
+                n: '15',
                 x: 2.475,
-                y: -3.175
+                y: -3.175,
             },
             {
-                n: "16",
+                n: '16',
                 x: 2.475,
-                y: -4.445
-            }
+                y: -4.445,
+            },
         ],
-        nativeOffset: [
-            0,
-            0,
-            0
-        ],
-        nativeRotate: [
-            0,
-            0,
-            0
-        ]
+        nativeOffset: [0, 0, 0],
+        nativeRotate: [0, 0, 0],
     },
-    "PinHeader_1x02_P2.54mm_Vertical": {
-        file: "Connector_PinHeader_2.54mm.pretty/PinHeader_1x02_P2.54mm_Vertical.kicad_mod",
+    'PinHeader_1x02_P2.54mm_Vertical': {
+        file: 'Connector_PinHeader_2.54mm.pretty/PinHeader_1x02_P2.54mm_Vertical.kicad_mod',
         pads: [
             {
-                n: "1",
+                n: '1',
                 x: 0,
-                y: 0
+                y: 0,
             },
             {
-                n: "2",
+                n: '2',
                 x: 0,
-                y: 2.54
-            }
+                y: 2.54,
+            },
         ],
-        nativeOffset: [
-            0,
-            0,
-            0
-        ],
-        nativeRotate: [
-            0,
-            0,
-            0
-        ]
+        nativeOffset: [0, 0, 0],
+        nativeRotate: [0, 0, 0],
     },
-    "PinHeader_1x03_P2.54mm_Vertical": {
-        file: "Connector_PinHeader_2.54mm.pretty/PinHeader_1x03_P2.54mm_Vertical.kicad_mod",
+    'PinHeader_1x03_P2.54mm_Vertical': {
+        file: 'Connector_PinHeader_2.54mm.pretty/PinHeader_1x03_P2.54mm_Vertical.kicad_mod',
         pads: [
             {
-                n: "1",
+                n: '1',
                 x: 0,
-                y: 0
+                y: 0,
             },
             {
-                n: "2",
+                n: '2',
                 x: 0,
-                y: 2.54
+                y: 2.54,
             },
             {
-                n: "3",
+                n: '3',
                 x: 0,
-                y: 5.08
-            }
+                y: 5.08,
+            },
         ],
-        nativeOffset: [
-            0,
-            0,
-            0
-        ],
-        nativeRotate: [
-            0,
-            0,
-            0
-        ]
+        nativeOffset: [0, 0, 0],
+        nativeRotate: [0, 0, 0],
     },
-    "PinHeader_1x04_P2.54mm_Vertical": {
-        file: "Connector_PinHeader_2.54mm.pretty/PinHeader_1x04_P2.54mm_Vertical.kicad_mod",
+    'PinHeader_1x04_P2.54mm_Vertical': {
+        file: 'Connector_PinHeader_2.54mm.pretty/PinHeader_1x04_P2.54mm_Vertical.kicad_mod',
         pads: [
             {
-                n: "1",
+                n: '1',
                 x: 0,
-                y: 0
+                y: 0,
             },
             {
-                n: "2",
+                n: '2',
                 x: 0,
-                y: 2.54
+                y: 2.54,
             },
             {
-                n: "3",
+                n: '3',
                 x: 0,
-                y: 5.08
+                y: 5.08,
             },
             {
-                n: "4",
+                n: '4',
                 x: 0,
-                y: 7.62
-            }
+                y: 7.62,
+            },
         ],
-        nativeOffset: [
-            0,
-            0,
-            0
-        ],
-        nativeRotate: [
-            0,
-            0,
-            0
-        ]
+        nativeOffset: [0, 0, 0],
+        nativeRotate: [0, 0, 0],
     },
-    "PinHeader_1x05_P2.54mm_Vertical": {
-        file: "Connector_PinHeader_2.54mm.pretty/PinHeader_1x05_P2.54mm_Vertical.kicad_mod",
+    'PinHeader_1x05_P2.54mm_Vertical': {
+        file: 'Connector_PinHeader_2.54mm.pretty/PinHeader_1x05_P2.54mm_Vertical.kicad_mod',
         pads: [
             {
-                n: "1",
+                n: '1',
                 x: 0,
-                y: 0
+                y: 0,
             },
             {
-                n: "2",
+                n: '2',
                 x: 0,
-                y: 2.54
+                y: 2.54,
             },
             {
-                n: "3",
+                n: '3',
                 x: 0,
-                y: 5.08
+                y: 5.08,
             },
             {
-                n: "4",
+                n: '4',
                 x: 0,
-                y: 7.62
+                y: 7.62,
             },
             {
-                n: "5",
+                n: '5',
                 x: 0,
-                y: 10.16
-            }
+                y: 10.16,
+            },
         ],
-        nativeOffset: [
-            0,
-            0,
-            0
-        ],
-        nativeRotate: [
-            0,
-            0,
-            0
-        ]
+        nativeOffset: [0, 0, 0],
+        nativeRotate: [0, 0, 0],
     },
-    "PinHeader_1x06_P2.54mm_Vertical": {
-        file: "Connector_PinHeader_2.54mm.pretty/PinHeader_1x06_P2.54mm_Vertical.kicad_mod",
+    'PinHeader_1x06_P2.54mm_Vertical': {
+        file: 'Connector_PinHeader_2.54mm.pretty/PinHeader_1x06_P2.54mm_Vertical.kicad_mod',
         pads: [
             {
-                n: "1",
+                n: '1',
                 x: 0,
-                y: 0
+                y: 0,
             },
             {
-                n: "2",
+                n: '2',
                 x: 0,
-                y: 2.54
+                y: 2.54,
             },
             {
-                n: "3",
+                n: '3',
                 x: 0,
-                y: 5.08
+                y: 5.08,
             },
             {
-                n: "4",
+                n: '4',
                 x: 0,
-                y: 7.62
+                y: 7.62,
             },
             {
-                n: "5",
+                n: '5',
                 x: 0,
-                y: 10.16
+                y: 10.16,
             },
             {
-                n: "6",
+                n: '6',
                 x: 0,
-                y: 12.7
-            }
+                y: 12.7,
+            },
         ],
-        nativeOffset: [
-            0,
-            0,
-            0
-        ],
-        nativeRotate: [
-            0,
-            0,
-            0
-        ]
+        nativeOffset: [0, 0, 0],
+        nativeRotate: [0, 0, 0],
     },
-    "PinHeader_1x07_P2.54mm_Vertical": {
-        file: "Connector_PinHeader_2.54mm.pretty/PinHeader_1x07_P2.54mm_Vertical.kicad_mod",
+    'PinHeader_1x07_P2.54mm_Vertical': {
+        file: 'Connector_PinHeader_2.54mm.pretty/PinHeader_1x07_P2.54mm_Vertical.kicad_mod',
         pads: [
             {
-                n: "1",
+                n: '1',
                 x: 0,
-                y: 0
+                y: 0,
             },
             {
-                n: "2",
+                n: '2',
                 x: 0,
-                y: 2.54
+                y: 2.54,
             },
             {
-                n: "3",
+                n: '3',
                 x: 0,
-                y: 5.08
+                y: 5.08,
             },
             {
-                n: "4",
+                n: '4',
                 x: 0,
-                y: 7.62
+                y: 7.62,
             },
             {
-                n: "5",
+                n: '5',
                 x: 0,
-                y: 10.16
+                y: 10.16,
             },
             {
-                n: "6",
+                n: '6',
                 x: 0,
-                y: 12.7
+                y: 12.7,
             },
             {
-                n: "7",
+                n: '7',
                 x: 0,
-                y: 15.24
-            }
+                y: 15.24,
+            },
         ],
-        nativeOffset: [
-            0,
-            0,
-            0
-        ],
-        nativeRotate: [
-            0,
-            0,
-            0
-        ]
+        nativeOffset: [0, 0, 0],
+        nativeRotate: [0, 0, 0],
     },
-    "PinHeader_1x08_P2.54mm_Vertical": {
-        file: "Connector_PinHeader_2.54mm.pretty/PinHeader_1x08_P2.54mm_Vertical.kicad_mod",
+    'PinHeader_1x08_P2.54mm_Vertical': {
+        file: 'Connector_PinHeader_2.54mm.pretty/PinHeader_1x08_P2.54mm_Vertical.kicad_mod',
         pads: [
             {
-                n: "1",
+                n: '1',
                 x: 0,
-                y: 0
+                y: 0,
             },
             {
-                n: "2",
+                n: '2',
                 x: 0,
-                y: 2.54
+                y: 2.54,
             },
             {
-                n: "3",
+                n: '3',
                 x: 0,
-                y: 5.08
+                y: 5.08,
             },
             {
-                n: "4",
+                n: '4',
                 x: 0,
-                y: 7.62
+                y: 7.62,
             },
             {
-                n: "5",
+                n: '5',
                 x: 0,
-                y: 10.16
+                y: 10.16,
             },
             {
-                n: "6",
+                n: '6',
                 x: 0,
-                y: 12.7
+                y: 12.7,
             },
             {
-                n: "7",
+                n: '7',
                 x: 0,
-                y: 15.24
+                y: 15.24,
             },
             {
-                n: "8",
+                n: '8',
                 x: 0,
-                y: 17.78
-            }
+                y: 17.78,
+            },
         ],
-        nativeOffset: [
-            0,
-            0,
-            0
-        ],
-        nativeRotate: [
-            0,
-            0,
-            0
-        ]
+        nativeOffset: [0, 0, 0],
+        nativeRotate: [0, 0, 0],
     },
     R_0402_1005Metric: {
-        file: "Resistor_SMD.pretty/R_0402_1005Metric.kicad_mod",
+        file: 'Resistor_SMD.pretty/R_0402_1005Metric.kicad_mod',
         pads: [
             {
-                n: "1",
+                n: '1',
                 x: -0.51,
-                y: 0
+                y: 0,
             },
             {
-                n: "2",
+                n: '2',
                 x: 0.51,
-                y: 0
-            }
+                y: 0,
+            },
         ],
-        nativeOffset: [
-            0,
-            0,
-            0
-        ],
-        nativeRotate: [
-            0,
-            0,
-            0
-        ]
+        nativeOffset: [0, 0, 0],
+        nativeRotate: [0, 0, 0],
     },
     C_0402_1005Metric: {
-        file: "Capacitor_SMD.pretty/C_0402_1005Metric.kicad_mod",
+        file: 'Capacitor_SMD.pretty/C_0402_1005Metric.kicad_mod',
         pads: [
             {
-                n: "1",
+                n: '1',
                 x: -0.48,
-                y: 0
+                y: 0,
             },
             {
-                n: "2",
+                n: '2',
                 x: 0.48,
-                y: 0
-            }
+                y: 0,
+            },
         ],
-        nativeOffset: [
-            0,
-            0,
-            0
-        ],
-        nativeRotate: [
-            0,
-            0,
-            0
-        ]
+        nativeOffset: [0, 0, 0],
+        nativeRotate: [0, 0, 0],
     },
     L_0402_1005Metric: {
-        file: "Inductor_SMD.pretty/L_0402_1005Metric.kicad_mod",
+        file: 'Inductor_SMD.pretty/L_0402_1005Metric.kicad_mod',
         pads: [
             {
-                n: "1",
+                n: '1',
                 x: -0.485,
-                y: 0
+                y: 0,
             },
             {
-                n: "2",
+                n: '2',
                 x: 0.485,
-                y: 0
-            }
+                y: 0,
+            },
         ],
-        nativeOffset: [
-            0,
-            0,
-            0
-        ],
-        nativeRotate: [
-            0,
-            0,
-            0
-        ]
+        nativeOffset: [0, 0, 0],
+        nativeRotate: [0, 0, 0],
     },
     R_0603_1608Metric: {
-        file: "Resistor_SMD.pretty/R_0603_1608Metric.kicad_mod",
+        file: 'Resistor_SMD.pretty/R_0603_1608Metric.kicad_mod',
         pads: [
             {
-                n: "1",
+                n: '1',
                 x: -0.825,
-                y: 0
+                y: 0,
             },
             {
-                n: "2",
+                n: '2',
                 x: 0.825,
-                y: 0
-            }
+                y: 0,
+            },
         ],
-        nativeOffset: [
-            0,
-            0,
-            0
-        ],
-        nativeRotate: [
-            0,
-            0,
-            0
-        ]
+        nativeOffset: [0, 0, 0],
+        nativeRotate: [0, 0, 0],
     },
     C_0603_1608Metric: {
-        file: "Capacitor_SMD.pretty/C_0603_1608Metric.kicad_mod",
+        file: 'Capacitor_SMD.pretty/C_0603_1608Metric.kicad_mod',
         pads: [
             {
-                n: "1",
+                n: '1',
                 x: -0.775,
-                y: 0
+                y: 0,
             },
             {
-                n: "2",
+                n: '2',
                 x: 0.775,
-                y: 0
-            }
+                y: 0,
+            },
         ],
-        nativeOffset: [
-            0,
-            0,
-            0
-        ],
-        nativeRotate: [
-            0,
-            0,
-            0
-        ]
+        nativeOffset: [0, 0, 0],
+        nativeRotate: [0, 0, 0],
     },
     L_0603_1608Metric: {
-        file: "Inductor_SMD.pretty/L_0603_1608Metric.kicad_mod",
+        file: 'Inductor_SMD.pretty/L_0603_1608Metric.kicad_mod',
         pads: [
             {
-                n: "1",
+                n: '1',
                 x: -0.7875,
-                y: 0
+                y: 0,
             },
             {
-                n: "2",
+                n: '2',
                 x: 0.7875,
-                y: 0
-            }
+                y: 0,
+            },
         ],
-        nativeOffset: [
-            0,
-            0,
-            0
-        ],
-        nativeRotate: [
-            0,
-            0,
-            0
-        ]
+        nativeOffset: [0, 0, 0],
+        nativeRotate: [0, 0, 0],
     },
     R_0805_2012Metric: {
-        file: "Resistor_SMD.pretty/R_0805_2012Metric.kicad_mod",
+        file: 'Resistor_SMD.pretty/R_0805_2012Metric.kicad_mod',
         pads: [
             {
-                n: "1",
+                n: '1',
                 x: -0.9125,
-                y: 0
+                y: 0,
             },
             {
-                n: "2",
+                n: '2',
                 x: 0.9125,
-                y: 0
-            }
+                y: 0,
+            },
         ],
-        nativeOffset: [
-            0,
-            0,
-            0
-        ],
-        nativeRotate: [
-            0,
-            0,
-            0
-        ]
+        nativeOffset: [0, 0, 0],
+        nativeRotate: [0, 0, 0],
     },
     C_0805_2012Metric: {
-        file: "Capacitor_SMD.pretty/C_0805_2012Metric.kicad_mod",
+        file: 'Capacitor_SMD.pretty/C_0805_2012Metric.kicad_mod',
         pads: [
             {
-                n: "1",
+                n: '1',
                 x: -0.95,
-                y: 0
+                y: 0,
             },
             {
-                n: "2",
+                n: '2',
                 x: 0.95,
-                y: 0
-            }
+                y: 0,
+            },
         ],
-        nativeOffset: [
-            0,
-            0,
-            0
-        ],
-        nativeRotate: [
-            0,
-            0,
-            0
-        ]
+        nativeOffset: [0, 0, 0],
+        nativeRotate: [0, 0, 0],
     },
     L_0805_2012Metric: {
-        file: "Inductor_SMD.pretty/L_0805_2012Metric.kicad_mod",
+        file: 'Inductor_SMD.pretty/L_0805_2012Metric.kicad_mod',
         pads: [
             {
-                n: "1",
+                n: '1',
                 x: -1.0625,
-                y: 0
+                y: 0,
             },
             {
-                n: "2",
+                n: '2',
                 x: 1.0625,
-                y: 0
-            }
+                y: 0,
+            },
         ],
-        nativeOffset: [
-            0,
-            0,
-            0
-        ],
-        nativeRotate: [
-            0,
-            0,
-            0
-        ]
+        nativeOffset: [0, 0, 0],
+        nativeRotate: [0, 0, 0],
     },
     R_1206_3216Metric: {
-        file: "Resistor_SMD.pretty/R_1206_3216Metric.kicad_mod",
+        file: 'Resistor_SMD.pretty/R_1206_3216Metric.kicad_mod',
         pads: [
             {
-                n: "1",
+                n: '1',
                 x: -1.4625,
-                y: 0
+                y: 0,
             },
             {
-                n: "2",
+                n: '2',
                 x: 1.4625,
-                y: 0
-            }
+                y: 0,
+            },
         ],
-        nativeOffset: [
-            0,
-            0,
-            0
-        ],
-        nativeRotate: [
-            0,
-            0,
-            0
-        ]
+        nativeOffset: [0, 0, 0],
+        nativeRotate: [0, 0, 0],
     },
     C_1206_3216Metric: {
-        file: "Capacitor_SMD.pretty/C_1206_3216Metric.kicad_mod",
+        file: 'Capacitor_SMD.pretty/C_1206_3216Metric.kicad_mod',
         pads: [
             {
-                n: "1",
+                n: '1',
                 x: -1.475,
-                y: 0
+                y: 0,
             },
             {
-                n: "2",
+                n: '2',
                 x: 1.475,
-                y: 0
-            }
+                y: 0,
+            },
         ],
-        nativeOffset: [
-            0,
-            0,
-            0
-        ],
-        nativeRotate: [
-            0,
-            0,
-            0
-        ]
+        nativeOffset: [0, 0, 0],
+        nativeRotate: [0, 0, 0],
     },
     L_1206_3216Metric: {
-        file: "Inductor_SMD.pretty/L_1206_3216Metric.kicad_mod",
+        file: 'Inductor_SMD.pretty/L_1206_3216Metric.kicad_mod',
         pads: [
             {
-                n: "1",
+                n: '1',
                 x: -1.575,
-                y: 0
+                y: 0,
             },
             {
-                n: "2",
+                n: '2',
                 x: 1.575,
-                y: 0
-            }
+                y: 0,
+            },
         ],
-        nativeOffset: [
-            0,
-            0,
-            0
-        ],
-        nativeRotate: [
-            0,
-            0,
-            0
-        ]
-    }
+        nativeOffset: [0, 0, 0],
+        nativeRotate: [0, 0, 0],
+    },
 } as const;

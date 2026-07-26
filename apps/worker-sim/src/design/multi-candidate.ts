@@ -75,11 +75,7 @@ function summarizeAlternative(r: DesignResult): Record<string, unknown> {
 /** Pick the winner among the finalized full-loop results. Finalists are already rank-ordered (best first),
  *  so the first that VERIFIED wins; else the first that's ok; else the best-ranked. */
 function pickWinner(finalized: DesignResult[]): DesignResult {
-    return (
-        finalized.find((r) => r.ok && r.verified) ??
-        finalized.find((r) => r.ok) ??
-        finalized[0]!
-    );
+    return finalized.find((r) => r.ok && r.verified) ?? finalized.find((r) => r.ok) ?? finalized[0]!;
 }
 
 export async function runMultiCandidateDesign(
@@ -115,7 +111,14 @@ export async function runMultiCandidateDesign(
             if (r.status === 'fulfilled') return r.value;
             // A candidate whose generation/screen threw (provider error, bad output) — log it so a low survival
             // rate (the fan-out not actually getting N candidates) is visible, not silently swallowed.
-            logger.warn({ candidate: i, directive: directives[i], reason: r.reason instanceof Error ? r.reason.message : String(r.reason) }, 'multi-candidate: a candidate screen failed');
+            logger.warn(
+                {
+                    candidate: i,
+                    directive: directives[i],
+                    reason: r.reason instanceof Error ? r.reason.message : String(r.reason),
+                },
+                'multi-candidate: a candidate screen failed',
+            );
             return null;
         })
         .filter((v): v is ScreenResult => v !== null);
@@ -148,17 +151,38 @@ export async function runMultiCandidateDesign(
     }
 
     // If somehow no finalist ran (budget already spent) — degrade to the best-screened candidate as a result.
-    if (finalized.length === 0) return runDesignLoop({ ...input, seedCircuit: finalists[0]!.circuit, seedAnalysisConfig: finalists[0]!.analysisConfig, seedCriteria: finalists[0]!.acceptanceCriteria }, { ...deps, mcEnabled: false });
+    if (finalized.length === 0)
+        return runDesignLoop(
+            {
+                ...input,
+                seedCircuit: finalists[0]!.circuit,
+                seedAnalysisConfig: finalists[0]!.analysisConfig,
+                seedCriteria: finalists[0]!.acceptanceCriteria,
+            },
+            { ...deps, mcEnabled: false },
+        );
 
     // --- Stage 4: Monte-Carlo yield on the WINNER ONLY ---
     const winner = pickWinner(finalized);
     let yieldReport: Record<string, unknown> | undefined;
     if (winner.ok) {
-        yieldReport = await runYieldAnalysis(deps, winner.circuit, winner.analysisConfig, winner.acceptanceCriteria ?? []);
+        yieldReport = await runYieldAnalysis(
+            deps,
+            winner.circuit,
+            winner.analysisConfig,
+            winner.acceptanceCriteria ?? [],
+        );
     }
 
     logger.info(
-        { n, screened: screened.length, finalists: finalized.length, llmCalls, winnerOk: winner.ok, winnerVerified: winner.verified ?? false },
+        {
+            n,
+            screened: screened.length,
+            finalists: finalized.length,
+            llmCalls,
+            winnerOk: winner.ok,
+            winnerVerified: winner.verified ?? false,
+        },
         'multi-candidate design complete',
     );
 

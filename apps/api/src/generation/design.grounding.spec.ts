@@ -27,28 +27,70 @@ const noSimulator = { available: () => false, simulate: jest.fn() } as unknown a
 const VALID_CIRCUIT = {
     version: '1.0',
     components: [
-        { id: 'v1', type: 'voltage_source', designator: 'V1', value: 'SIN(0 5 1k)', pins: [
-            { pinId: '+', netId: 'in' }, { pinId: '-', netId: 'gnd' }] },
-        { id: 'r1', type: 'resistor', designator: 'R1', value: '10k',
-            pins: [{ pinId: '1', netId: 'in' }, { pinId: '2', netId: 'out' }],
-            mpn: 'RC0603FR-0710KL', manufacturer: 'YAGEO' },
-        { id: 'c1', type: 'capacitor', designator: 'C1', value: '100n', pins: [
-            { pinId: '1', netId: 'out' }, { pinId: '2', netId: 'gnd' }] },
+        {
+            id: 'v1',
+            type: 'voltage_source',
+            designator: 'V1',
+            value: 'SIN(0 5 1k)',
+            pins: [
+                { pinId: '+', netId: 'in' },
+                { pinId: '-', netId: 'gnd' },
+            ],
+        },
+        {
+            id: 'r1',
+            type: 'resistor',
+            designator: 'R1',
+            value: '10k',
+            pins: [
+                { pinId: '1', netId: 'in' },
+                { pinId: '2', netId: 'out' },
+            ],
+            mpn: 'RC0603FR-0710KL',
+            manufacturer: 'YAGEO',
+        },
+        {
+            id: 'c1',
+            type: 'capacitor',
+            designator: 'C1',
+            value: '100n',
+            pins: [
+                { pinId: '1', netId: 'out' },
+                { pinId: '2', netId: 'gnd' },
+            ],
+        },
         { id: 'gnd', type: 'ground', designator: 'GND1', pins: [{ pinId: '1', netId: 'gnd' }] },
     ],
-    nets: [{ id: 'in', name: 'IN' }, { id: 'out', name: 'OUT' }, { id: 'gnd', name: 'GND', isGround: true }],
+    nets: [
+        { id: 'in', name: 'IN' },
+        { id: 'out', name: 'OUT' },
+        { id: 'gnd', name: 'GND', isGround: true },
+    ],
 };
 
 function makeParts() {
     const part = {
-        mpn: 'RC0603FR-0710KL', manufacturer: 'YAGEO', description: '10k 0603', footprint: '0603',
-        stock: 50000, unitCost: 0.002, currency: 'EUR', datasheetUrl: 'https://d/x.pdf',
-        parameters: [], priceBreaks: [], supplier: 'tme', supplierId: 'SYM-RES-1',
+        mpn: 'RC0603FR-0710KL',
+        manufacturer: 'YAGEO',
+        description: '10k 0603',
+        footprint: '0603',
+        stock: 50000,
+        unitCost: 0.002,
+        currency: 'EUR',
+        datasheetUrl: 'https://d/x.pdf',
+        parameters: [],
+        priceBreaks: [],
+        supplier: 'tme',
+        supplierId: 'SYM-RES-1',
     };
     return {
         search: jest.fn(async () => ({ items: [part], page: 1, pageSize: 1 })),
         getProduct: jest.fn(async () => part),
-        getComponent: jest.fn(async () => ({ simulatable: true, component: { type: 'resistor', value: '10K' }, catalog: part })),
+        getComponent: jest.fn(async () => ({
+            simulatable: true,
+            component: { type: 'resistor', value: '10K' },
+            catalog: part,
+        })),
     };
 }
 
@@ -72,14 +114,24 @@ describe('DesignService grounding (flagship /design-circuit)', () => {
     it('grounds the initial design and attaches sourcing to the simulation-verified circuit', async () => {
         // The model returns a grounded circuit directly (no tool_use needed for the assertion).
         mockCreate.mockResolvedValueOnce({
-            content: [{ type: 'text', text: JSON.stringify({
-                circuit: VALID_CIRCUIT, analysisConfig: { type: 'tran', stopTime: '5m', stepTime: '20u' },
-                explanation: 'RC low-pass',
-            }) }],
+            content: [
+                {
+                    type: 'text',
+                    text: JSON.stringify({
+                        circuit: VALID_CIRCUIT,
+                        analysisConfig: { type: 'tran', stopTime: '5m', stepTime: '20u' },
+                        explanation: 'RC low-pass',
+                    }),
+                },
+            ],
         });
         const cfg = makeConfig();
         const parts = makeParts();
-        const service = new DesignService(cfg, makeSim(), new CatalogGroundingService(cfg, parts as unknown as PartsService, noSimulator));
+        const service = new DesignService(
+            cfg,
+            makeSim(),
+            new CatalogGroundingService(cfg, parts as unknown as PartsService, noSimulator),
+        );
 
         // No frequency/current target in the prompt: this test is about GROUNDING the happy path, not the
         // spec-coverage gate (which would otherwise block ok:true for an unmeasured named frequency — see
@@ -114,13 +166,22 @@ function makeSimWith(opts: { status?: string; createThrows?: boolean; failureCla
 /** Make the model return one valid design (the initial generate call). */
 function initialDesignOnce() {
     mockCreate.mockResolvedValueOnce({
-        content: [{ type: 'text', text: JSON.stringify({ circuit: VALID_CIRCUIT, analysisConfig: { type: 'op' }, explanation: 'x' }) }],
+        content: [
+            {
+                type: 'text',
+                text: JSON.stringify({ circuit: VALID_CIRCUIT, analysisConfig: { type: 'op' }, explanation: 'x' }),
+            },
+        ],
     });
 }
 
 function makeService(sim: SimulationService): DesignService {
     const cfg = makeConfig();
-    return new DesignService(cfg, sim, new CatalogGroundingService(cfg, makeParts() as unknown as PartsService, noSimulator));
+    return new DesignService(
+        cfg,
+        sim,
+        new CatalogGroundingService(cfg, makeParts() as unknown as PartsService, noSimulator),
+    );
 }
 
 describe('DesignService — infra/operational outcomes are inconclusive, not a design fault', () => {
@@ -128,7 +189,10 @@ describe('DesignService — infra/operational outcomes are inconclusive, not a d
 
     it('a queue/worker outage (enqueue throws) is INCONCLUSIVE — circuit returned, LLM NOT asked to "fix" it', async () => {
         initialDesignOnce();
-        const r = (await makeService(makeSimWith({ createThrows: true })).design({ prompt: 'x', maxRounds: 2 } as never, 'user-1')) as Record<string, unknown>;
+        const r = (await makeService(makeSimWith({ createThrows: true })).design(
+            { prompt: 'x', maxRounds: 2 } as never,
+            'user-1',
+        )) as Record<string, unknown>;
         expect(r.ok).toBe(false);
         expect(r.inconclusive).toBe(true);
         expect(r.circuit).toBeDefined();
@@ -140,7 +204,10 @@ describe('DesignService — infra/operational outcomes are inconclusive, not a d
         process.env.DESIGN_POLL_TIMEOUT_MS = '1500'; // expire the server-side poll fast
         try {
             initialDesignOnce();
-            const r = (await makeService(makeSimWith({ status: 'RUNNING' })).design({ prompt: 'x', maxRounds: 2 } as never, 'user-1')) as Record<string, unknown>;
+            const r = (await makeService(makeSimWith({ status: 'RUNNING' })).design(
+                { prompt: 'x', maxRounds: 2 } as never,
+                'user-1',
+            )) as Record<string, unknown>;
             expect(r.ok).toBe(false);
             expect(r.inconclusive).toBe(true);
             expect(mockCreate).toHaveBeenCalledTimes(1); // no fix round
@@ -152,14 +219,20 @@ describe('DesignService — infra/operational outcomes are inconclusive, not a d
 
     it('a genuine FAILED sim is NOT inconclusive — it stays a (fixable) circuit fault', async () => {
         initialDesignOnce();
-        const r = (await makeService(makeSimWith({ status: 'FAILED' })).design({ prompt: 'x', maxRounds: 1 } as never, 'user-1')) as Record<string, unknown>;
+        const r = (await makeService(makeSimWith({ status: 'FAILED' })).design(
+            { prompt: 'x', maxRounds: 1 } as never,
+            'user-1',
+        )) as Record<string, unknown>;
         expect(r.ok).toBe(false);
         expect(r.inconclusive).toBeUndefined(); // ngspice ran and failed → a real fault, not an operational outcome
     });
 
     it('a worker INFRA failure (FAILED + failureClass=infra) is INCONCLUSIVE, NOT fed to the LLM', async () => {
         initialDesignOnce();
-        const r = (await makeService(makeSimWith({ status: 'FAILED', failureClass: 'infra' })).design({ prompt: 'x', maxRounds: 2 } as never, 'user-1')) as Record<string, unknown>;
+        const r = (await makeService(makeSimWith({ status: 'FAILED', failureClass: 'infra' })).design(
+            { prompt: 'x', maxRounds: 2 } as never,
+            'user-1',
+        )) as Record<string, unknown>;
         expect(r.ok).toBe(false);
         expect(r.inconclusive).toBe(true);
         expect(mockCreate).toHaveBeenCalledTimes(1); // worker infra error → no "fix" round, no design-failed

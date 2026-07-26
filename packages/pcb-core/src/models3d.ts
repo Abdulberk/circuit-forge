@@ -264,14 +264,18 @@ export function injectModels(kicadPcb: string, base: string = KICAD_3DMODEL_BASE
 
     const blocks = parseFootprintBlocks(kicadPcb);
     let out = kicadPcb;
-    for (const block of [...blocks].reverse()) { // reverse: string edits keep earlier indices valid
+    for (const block of [...blocks].reverse()) {
+        // reverse: string edits keep earlier indices valid
         if (block.hasModel) continue;
         const model = resolveModel(block.id, base);
         if (!model) {
             unmatched.set(block.id, (unmatched.get(block.id) ?? 0) + 1);
             continue;
         }
-        const basename = model.split('/').pop()!.replace(/\.step$/i, '');
+        const basename = model
+            .split('/')
+            .pop()!
+            .replace(/\.step$/i, '');
         const anchor = (KICAD_ANCHORS as Record<string, KicadAnchor | undefined>)[basename];
 
         let align: ModelAlignment;
@@ -281,7 +285,15 @@ export function injectModels(kicadPcb: string, base: string = KICAD_3DMODEL_BASE
         } else if (CENTROID_POLICY.some((re) => re.test(basename))) {
             const [ox, oy] = centroid(block.pads);
             const [tx, ty] = centroid(anchor.pads);
-            align = { id: block.id, model: basename, thetaDeg: 0, dx: ox - tx, dy: oy - ty, residual: 0, mode: 'centroid' };
+            align = {
+                id: block.id,
+                model: basename,
+                thetaDeg: 0,
+                dx: ox - tx,
+                dy: oy - ty,
+                residual: 0,
+                mode: 'centroid',
+            };
         } else {
             const sol = solveAlignment(block.pads, anchor.pads);
             if (sol && sol.residual <= EXACT_TOL_MM) {
@@ -290,10 +302,17 @@ export function injectModels(kicadPcb: string, base: string = KICAD_3DMODEL_BASE
                 const [ox, oy] = centroid(block.pads);
                 const [tx, ty] = centroid(anchor.pads);
                 align = {
-                    id: block.id, model: basename, thetaDeg: sol?.thetaDeg ?? 0,
-                    dx: ox - tx, dy: oy - ty, residual: sol?.residual ?? NaN, mode: 'centroid',
+                    id: block.id,
+                    model: basename,
+                    thetaDeg: sol?.thetaDeg ?? 0,
+                    dx: ox - tx,
+                    dy: oy - ty,
+                    residual: sol?.residual ?? NaN,
+                    mode: 'centroid',
                 };
-                warnings.add(`${basename}: constellation residual ${sol ? sol.residual.toFixed(3) : 'n/a'}mm > ${EXACT_TOL_MM}mm — centroid fallback (pad geometry differs from KiCad's)`);
+                warnings.add(
+                    `${basename}: constellation residual ${sol ? sol.residual.toFixed(3) : 'n/a'}mm > ${EXACT_TOL_MM}mm — centroid fallback (pad geometry differs from KiCad's)`,
+                );
             }
         }
         alignments.push(align);

@@ -1,37 +1,37 @@
 {
-  "name": "@circuit-forge/pcb-core",
-  "version": "0.1.0",
-  "description": "PCB layout pipeline: CircuitJson -> tscircuit -> autoroute -> Gerber/.kicad_pcb (Phase 1: adapter + line)",
-  "license": "MIT",
-  "author": "Abdulberk",
-  "private": true,
-  "main": "dist/index.js",
-  "types": "dist/index.d.ts",
-  "files": [
-    "dist"
-  ],
-  "scripts": {
-    "build": "tsc",
-    "lint": "eslint src --ext .ts",
-    "lint:fix": "eslint src --ext .ts --fix",
-    "dev": "tsc --watch",
-    "test": "jest",
-    "test:cov": "jest --coverage",
-    "clean": "rm -rf dist coverage",
-    "typecheck": "tsc --noEmit"
-  },
-  "dependencies": {
-    "@circuit-forge/eda-core": "workspace:*",
-    "@tscircuit/eval": "0.0.970",
-    "circuit-json-to-gerber": "0.0.78",
-    "circuit-json-to-kicad": "0.0.156",
-    "dsn-converter": "0.0.91"
-  },
-  "devDependencies": {
-    "@types/jest": "^29.5.11",
-    "@types/node": "^20.11.0",
-    "jest": "^29.7.0",
-    "ts-jest": "^29.1.1",
-    "typescript": "^5.3.3"
-  }
+    "name": "@circuit-forge/pcb-core",
+    "version": "0.1.0",
+    "description": "PCB layout pipeline: CircuitJson -> tscircuit -> autoroute -> Gerber/.kicad_pcb (Phase 1: adapter + line)",
+    "license": "MIT",
+    "author": "Abdulberk",
+    "private": true,
+    "main": "dist/index.js",
+    "types": "dist/index.d.ts",
+    "files": [
+        "dist"
+    ],
+    "scripts": {
+        "build": "tsc",
+        "lint": "eslint src --ext .ts",
+        "lint:fix": "eslint src --ext .ts --fix",
+        "dev": "tsc --watch",
+        "test": "jest",
+        "test:cov": "jest --coverage",
+        "clean": "rm -rf dist coverage",
+        "typecheck": "tsc --noEmit"
+    },
+    "dependencies": {
+        "@circuit-forge/eda-core": "workspace:*",
+        "@tscircuit/eval": "0.0.970",
+        "circuit-json-to-gerber": "0.0.78",
+        "circuit-json-to-kicad": "0.0.156",
+        "dsn-converter": "0.0.91"
+    },
+    "devDependencies": {
+        "@types/jest": "^29.5.11",
+        "@types/node": "^20.11.0",
+        "jest": "^29.7.0",
+        "ts-jest": "^29.1.1",
+        "typescript": "^5.3.3"
+    }
 }

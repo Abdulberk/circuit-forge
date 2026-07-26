@@ -37,7 +37,8 @@ import { GenerationService } from '../generation.service';
 const GATE = process.env.SIMLOOP_LIVE === '1';
 
 function loadRealEnv(): boolean {
-    const have = () => !!(process.env.TME_TOKEN && process.env.TME_TOKEN !== 'test-tme-token' && process.env.NGSPICE_PATH);
+    const have = () =>
+        !!(process.env.TME_TOKEN && process.env.TME_TOKEN !== 'test-tme-token' && process.env.NGSPICE_PATH);
     if (have()) return true;
     for (const p of [resolve(process.cwd(), '../../.env'), resolve(__dirname, '../../../../../.env')]) {
         try {
@@ -54,7 +55,9 @@ function loadRealEnv(): boolean {
     return false;
 }
 
-const toolUse = (id: string, name: string, input: Record<string, unknown>) => ({ content: [{ type: 'tool_use', id, name, input }] });
+const toolUse = (id: string, name: string, input: Record<string, unknown>) => ({
+    content: [{ type: 'tool_use', id, name, input }],
+});
 const jsonResponse = (payload: unknown) => ({ content: [{ type: 'text', text: JSON.stringify(payload) }] });
 
 // A BROKEN RC: no ground net anywhere → ERC NO_GROUND (ERC001). The (scripted) model "discovers" this
@@ -62,22 +65,84 @@ const jsonResponse = (payload: unknown) => ({ content: [{ type: 'text', text: JS
 const BROKEN_RC = {
     version: '1.0',
     components: [
-        { id: 'v1', type: 'voltage_source', designator: 'V1', value: 'DC 5', pins: [{ pinId: '+', netId: 'in' }, { pinId: '-', netId: 'ret' }] },
-        { id: 'r1', type: 'resistor', designator: 'R1', value: '1.6k', pins: [{ pinId: '1', netId: 'in' }, { pinId: '2', netId: 'out' }] },
-        { id: 'c1', type: 'capacitor', designator: 'C1', value: '100n', pins: [{ pinId: '1', netId: 'out' }, { pinId: '2', netId: 'ret' }] },
+        {
+            id: 'v1',
+            type: 'voltage_source',
+            designator: 'V1',
+            value: 'DC 5',
+            pins: [
+                { pinId: '+', netId: 'in' },
+                { pinId: '-', netId: 'ret' },
+            ],
+        },
+        {
+            id: 'r1',
+            type: 'resistor',
+            designator: 'R1',
+            value: '1.6k',
+            pins: [
+                { pinId: '1', netId: 'in' },
+                { pinId: '2', netId: 'out' },
+            ],
+        },
+        {
+            id: 'c1',
+            type: 'capacitor',
+            designator: 'C1',
+            value: '100n',
+            pins: [
+                { pinId: '1', netId: 'out' },
+                { pinId: '2', netId: 'ret' },
+            ],
+        },
     ],
-    nets: [{ id: 'in', name: 'in' }, { id: 'out', name: 'out' }, { id: 'ret', name: 'ret' }],
+    nets: [
+        { id: 'in', name: 'in' },
+        { id: 'out', name: 'out' },
+        { id: 'ret', name: 'ret' },
+    ],
 };
 // FIXED: 'ret' is now the ground reference. ERC clean, simulates.
 const FIXED_RC = {
     version: '1.0',
     components: [
-        { id: 'v1', type: 'voltage_source', designator: 'V1', value: 'SIN(0 5 1k)', pins: [{ pinId: '+', netId: 'in' }, { pinId: '-', netId: 'gnd' }] },
-        { id: 'r1', type: 'resistor', designator: 'R1', value: '1.6k', pins: [{ pinId: '1', netId: 'in' }, { pinId: '2', netId: 'out' }] },
-        { id: 'c1', type: 'capacitor', designator: 'C1', value: '100n', pins: [{ pinId: '1', netId: 'out' }, { pinId: '2', netId: 'gnd' }] },
+        {
+            id: 'v1',
+            type: 'voltage_source',
+            designator: 'V1',
+            value: 'SIN(0 5 1k)',
+            pins: [
+                { pinId: '+', netId: 'in' },
+                { pinId: '-', netId: 'gnd' },
+            ],
+        },
+        {
+            id: 'r1',
+            type: 'resistor',
+            designator: 'R1',
+            value: '1.6k',
+            pins: [
+                { pinId: '1', netId: 'in' },
+                { pinId: '2', netId: 'out' },
+            ],
+        },
+        {
+            id: 'c1',
+            type: 'capacitor',
+            designator: 'C1',
+            value: '100n',
+            pins: [
+                { pinId: '1', netId: 'out' },
+                { pinId: '2', netId: 'gnd' },
+            ],
+        },
         { id: 'gnd', type: 'ground', designator: 'GND1', pins: [{ pinId: '1', netId: 'gnd' }] },
     ],
-    nets: [{ id: 'in', name: 'in' }, { id: 'out', name: 'out' }, { id: 'gnd', name: 'gnd', isGround: true }],
+    nets: [
+        { id: 'in', name: 'in' },
+        { id: 'out', name: 'out' },
+        { id: 'gnd', name: 'gnd', isGround: true },
+    ],
 };
 
 (GATE ? describe : describe.skip)('sim-loop integration (REAL TME + REAL ngspice, scripted model)', () => {
@@ -95,7 +160,10 @@ const FIXED_RC = {
             config,
             new ComponentMapper(),
         );
-        gen = new GenerationService(config, new CatalogGroundingService(config, parts, new CircuitSimulatorService(config)));
+        gen = new GenerationService(
+            config,
+            new CatalogGroundingService(config, parts, new CircuitSimulatorService(config)),
+        );
     });
 
     jest.setTimeout(60_000);
@@ -106,8 +174,19 @@ const FIXED_RC = {
         mockCreate
             .mockResolvedValueOnce(toolUse('t1', 'search_parts', { query: 'resistor 10k 0603' }))
             .mockResolvedValueOnce(toolUse('t2', 'simulate_circuit', { circuit: BROKEN_RC, analysis: { type: 'op' } }))
-            .mockResolvedValueOnce(toolUse('t3', 'simulate_circuit', { circuit: FIXED_RC, analysis: { type: 'tran', stopTime: '5m', stepTime: '20u' } }))
-            .mockResolvedValueOnce(jsonResponse({ circuit: FIXED_RC, analysisConfig: { type: 'tran', stopTime: '5m', stepTime: '20u' }, explanation: 'RC low-pass; fixed the missing ground after simulation flagged it.' }));
+            .mockResolvedValueOnce(
+                toolUse('t3', 'simulate_circuit', {
+                    circuit: FIXED_RC,
+                    analysis: { type: 'tran', stopTime: '5m', stepTime: '20u' },
+                }),
+            )
+            .mockResolvedValueOnce(
+                jsonResponse({
+                    circuit: FIXED_RC,
+                    analysisConfig: { type: 'tran', stopTime: '5m', stepTime: '20u' },
+                    explanation: 'RC low-pass; fixed the missing ground after simulation flagged it.',
+                }),
+            );
 
         const result = await gen.generate({ prompt: 'An RC low-pass filter, 1 kHz cutoff.' } as never);
 
@@ -159,8 +238,14 @@ const FIXED_RC = {
         // eslint-disable-next-line no-console
         console.log('REAL TME first hit:', JSON.stringify(firstSearch.items[0]));
         // eslint-disable-next-line no-console
-        console.log('REAL sim of BROKEN circuit:', JSON.stringify({ simStatus: brokenSim.simStatus, ercErrors: brokenSim.ercErrors }));
+        console.log(
+            'REAL sim of BROKEN circuit:',
+            JSON.stringify({ simStatus: brokenSim.simStatus, ercErrors: brokenSim.ercErrors }),
+        );
         // eslint-disable-next-line no-console
-        console.log('REAL sim of FIXED circuit:', JSON.stringify({ simStatus: fixedSim.simStatus, measurements: fixedSim.measurements }));
+        console.log(
+            'REAL sim of FIXED circuit:',
+            JSON.stringify({ simStatus: fixedSim.simStatus, measurements: fixedSim.measurements }),
+        );
     });
 });

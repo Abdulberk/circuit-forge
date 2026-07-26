@@ -11,13 +11,12 @@ import { PaginationQueryDto } from '../common/dto/pagination.dto';
 import { CreateProjectDto, UpdateProjectDto } from './dto';
 import { ProjectsService } from './projects.service';
 
-
 @ApiTags('projects')
 @ApiBearerAuth()
 @UseGuards(JwtAuthGuard)
 @Controller()
 export class ProjectsController {
-    constructor(private readonly projectsService: ProjectsService) { }
+    constructor(private readonly projectsService: ProjectsService) {}
 
     @Get('orgs/:orgId/projects')
     @ApiOperation({ summary: 'List projects in organization (paginated: ?limit&offset)' })

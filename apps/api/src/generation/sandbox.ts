@@ -55,10 +55,12 @@ export function resolveSandboxConfig(env: {
 }): SandboxConfig {
     const platform = env.platform ?? process.platform;
     const requested = (env.SIM_SANDBOX ?? 'auto').toLowerCase();
-    const mode: SandboxMode = requested === 'none' ? 'none' : requested === 'rlimit' ? 'rlimit' : platform === 'linux' ? 'rlimit' : 'none';
+    const mode: SandboxMode =
+        requested === 'none' ? 'none' : requested === 'rlimit' ? 'rlimit' : platform === 'linux' ? 'rlimit' : 'none';
     const cpuBackstop = Math.ceil((env.SIM_TIMEOUT_MS ?? 10000) / 1000) * 2 + 5;
     // Only a plain username (no shell metacharacters) — it is interpolated into the bash preamble.
-    const user = env.SIM_SANDBOX_USER && /^[a-z_][a-z0-9_-]*$/.test(env.SIM_SANDBOX_USER) ? env.SIM_SANDBOX_USER : undefined;
+    const user =
+        env.SIM_SANDBOX_USER && /^[a-z_][a-z0-9_-]*$/.test(env.SIM_SANDBOX_USER) ? env.SIM_SANDBOX_USER : undefined;
     return {
         mode,
         ...(user ? { user } : {}),

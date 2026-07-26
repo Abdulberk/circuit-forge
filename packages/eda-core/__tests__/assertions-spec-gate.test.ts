@@ -21,7 +21,9 @@ import {
 } from '../src/analysis/assertions';
 import type { SimMeasurement } from '../src/analysis/measurements';
 
-const crit = (c: Partial<AcceptanceCriterion> & Pick<AcceptanceCriterion, 'probe' | 'metric' | 'op' | 'value'>): AcceptanceCriterion => c;
+const crit = (
+    c: Partial<AcceptanceCriterion> & Pick<AcceptanceCriterion, 'probe' | 'metric' | 'op' | 'value'>,
+): AcceptanceCriterion => c;
 const dims = (p: string): SpecDimension[] => [...requiredDimensions(p)].sort();
 
 describe('requiredDimensions — conservative current/frequency detection from the prompt', () => {
@@ -115,7 +117,9 @@ describe('uncoveredRequiredDimensions — the gate that blocks an over-claimed "
     });
 
     it('flags a FREQUENCY target when no cutoff criterion measures it', () => {
-        expect(uncoveredRequiredDimensions('1kHz low-pass', [{ probe: 'out', metric: 'final' }])).toEqual(['frequency']);
+        expect(uncoveredRequiredDimensions('1kHz low-pass', [{ probe: 'out', metric: 'final' }])).toEqual([
+            'frequency',
+        ]);
         expect(uncoveredRequiredDimensions('1kHz low-pass', [{ probe: 'out', metric: 'cutoff' }])).toEqual([]);
     });
 
@@ -138,13 +142,16 @@ describe('uncoveredRequiredDimensions — the gate that blocks an over-claimed "
     });
 
     it('reports BOTH uncovered dimensions when both are required and neither is measured', () => {
-        expect(uncoveredRequiredDimensions('10mA at 1kHz', [{ probe: 'out', metric: 'final' }]).sort()).toEqual(['current', 'frequency']);
+        expect(uncoveredRequiredDimensions('10mA at 1kHz', [{ probe: 'out', metric: 'final' }]).sort()).toEqual([
+            'current',
+            'frequency',
+        ]);
     });
 
     it('reports all three uncovered when current + frequency + THD are named but only voltage is checked', () => {
-        expect(uncoveredRequiredDimensions('10mA, 1kHz cutoff, THD < 1%', [{ probe: 'out', metric: 'final' }]).sort()).toEqual(
-            ['current', 'frequency', 'thd'],
-        );
+        expect(
+            uncoveredRequiredDimensions('10mA, 1kHz cutoff, THD < 1%', [{ probe: 'out', metric: 'final' }]).sort(),
+        ).toEqual(['current', 'frequency', 'thd']);
     });
 });
 
@@ -158,8 +165,20 @@ describe('cutoff metric — not-determinable returns actual:null (never a silent
     });
 
     it('a determinable cutoff is compared at full precision and shown as-is (not 4-sig-fig rounded)', () => {
-        const m: SimMeasurement = { node: 'out', min: 0, max: 1, final: 1, pp: 1, avg: 0.5, rms: 0.7, cutoff: 1591.549 };
-        const [r] = evaluateAssertions([m], [crit({ probe: 'out', metric: 'cutoff', op: 'approx', value: 1600, tol: 20 })]);
+        const m: SimMeasurement = {
+            node: 'out',
+            min: 0,
+            max: 1,
+            final: 1,
+            pp: 1,
+            avg: 0.5,
+            rms: 0.7,
+            cutoff: 1591.549,
+        };
+        const [r] = evaluateAssertions(
+            [m],
+            [crit({ probe: 'out', metric: 'cutoff', op: 'approx', value: 1600, tol: 20 })],
+        );
         expect(r!.pass).toBe(true);
         expect(r!.actual).toBe(1591.549); // frequency shown at full precision, unlike the 4-sig-fig display of other metrics
     });
@@ -184,11 +203,21 @@ describe('evaluateAssertions — unmeasured cases', () => {
 
 describe('describeFailure — off-by message fed to the AI fix loop', () => {
     const base: Omit<AssertionResult, 'actual' | 'distance' | 'pass' | 'detail'> = {
-        label: 'gain check', probe: 'out', metric: 'gain', op: 'gte', target: 10,
+        label: 'gain check',
+        probe: 'out',
+        metric: 'gain',
+        op: 'gte',
+        target: 10,
     };
 
     it('unmeasured failure → "<label>: <detail>"', () => {
-        const r: AssertionResult = { ...base, actual: null, distance: null, pass: false, detail: 'gain(out) not determinable' };
+        const r: AssertionResult = {
+            ...base,
+            actual: null,
+            distance: null,
+            pass: false,
+            detail: 'gain(out) not determinable',
+        };
         expect(describeFailure(r)).toBe('gain check: gain(out) not determinable');
     });
 

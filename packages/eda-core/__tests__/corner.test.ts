@@ -5,22 +5,63 @@ import type { CircuitJson } from '../src/types/circuit';
 import { parseSpiceValue } from '../src/utils/unit-parser';
 
 /** Divider with two ±10% resistors. out = 5·R2/(R1+R2). */
-const DIVIDER = (r1Tol?: number, r2Tol?: number): CircuitJson => ({
-    version: '1.0',
-    components: [
-        { id: 'v1', type: 'voltage_source', designator: 'V1', value: 'DC 5', pins: [{ pinId: '+', netId: 'in' }, { pinId: '-', netId: '0' }] },
-        { id: 'r1', type: 'resistor', designator: 'R1', value: '1k', ...(r1Tol ? { tolerance: r1Tol } : {}), pins: [{ pinId: '1', netId: 'in' }, { pinId: '2', netId: 'out' }] },
-        { id: 'r2', type: 'resistor', designator: 'R2', value: '1k', ...(r2Tol ? { tolerance: r2Tol } : {}), pins: [{ pinId: '1', netId: 'out' }, { pinId: '2', netId: '0' }] },
-        { id: 'gnd', type: 'ground', designator: 'GND1', pins: [{ pinId: '1', netId: '0' }] },
-    ],
-    nets: [{ id: 'in', name: 'in' }, { id: 'out', name: 'out' }, { id: '0', name: '0', isGround: true }],
-} as unknown as CircuitJson);
+const DIVIDER = (r1Tol?: number, r2Tol?: number): CircuitJson =>
+    ({
+        version: '1.0',
+        components: [
+            {
+                id: 'v1',
+                type: 'voltage_source',
+                designator: 'V1',
+                value: 'DC 5',
+                pins: [
+                    { pinId: '+', netId: 'in' },
+                    { pinId: '-', netId: '0' },
+                ],
+            },
+            {
+                id: 'r1',
+                type: 'resistor',
+                designator: 'R1',
+                value: '1k',
+                ...(r1Tol ? { tolerance: r1Tol } : {}),
+                pins: [
+                    { pinId: '1', netId: 'in' },
+                    { pinId: '2', netId: 'out' },
+                ],
+            },
+            {
+                id: 'r2',
+                type: 'resistor',
+                designator: 'R2',
+                value: '1k',
+                ...(r2Tol ? { tolerance: r2Tol } : {}),
+                pins: [
+                    { pinId: '1', netId: 'out' },
+                    { pinId: '2', netId: '0' },
+                ],
+            },
+            { id: 'gnd', type: 'ground', designator: 'GND1', pins: [{ pinId: '1', netId: '0' }] },
+        ],
+        nets: [
+            { id: 'in', name: 'in' },
+            { id: 'out', name: 'out' },
+            { id: '0', name: '0', isGround: true },
+        ],
+    }) as unknown as CircuitJson;
 
 const meas = (node: string, value: number): SimMeasurement => ({
-    node, min: value, max: value, final: value, pp: 0, avg: value, rms: Math.abs(value),
+    node,
+    min: value,
+    max: value,
+    final: value,
+    pp: 0,
+    avg: value,
+    rms: Math.abs(value),
     raw: { min: value, max: value, final: value, pp: 0, avg: value, rms: Math.abs(value) },
 });
-const valueOf = (c: CircuitJson, d: string): number => parseSpiceValue(c.components.find((x) => x.designator === d)!.value!).value;
+const valueOf = (c: CircuitJson, d: string): number =>
+    parseSpiceValue(c.components.find((x) => x.designator === d)!.value!).value;
 
 describe('cornerVariants', () => {
     it('enumerates 2^k corners (k toleranced components), each at its ±tol extreme', () => {
@@ -49,10 +90,23 @@ describe('cornerVariants', () => {
         const withRail: CircuitJson = {
             version: '1.0',
             components: [
-                { id: 'v1', type: 'voltage_source', designator: 'V1', value: 'DC 5', tolerance: 0.1, pins: [{ pinId: '+', netId: 'in' }, { pinId: '-', netId: '0' }] },
+                {
+                    id: 'v1',
+                    type: 'voltage_source',
+                    designator: 'V1',
+                    value: 'DC 5',
+                    tolerance: 0.1,
+                    pins: [
+                        { pinId: '+', netId: 'in' },
+                        { pinId: '-', netId: '0' },
+                    ],
+                },
                 { id: 'gnd', type: 'ground', designator: 'GND1', pins: [{ pinId: '1', netId: '0' }] },
             ],
-            nets: [{ id: 'in', name: 'in' }, { id: '0', name: '0', isGround: true }],
+            nets: [
+                { id: 'in', name: 'in' },
+                { id: '0', name: '0', isGround: true },
+            ],
         } as unknown as CircuitJson;
         const { variants, componentsCornered } = cornerVariants(withRail);
         expect(componentsCornered).toEqual(['V1']);
@@ -85,7 +139,7 @@ describe('runWorstCase', () => {
     const runner = (variant: CircuitJson): Promise<SimMeasurement[]> => {
         const r1 = valueOf(variant, 'R1');
         const r2 = valueOf(variant, 'R2');
-        return Promise.resolve([meas('v(out)', 5 * r2 / (r1 + r2))]);
+        return Promise.resolve([meas('v(out)', (5 * r2) / (r1 + r2))]);
     };
 
     it('passAllCorners=true when the criterion holds at every ±tol corner', async () => {

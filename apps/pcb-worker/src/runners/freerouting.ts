@@ -38,10 +38,14 @@ export function makeNativeFreeroutingRunner(opts: FreeroutingOpts = {}): (dsn: s
             writeFileSync(dsnPath, dsn);
             // Async execFile: the child runs off-thread so the event loop stays live (BullMQ lock renewal,
             // health, graceful shutdown) for the whole 10-300s route instead of freezing the single JS thread.
-            await execFileAsync(java, ['-jar', jar, '--gui.enabled=false', '-de', dsnPath, '-do', sesPath, '-mp', String(passes)], {
-                timeout: timeoutMs,
-                maxBuffer: MAX_BUFFER,
-            });
+            await execFileAsync(
+                java,
+                ['-jar', jar, '--gui.enabled=false', '-de', dsnPath, '-do', sesPath, '-mp', String(passes)],
+                {
+                    timeout: timeoutMs,
+                    maxBuffer: MAX_BUFFER,
+                },
+            );
             const ses = readFileSync(sesPath, 'utf8');
             if (!ses.includes('(session')) throw new Error('freerouting produced no SES session');
             return ses;

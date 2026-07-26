@@ -37,7 +37,7 @@ export function resultToCsv(result: SimulationResult, opts: CsvExportOptions = {
     const delim = opts.delimiter ?? ',';
     const eol = opts.eol ?? '\n';
     const series = result.series ?? [];
-    const xHeader = result.meta?.xUnit ? `${result.meta.xLabel} (${result.meta.xUnit})` : result.meta?.xLabel ?? 'x';
+    const xHeader = result.meta?.xUnit ? `${result.meta.xLabel} (${result.meta.xUnit})` : (result.meta?.xLabel ?? 'x');
 
     const header = [xHeader, ...series.map((s) => s.name)].map((h) => csvField(h, delim)).join(delim);
     const rowCount = series.reduce((max, s) => Math.max(max, s.points.length), 0);
@@ -69,7 +69,12 @@ function vcdId(index: number): string {
 }
 
 const TIME_UNIT_LABEL: Record<string, string> = {
-    '1': '1s', '0.001': '1ms', '0.000001': '1us', '1e-9': '1ns', '1e-12': '1ps', '1e-15': '1fs',
+    '1': '1s',
+    '0.001': '1ms',
+    '0.000001': '1us',
+    '1e-9': '1ns',
+    '1e-12': '1ps',
+    '1e-15': '1fs',
 };
 
 /**

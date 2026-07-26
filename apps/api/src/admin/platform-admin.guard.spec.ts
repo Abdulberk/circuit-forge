@@ -29,7 +29,10 @@ describe('PlatformAdminGuard', () => {
             getClass: () => class {},
         }) as unknown as ExecutionContext;
 
-    const makeGuard = (required: PlatformRole | undefined, dbUser: { platformRole: PlatformRole; email: string } | null) => {
+    const makeGuard = (
+        required: PlatformRole | undefined,
+        dbUser: { platformRole: PlatformRole; email: string } | null,
+    ) => {
         const reflector = { getAllAndOverride: jest.fn().mockReturnValue(required) } as unknown as Reflector;
         const findUnique = jest.fn().mockResolvedValue(dbUser);
         const prisma = { user: { findUnique } } as any;
@@ -66,7 +69,9 @@ describe('PlatformAdminGuard', () => {
     it('fails closed at ADMIN when no @PlatformRoles metadata is present', async () => {
         // reflector returns undefined -> guard requires ADMIN
         const support = makeGuard(undefined, { platformRole: PlatformRole.OPERATOR, email: 'o@x.io' });
-        await expect(support.guard.canActivate(makeCtx({ user: { id: 'u1' } }))).rejects.toBeInstanceOf(ForbiddenException);
+        await expect(support.guard.canActivate(makeCtx({ user: { id: 'u1' } }))).rejects.toBeInstanceOf(
+            ForbiddenException,
+        );
 
         const admin = makeGuard(undefined, { platformRole: PlatformRole.ADMIN, email: 'a@x.io' });
         await expect(admin.guard.canActivate(makeCtx({ user: { id: 'u1' } }))).resolves.toBe(true);

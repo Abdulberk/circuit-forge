@@ -89,11 +89,21 @@ function tolerancedComponents(circuit: CircuitJson, only?: string[]): Toleranced
  * all combinations enumerated. Returns `{ corner, circuit }[]`; empty when no component qualifies. The `omitted`
  * designators (dropped by the cap) are returned alongside so the caller can report an honest verdict.
  */
-export function cornerVariants(circuit: CircuitJson, spec: CornerSpec = {}): { variants: Array<{ corner: Record<string, CornerSide>; circuit: CircuitJson }>; componentsCornered: string[]; omitted: string[] } {
+export function cornerVariants(
+    circuit: CircuitJson,
+    spec: CornerSpec = {},
+): {
+    variants: Array<{ corner: Record<string, CornerSide>; circuit: CircuitJson }>;
+    componentsCornered: string[];
+    omitted: string[];
+} {
     const cap = Math.max(1, spec.maxComponents ?? 8);
     const all = tolerancedComponents(circuit, spec.components);
     const cornered = all.slice(0, cap);
-    const omitted = all.slice(cap).map((t) => t.component.designator).filter(Boolean);
+    const omitted = all
+        .slice(cap)
+        .map((t) => t.component.designator)
+        .filter(Boolean);
     const componentsCornered = cornered.map((t) => t.component.designator).filter(Boolean);
     if (cornered.length === 0) return { variants: [], componentsCornered, omitted };
 
@@ -110,7 +120,10 @@ export function cornerVariants(circuit: CircuitJson, spec: CornerSpec = {}): { v
         }
         variants.push({
             corner,
-            circuit: { ...circuit, components: circuit.components.map((c) => (overrides.has(c) ? { ...c, value: overrides.get(c)! } : c)) },
+            circuit: {
+                ...circuit,
+                components: circuit.components.map((c) => (overrides.has(c) ? { ...c, value: overrides.get(c)! } : c)),
+            },
         });
     }
     return { variants, componentsCornered, omitted };

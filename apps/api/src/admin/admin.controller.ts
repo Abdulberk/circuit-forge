@@ -8,7 +8,20 @@
  * Route ORDER matters: the literal `orgs/usage` is declared BEFORE `orgs/:id` so it isn't captured by
  * the :id param (which would 400 in ParseUUIDPipe).
  */
-import { Body, Controller, Delete, Get, HttpCode, HttpStatus, Param, ParseUUIDPipe, Patch, Post, Query, UseGuards } from '@nestjs/common';
+import {
+    Body,
+    Controller,
+    Delete,
+    Get,
+    HttpCode,
+    HttpStatus,
+    Param,
+    ParseUUIDPipe,
+    Patch,
+    Post,
+    Query,
+    UseGuards,
+} from '@nestjs/common';
 import { ApiBearerAuth, ApiOperation, ApiTags } from '@nestjs/swagger';
 import { PlatformRole } from '@prisma/client';
 
@@ -37,7 +50,6 @@ import {
     SweepOrphanModelsDto,
 } from './dto';
 import { PlatformAdminGuard } from './guards/platform-admin.guard';
-
 
 @ApiTags('admin')
 @ApiBearerAuth()
@@ -122,7 +134,13 @@ export class AdminController {
     listAuditLogs(@Query() q: AdminAuditQueryDto) {
         return this.adminService.listAuditLogs(
             { limit: q.limit, offset: q.offset },
-            { orgId: q.orgId, userId: q.userId, adminActorId: q.adminActorId, action: q.action, entityType: q.entityType },
+            {
+                orgId: q.orgId,
+                userId: q.userId,
+                adminActorId: q.adminActorId,
+                action: q.action,
+                entityType: q.entityType,
+            },
         );
     }
 
@@ -139,7 +157,11 @@ export class AdminController {
     @Patch('users/:id/lock')
     @PlatformRoles(PlatformRole.OPERATOR)
     @ApiOperation({ summary: 'Lock/unlock a user (locking also revokes live sessions)' })
-    lockUser(@Param('id', ParseUUIDPipe) id: string, @Body() dto: LockUserDto, @CurrentPlatformActor() actor: PlatformActor) {
+    lockUser(
+        @Param('id', ParseUUIDPipe) id: string,
+        @Body() dto: LockUserDto,
+        @CurrentPlatformActor() actor: PlatformActor,
+    ) {
         return this.adminService.lockUser(id, dto, actor);
     }
 
@@ -147,21 +169,33 @@ export class AdminController {
     @HttpCode(HttpStatus.OK)
     @PlatformRoles(PlatformRole.OPERATOR)
     @ApiOperation({ summary: 'Revoke all of a user’s sessions (refresh-token families)' })
-    logoutAll(@Param('id', ParseUUIDPipe) id: string, @Body() dto: ActionReasonDto, @CurrentPlatformActor() actor: PlatformActor) {
+    logoutAll(
+        @Param('id', ParseUUIDPipe) id: string,
+        @Body() dto: ActionReasonDto,
+        @CurrentPlatformActor() actor: PlatformActor,
+    ) {
         return this.adminService.logoutAll(id, dto, actor);
     }
 
     @Patch('users/:id/role')
     @PlatformRoles(PlatformRole.ADMIN)
     @ApiOperation({ summary: 'Change a user’s platform role (ADMIN only; demotion revokes sessions)' })
-    setPlatformRole(@Param('id', ParseUUIDPipe) id: string, @Body() dto: SetPlatformRoleDto, @CurrentPlatformActor() actor: PlatformActor) {
+    setPlatformRole(
+        @Param('id', ParseUUIDPipe) id: string,
+        @Body() dto: SetPlatformRoleDto,
+        @CurrentPlatformActor() actor: PlatformActor,
+    ) {
         return this.adminService.setPlatformRole(id, dto, actor);
     }
 
     @Patch('users/:id/email-verified')
     @PlatformRoles(PlatformRole.OPERATOR)
     @ApiOperation({ summary: 'Override a user’s email-verified flag' })
-    setEmailVerified(@Param('id', ParseUUIDPipe) id: string, @Body() dto: SetEmailVerifiedDto, @CurrentPlatformActor() actor: PlatformActor) {
+    setEmailVerified(
+        @Param('id', ParseUUIDPipe) id: string,
+        @Body() dto: SetEmailVerifiedDto,
+        @CurrentPlatformActor() actor: PlatformActor,
+    ) {
         return this.adminService.setEmailVerified(id, dto, actor);
     }
 
@@ -169,14 +203,22 @@ export class AdminController {
     @Patch('orgs/:id')
     @PlatformRoles(PlatformRole.OPERATOR)
     @ApiOperation({ summary: 'Rename an organization' })
-    renameOrg(@Param('id', ParseUUIDPipe) id: string, @Body() dto: RenameOrgDto, @CurrentPlatformActor() actor: PlatformActor) {
+    renameOrg(
+        @Param('id', ParseUUIDPipe) id: string,
+        @Body() dto: RenameOrgDto,
+        @CurrentPlatformActor() actor: PlatformActor,
+    ) {
         return this.adminService.renameOrg(id, dto, actor);
     }
 
     @Patch('orgs/:id/suspend')
     @PlatformRoles(PlatformRole.OPERATOR)
     @ApiOperation({ summary: 'Suspend/reinstate an org (suspend blocks all its writes with 403)' })
-    suspendOrg(@Param('id', ParseUUIDPipe) id: string, @Body() dto: SuspendOrgDto, @CurrentPlatformActor() actor: PlatformActor) {
+    suspendOrg(
+        @Param('id', ParseUUIDPipe) id: string,
+        @Body() dto: SuspendOrgDto,
+        @CurrentPlatformActor() actor: PlatformActor,
+    ) {
         return this.adminService.suspendOrg(id, dto, actor);
     }
 
@@ -184,7 +226,11 @@ export class AdminController {
     @Post('orgs/:id/members')
     @PlatformRoles(PlatformRole.OPERATOR)
     @ApiOperation({ summary: 'Add (or re-role) a member in any org' })
-    addMember(@Param('id', ParseUUIDPipe) id: string, @Body() dto: AddMemberDto, @CurrentPlatformActor() actor: PlatformActor) {
+    addMember(
+        @Param('id', ParseUUIDPipe) id: string,
+        @Body() dto: AddMemberDto,
+        @CurrentPlatformActor() actor: PlatformActor,
+    ) {
         return this.adminService.addMember(id, dto, actor);
     }
 
@@ -216,14 +262,22 @@ export class AdminController {
     @Patch('orgs/:id/quota')
     @PlatformRoles(PlatformRole.OPERATOR)
     @ApiOperation({ summary: 'Set per-org quota overrides (null clears a field → inherit env)' })
-    setQuotaOverride(@Param('id', ParseUUIDPipe) id: string, @Body() dto: SetQuotaOverrideDto, @CurrentPlatformActor() actor: PlatformActor) {
+    setQuotaOverride(
+        @Param('id', ParseUUIDPipe) id: string,
+        @Body() dto: SetQuotaOverrideDto,
+        @CurrentPlatformActor() actor: PlatformActor,
+    ) {
         return this.adminService.setQuotaOverride(id, dto, actor);
     }
 
     @Delete('orgs/:id/quota')
     @PlatformRoles(PlatformRole.OPERATOR)
     @ApiOperation({ summary: 'Clear all per-org quota overrides (inherit env everywhere)' })
-    clearQuotaOverride(@Param('id', ParseUUIDPipe) id: string, @Body() dto: ActionReasonDto, @CurrentPlatformActor() actor: PlatformActor) {
+    clearQuotaOverride(
+        @Param('id', ParseUUIDPipe) id: string,
+        @Body() dto: ActionReasonDto,
+        @CurrentPlatformActor() actor: PlatformActor,
+    ) {
         return this.adminService.clearQuotaOverride(id, dto, actor);
     }
 
@@ -232,7 +286,11 @@ export class AdminController {
     @HttpCode(HttpStatus.OK)
     @PlatformRoles(PlatformRole.OPERATOR)
     @ApiOperation({ summary: 'Cancel a QUEUED simulation (removes it from the queue)' })
-    cancelSimJob(@Param('id', ParseUUIDPipe) id: string, @Body() dto: ActionReasonDto, @CurrentPlatformActor() actor: PlatformActor) {
+    cancelSimJob(
+        @Param('id', ParseUUIDPipe) id: string,
+        @Body() dto: ActionReasonDto,
+        @CurrentPlatformActor() actor: PlatformActor,
+    ) {
         return this.adminService.cancelSimJob(id, dto, actor);
     }
 
@@ -240,7 +298,11 @@ export class AdminController {
     @HttpCode(HttpStatus.OK)
     @PlatformRoles(PlatformRole.OPERATOR)
     @ApiOperation({ summary: 'Re-enqueue a failed/timed-out/canceled simulation' })
-    retrySimJob(@Param('id', ParseUUIDPipe) id: string, @Body() dto: ActionReasonDto, @CurrentPlatformActor() actor: PlatformActor) {
+    retrySimJob(
+        @Param('id', ParseUUIDPipe) id: string,
+        @Body() dto: ActionReasonDto,
+        @CurrentPlatformActor() actor: PlatformActor,
+    ) {
         return this.adminService.retrySimJob(id, dto, actor);
     }
 
@@ -248,7 +310,11 @@ export class AdminController {
     @HttpCode(HttpStatus.OK)
     @PlatformRoles(PlatformRole.OPERATOR)
     @ApiOperation({ summary: 'Cancel a design job (QUEUED → CANCELED, RUNNING → cooperative abort)' })
-    cancelDesignJob(@Param('id', ParseUUIDPipe) id: string, @Body() dto: ActionReasonDto, @CurrentPlatformActor() actor: PlatformActor) {
+    cancelDesignJob(
+        @Param('id', ParseUUIDPipe) id: string,
+        @Body() dto: ActionReasonDto,
+        @CurrentPlatformActor() actor: PlatformActor,
+    ) {
         return this.adminService.cancelDesignJob(id, dto, actor);
     }
 
@@ -257,7 +323,11 @@ export class AdminController {
     @HttpCode(HttpStatus.OK)
     @PlatformRoles(PlatformRole.ADMIN)
     @ApiOperation({ summary: 'Pause a queue (simulations|design) — in-flight drains, no new jobs start' })
-    pauseQueue(@Param('name') name: string, @Body() dto: ActionReasonDto, @CurrentPlatformActor() actor: PlatformActor) {
+    pauseQueue(
+        @Param('name') name: string,
+        @Body() dto: ActionReasonDto,
+        @CurrentPlatformActor() actor: PlatformActor,
+    ) {
         return this.adminService.pauseQueue(name, dto, actor);
     }
 
@@ -265,7 +335,11 @@ export class AdminController {
     @HttpCode(HttpStatus.OK)
     @PlatformRoles(PlatformRole.ADMIN)
     @ApiOperation({ summary: 'Resume a paused queue (simulations|design)' })
-    resumeQueue(@Param('name') name: string, @Body() dto: ActionReasonDto, @CurrentPlatformActor() actor: PlatformActor) {
+    resumeQueue(
+        @Param('name') name: string,
+        @Body() dto: ActionReasonDto,
+        @CurrentPlatformActor() actor: PlatformActor,
+    ) {
         return this.adminService.resumeQueue(name, dto, actor);
     }
 
@@ -282,7 +356,9 @@ export class AdminController {
     @Post('storage/sweep-orphan-models')
     @HttpCode(HttpStatus.OK)
     @PlatformRoles(PlatformRole.ADMIN)
-    @ApiOperation({ summary: 'Delete S3 model objects with no Asset row, older than the grace window (dryRun supported)' })
+    @ApiOperation({
+        summary: 'Delete S3 model objects with no Asset row, older than the grace window (dryRun supported)',
+    })
     sweepOrphanModels(@Body() dto: SweepOrphanModelsDto, @CurrentPlatformActor() actor: PlatformActor) {
         return this.adminService.sweepOrphanModels(dto, actor);
     }

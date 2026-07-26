@@ -61,11 +61,7 @@ export type {
     SensitivityEntry,
 } from './types/simulation';
 
-export type {
-    ErcResult,
-    ErcIssue,
-    ErcConfig,
-} from './types/erc';
+export type { ErcResult, ErcIssue, ErcConfig } from './types/erc';
 
 export { ErcCode } from './types/erc';
 export type { ErcSeverity } from './types/erc';
@@ -112,12 +108,7 @@ export {
 } from './schemas/analysis.schema';
 
 // Netlist generation
-export {
-    generateNetlist,
-    getNodeNames,
-    validateNetlist,
-    type NetlistOptions,
-} from './netlist';
+export { generateNetlist, getNodeNames, validateNetlist, type NetlistOptions } from './netlist';
 
 // Netlist sanitization
 export {
@@ -145,26 +136,12 @@ export {
 } from './netlist';
 
 // Parsing
-export {
-    parseCsv,
-    parseRawAscii,
-    detectOutputFormat,
-    parseSimulationOutput,
-} from './parser';
+export { parseCsv, parseRawAscii, detectOutputFormat, parseSimulationOutput } from './parser';
 
-export {
-    parseNetlist,
-    extractProbes,
-    type NetlistParseResult,
-} from './parser';
+export { parseNetlist, extractProbes, type NetlistParseResult } from './parser';
 
 // Result export (CSV / VCD writers — take a finished SimulationResult out to other tools)
-export {
-    resultToCsv,
-    resultToVcd,
-    type CsvExportOptions,
-    type VcdExportOptions,
-} from './parser';
+export { resultToCsv, resultToVcd, type CsvExportOptions, type VcdExportOptions } from './parser';
 
 // Monte-Carlo / tolerance (verify at X% yield, not just nominal)
 export {
@@ -189,13 +166,7 @@ export { mulberry32 } from './utils/prng';
 
 // Parametric sweep (`.step`-style) — the deterministic sibling of Monte-Carlo: over what RANGE of a chosen
 // parameter does the design still meet spec? (reuses the same injected VariantRunner + one-job-dir batch path)
-export {
-    sweepVariants,
-    runParametricSweep,
-    type SweepSpec,
-    type SweepPoint,
-    type SweepResult,
-} from './sweep';
+export { sweepVariants, runParametricSweep, type SweepSpec, type SweepPoint, type SweepResult } from './sweep';
 
 // Worst-case (corner) analysis — the deterministic tolerance-EXTREME lens: does the spec hold at every ±tol
 // corner? (random Monte-Carlo can miss the true worst corner; this hits them exactly). Shares the VariantRunner.
@@ -241,7 +212,11 @@ export {
 // Analysis — measurement distillation + assertion evaluation (shared by the API AND the Monte-Carlo worker,
 // which is why they live here and not in the API).
 export { summarizeSeries, type SimMeasurement } from './analysis/measurements';
-export { assessTransientCompleteness, TRANSIENT_COMPLETE_FRACTION, type TransientCompleteness } from './analysis/transient-completeness';
+export {
+    assessTransientCompleteness,
+    TRANSIENT_COMPLETE_FRACTION,
+    type TransientCompleteness,
+} from './analysis/transient-completeness';
 export { cutoffFrequency, isAcMagnitudeSeries, type FreqMagPoint } from './analysis/ac-measurements';
 export { parseFourierLog } from './analysis/fourier';
 export { parseMeasurements } from './analysis/measure';
@@ -291,12 +266,7 @@ export {
 } from './verification/design-review';
 
 // ERC
-export {
-    runErc,
-    quickCheck,
-    ERC_DESCRIPTIONS,
-    ERC_SEVERITIES,
-} from './erc';
+export { runErc, quickCheck, ERC_DESCRIPTIONS, ERC_SEVERITIES } from './erc';
 
 // Utilities
 export {

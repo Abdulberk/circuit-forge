@@ -61,13 +61,27 @@ export async function runSweepBatch(input: SweepBatchInput): Promise<SweepBatchR
     // Union the SAME criterion probes the nominal verify path saves (branch currents), so a current criterion is
     // measured at every swept point instead of reading "probe not found".
     const extraProbes = extraProbesForCriteria(input.criteria);
-    const result = await withVariantJobDir(input.jobId, 'sweep', input.analysis, extraProbes, input.modelFiles, async (runVariant) => {
-        const r = await runParametricSweep(input.circuit, input.criteria, spec, runVariant);
-        logger.info(
-            { jobId: input.jobId, parameter: r.parameter, evaluated: r.evaluated, passed: r.passed, passAll: r.passAll, clamped },
-            'Parametric sweep complete',
-        );
-        return r;
-    });
+    const result = await withVariantJobDir(
+        input.jobId,
+        'sweep',
+        input.analysis,
+        extraProbes,
+        input.modelFiles,
+        async (runVariant) => {
+            const r = await runParametricSweep(input.circuit, input.criteria, spec, runVariant);
+            logger.info(
+                {
+                    jobId: input.jobId,
+                    parameter: r.parameter,
+                    evaluated: r.evaluated,
+                    passed: r.passed,
+                    passAll: r.passAll,
+                    clamped,
+                },
+                'Parametric sweep complete',
+            );
+            return r;
+        },
+    );
     return { ...result, runtimeMs: Date.now() - startTime, clamped };
 }

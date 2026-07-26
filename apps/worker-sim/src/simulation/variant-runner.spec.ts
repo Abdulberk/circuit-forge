@@ -42,7 +42,9 @@ const mock = <T extends (...a: never[]) => unknown>(fn: T) => fn as unknown as j
 const JOB = path.join('sim-work', 'job');
 const jp = (name: string) => path.join(JOB, name);
 const OK = { stdout: '', stderr: '', exitCode: 0, timedOut: false, spawnError: false as boolean | undefined };
-const variant = { version: '1.0', components: [], nets: [] } as unknown as Parameters<ReturnType<typeof makeVariantRunner>>[0];
+const variant = { version: '1.0', components: [], nets: [] } as unknown as Parameters<
+    ReturnType<typeof makeVariantRunner>
+>[0];
 
 beforeEach(() => {
     jest.clearAllMocks();
@@ -50,7 +52,9 @@ beforeEach(() => {
     mock(eda.sanitizeNetlist).mockReturnValue('SANITIZED');
     mock(eda.extractProbes).mockReturnValue(['v(out)']);
     mock(eda.parseSimulationOutput).mockReturnValue({ series: [{ name: 'out', points: [{ x: 0, y: 1 }] }], meta: {} });
-    mock(eda.summarizeSeries).mockImplementation((s: { name: string }) => ({ node: s.name, max: 1 } as unknown as SimMeasurement));
+    mock(eda.summarizeSeries).mockImplementation(
+        (s: { name: string }) => ({ node: s.name, max: 1 }) as unknown as SimMeasurement,
+    );
     mock(eda.parseFourierLog).mockReturnValue([{ probe: 'v(out)', thd: 1.5 }]);
     mock(eda.parseTransferFunction).mockReturnValue({ outputNode: 'out', gain: 10 });
     mock(eda.parseSpiceValue).mockReturnValue({ value: 0.01, isValid: true });
@@ -84,7 +88,9 @@ describe('makeVariantRunner — happy path', () => {
 
 describe('makeVariantRunner — every unrunnable variant returns null (= errored, never a spec pass/fail)', () => {
     it('sanitize/generate throws → null, and ngspice is never spawned', async () => {
-        mock(eda.sanitizeNetlist).mockImplementationOnce(() => { throw new Error('bad deck'); });
+        mock(eda.sanitizeNetlist).mockImplementationOnce(() => {
+            throw new Error('bad deck');
+        });
         const run = makeVariantRunner(JOB, { type: 'op' } as never);
         expect(await run(variant)).toBeNull();
         expect(executeNgspice).not.toHaveBeenCalled();
@@ -141,10 +147,7 @@ describe('makeVariantRunner — a silently-truncated transient variant is ERRORE
         const run = makeVariantRunner(JOB, { type: 'tran', stopTime: '10m' } as never);
         expect(await run(variant)).toBeNull();
         // The completeness rule is consulted with the parsed stopTime, and we bail BEFORE reducing to measurements.
-        expect(eda.assessTransientCompleteness).toHaveBeenCalledWith(
-            [{ name: 'out', points: [{ x: 0, y: 1 }] }],
-            0.01,
-        );
+        expect(eda.assessTransientCompleteness).toHaveBeenCalledWith([{ name: 'out', points: [{ x: 0, y: 1 }] }], 0.01);
         expect(eda.summarizeSeries).not.toHaveBeenCalled();
     });
 
@@ -175,7 +178,10 @@ describe('makeVariantRunner — robust scalar metrics folded PER VARIANT from th
         const run = makeVariantRunner(JOB, { type: 'op', tf: { output: 'out' } } as never);
         await run(variant);
         expect(eda.parseTransferFunction).toHaveBeenCalledWith('LISTING', 'out');
-        expect(eda.attachTransferFunction).toHaveBeenCalledWith([{ node: 'out', max: 1 }], { outputNode: 'out', gain: 10 });
+        expect(eda.attachTransferFunction).toHaveBeenCalledWith([{ node: 'out', max: 1 }], {
+            outputNode: 'out',
+            gain: 10,
+        });
         expect(eda.attachFourierThd).not.toHaveBeenCalled();
     });
 });

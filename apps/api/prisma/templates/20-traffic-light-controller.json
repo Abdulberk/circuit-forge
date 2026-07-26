@@ -1,333 +1,319 @@
 {
-  "name": "Traffic Light Controller (R/RY/G/Y)",
-  "description": "A traffic light controller: a 2-bit synchronous counter (2 D flip-flops, with an XOR for the count logic) plus decode gates sequence three LEDs through the real European cycle RED → RED+YELLOW → GREEN → YELLOW, one state per clock period, wrapping continuously. Each lit lamp draws its model-correct current (9.26/8.61/7.92mA for the red/yellow/green diode models). In real hardware the lamps would sit behind driver transistors — here the logic drives them directly for clarity. (ngspice-validated: all 9 windows match the decode truth table exactly.)",
-  "tags": [
-    "display",
-    "led",
-    "traffic-light",
-    "digital",
-    "counter",
-    "fsm",
-    "decoder"
-  ],
-  "analysisConfig": {
-    "analysis": {
-      "type": "tran",
-      "stopTime": "8.5m",
-      "stepTime": "5u"
+    "name": "Traffic Light Controller (R/RY/G/Y)",
+    "description": "A traffic light controller: a 2-bit synchronous counter (2 D flip-flops, with an XOR for the count logic) plus decode gates sequence three LEDs through the real European cycle RED → RED+YELLOW → GREEN → YELLOW, one state per clock period, wrapping continuously. Each lit lamp draws its model-correct current (9.26/8.61/7.92mA for the red/yellow/green diode models). In real hardware the lamps would sit behind driver transistors — here the logic drives them directly for clarity. (ngspice-validated: all 9 windows match the decode truth table exactly.)",
+    "tags": ["display", "led", "traffic-light", "digital", "counter", "fsm", "decoder"],
+    "analysisConfig": {
+        "analysis": {
+            "type": "tran",
+            "stopTime": "8.5m",
+            "stepTime": "5u"
+        },
+        "probes": ["i(R1)", "i(R2)", "i(R3)", "v(q0)", "v(q1)"]
     },
-    "probes": [
-      "i(R1)",
-      "i(R2)",
-      "i(R3)",
-      "v(q0)",
-      "v(q1)"
-    ]
-  },
-  "circuitJson": {
-    "version": "1.0",
-    "components": [
-      {
-        "id": "vclk",
-        "type": "voltage_source",
-        "designator": "V1",
-        "value": "PULSE(0 5 0.5m 1u 1u 0.5m 1m)",
-        "pins": [
-          {
-            "pinId": "+",
-            "netId": "clk"
-          },
-          {
-            "pinId": "-",
-            "netId": "0"
-          }
-        ]
-      },
-      {
-        "id": "ff0",
-        "type": "dff",
-        "designator": "U1",
-        "pins": [
-          {
-            "pinId": "d",
-            "netId": "qb0"
-          },
-          {
-            "pinId": "clk",
-            "netId": "clk"
-          },
-          {
-            "pinId": "q",
-            "netId": "q0"
-          },
-          {
-            "pinId": "qb",
-            "netId": "qb0"
-          }
-        ]
-      },
-      {
-        "id": "ff1",
-        "type": "dff",
-        "designator": "U2",
-        "pins": [
-          {
-            "pinId": "d",
-            "netId": "d1"
-          },
-          {
-            "pinId": "clk",
-            "netId": "clk"
-          },
-          {
-            "pinId": "q",
-            "netId": "q1"
-          },
-          {
-            "pinId": "qb",
-            "netId": "qb1"
-          }
-        ]
-      },
-      {
-        "id": "gxor",
-        "type": "logic_xor",
-        "designator": "U3",
-        "pins": [
-          {
-            "pinId": "in1",
-            "netId": "q1"
-          },
-          {
-            "pinId": "in2",
-            "netId": "q0"
-          },
-          {
-            "pinId": "out",
-            "netId": "d1"
-          }
-        ]
-      },
-      {
-        "id": "gred",
-        "type": "logic_not",
-        "designator": "U4",
-        "pins": [
-          {
-            "pinId": "in1",
-            "netId": "q1"
-          },
-          {
-            "pinId": "out",
-            "netId": "red"
-          }
-        ]
-      },
-      {
-        "id": "gyel",
-        "type": "logic_buffer",
-        "designator": "U5",
-        "pins": [
-          {
-            "pinId": "in1",
-            "netId": "q0"
-          },
-          {
-            "pinId": "out",
-            "netId": "yel"
-          }
-        ]
-      },
-      {
-        "id": "ggrn",
-        "type": "logic_and",
-        "designator": "U6",
-        "pins": [
-          {
-            "pinId": "in1",
-            "netId": "q1"
-          },
-          {
-            "pinId": "in2",
-            "netId": "qb0"
-          },
-          {
-            "pinId": "out",
-            "netId": "grn"
-          }
-        ]
-      },
-      {
-        "id": "rred",
-        "type": "resistor",
-        "designator": "R1",
-        "value": "330",
-        "pins": [
-          {
-            "pinId": "1",
-            "netId": "red"
-          },
-          {
-            "pinId": "2",
-            "netId": "ared"
-          }
-        ]
-      },
-      {
-        "id": "dred",
-        "type": "diode",
-        "designator": "D1",
-        "model": "LEDRED",
-        "pins": [
-          {
-            "pinId": "anode",
-            "netId": "ared"
-          },
-          {
-            "pinId": "cathode",
-            "netId": "0"
-          }
-        ]
-      },
-      {
-        "id": "ryel",
-        "type": "resistor",
-        "designator": "R2",
-        "value": "330",
-        "pins": [
-          {
-            "pinId": "1",
-            "netId": "yel"
-          },
-          {
-            "pinId": "2",
-            "netId": "ayel"
-          }
-        ]
-      },
-      {
-        "id": "dyel",
-        "type": "diode",
-        "designator": "D2",
-        "model": "LEDYEL",
-        "pins": [
-          {
-            "pinId": "anode",
-            "netId": "ayel"
-          },
-          {
-            "pinId": "cathode",
-            "netId": "0"
-          }
-        ]
-      },
-      {
-        "id": "rgrn",
-        "type": "resistor",
-        "designator": "R3",
-        "value": "330",
-        "pins": [
-          {
-            "pinId": "1",
-            "netId": "grn"
-          },
-          {
-            "pinId": "2",
-            "netId": "agrn"
-          }
-        ]
-      },
-      {
-        "id": "dgrn",
-        "type": "diode",
-        "designator": "D3",
-        "model": "LEDGRN",
-        "pins": [
-          {
-            "pinId": "anode",
-            "netId": "agrn"
-          },
-          {
-            "pinId": "cathode",
-            "netId": "0"
-          }
-        ]
-      }
-    ],
-    "nets": [
-      {
-        "id": "clk",
-        "name": "CLK"
-      },
-      {
-        "id": "q0",
-        "name": "Q0"
-      },
-      {
-        "id": "qb0",
-        "name": "QB0"
-      },
-      {
-        "id": "q1",
-        "name": "Q1"
-      },
-      {
-        "id": "qb1",
-        "name": "QB1"
-      },
-      {
-        "id": "d1",
-        "name": "D1NET"
-      },
-      {
-        "id": "red",
-        "name": "RED"
-      },
-      {
-        "id": "yel",
-        "name": "YEL"
-      },
-      {
-        "id": "grn",
-        "name": "GRN"
-      },
-      {
-        "id": "ared",
-        "name": "ARED"
-      },
-      {
-        "id": "ayel",
-        "name": "AYEL"
-      },
-      {
-        "id": "agrn",
-        "name": "AGRN"
-      },
-      {
-        "id": "0",
-        "name": "0",
-        "isGround": true
-      }
-    ],
-    "models": [
-      {
-        "name": "LEDRED",
-        "device": "diode",
-        "body": ".model LEDRED D(IS=1e-20 N=1.8 RS=2 CJO=10p)"
-      },
-      {
-        "name": "LEDYEL",
-        "device": "diode",
-        "body": ".model LEDYEL D(IS=1e-21 N=1.9 RS=2 CJO=10p)"
-      },
-      {
-        "name": "LEDGRN",
-        "device": "diode",
-        "body": ".model LEDGRN D(IS=1e-22 N=2.0 RS=2 CJO=10p)"
-      }
-    ],
-    "metadata": {
-      "name": "Traffic Light Controller (R/RY/G/Y)"
+    "circuitJson": {
+        "version": "1.0",
+        "components": [
+            {
+                "id": "vclk",
+                "type": "voltage_source",
+                "designator": "V1",
+                "value": "PULSE(0 5 0.5m 1u 1u 0.5m 1m)",
+                "pins": [
+                    {
+                        "pinId": "+",
+                        "netId": "clk"
+                    },
+                    {
+                        "pinId": "-",
+                        "netId": "0"
+                    }
+                ]
+            },
+            {
+                "id": "ff0",
+                "type": "dff",
+                "designator": "U1",
+                "pins": [
+                    {
+                        "pinId": "d",
+                        "netId": "qb0"
+                    },
+                    {
+                        "pinId": "clk",
+                        "netId": "clk"
+                    },
+                    {
+                        "pinId": "q",
+                        "netId": "q0"
+                    },
+                    {
+                        "pinId": "qb",
+                        "netId": "qb0"
+                    }
+                ]
+            },
+            {
+                "id": "ff1",
+                "type": "dff",
+                "designator": "U2",
+                "pins": [
+                    {
+                        "pinId": "d",
+                        "netId": "d1"
+                    },
+                    {
+                        "pinId": "clk",
+                        "netId": "clk"
+                    },
+                    {
+                        "pinId": "q",
+                        "netId": "q1"
+                    },
+                    {
+                        "pinId": "qb",
+                        "netId": "qb1"
+                    }
+                ]
+            },
+            {
+                "id": "gxor",
+                "type": "logic_xor",
+                "designator": "U3",
+                "pins": [
+                    {
+                        "pinId": "in1",
+                        "netId": "q1"
+                    },
+                    {
+                        "pinId": "in2",
+                        "netId": "q0"
+                    },
+                    {
+                        "pinId": "out",
+                        "netId": "d1"
+                    }
+                ]
+            },
+            {
+                "id": "gred",
+                "type": "logic_not",
+                "designator": "U4",
+                "pins": [
+                    {
+                        "pinId": "in1",
+                        "netId": "q1"
+                    },
+                    {
+                        "pinId": "out",
+                        "netId": "red"
+                    }
+                ]
+            },
+            {
+                "id": "gyel",
+                "type": "logic_buffer",
+                "designator": "U5",
+                "pins": [
+                    {
+                        "pinId": "in1",
+                        "netId": "q0"
+                    },
+                    {
+                        "pinId": "out",
+                        "netId": "yel"
+                    }
+                ]
+            },
+            {
+                "id": "ggrn",
+                "type": "logic_and",
+                "designator": "U6",
+                "pins": [
+                    {
+                        "pinId": "in1",
+                        "netId": "q1"
+                    },
+                    {
+                        "pinId": "in2",
+                        "netId": "qb0"
+                    },
+                    {
+                        "pinId": "out",
+                        "netId": "grn"
+                    }
+                ]
+            },
+            {
+                "id": "rred",
+                "type": "resistor",
+                "designator": "R1",
+                "value": "330",
+                "pins": [
+                    {
+                        "pinId": "1",
+                        "netId": "red"
+                    },
+                    {
+                        "pinId": "2",
+                        "netId": "ared"
+                    }
+                ]
+            },
+            {
+                "id": "dred",
+                "type": "diode",
+                "designator": "D1",
+                "model": "LEDRED",
+                "pins": [
+                    {
+                        "pinId": "anode",
+                        "netId": "ared"
+                    },
+                    {
+                        "pinId": "cathode",
+                        "netId": "0"
+                    }
+                ]
+            },
+            {
+                "id": "ryel",
+                "type": "resistor",
+                "designator": "R2",
+                "value": "330",
+                "pins": [
+                    {
+                        "pinId": "1",
+                        "netId": "yel"
+                    },
+                    {
+                        "pinId": "2",
+                        "netId": "ayel"
+                    }
+                ]
+            },
+            {
+                "id": "dyel",
+                "type": "diode",
+                "designator": "D2",
+                "model": "LEDYEL",
+                "pins": [
+                    {
+                        "pinId": "anode",
+                        "netId": "ayel"
+                    },
+                    {
+                        "pinId": "cathode",
+                        "netId": "0"
+                    }
+                ]
+            },
+            {
+                "id": "rgrn",
+                "type": "resistor",
+                "designator": "R3",
+                "value": "330",
+                "pins": [
+                    {
+                        "pinId": "1",
+                        "netId": "grn"
+                    },
+                    {
+                        "pinId": "2",
+                        "netId": "agrn"
+                    }
+                ]
+            },
+            {
+                "id": "dgrn",
+                "type": "diode",
+                "designator": "D3",
+                "model": "LEDGRN",
+                "pins": [
+                    {
+                        "pinId": "anode",
+                        "netId": "agrn"
+                    },
+                    {
+                        "pinId": "cathode",
+                        "netId": "0"
+                    }
+                ]
+            }
+        ],
+        "nets": [
+            {
+                "id": "clk",
+                "name": "CLK"
+            },
+            {
+                "id": "q0",
+                "name": "Q0"
+            },
+            {
+                "id": "qb0",
+                "name": "QB0"
+            },
+            {
+                "id": "q1",
+                "name": "Q1"
+            },
+            {
+                "id": "qb1",
+                "name": "QB1"
+            },
+            {
+                "id": "d1",
+                "name": "D1NET"
+            },
+            {
+                "id": "red",
+                "name": "RED"
+            },
+            {
+                "id": "yel",
+                "name": "YEL"
+            },
+            {
+                "id": "grn",
+                "name": "GRN"
+            },
+            {
+                "id": "ared",
+                "name": "ARED"
+            },
+            {
+                "id": "ayel",
+                "name": "AYEL"
+            },
+            {
+                "id": "agrn",
+                "name": "AGRN"
+            },
+            {
+                "id": "0",
+                "name": "0",
+                "isGround": true
+            }
+        ],
+        "models": [
+            {
+                "name": "LEDRED",
+                "device": "diode",
+                "body": ".model LEDRED D(IS=1e-20 N=1.8 RS=2 CJO=10p)"
+            },
+            {
+                "name": "LEDYEL",
+                "device": "diode",
+                "body": ".model LEDYEL D(IS=1e-21 N=1.9 RS=2 CJO=10p)"
+            },
+            {
+                "name": "LEDGRN",
+                "device": "diode",
+                "body": ".model LEDGRN D(IS=1e-22 N=2.0 RS=2 CJO=10p)"
+            }
+        ],
+        "metadata": {
+            "name": "Traffic Light Controller (R/RY/G/Y)"
+        }
     }
-  }
 }

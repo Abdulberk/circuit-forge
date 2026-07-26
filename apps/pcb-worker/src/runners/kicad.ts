@@ -53,7 +53,11 @@ export function makeNativeKicad(opts: KicadOpts = {}): NativeKicad {
 
     // async + `await fn(dir)` is load-bearing: without the await the finally would rmSync the temp dir while
     // kicad-cli is still writing into it (the child now runs off-thread via execFileAsync).
-    const withBoard = async <T>(kicadPcb: string, kicadPro: string | undefined, fn: (dir: string) => Promise<T>): Promise<T> => {
+    const withBoard = async <T>(
+        kicadPcb: string,
+        kicadPro: string | undefined,
+        fn: (dir: string) => Promise<T>,
+    ): Promise<T> => {
         const dir = mkdtempSync(join(baseDir, 'kc-'));
         try {
             writeFileSync(join(dir, 'b.kicad_pcb'), kicadPcb);
@@ -71,7 +75,18 @@ export function makeNativeKicad(opts: KicadOpts = {}): NativeKicad {
             try {
                 await execFileAsync(
                     cli,
-                    ['pcb', 'drc', '--refill-zones', '--exit-code-violations', '--severity-error', '--format', 'json', '--output', out, join(dir, 'b.kicad_pcb')],
+                    [
+                        'pcb',
+                        'drc',
+                        '--refill-zones',
+                        '--exit-code-violations',
+                        '--severity-error',
+                        '--format',
+                        'json',
+                        '--output',
+                        out,
+                        join(dir, 'b.kicad_pcb'),
+                    ],
                     { timeout: timeoutMs, maxBuffer: MAX_BUFFER },
                 );
                 clean = true;
@@ -85,7 +100,12 @@ export function makeNativeKicad(opts: KicadOpts = {}): NativeKicad {
             // to drcReport's (only --exit-code-violations differs, which sets the exit code, not the output). Cache
             // it best-effort so drcReport can skip a redundant run — a parse failure must NEVER flip the verdict.
             try {
-                if (existsSync(out)) lastDrc = { board: kicadPcb, pro: kicadPro, report: JSON.parse(readFileSync(out, 'utf8')) as KicadDrcJson };
+                if (existsSync(out))
+                    lastDrc = {
+                        board: kicadPcb,
+                        pro: kicadPro,
+                        report: JSON.parse(readFileSync(out, 'utf8')) as KicadDrcJson,
+                    };
             } catch {
                 lastDrc = null;
             }
@@ -100,15 +120,30 @@ export function makeNativeKicad(opts: KicadOpts = {}): NativeKicad {
         }
         return withBoard(kicadPcb, kicadPro, async (dir) => {
             const out = join(dir, 'd.json');
-            await execFileAsync(cli, ['pcb', 'drc', '--refill-zones', '--severity-error', '--format', 'json', '--output', out, join(dir, 'b.kicad_pcb')], {
-                timeout: timeoutMs,
-                maxBuffer: MAX_BUFFER,
-            });
+            await execFileAsync(
+                cli,
+                [
+                    'pcb',
+                    'drc',
+                    '--refill-zones',
+                    '--severity-error',
+                    '--format',
+                    'json',
+                    '--output',
+                    out,
+                    join(dir, 'b.kicad_pcb'),
+                ],
+                {
+                    timeout: timeoutMs,
+                    maxBuffer: MAX_BUFFER,
+                },
+            );
             // FAIL-CLOSED: this report is the manufacturability gate's sole authority (drcReport runs WITHOUT
             // --exit-code-violations, so a clean exit carries no verdict — only the file does). If kicad-cli
             // exits 0 but writes no report, we must NOT synthesize an empty (=clean) one: that would ship the
             // fab bundle for a board DRC never actually checked. Throw so the job fails instead of over-claiming.
-            if (!existsSync(out)) throw new Error('kicad-cli DRC produced no report file — refusing to assume the board is DRC-clean');
+            if (!existsSync(out))
+                throw new Error('kicad-cli DRC produced no report file — refusing to assume the board is DRC-clean');
             const report = JSON.parse(readFileSync(out, 'utf8')) as KicadDrcJson;
             lastDrc = { board: kicadPcb, pro: kicadPro, report };
             return report;
@@ -120,7 +155,20 @@ export function makeNativeKicad(opts: KicadOpts = {}): NativeKicad {
             const out = join(dir, 'b.glb');
             await execFileAsync(
                 cli,
-                ['pcb', 'export', 'glb', '--include-tracks', '--include-pads', '--include-zones', '--include-silkscreen', '--include-soldermask', '--subst-models', '--output', out, join(dir, 'b.kicad_pcb')],
+                [
+                    'pcb',
+                    'export',
+                    'glb',
+                    '--include-tracks',
+                    '--include-pads',
+                    '--include-zones',
+                    '--include-silkscreen',
+                    '--include-soldermask',
+                    '--subst-models',
+                    '--output',
+                    out,
+                    join(dir, 'b.kicad_pcb'),
+                ],
                 { timeout: timeoutMs, maxBuffer: MAX_BUFFER },
             );
             return readFileSync(out);
@@ -141,11 +189,10 @@ export function makeNativeKicad(opts: KicadOpts = {}): NativeKicad {
                 ['pcb', 'export', 'gerbers', '--check-zones', '--output', out, join(dir, 'b.kicad_pcb')],
                 { timeout: timeoutMs, maxBuffer: MAX_BUFFER },
             );
-            await execFileAsync(
-                cli,
-                ['pcb', 'export', 'drill', '--output', `${out}/`, join(dir, 'b.kicad_pcb')],
-                { timeout: timeoutMs, maxBuffer: MAX_BUFFER },
-            );
+            await execFileAsync(cli, ['pcb', 'export', 'drill', '--output', `${out}/`, join(dir, 'b.kicad_pcb')], {
+                timeout: timeoutMs,
+                maxBuffer: MAX_BUFFER,
+            });
             const layers: Record<string, string> = {};
             let drill = '';
             for (const f of readdirSync(out)) {

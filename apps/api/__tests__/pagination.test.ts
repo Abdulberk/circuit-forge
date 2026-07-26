@@ -14,17 +14,41 @@ import { PrismaService } from '../src/prisma/prisma.service';
 const circuit = {
     version: '1.0',
     components: [
-        { id: 'V1', type: 'voltage_source', designator: 'V1', value: 'DC 5', pins: [{ pinId: '+', netId: 'in' }, { pinId: '-', netId: '0' }] },
-        { id: 'R1', type: 'resistor', designator: 'R1', value: '1k', pins: [{ pinId: '1', netId: 'in' }, { pinId: '2', netId: '0' }] },
+        {
+            id: 'V1',
+            type: 'voltage_source',
+            designator: 'V1',
+            value: 'DC 5',
+            pins: [
+                { pinId: '+', netId: 'in' },
+                { pinId: '-', netId: '0' },
+            ],
+        },
+        {
+            id: 'R1',
+            type: 'resistor',
+            designator: 'R1',
+            value: '1k',
+            pins: [
+                { pinId: '1', netId: 'in' },
+                { pinId: '2', netId: '0' },
+            ],
+        },
     ],
-    nets: [{ id: 'in', name: 'in' }, { id: '0', name: '0', isGround: true }],
+    nets: [
+        { id: 'in', name: 'in' },
+        { id: '0', name: '0', isGround: true },
+    ],
 };
 
 describe('Pagination (list endpoints)', () => {
     let app: INestApplication;
     let prisma: PrismaService;
     let server: import('http').Server;
-    let token = '', userId = '', orgId = '', projectId = '';
+    let token = '',
+        userId = '',
+        orgId = '',
+        projectId = '';
 
     beforeAll(async () => {
         const moduleFixture: TestingModule = await Test.createTestingModule({ imports: [AppModule] }).compile();
@@ -34,14 +58,33 @@ describe('Pagination (list endpoints)', () => {
         prisma = app.get(PrismaService);
         server = app.getHttpServer();
 
-        const reg = await request(server).post('/auth/register').send({ email: `page-${Date.now()}@test.com`, password: 'SecurePassword123!', name: 'Pager' }).expect(201);
+        const reg = await request(server)
+            .post('/auth/register')
+            .send({ email: `page-${Date.now()}@test.com`, password: 'SecurePassword123!', name: 'Pager' })
+            .expect(201);
         token = reg.body.accessToken;
         userId = reg.body.user.id;
-        orgId = (await request(server).post('/orgs').set('Authorization', `Bearer ${token}`).send({ name: 'Page Org' }).expect(201)).body.id;
-        projectId = (await request(server).post(`/orgs/${orgId}/projects`).set('Authorization', `Bearer ${token}`).send({ name: 'Page Proj' }).expect(201)).body.id;
+        orgId = (
+            await request(server)
+                .post('/orgs')
+                .set('Authorization', `Bearer ${token}`)
+                .send({ name: 'Page Org' })
+                .expect(201)
+        ).body.id;
+        projectId = (
+            await request(server)
+                .post(`/orgs/${orgId}/projects`)
+                .set('Authorization', `Bearer ${token}`)
+                .send({ name: 'Page Proj' })
+                .expect(201)
+        ).body.id;
         // 3 versions → v1, v2, v3.
         for (let i = 0; i < 3; i++) {
-            await request(server).post(`/projects/${projectId}/versions`).set('Authorization', `Bearer ${token}`).send({ circuitJson: circuit, uiJson: {} }).expect(201);
+            await request(server)
+                .post(`/projects/${projectId}/versions`)
+                .set('Authorization', `Bearer ${token}`)
+                .send({ circuitJson: circuit, uiJson: {} })
+                .expect(201);
         }
     });
 
@@ -54,7 +97,8 @@ describe('Pagination (list endpoints)', () => {
         await app.close();
     });
 
-    const list = (q = '') => request(server).get(`/projects/${projectId}/versions${q}`).set('Authorization', `Bearer ${token}`);
+    const list = (q = '') =>
+        request(server).get(`/projects/${projectId}/versions${q}`).set('Authorization', `Bearer ${token}`);
 
     it('default (no params) → bounded envelope with the default limit, all 3 items, hasMore=false', async () => {
         const r = await list().expect(200);
@@ -88,7 +132,10 @@ describe('Pagination (list endpoints)', () => {
     });
 
     it('the projects list is paginated too (envelope on a second endpoint)', async () => {
-        const r = await request(server).get(`/orgs/${orgId}/projects`).set('Authorization', `Bearer ${token}`).expect(200);
+        const r = await request(server)
+            .get(`/orgs/${orgId}/projects`)
+            .set('Authorization', `Bearer ${token}`)
+            .expect(200);
         expect(r.body).toMatchObject({ total: 1, offset: 0, hasMore: false });
         expect(r.body.items).toHaveLength(1);
         expect(r.body.items[0].id).toBe(projectId);

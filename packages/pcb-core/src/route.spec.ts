@@ -1,5 +1,12 @@
 import { JLC_FAB_PROFILE } from './fab-profile';
-import { applyFabRulesToDsn, applyPerNetWidths, stripRouting, enlargeBoard, findFullyUnroutedNets, fixPlaceRotations } from './route';
+import {
+    applyFabRulesToDsn,
+    applyPerNetWidths,
+    stripRouting,
+    enlargeBoard,
+    findFullyUnroutedNets,
+    fixPlaceRotations,
+} from './route';
 
 // applyFabRulesToDsn is a pure string transform (no ESM dsn-converter), so it lives in jest; exportDsn
 // and mergeSes exercise dsn-converter and are covered by the `pnpm test:layout` harness instead.
@@ -183,7 +190,8 @@ describe('findFullyUnroutedNets — the fast Docker-free "whole net dropped" pre
     });
 
     it('reports none when every routable net has at least one wire (single-pin pseudo-nets ignored)', () => {
-        const ses = '(session (routes (network_out (net "GND_source_net_1" (wire ...)) (net "OUT_source_net_0" (wire ...)))))';
+        const ses =
+            '(session (routes (network_out (net "GND_source_net_1" (wire ...)) (net "OUT_source_net_0" (wire ...)))))';
         expect(findFullyUnroutedNets(dsn, ses)).toEqual([]);
     });
 });
@@ -204,7 +212,10 @@ describe('stripRouting — drop copper geometry so an external router starts fro
 
 describe('enlargeBoard — symmetric routing headroom without moving the placement', () => {
     it('grows the rectangular pcb_board by 2×margin on each dimension, keeps center', () => {
-        const board = [{ type: 'pcb_board', width: 38, height: 28, center: { x: 0, y: 0 } }, { type: 'pcb_smtpad', x: 5 }] as never[];
+        const board = [
+            { type: 'pcb_board', width: 38, height: 28, center: { x: 0, y: 0 } },
+            { type: 'pcb_smtpad', x: 5 },
+        ] as never[];
         const out = enlargeBoard(board, 6) as Array<{ type: string; width?: number; height?: number; x?: number }>;
         expect(out[0]).toMatchObject({ width: 50, height: 40, center: { x: 0, y: 0 } });
         expect(out[1]).toMatchObject({ type: 'pcb_smtpad', x: 5 }); // pads untouched

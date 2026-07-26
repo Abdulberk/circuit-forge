@@ -8,9 +8,21 @@
  * DIAGNOSIS + remedy ladder + solver-option injection are kept REAL so the ladder walk is exercised truthfully.
  */
 jest.mock('child_process', () => ({ spawn: jest.fn() }));
-jest.mock('fs/promises', () => ({ mkdir: jest.fn(), writeFile: jest.fn(), readFile: jest.fn(), rm: jest.fn(), chmod: jest.fn() }));
+jest.mock('fs/promises', () => ({
+    mkdir: jest.fn(),
+    writeFile: jest.fn(),
+    readFile: jest.fn(),
+    rm: jest.fn(),
+    chmod: jest.fn(),
+}));
 jest.mock('../config', () => ({
-    config: { SIM_TEMP_DIR: 'sim-tmp', SIM_MAX_OUTPUT_BYTES: 1000, SIM_TIMEOUT_MS: 100000, NGSPICE_PATH: 'ngspice', SIM_SANDBOX: 'none' },
+    config: {
+        SIM_TEMP_DIR: 'sim-tmp',
+        SIM_MAX_OUTPUT_BYTES: 1000,
+        SIM_TIMEOUT_MS: 100000,
+        NGSPICE_PATH: 'ngspice',
+        SIM_SANDBOX: 'none',
+    },
 }));
 jest.mock('../logger', () => ({ logger: { info: jest.fn(), warn: jest.fn(), error: jest.fn(), debug: jest.fn() } }));
 // Sandbox wrapping is Linux-only plumbing — run ngspice "directly" so the fake spawn sees the plain command.
@@ -47,8 +59,17 @@ let outcomes: Outcome[] = []; // one per spawn call; the last is reused if more 
 let csv: string | Error = 'CSVDATA'; // what reading output.csv yields (an Error → rejected read = "no output")
 let listing = ''; // what reading stdout.log yields
 
-const series = (lastX: number) => ({ meta: { analysisType: 'x', pointsCount: 1 }, series: [{ name: 'out', points: [{ x: lastX, y: 1 }] }] });
-const mkInput = (over: Record<string, unknown> = {}) => ({ jobId: 'j1', netlist: '* deck\n.end', probeNames: ['v(out)'], analysisType: 'op', ...over });
+const series = (lastX: number) => ({
+    meta: { analysisType: 'x', pointsCount: 1 },
+    series: [{ name: 'out', points: [{ x: lastX, y: 1 }] }],
+});
+const mkInput = (over: Record<string, unknown> = {}) => ({
+    jobId: 'j1',
+    netlist: '* deck\n.end',
+    probeNames: ['v(out)'],
+    analysisType: 'op',
+    ...over,
+});
 
 beforeEach(() => {
     jest.clearAllMocks();
@@ -62,12 +83,19 @@ beforeEach(() => {
     mock(fs.rm).mockResolvedValue(undefined);
     mock(fs.readFile).mockImplementation((p: string) =>
         String(p).endsWith('output.csv')
-            ? (csv instanceof Error ? Promise.reject(csv) : Promise.resolve(csv))
+            ? csv instanceof Error
+                ? Promise.reject(csv)
+                : Promise.resolve(csv)
             : Promise.resolve(listing),
     );
     mock(spawn).mockImplementation(() => {
         const o = outcomes.length > 1 ? outcomes.shift()! : (outcomes[0] ?? { code: 0 });
-        const child = new EventEmitter() as unknown as { stdout: EventEmitter; stderr: EventEmitter; pid: number; kill: jest.Mock } & EventEmitter;
+        const child = new EventEmitter() as unknown as {
+            stdout: EventEmitter;
+            stderr: EventEmitter;
+            pid: number;
+            kill: jest.Mock;
+        } & EventEmitter;
         child.stdout = new EventEmitter();
         child.stderr = new EventEmitter();
         child.pid = 111;

@@ -37,7 +37,9 @@ async function bootstrap() {
     const trustProxy = process.env.TRUST_PROXY;
     if (trustProxy) {
         const hops = Number(trustProxy);
-        app.getHttpAdapter().getInstance().set('trust proxy', Number.isInteger(hops) && hops > 0 ? hops : true);
+        app.getHttpAdapter()
+            .getInstance()
+            .set('trust proxy', Number.isInteger(hops) && hops > 0 ? hops : true);
     }
 
     // Global validation pipe

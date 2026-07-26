@@ -64,7 +64,12 @@ describe('CircuitSimulatorService.simulateWithRemedies (Convergence Doctor)', ()
 
     it('walks the full ladder and reports unrecovered + every remedy tried when none converge', async () => {
         // op ladder has 3 steps → base + 3 retries, all failing
-        const { svc, spy } = svcWithSimulate(failed('no convergence'), failed('no convergence'), failed('no convergence'), failed('no convergence'));
+        const { svc, spy } = svcWithSimulate(
+            failed('no convergence'),
+            failed('no convergence'),
+            failed('no convergence'),
+            failed('no convergence'),
+        );
         const r = await svc.simulateWithRemedies({}, { type: 'op' });
         expect(r.simStatus).toBe('failed');
         expect(r.convergence).toMatchObject({ recovered: false, kind: 'no_convergence' });
@@ -74,7 +79,12 @@ describe('CircuitSimulatorService.simulateWithRemedies (Convergence Doctor)', ()
 
     it('merges remedies OVER the caller’s existing solver options (caller intent preserved where not overridden)', async () => {
         const { svc, spy } = svcWithSimulate(failed('Timestep too small', 'tran'), ok());
-        await svc.simulateWithRemedies({}, { type: 'tran', stopTime: '5m', stepTime: '10u', options: { abstol: '1e-7' } } as never);
+        await svc.simulateWithRemedies({}, {
+            type: 'tran',
+            stopTime: '5m',
+            stepTime: '10u',
+            options: { abstol: '1e-7' },
+        } as never);
         const retryAnalysis = spy.mock.calls[1]![1] as { stopTime?: string; options?: Record<string, unknown> };
         expect(retryAnalysis.stopTime).toBe('5m'); // base analysis preserved
         expect(retryAnalysis.options).toMatchObject({ abstol: '1e-7', itl4: 500 }); // caller's abstol kept + remedy added
@@ -82,7 +92,13 @@ describe('CircuitSimulatorService.simulateWithRemedies (Convergence Doctor)', ()
 
     it('stops the ladder (does not block on every remedy) when a retry is skipped for capacity', async () => {
         // base fails convergence, first remedy retry comes back 'skipped' (host saturated)
-        const { svc, spy } = svcWithSimulate(failed('no convergence'), { simStatus: 'skipped', ercErrors: [], ercWarnings: [], measurements: [], nodeCount: 0 });
+        const { svc, spy } = svcWithSimulate(failed('no convergence'), {
+            simStatus: 'skipped',
+            ercErrors: [],
+            ercWarnings: [],
+            measurements: [],
+            nodeCount: 0,
+        });
         const r = await svc.simulateWithRemedies({}, { type: 'op' });
         expect(r.simStatus).toBe('failed');
         expect(r.convergence).toMatchObject({ recovered: false, attempts: 0 });
@@ -92,7 +108,13 @@ describe('CircuitSimulatorService.simulateWithRemedies (Convergence Doctor)', ()
     });
 
     it('skipped runs (ngspice off) pass through untouched', async () => {
-        const { svc, spy } = svcWithSimulate({ simStatus: 'skipped', ercErrors: [], ercWarnings: [], measurements: [], nodeCount: 0 });
+        const { svc, spy } = svcWithSimulate({
+            simStatus: 'skipped',
+            ercErrors: [],
+            ercWarnings: [],
+            measurements: [],
+            nodeCount: 0,
+        });
         const r = await svc.simulateWithRemedies({}, { type: 'op' });
         expect(r.simStatus).toBe('skipped');
         expect(spy).toHaveBeenCalledTimes(1);

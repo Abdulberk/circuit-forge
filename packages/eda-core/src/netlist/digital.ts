@@ -39,14 +39,34 @@ import {
  * `dff` — `clkDelay`, `setDelay`, `resetDelay`, `riseDelay`, `fallDelay`, and `ic` ("1" → Q starts HIGH).
  */
 const DIGITAL_DEVICE: Partial<Record<string, string>> = {
-    logic_and: 'd_and', logic_or: 'd_or', logic_nand: 'd_nand', logic_nor: 'd_nor',
-    logic_xor: 'd_xor', logic_xnor: 'd_xnor', logic_not: 'd_inverter', logic_buffer: 'd_buffer', dff: 'd_dff',
-    jkff: 'd_jkff', tff: 'd_tff', dlatch: 'd_dlatch', tristate: 'd_tristate',
+    logic_and: 'd_and',
+    logic_or: 'd_or',
+    logic_nand: 'd_nand',
+    logic_nor: 'd_nor',
+    logic_xor: 'd_xor',
+    logic_xnor: 'd_xnor',
+    logic_not: 'd_inverter',
+    logic_buffer: 'd_buffer',
+    dff: 'd_dff',
+    jkff: 'd_jkff',
+    tff: 'd_tff',
+    dlatch: 'd_dlatch',
+    tristate: 'd_tristate',
 };
 const DIGITAL_BASENAME: Partial<Record<string, string>> = {
-    logic_and: 'CFD_AND', logic_or: 'CFD_OR', logic_nand: 'CFD_NAND', logic_nor: 'CFD_NOR',
-    logic_xor: 'CFD_XOR', logic_xnor: 'CFD_XNOR', logic_not: 'CFD_NOT', logic_buffer: 'CFD_BUF', dff: 'CFD_DFF',
-    jkff: 'CFD_JKFF', tff: 'CFD_TFF', dlatch: 'CFD_DLATCH', tristate: 'CFD_TRI',
+    logic_and: 'CFD_AND',
+    logic_or: 'CFD_OR',
+    logic_nand: 'CFD_NAND',
+    logic_nor: 'CFD_NOR',
+    logic_xor: 'CFD_XOR',
+    logic_xnor: 'CFD_XNOR',
+    logic_not: 'CFD_NOT',
+    logic_buffer: 'CFD_BUF',
+    dff: 'CFD_DFF',
+    jkff: 'CFD_JKFF',
+    tff: 'CFD_TFF',
+    dlatch: 'CFD_DLATCH',
+    tristate: 'CFD_TRI',
 };
 const GATE_DEFAULT_PARAMS = 'rise_delay=1n fall_delay=1n input_load=0.5p';
 const DFF_DEFAULT_PARAMS = 'clk_delay=1n set_delay=1n reset_delay=1n rise_delay=1n fall_delay=1n';
@@ -176,7 +196,8 @@ function detectLogicHigh(circuit: CircuitJson, roles: Map<string, NetRoles>, ove
     for (const c of circuit.components) {
         // Independent V sources, and a voltage-form behavioral source (`V=<const>`), define a logic level.
         // (A `bsource` `I=…`, a `current_source`, or a `vcvs`/`vccs` gain carry no statically-knowable level.)
-        const isVoltageDriver = c.type === 'voltage_source' || (c.type === 'bsource' && /^\s*V\s*=/i.test(c.value ?? ''));
+        const isVoltageDriver =
+            c.type === 'voltage_source' || (c.type === 'bsource' && /^\s*V\s*=/i.test(c.value ?? ''));
         if (!isVoltageDriver) continue;
         const drivesDigital = c.pins.some((p) => {
             const r = roles.get(p.netId);

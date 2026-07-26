@@ -2,17 +2,7 @@
  * Assets Controller
  * Handles file upload and management for SPICE models
  */
-import {
-    Controller,
-    Get,
-    Post,
-    Delete,
-    Body,
-    Param,
-    Query,
-    UseGuards,
-    ParseUUIDPipe,
-} from '@nestjs/common';
+import { Controller, Get, Post, Delete, Body, Param, Query, UseGuards, ParseUUIDPipe } from '@nestjs/common';
 import { ApiTags, ApiOperation, ApiBearerAuth, ApiParam } from '@nestjs/swagger';
 
 import { CurrentUser } from '../auth/decorators/current-user.decorator';
@@ -26,7 +16,7 @@ import { PresignUploadDto, CommitAssetDto, AssetListQueryDto } from './dto';
 @UseGuards(JwtAuthGuard)
 @ApiBearerAuth()
 export class AssetsController {
-    constructor(private readonly assetsService: AssetsService) { }
+    constructor(private readonly assetsService: AssetsService) {}
 
     /**
      * Get presigned URL for uploading a model file
@@ -76,10 +66,7 @@ export class AssetsController {
     @Get('assets/:assetId')
     @ApiOperation({ summary: 'Get asset details' })
     @ApiParam({ name: 'assetId', description: 'Asset ID' })
-    async getAsset(
-        @CurrentUser() user: { id: string },
-        @Param('assetId', ParseUUIDPipe) assetId: string,
-    ) {
+    async getAsset(@CurrentUser() user: { id: string }, @Param('assetId', ParseUUIDPipe) assetId: string) {
         return this.assetsService.getAsset(assetId, user.id);
     }
 
@@ -89,10 +76,7 @@ export class AssetsController {
     @Get('assets/:assetId/download')
     @ApiOperation({ summary: 'Get presigned download URL for asset' })
     @ApiParam({ name: 'assetId', description: 'Asset ID' })
-    async getDownloadUrl(
-        @CurrentUser() user: { id: string },
-        @Param('assetId', ParseUUIDPipe) assetId: string,
-    ) {
+    async getDownloadUrl(@CurrentUser() user: { id: string }, @Param('assetId', ParseUUIDPipe) assetId: string) {
         return this.assetsService.getDownloadUrl(assetId, user.id);
     }
 
@@ -102,10 +86,7 @@ export class AssetsController {
     @Delete('assets/:assetId')
     @ApiOperation({ summary: 'Delete an asset' })
     @ApiParam({ name: 'assetId', description: 'Asset ID' })
-    async deleteAsset(
-        @CurrentUser() user: { id: string },
-        @Param('assetId', ParseUUIDPipe) assetId: string,
-    ) {
+    async deleteAsset(@CurrentUser() user: { id: string }, @Param('assetId', ParseUUIDPipe) assetId: string) {
         return this.assetsService.deleteAsset(assetId, user.id);
     }
 }

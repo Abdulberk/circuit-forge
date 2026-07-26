@@ -1,353 +1,343 @@
 {
-  "name": "Wien-Bridge Sine Oscillator (16 Hz)",
-  "description": "A classic Wien-bridge sine-wave oscillator: an op-amp non-inverting amplifier (gain ~3.2) closed around a Wien RC network (R=10k, C=1uF, f0 = 1/2πRC ≈ 16 Hz), with anti-parallel diode pairs softly limiting the gain for amplitude stabilization. IMPORTANT: a symmetric oscillator sits at a perfect equilibrium in simulation — run the included analysisConfig (transient with an initialConditions seed on the np node) and it self-starts into a sustained ±1.72V sine at ~15.8 Hz, stable to 5 significant figures. (Validated on ngspice.)",
-  "tags": [
-    "oscillator",
-    "wien-bridge",
-    "sine",
-    "opamp",
-    "analog",
-    "advanced"
-  ],
-  "analysisConfig": {
-    "analysis": {
-      "type": "tran",
-      "stopTime": "0.8",
-      "stepTime": "50u",
-      "initialConditions": {
-        "np": 0.5
-      }
+    "name": "Wien-Bridge Sine Oscillator (16 Hz)",
+    "description": "A classic Wien-bridge sine-wave oscillator: an op-amp non-inverting amplifier (gain ~3.2) closed around a Wien RC network (R=10k, C=1uF, f0 = 1/2πRC ≈ 16 Hz), with anti-parallel diode pairs softly limiting the gain for amplitude stabilization. IMPORTANT: a symmetric oscillator sits at a perfect equilibrium in simulation — run the included analysisConfig (transient with an initialConditions seed on the np node) and it self-starts into a sustained ±1.72V sine at ~15.8 Hz, stable to 5 significant figures. (Validated on ngspice.)",
+    "tags": ["oscillator", "wien-bridge", "sine", "opamp", "analog", "advanced"],
+    "analysisConfig": {
+        "analysis": {
+            "type": "tran",
+            "stopTime": "0.8",
+            "stepTime": "50u",
+            "initialConditions": {
+                "np": 0.5
+            }
+        },
+        "probes": ["v(out)", "v(np)"]
     },
-    "probes": [
-      "v(out)",
-      "v(np)"
-    ]
-  },
-  "circuitJson": {
-    "version": "1.0",
-    "components": [
-      {
-        "id": "U1",
-        "type": "subckt",
-        "designator": "U1",
-        "model": "OPAMPGEN",
-        "pins": [
-          {
-            "pinId": "out",
-            "netId": "out"
-          },
-          {
-            "pinId": "in+",
-            "netId": "np"
-          },
-          {
-            "pinId": "in-",
-            "netId": "nn"
-          },
-          {
-            "pinId": "vcc",
-            "netId": "vcc"
-          },
-          {
-            "pinId": "vee",
-            "netId": "vee"
-          }
-        ]
-      },
-      {
-        "id": "VCC",
-        "type": "voltage_source",
-        "designator": "V1",
-        "value": "DC 12",
-        "pins": [
-          {
-            "pinId": "+",
-            "netId": "vcc"
-          },
-          {
-            "pinId": "-",
-            "netId": "0"
-          }
-        ]
-      },
-      {
-        "id": "VEE",
-        "type": "voltage_source",
-        "designator": "V2",
-        "value": "DC -12",
-        "pins": [
-          {
-            "pinId": "+",
-            "netId": "vee"
-          },
-          {
-            "pinId": "-",
-            "netId": "0"
-          }
-        ]
-      },
-      {
-        "id": "Rs",
-        "type": "resistor",
-        "designator": "R3",
-        "value": "10k",
-        "pins": [
-          {
-            "pinId": "1",
-            "netId": "out"
-          },
-          {
-            "pinId": "2",
-            "netId": "nw"
-          }
-        ]
-      },
-      {
-        "id": "Cs",
-        "type": "capacitor",
-        "designator": "C1",
-        "value": "1u",
-        "pins": [
-          {
-            "pinId": "1",
-            "netId": "nw"
-          },
-          {
-            "pinId": "2",
-            "netId": "np"
-          }
-        ]
-      },
-      {
-        "id": "Rp",
-        "type": "resistor",
-        "designator": "R4",
-        "value": "10k",
-        "pins": [
-          {
-            "pinId": "1",
-            "netId": "np"
-          },
-          {
-            "pinId": "2",
-            "netId": "0"
-          }
-        ]
-      },
-      {
-        "id": "Cp",
-        "type": "capacitor",
-        "designator": "C2",
-        "value": "1u",
-        "pins": [
-          {
-            "pinId": "1",
-            "netId": "np"
-          },
-          {
-            "pinId": "2",
-            "netId": "0"
-          }
-        ]
-      },
-      {
-        "id": "Rg",
-        "type": "resistor",
-        "designator": "R5",
-        "value": "10k",
-        "pins": [
-          {
-            "pinId": "1",
-            "netId": "nn"
-          },
-          {
-            "pinId": "2",
-            "netId": "0"
-          }
-        ]
-      },
-      {
-        "id": "Rf",
-        "type": "resistor",
-        "designator": "R6",
-        "value": "22k",
-        "pins": [
-          {
-            "pinId": "1",
-            "netId": "nn"
-          },
-          {
-            "pinId": "2",
-            "netId": "out"
-          }
-        ]
-      },
-      {
-        "id": "Rsoft",
-        "type": "resistor",
-        "designator": "R7",
-        "value": "6.8k",
-        "pins": [
-          {
-            "pinId": "1",
-            "netId": "nn"
-          },
-          {
-            "pinId": "2",
-            "netId": "nx"
-          }
-        ]
-      },
-      {
-        "id": "D1",
-        "type": "diode",
-        "designator": "D1",
-        "model": "DCLAMP",
-        "pins": [
-          {
-            "pinId": "anode",
-            "netId": "nx"
-          },
-          {
-            "pinId": "cathode",
-            "netId": "nya"
-          }
-        ]
-      },
-      {
-        "id": "D3",
-        "type": "diode",
-        "designator": "D3",
-        "model": "DCLAMP",
-        "pins": [
-          {
-            "pinId": "anode",
-            "netId": "nya"
-          },
-          {
-            "pinId": "cathode",
-            "netId": "out"
-          }
-        ]
-      },
-      {
-        "id": "D2",
-        "type": "diode",
-        "designator": "D2",
-        "model": "DCLAMP",
-        "pins": [
-          {
-            "pinId": "anode",
-            "netId": "out"
-          },
-          {
-            "pinId": "cathode",
-            "netId": "nyb"
-          }
-        ]
-      },
-      {
-        "id": "D4",
-        "type": "diode",
-        "designator": "D4",
-        "model": "DCLAMP",
-        "pins": [
-          {
-            "pinId": "anode",
-            "netId": "nyb"
-          },
-          {
-            "pinId": "cathode",
-            "netId": "nx"
-          }
-        ]
-      },
-      {
-        "id": "Rb1",
-        "type": "resistor",
-        "designator": "Rb1",
-        "value": "1Meg",
-        "pins": [
-          {
-            "pinId": "1",
-            "netId": "nya"
-          },
-          {
-            "pinId": "2",
-            "netId": "nn"
-          }
-        ]
-      },
-      {
-        "id": "Rb2",
-        "type": "resistor",
-        "designator": "Rb2",
-        "value": "1Meg",
-        "pins": [
-          {
-            "pinId": "1",
-            "netId": "nyb"
-          },
-          {
-            "pinId": "2",
-            "netId": "nn"
-          }
-        ]
-      }
-    ],
-    "nets": [
-      {
-        "id": "0",
-        "name": "GND",
-        "isGround": true
-      },
-      {
-        "id": "vcc",
-        "name": "VCC"
-      },
-      {
-        "id": "vee",
-        "name": "VEE"
-      },
-      {
-        "id": "out",
-        "name": "OUT"
-      },
-      {
-        "id": "np",
-        "name": "NP"
-      },
-      {
-        "id": "nw",
-        "name": "NW"
-      },
-      {
-        "id": "nn",
-        "name": "NN"
-      },
-      {
-        "id": "nx",
-        "name": "NX"
-      },
-      {
-        "id": "nya",
-        "name": "NYA"
-      },
-      {
-        "id": "nyb",
-        "name": "NYB"
-      }
-    ],
-    "models": [
-      {
-        "name": "DCLAMP",
-        "device": "diode",
-        "body": ".model DCLAMP D(IS=1e-14 N=1 RS=0.5)"
-      }
-    ],
-    "metadata": {
-      "name": "Wien-Bridge Sine Oscillator (16 Hz)",
-      "description": "Op-amp Wien bridge, 16 Hz, diode-stabilized"
+    "circuitJson": {
+        "version": "1.0",
+        "components": [
+            {
+                "id": "U1",
+                "type": "subckt",
+                "designator": "U1",
+                "model": "OPAMPGEN",
+                "pins": [
+                    {
+                        "pinId": "out",
+                        "netId": "out"
+                    },
+                    {
+                        "pinId": "in+",
+                        "netId": "np"
+                    },
+                    {
+                        "pinId": "in-",
+                        "netId": "nn"
+                    },
+                    {
+                        "pinId": "vcc",
+                        "netId": "vcc"
+                    },
+                    {
+                        "pinId": "vee",
+                        "netId": "vee"
+                    }
+                ]
+            },
+            {
+                "id": "VCC",
+                "type": "voltage_source",
+                "designator": "V1",
+                "value": "DC 12",
+                "pins": [
+                    {
+                        "pinId": "+",
+                        "netId": "vcc"
+                    },
+                    {
+                        "pinId": "-",
+                        "netId": "0"
+                    }
+                ]
+            },
+            {
+                "id": "VEE",
+                "type": "voltage_source",
+                "designator": "V2",
+                "value": "DC -12",
+                "pins": [
+                    {
+                        "pinId": "+",
+                        "netId": "vee"
+                    },
+                    {
+                        "pinId": "-",
+                        "netId": "0"
+                    }
+                ]
+            },
+            {
+                "id": "Rs",
+                "type": "resistor",
+                "designator": "R3",
+                "value": "10k",
+                "pins": [
+                    {
+                        "pinId": "1",
+                        "netId": "out"
+                    },
+                    {
+                        "pinId": "2",
+                        "netId": "nw"
+                    }
+                ]
+            },
+            {
+                "id": "Cs",
+                "type": "capacitor",
+                "designator": "C1",
+                "value": "1u",
+                "pins": [
+                    {
+                        "pinId": "1",
+                        "netId": "nw"
+                    },
+                    {
+                        "pinId": "2",
+                        "netId": "np"
+                    }
+                ]
+            },
+            {
+                "id": "Rp",
+                "type": "resistor",
+                "designator": "R4",
+                "value": "10k",
+                "pins": [
+                    {
+                        "pinId": "1",
+                        "netId": "np"
+                    },
+                    {
+                        "pinId": "2",
+                        "netId": "0"
+                    }
+                ]
+            },
+            {
+                "id": "Cp",
+                "type": "capacitor",
+                "designator": "C2",
+                "value": "1u",
+                "pins": [
+                    {
+                        "pinId": "1",
+                        "netId": "np"
+                    },
+                    {
+                        "pinId": "2",
+                        "netId": "0"
+                    }
+                ]
+            },
+            {
+                "id": "Rg",
+                "type": "resistor",
+                "designator": "R5",
+                "value": "10k",
+                "pins": [
+                    {
+                        "pinId": "1",
+                        "netId": "nn"
+                    },
+                    {
+                        "pinId": "2",
+                        "netId": "0"
+                    }
+                ]
+            },
+            {
+                "id": "Rf",
+                "type": "resistor",
+                "designator": "R6",
+                "value": "22k",
+                "pins": [
+                    {
+                        "pinId": "1",
+                        "netId": "nn"
+                    },
+                    {
+                        "pinId": "2",
+                        "netId": "out"
+                    }
+                ]
+            },
+            {
+                "id": "Rsoft",
+                "type": "resistor",
+                "designator": "R7",
+                "value": "6.8k",
+                "pins": [
+                    {
+                        "pinId": "1",
+                        "netId": "nn"
+                    },
+                    {
+                        "pinId": "2",
+                        "netId": "nx"
+                    }
+                ]
+            },
+            {
+                "id": "D1",
+                "type": "diode",
+                "designator": "D1",
+                "model": "DCLAMP",
+                "pins": [
+                    {
+                        "pinId": "anode",
+                        "netId": "nx"
+                    },
+                    {
+                        "pinId": "cathode",
+                        "netId": "nya"
+                    }
+                ]
+            },
+            {
+                "id": "D3",
+                "type": "diode",
+                "designator": "D3",
+                "model": "DCLAMP",
+                "pins": [
+                    {
+                        "pinId": "anode",
+                        "netId": "nya"
+                    },
+                    {
+                        "pinId": "cathode",
+                        "netId": "out"
+                    }
+                ]
+            },
+            {
+                "id": "D2",
+                "type": "diode",
+                "designator": "D2",
+                "model": "DCLAMP",
+                "pins": [
+                    {
+                        "pinId": "anode",
+                        "netId": "out"
+                    },
+                    {
+                        "pinId": "cathode",
+                        "netId": "nyb"
+                    }
+                ]
+            },
+            {
+                "id": "D4",
+                "type": "diode",
+                "designator": "D4",
+                "model": "DCLAMP",
+                "pins": [
+                    {
+                        "pinId": "anode",
+                        "netId": "nyb"
+                    },
+                    {
+                        "pinId": "cathode",
+                        "netId": "nx"
+                    }
+                ]
+            },
+            {
+                "id": "Rb1",
+                "type": "resistor",
+                "designator": "Rb1",
+                "value": "1Meg",
+                "pins": [
+                    {
+                        "pinId": "1",
+                        "netId": "nya"
+                    },
+                    {
+                        "pinId": "2",
+                        "netId": "nn"
+                    }
+                ]
+            },
+            {
+                "id": "Rb2",
+                "type": "resistor",
+                "designator": "Rb2",
+                "value": "1Meg",
+                "pins": [
+                    {
+                        "pinId": "1",
+                        "netId": "nyb"
+                    },
+                    {
+                        "pinId": "2",
+                        "netId": "nn"
+                    }
+                ]
+            }
+        ],
+        "nets": [
+            {
+                "id": "0",
+                "name": "GND",
+                "isGround": true
+            },
+            {
+                "id": "vcc",
+                "name": "VCC"
+            },
+            {
+                "id": "vee",
+                "name": "VEE"
+            },
+            {
+                "id": "out",
+                "name": "OUT"
+            },
+            {
+                "id": "np",
+                "name": "NP"
+            },
+            {
+                "id": "nw",
+                "name": "NW"
+            },
+            {
+                "id": "nn",
+                "name": "NN"
+            },
+            {
+                "id": "nx",
+                "name": "NX"
+            },
+            {
+                "id": "nya",
+                "name": "NYA"
+            },
+            {
+                "id": "nyb",
+                "name": "NYB"
+            }
+        ],
+        "models": [
+            {
+                "name": "DCLAMP",
+                "device": "diode",
+                "body": ".model DCLAMP D(IS=1e-14 N=1 RS=0.5)"
+            }
+        ],
+        "metadata": {
+            "name": "Wien-Bridge Sine Oscillator (16 Hz)",
+            "description": "Op-amp Wien bridge, 16 Hz, diode-stabilized"
+        }
     }
-  }
 }

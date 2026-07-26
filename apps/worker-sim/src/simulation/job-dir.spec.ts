@@ -4,7 +4,9 @@
  * the batch suffix, perms are loosened ONLY in legacy two-user mode, shared model files are written once, and the
  * dir is torn down in a `finally` even when the body throws. fs + variant-runner are mocked (pure lifecycle test).
  */
-jest.mock('../config', () => ({ config: { SIM_TEMP_DIR: 'sim-tmp', SIM_SANDBOX_USER: undefined as string | undefined } }));
+jest.mock('../config', () => ({
+    config: { SIM_TEMP_DIR: 'sim-tmp', SIM_SANDBOX_USER: undefined as string | undefined },
+}));
 jest.mock('fs/promises', () => ({ mkdir: jest.fn(), chmod: jest.fn(), writeFile: jest.fn(), rm: jest.fn() }));
 const fakeRunner = jest.fn();
 jest.mock('./variant-runner', () => ({ makeVariantRunner: jest.fn(() => fakeRunner) }));
@@ -67,7 +69,9 @@ it('writes each shared model file once into the job dir', async () => {
 
 it('tears the dir down even when the body throws (guaranteed cleanup)', async () => {
     await expect(
-        withVariantJobDir('j4', 'mc', analysis, undefined, undefined, async () => { throw new Error('boom'); }),
+        withVariantJobDir('j4', 'mc', analysis, undefined, undefined, async () => {
+            throw new Error('boom');
+        }),
     ).rejects.toThrow('boom');
     expect(fs.rm).toHaveBeenCalledWith(dir('j4-mc'), { recursive: true, force: true });
 });

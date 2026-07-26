@@ -3,7 +3,15 @@
  * circuit.models de-dup, the generic model library, and the ERC rules.
  */
 import { runErc } from '../src/erc/checker';
-import { GENERIC_MODELS, resolveModelForPart, resolveGenericModels, buildZenerModel, normalizeControlledSourceGain, parseTransformerParams, parseTransmissionLineParams } from '../src/models/library';
+import {
+    GENERIC_MODELS,
+    resolveModelForPart,
+    resolveGenericModels,
+    buildZenerModel,
+    normalizeControlledSourceGain,
+    parseTransformerParams,
+    parseTransmissionLineParams,
+} from '../src/models/library';
 import { generateNetlist } from '../src/netlist/generator';
 import { parseNetlist } from '../src/parser/netlist-parser';
 import type { TranAnalysis } from '../src/types/analysis';
@@ -19,18 +27,53 @@ function npnCircuit(model?: string): CircuitJson {
     return {
         version: '1.0',
         components: [
-            { id: 'v1', type: 'voltage_source', designator: 'V1', value: 'DC 5', pins: [
-                { pinId: '+', netId: 'vcc' }, { pinId: '-', netId: 'gnd' }] },
-            { id: 'rc', type: 'resistor', designator: 'RC1', value: '1k', pins: [
-                { pinId: '1', netId: 'vcc' }, { pinId: '2', netId: 'col' }] },
+            {
+                id: 'v1',
+                type: 'voltage_source',
+                designator: 'V1',
+                value: 'DC 5',
+                pins: [
+                    { pinId: '+', netId: 'vcc' },
+                    { pinId: '-', netId: 'gnd' },
+                ],
+            },
+            {
+                id: 'rc',
+                type: 'resistor',
+                designator: 'RC1',
+                value: '1k',
+                pins: [
+                    { pinId: '1', netId: 'vcc' },
+                    { pinId: '2', netId: 'col' },
+                ],
+            },
             // pins authored emitter, base, collector — the generator must reorder to c b e.
-            { id: 'q1', type: 'bjt', designator: 'Q1', model, pins: [
-                { pinId: 'e', netId: 'gnd' }, { pinId: 'b', netId: 'base' }, { pinId: 'c', netId: 'col' }] },
-            { id: 'vb', type: 'voltage_source', designator: 'V2', value: 'DC 0.7', pins: [
-                { pinId: '+', netId: 'base' }, { pinId: '-', netId: 'gnd' }] },
+            {
+                id: 'q1',
+                type: 'bjt',
+                designator: 'Q1',
+                model,
+                pins: [
+                    { pinId: 'e', netId: 'gnd' },
+                    { pinId: 'b', netId: 'base' },
+                    { pinId: 'c', netId: 'col' },
+                ],
+            },
+            {
+                id: 'vb',
+                type: 'voltage_source',
+                designator: 'V2',
+                value: 'DC 0.7',
+                pins: [
+                    { pinId: '+', netId: 'base' },
+                    { pinId: '-', netId: 'gnd' },
+                ],
+            },
         ],
         nets: [
-            { id: 'vcc', name: 'VCC' }, { id: 'col', name: 'COL' }, { id: 'base', name: 'BASE' },
+            { id: 'vcc', name: 'VCC' },
+            { id: 'col', name: 'COL' },
+            { id: 'base', name: 'BASE' },
             { id: 'gnd', name: 'GND', isGround: true },
         ],
         models: model ? [NPN] : undefined,
@@ -52,8 +95,17 @@ describe('active devices', () => {
 
     it('de-dupes circuit.models by name (two BJTs, one .model line)', () => {
         const c = npnCircuit('QGENNPN');
-        c.components.push({ id: 'q2', type: 'bjt', designator: 'Q2', model: 'QGENNPN', pins: [
-            { pinId: 'c', netId: 'col' }, { pinId: 'b', netId: 'base' }, { pinId: 'e', netId: 'gnd' }] });
+        c.components.push({
+            id: 'q2',
+            type: 'bjt',
+            designator: 'Q2',
+            model: 'QGENNPN',
+            pins: [
+                { pinId: 'c', netId: 'col' },
+                { pinId: 'b', netId: 'base' },
+                { pinId: 'e', netId: 'gnd' },
+            ],
+        });
         c.models = [NPN, NPN];
         const netlist = generateNetlist(c, TRAN);
         expect(netlist.match(/\.model QGENNPN/g)?.length).toBe(1);
@@ -79,13 +131,37 @@ describe('active devices', () => {
         const circuit: CircuitJson = {
             version: '1.0',
             components: [
-                { id: 'd1', type: 'diode', designator: 'D1', pins: [
-                    { pinId: 'anode', netId: 'in' }, { pinId: 'cathode', netId: 'gnd' }] },
-                { id: 'v1', type: 'voltage_source', designator: 'V1', value: 'DC 5', pins: [
-                    { pinId: '+', netId: 'in' }, { pinId: '-', netId: 'gnd' }] },
+                {
+                    id: 'd1',
+                    type: 'diode',
+                    designator: 'D1',
+                    pins: [
+                        { pinId: 'anode', netId: 'in' },
+                        { pinId: 'cathode', netId: 'gnd' },
+                    ],
+                },
+                {
+                    id: 'v1',
+                    type: 'voltage_source',
+                    designator: 'V1',
+                    value: 'DC 5',
+                    pins: [
+                        { pinId: '+', netId: 'in' },
+                        { pinId: '-', netId: 'gnd' },
+                    ],
+                },
             ],
-            nets: [{ id: 'in', name: 'IN' }, { id: 'gnd', name: 'GND', isGround: true }],
-            models: [{ name: 'DDEFAULT', device: 'diode', body: '.model DDEFAULT D(IS=1e-14 N=1.05 RS=10 BV=100 IBV=1e-10)' }],
+            nets: [
+                { id: 'in', name: 'IN' },
+                { id: 'gnd', name: 'GND', isGround: true },
+            ],
+            models: [
+                {
+                    name: 'DDEFAULT',
+                    device: 'diode',
+                    body: '.model DDEFAULT D(IS=1e-14 N=1.05 RS=10 BV=100 IBV=1e-10)',
+                },
+            ],
         };
         const netlist = generateNetlist(circuit, TRAN);
         expect(netlist.match(/\.model DDEFAULT/g)?.length).toBe(1);
@@ -95,12 +171,30 @@ describe('active devices', () => {
         const circuit: CircuitJson = {
             version: '1.0',
             components: [
-                { id: 'd1', type: 'diode', designator: 'D1', pins: [
-                    { pinId: 'anode', netId: 'in' }, { pinId: 'cathode', netId: 'gnd' }] },
-                { id: 'v1', type: 'voltage_source', designator: 'V1', value: 'DC 5', pins: [
-                    { pinId: '+', netId: 'in' }, { pinId: '-', netId: 'gnd' }] },
+                {
+                    id: 'd1',
+                    type: 'diode',
+                    designator: 'D1',
+                    pins: [
+                        { pinId: 'anode', netId: 'in' },
+                        { pinId: 'cathode', netId: 'gnd' },
+                    ],
+                },
+                {
+                    id: 'v1',
+                    type: 'voltage_source',
+                    designator: 'V1',
+                    value: 'DC 5',
+                    pins: [
+                        { pinId: '+', netId: 'in' },
+                        { pinId: '-', netId: 'gnd' },
+                    ],
+                },
             ],
-            nets: [{ id: 'in', name: 'IN' }, { id: 'gnd', name: 'GND', isGround: true }],
+            nets: [
+                { id: 'in', name: 'IN' },
+                { id: 'gnd', name: 'GND', isGround: true },
+            ],
             models: [{ name: 'DDEFAULT', device: 'diode', body: '.model DDEFAULT D(IS=2e-14)' }],
         };
         expect(() => generateNetlist(circuit, TRAN)).toThrow(/Conflicting definitions for model 'DDEFAULT'/);
@@ -110,12 +204,34 @@ describe('active devices', () => {
         const circuit: CircuitJson = {
             version: '1.0',
             components: [
-                { id: 'm1', type: 'mosfet', designator: 'M1', model: 'MGENNMOS', pins: [
-                    { pinId: 's', netId: 'gnd' }, { pinId: 'g', netId: 'in' }, { pinId: 'd', netId: 'out' }, { pinId: 'b', netId: 'gnd' }] },
-                { id: 'v1', type: 'voltage_source', designator: 'V1', value: 'DC 5', pins: [
-                    { pinId: '+', netId: 'out' }, { pinId: '-', netId: 'gnd' }] },
+                {
+                    id: 'm1',
+                    type: 'mosfet',
+                    designator: 'M1',
+                    model: 'MGENNMOS',
+                    pins: [
+                        { pinId: 's', netId: 'gnd' },
+                        { pinId: 'g', netId: 'in' },
+                        { pinId: 'd', netId: 'out' },
+                        { pinId: 'b', netId: 'gnd' },
+                    ],
+                },
+                {
+                    id: 'v1',
+                    type: 'voltage_source',
+                    designator: 'V1',
+                    value: 'DC 5',
+                    pins: [
+                        { pinId: '+', netId: 'out' },
+                        { pinId: '-', netId: 'gnd' },
+                    ],
+                },
             ],
-            nets: [{ id: 'in', name: 'IN' }, { id: 'out', name: 'OUT' }, { id: 'gnd', name: 'GND', isGround: true }],
+            nets: [
+                { id: 'in', name: 'IN' },
+                { id: 'out', name: 'OUT' },
+                { id: 'gnd', name: 'GND', isGround: true },
+            ],
             models: [GENERIC_MODELS.nmos!],
         };
         const netlist = generateNetlist(circuit, TRAN);
@@ -140,12 +256,33 @@ describe('active devices', () => {
             version: '1.0',
             components: [
                 // authored source, gate, drain — generator must reorder to d,g,s
-                { id: 'j1', type: 'jfet', designator: 'J1', model: 'JGENNJF', pins: [
-                    { pinId: 's', netId: 'gnd' }, { pinId: 'g', netId: 'in' }, { pinId: 'd', netId: 'out' }] },
-                { id: 'v1', type: 'voltage_source', designator: 'V1', value: 'DC 5', pins: [
-                    { pinId: '+', netId: 'out' }, { pinId: '-', netId: 'gnd' }] },
+                {
+                    id: 'j1',
+                    type: 'jfet',
+                    designator: 'J1',
+                    model: 'JGENNJF',
+                    pins: [
+                        { pinId: 's', netId: 'gnd' },
+                        { pinId: 'g', netId: 'in' },
+                        { pinId: 'd', netId: 'out' },
+                    ],
+                },
+                {
+                    id: 'v1',
+                    type: 'voltage_source',
+                    designator: 'V1',
+                    value: 'DC 5',
+                    pins: [
+                        { pinId: '+', netId: 'out' },
+                        { pinId: '-', netId: 'gnd' },
+                    ],
+                },
             ],
-            nets: [{ id: 'in', name: 'IN' }, { id: 'out', name: 'OUT' }, { id: 'gnd', name: 'GND', isGround: true }],
+            nets: [
+                { id: 'in', name: 'IN' },
+                { id: 'out', name: 'OUT' },
+                { id: 'gnd', name: 'GND', isGround: true },
+            ],
             models: [GENERIC_MODELS.njf!],
         };
         const netlist = generateNetlist(circuit, TRAN);
@@ -184,8 +321,10 @@ describe('active devices', () => {
 
         it('flags a BJT with the wrong pin count', () => {
             const c = npnCircuit('QGENNPN');
-            (c.components.find((x) => x.id === 'q1')!).pins = [
-                { pinId: 'c', netId: 'col' }, { pinId: 'e', netId: 'gnd' }]; // only 2 pins
+            c.components.find((x) => x.id === 'q1')!.pins = [
+                { pinId: 'c', netId: 'col' },
+                { pinId: 'e', netId: 'gnd' },
+            ]; // only 2 pins
             const issues = runErc(c).issues;
             expect(issues.some((i) => i.code === ErcCode.PIN_COUNT_MISMATCH)).toBe(true);
         });
@@ -202,8 +341,15 @@ describe('active devices', () => {
         it('does NOT warn UNRESOLVED_MODEL when the referenced model is defined (or built-in)', () => {
             // QGENNPN is in circuit.models -> resolved; a model-less diode uses the built-in DDEFAULT.
             const c = npnCircuit('QGENNPN');
-            c.components.push({ id: 'd1', type: 'diode', designator: 'D1', pins: [
-                { pinId: 'anode', netId: 'col' }, { pinId: 'cathode', netId: 'gnd' }] });
+            c.components.push({
+                id: 'd1',
+                type: 'diode',
+                designator: 'D1',
+                pins: [
+                    { pinId: 'anode', netId: 'col' },
+                    { pinId: 'cathode', netId: 'gnd' },
+                ],
+            });
             const issues = runErc(c).issues;
             expect(issues.some((i) => i.code === ErcCode.UNRESOLVED_MODEL)).toBe(false);
         });
@@ -225,26 +371,59 @@ describe('active devices', () => {
             return {
                 version: '1.0',
                 components: [
-                    { id: 'vin', type: 'voltage_source', designator: 'V1', value: 'SIN(0 0.1 1k)', pins: [
-                        { pinId: '+', netId: 'in' }, { pinId: '-', netId: 'gnd' }] },
-                    { id: 'e1', type, designator: type === 'vcvs' ? 'E1' : 'G1', value, pins: [
-                        { pinId: 'c+', netId: 'in' }, { pinId: 'c-', netId: 'gnd' },
-                        { pinId: '+', netId: 'out' }, { pinId: '-', netId: 'gnd' }] },
-                    { id: 'rl', type: 'resistor', designator: 'RL1', value: '1k', pins: [
-                        { pinId: '1', netId: 'out' }, { pinId: '2', netId: 'gnd' }] },
+                    {
+                        id: 'vin',
+                        type: 'voltage_source',
+                        designator: 'V1',
+                        value: 'SIN(0 0.1 1k)',
+                        pins: [
+                            { pinId: '+', netId: 'in' },
+                            { pinId: '-', netId: 'gnd' },
+                        ],
+                    },
+                    {
+                        id: 'e1',
+                        type,
+                        designator: type === 'vcvs' ? 'E1' : 'G1',
+                        value,
+                        pins: [
+                            { pinId: 'c+', netId: 'in' },
+                            { pinId: 'c-', netId: 'gnd' },
+                            { pinId: '+', netId: 'out' },
+                            { pinId: '-', netId: 'gnd' },
+                        ],
+                    },
+                    {
+                        id: 'rl',
+                        type: 'resistor',
+                        designator: 'RL1',
+                        value: '1k',
+                        pins: [
+                            { pinId: '1', netId: 'out' },
+                            { pinId: '2', netId: 'gnd' },
+                        ],
+                    },
                 ],
-                nets: [{ id: 'in', name: 'IN' }, { id: 'out', name: 'OUT' }, { id: 'gnd', name: 'GND', isGround: true }],
+                nets: [
+                    { id: 'in', name: 'IN' },
+                    { id: 'out', name: 'OUT' },
+                    { id: 'gnd', name: 'GND', isGround: true },
+                ],
             };
         }
 
         it('emits E/G with 4 nodes in canonical (out+,out-,c+,c-) order + the gain value', () => {
-            const e = generateNetlist(csCircuit('vcvs', '10'), TRAN).split('\n').find((l) => l.startsWith('E1 '))!;
+            const e = generateNetlist(csCircuit('vcvs', '10'), TRAN)
+                .split('\n')
+                .find((l) => l.startsWith('E1 '))!;
             const ep = e.split(/\s+/); // E1 <out+> <out-> <c+> <c-> 10  (6 tokens)
             expect(ep.length).toBe(6);
             expect(ep[ep.length - 1]).toBe('10');
             expect(ep[2]).toBe('0'); // out- -> ground (despite control pins authored first)
             expect(ep[4]).toBe('0'); // c- -> ground
-            const g = generateNetlist(csCircuit('vccs', '1m'), TRAN).split('\n').find((l) => l.startsWith('G1 '))!;
+            const g = generateNetlist(csCircuit('vccs', '1m'), TRAN)
+                .split('\n')
+                .find((l) => l.startsWith('G1 '))!;
             expect(g.split(/\s+/).pop()).toBe('1m');
         });
 
@@ -261,9 +440,13 @@ describe('active devices', () => {
             const issues = runErc(csCircuit('vcvs', undefined)).issues;
             expect(issues.some((i) => i.code === ErcCode.MISSING_VALUE && i.relatedIds.includes('e1'))).toBe(true);
             const c = csCircuit('vcvs', '10');
-            (c.components.find((x) => x.id === 'e1')!).pins = [
-                { pinId: '+', netId: 'out' }, { pinId: '-', netId: 'gnd' }]; // only 2 of 4 pins
-            expect(runErc(c).issues.some((i) => i.code === ErcCode.PIN_COUNT_MISMATCH && i.relatedIds.includes('e1'))).toBe(true);
+            c.components.find((x) => x.id === 'e1')!.pins = [
+                { pinId: '+', netId: 'out' },
+                { pinId: '-', netId: 'gnd' },
+            ]; // only 2 of 4 pins
+            expect(
+                runErc(c).issues.some((i) => i.code === ErcCode.PIN_COUNT_MISMATCH && i.relatedIds.includes('e1')),
+            ).toBe(true);
         });
 
         it('normalizes a controlled-source gain: tolerates a stray "DC", rejects keyword/expression forms', () => {
@@ -277,7 +460,9 @@ describe('active devices', () => {
         });
 
         it('a "DC "-prefixed gain is emitted as a bare number (would otherwise crash ngspice)', () => {
-            const e = generateNetlist(csCircuit('vcvs', 'DC 10'), TRAN).split('\n').find((l) => l.startsWith('E1 '))!;
+            const e = generateNetlist(csCircuit('vcvs', 'DC 10'), TRAN)
+                .split('\n')
+                .find((l) => l.startsWith('E1 '))!;
             expect(e.split(/\s+/).pop()).toBe('10'); // 'DC ' stripped -> valid linear VCVS
         });
 
@@ -300,12 +485,31 @@ describe('active devices', () => {
         const c: CircuitJson = {
             version: '1.0',
             components: [
-                { id: 'j1', type: 'jfet', designator: 'J1', pins: [ // no model + only 2 pins
-                    { pinId: 'd', netId: 'out' }, { pinId: 's', netId: 'gnd' }] },
-                { id: 'v1', type: 'voltage_source', designator: 'V1', value: 'DC 5', pins: [
-                    { pinId: '+', netId: 'out' }, { pinId: '-', netId: 'gnd' }] },
+                {
+                    id: 'j1',
+                    type: 'jfet',
+                    designator: 'J1',
+                    pins: [
+                        // no model + only 2 pins
+                        { pinId: 'd', netId: 'out' },
+                        { pinId: 's', netId: 'gnd' },
+                    ],
+                },
+                {
+                    id: 'v1',
+                    type: 'voltage_source',
+                    designator: 'V1',
+                    value: 'DC 5',
+                    pins: [
+                        { pinId: '+', netId: 'out' },
+                        { pinId: '-', netId: 'gnd' },
+                    ],
+                },
             ],
-            nets: [{ id: 'out', name: 'OUT' }, { id: 'gnd', name: 'GND', isGround: true }],
+            nets: [
+                { id: 'out', name: 'OUT' },
+                { id: 'gnd', name: 'GND', isGround: true },
+            ],
         };
         const issues = runErc(c).issues;
         expect(issues.some((i) => i.code === ErcCode.MODEL_REQUIRED && i.relatedIds.includes('j1'))).toBe(true);
@@ -317,38 +521,80 @@ describe('active devices', () => {
             return {
                 version: '1.0',
                 components: [
-                    { id: 'v1', type: 'voltage_source', designator: 'V1', value: 'SIN(0 1 50k)', pins: [
-                        { pinId: '+', netId: 'prim' }, { pinId: '-', netId: 'gnd' }] },
+                    {
+                        id: 'v1',
+                        type: 'voltage_source',
+                        designator: 'V1',
+                        value: 'SIN(0 1 50k)',
+                        pins: [
+                            { pinId: '+', netId: 'prim' },
+                            { pinId: '-', netId: 'gnd' },
+                        ],
+                    },
                     // pins authored shuffled to prove canonical p+,p-,s+,s- binding
-                    { id: 't1', type: 'transformer', designator: 'T1', properties: props, pins: [
-                        { pinId: 's+', netId: 'sec' }, { pinId: 'p-', netId: 'gnd' },
-                        { pinId: 's-', netId: 'gnd' }, { pinId: 'p+', netId: 'prim' }] },
-                    { id: 'rl', type: 'resistor', designator: 'RL1', value: '10k', pins: [
-                        { pinId: '1', netId: 'sec' }, { pinId: '2', netId: 'gnd' }] },
+                    {
+                        id: 't1',
+                        type: 'transformer',
+                        designator: 'T1',
+                        properties: props,
+                        pins: [
+                            { pinId: 's+', netId: 'sec' },
+                            { pinId: 'p-', netId: 'gnd' },
+                            { pinId: 's-', netId: 'gnd' },
+                            { pinId: 'p+', netId: 'prim' },
+                        ],
+                    },
+                    {
+                        id: 'rl',
+                        type: 'resistor',
+                        designator: 'RL1',
+                        value: '10k',
+                        pins: [
+                            { pinId: '1', netId: 'sec' },
+                            { pinId: '2', netId: 'gnd' },
+                        ],
+                    },
                 ],
-                nets: [{ id: 'prim', name: 'PRIM' }, { id: 'sec', name: 'SEC' }, { id: 'gnd', name: 'GND', isGround: true }],
+                nets: [
+                    { id: 'prim', name: 'PRIM' },
+                    { id: 'sec', name: 'SEC' },
+                    { id: 'gnd', name: 'GND', isGround: true },
+                ],
             };
         }
 
         it('parses winding params: requires both inductances, defaults coupling, rejects bad k', () => {
             expect(parseTransformerParams({ primaryInductance: '100m', secondaryInductance: '25m' })).toEqual({
-                lp: '100m', ls: '25m', k: '0.999',
+                lp: '100m',
+                ls: '25m',
+                k: '0.999',
             });
-            expect(parseTransformerParams({ primaryInductance: '10m', secondaryInductance: '10m', coupling: '0.95' })!.k).toBe('0.95');
+            expect(
+                parseTransformerParams({ primaryInductance: '10m', secondaryInductance: '10m', coupling: '0.95' })!.k,
+            ).toBe('0.95');
             expect(parseTransformerParams({ primaryInductance: '10m' })).toBeNull(); // missing secondary
             expect(parseTransformerParams({ primaryInductance: '10m', secondaryInductance: 'abc' })).toBeNull();
-            expect(parseTransformerParams({ primaryInductance: '10m', secondaryInductance: '10m', coupling: '1.5' })).toBeNull();
-            expect(parseTransformerParams({ primaryInductance: '10m', secondaryInductance: '10m', coupling: '0' })).toBeNull();
+            expect(
+                parseTransformerParams({ primaryInductance: '10m', secondaryInductance: '10m', coupling: '1.5' }),
+            ).toBeNull();
+            expect(
+                parseTransformerParams({ primaryInductance: '10m', secondaryInductance: '10m', coupling: '0' }),
+            ).toBeNull();
             // strictly-positive windings: a negative or zero inductance is non-physical and is rejected
             expect(parseTransformerParams({ primaryInductance: '-10m', secondaryInductance: '25m' })).toBeNull();
             expect(parseTransformerParams({ primaryInductance: '0', secondaryInductance: '25m' })).toBeNull();
             // a JS-coercible but non-decimal coupling ("0x1" -> Number 1) must NOT slip through
-            expect(parseTransformerParams({ primaryInductance: '10m', secondaryInductance: '10m', coupling: '0x1' })).toBeNull();
+            expect(
+                parseTransformerParams({ primaryInductance: '10m', secondaryInductance: '10m', coupling: '0x1' }),
+            ).toBeNull();
         });
 
         it('expands one transformer into two coupled windings (L+series-R) + a K statement, bound by pinId', () => {
             const TRAN1: TranAnalysis = { type: 'tran', stopTime: '60u', stepTime: '0.1u' };
-            const netlist = generateNetlist(xfmrCircuit({ primaryInductance: '100m', secondaryInductance: '25m', coupling: '0.99' }), TRAN1);
+            const netlist = generateNetlist(
+                xfmrCircuit({ primaryInductance: '100m', secondaryInductance: '25m', coupling: '0.99' }),
+                TRAN1,
+            );
             const lp = netlist.split('\n').find((l) => l.startsWith('LT1P '))!;
             const ls = netlist.split('\n').find((l) => l.startsWith('LT1S '))!;
             const k = netlist.split('\n').find((l) => l.startsWith('KT1 '))!;
@@ -363,15 +609,25 @@ describe('active devices', () => {
 
         it('ERC flags a transformer with missing/invalid winding params + the wrong pin count', () => {
             // a missing key -> MISSING_VALUE
-            expect(runErc(xfmrCircuit({ primaryInductance: '10m' })).issues
-                .some((i) => i.code === ErcCode.MISSING_VALUE && i.relatedIds.includes('t1'))).toBe(true);
+            expect(
+                runErc(xfmrCircuit({ primaryInductance: '10m' })).issues.some(
+                    (i) => i.code === ErcCode.MISSING_VALUE && i.relatedIds.includes('t1'),
+                ),
+            ).toBe(true);
             // both present but non-physical (negative) -> INVALID_VALUE
-            expect(runErc(xfmrCircuit({ primaryInductance: '-10m', secondaryInductance: '25m' })).issues
-                .some((i) => i.code === ErcCode.INVALID_VALUE && i.relatedIds.includes('t1'))).toBe(true);
+            expect(
+                runErc(xfmrCircuit({ primaryInductance: '-10m', secondaryInductance: '25m' })).issues.some(
+                    (i) => i.code === ErcCode.INVALID_VALUE && i.relatedIds.includes('t1'),
+                ),
+            ).toBe(true);
             const c = xfmrCircuit({ primaryInductance: '10m', secondaryInductance: '10m' });
-            (c.components.find((x) => x.id === 't1')!).pins = [
-                { pinId: 'p+', netId: 'prim' }, { pinId: 'p-', netId: 'gnd' }]; // only 2 of 4
-            expect(runErc(c).issues.some((i) => i.code === ErcCode.PIN_COUNT_MISMATCH && i.relatedIds.includes('t1'))).toBe(true);
+            c.components.find((x) => x.id === 't1')!.pins = [
+                { pinId: 'p+', netId: 'prim' },
+                { pinId: 'p-', netId: 'gnd' },
+            ]; // only 2 of 4
+            expect(
+                runErc(c).issues.some((i) => i.code === ErcCode.PIN_COUNT_MISMATCH && i.relatedIds.includes('t1')),
+            ).toBe(true);
         });
 
         it('transformer is a simulatable type', () => {
@@ -384,15 +640,45 @@ describe('active devices', () => {
             const c: CircuitJson = {
                 version: '1.0',
                 components: [
-                    { id: 'v1', type: 'voltage_source', designator: 'V1', value: 'SIN(0 1 50k)', pins: [
-                        { pinId: '+', netId: 'prim' }, { pinId: '-', netId: 'gnd' }] },
-                    { id: 't1', type: 'transformer', designator: 'T1', properties: { primaryInductance: '100m', secondaryInductance: '25m' }, pins: [
-                        { pinId: 'p+', netId: 'prim' }, { pinId: 'p-', netId: 'gnd' },
-                        { pinId: 's+', netId: 'sa' }, { pinId: 's-', netId: 'sb' }] },
-                    { id: 'rl', type: 'resistor', designator: 'RL1', value: '1k', pins: [
-                        { pinId: '1', netId: 'sa' }, { pinId: '2', netId: 'sb' }] },
+                    {
+                        id: 'v1',
+                        type: 'voltage_source',
+                        designator: 'V1',
+                        value: 'SIN(0 1 50k)',
+                        pins: [
+                            { pinId: '+', netId: 'prim' },
+                            { pinId: '-', netId: 'gnd' },
+                        ],
+                    },
+                    {
+                        id: 't1',
+                        type: 'transformer',
+                        designator: 'T1',
+                        properties: { primaryInductance: '100m', secondaryInductance: '25m' },
+                        pins: [
+                            { pinId: 'p+', netId: 'prim' },
+                            { pinId: 'p-', netId: 'gnd' },
+                            { pinId: 's+', netId: 'sa' },
+                            { pinId: 's-', netId: 'sb' },
+                        ],
+                    },
+                    {
+                        id: 'rl',
+                        type: 'resistor',
+                        designator: 'RL1',
+                        value: '1k',
+                        pins: [
+                            { pinId: '1', netId: 'sa' },
+                            { pinId: '2', netId: 'sb' },
+                        ],
+                    },
                 ],
-                nets: [{ id: 'prim', name: 'PRIM' }, { id: 'sa', name: 'SA' }, { id: 'sb', name: 'SB' }, { id: 'gnd', name: 'GND', isGround: true }],
+                nets: [
+                    { id: 'prim', name: 'PRIM' },
+                    { id: 'sa', name: 'SA' },
+                    { id: 'sb', name: 'SB' },
+                    { id: 'gnd', name: 'GND', isGround: true },
+                ],
             };
             const netlist = generateNetlist(c, TRAN1);
             expect(netlist).toMatch(/^RT1SG \S+ 0 1G$/m); // isolated secondary tied to ground via a 1G bleeder
@@ -402,8 +688,16 @@ describe('active devices', () => {
         it('throws when a transformer sub-element name collides with another component', () => {
             const c = xfmrCircuit({ primaryInductance: '10m', secondaryInductance: '10m' });
             // a user inductor named LT1P collides with transformer T1's primary winding name
-            c.components.push({ id: 'lx', type: 'inductor', designator: 'LT1P', value: '1m', pins: [
-                { pinId: '1', netId: 'sec' }, { pinId: '2', netId: 'gnd' }] });
+            c.components.push({
+                id: 'lx',
+                type: 'inductor',
+                designator: 'LT1P',
+                value: '1m',
+                pins: [
+                    { pinId: '1', netId: 'sec' },
+                    { pinId: '2', netId: 'gnd' },
+                ],
+            });
             const TRAN1: TranAnalysis = { type: 'tran', stopTime: '1m' };
             expect(() => generateNetlist(c, TRAN1)).toThrow(/Duplicate device name 'LT1P'/);
         });
@@ -423,23 +717,77 @@ describe('active devices', () => {
             return {
                 version: '1.0',
                 components: [
-                    { id: 'vp', type: 'voltage_source', designator: 'V1', value: 'DC 15', pins: [
-                        { pinId: '+', netId: 'vcc' }, { pinId: '-', netId: 'gnd' }] },
-                    { id: 'vn', type: 'voltage_source', designator: 'V2', value: 'DC -15', pins: [
-                        { pinId: '+', netId: 'vee' }, { pinId: '-', netId: 'gnd' }] },
-                    { id: 'rg', type: 'resistor', designator: 'RG1', value: '1k', pins: [
-                        { pinId: '1', netId: 'in' }, { pinId: '2', netId: 'inv' }] },
-                    { id: 'rf', type: 'resistor', designator: 'RF1', value: '10k', pins: [
-                        { pinId: '1', netId: 'inv' }, { pinId: '2', netId: 'out' }] },
-                    { id: 'u1', type: 'subckt', designator: 'U1', model, pins: [
-                        { pinId: 'out', netId: 'out' }, { pinId: 'in+', netId: 'gnd' }, { pinId: 'in-', netId: 'inv' },
-                        { pinId: 'vcc', netId: 'vcc' }, { pinId: 'vee', netId: 'vee' }] },
-                    { id: 'vin', type: 'voltage_source', designator: 'V3', value: 'SIN(0 0.5 1k)', pins: [
-                        { pinId: '+', netId: 'in' }, { pinId: '-', netId: 'gnd' }] },
+                    {
+                        id: 'vp',
+                        type: 'voltage_source',
+                        designator: 'V1',
+                        value: 'DC 15',
+                        pins: [
+                            { pinId: '+', netId: 'vcc' },
+                            { pinId: '-', netId: 'gnd' },
+                        ],
+                    },
+                    {
+                        id: 'vn',
+                        type: 'voltage_source',
+                        designator: 'V2',
+                        value: 'DC -15',
+                        pins: [
+                            { pinId: '+', netId: 'vee' },
+                            { pinId: '-', netId: 'gnd' },
+                        ],
+                    },
+                    {
+                        id: 'rg',
+                        type: 'resistor',
+                        designator: 'RG1',
+                        value: '1k',
+                        pins: [
+                            { pinId: '1', netId: 'in' },
+                            { pinId: '2', netId: 'inv' },
+                        ],
+                    },
+                    {
+                        id: 'rf',
+                        type: 'resistor',
+                        designator: 'RF1',
+                        value: '10k',
+                        pins: [
+                            { pinId: '1', netId: 'inv' },
+                            { pinId: '2', netId: 'out' },
+                        ],
+                    },
+                    {
+                        id: 'u1',
+                        type: 'subckt',
+                        designator: 'U1',
+                        model,
+                        pins: [
+                            { pinId: 'out', netId: 'out' },
+                            { pinId: 'in+', netId: 'gnd' },
+                            { pinId: 'in-', netId: 'inv' },
+                            { pinId: 'vcc', netId: 'vcc' },
+                            { pinId: 'vee', netId: 'vee' },
+                        ],
+                    },
+                    {
+                        id: 'vin',
+                        type: 'voltage_source',
+                        designator: 'V3',
+                        value: 'SIN(0 0.5 1k)',
+                        pins: [
+                            { pinId: '+', netId: 'in' },
+                            { pinId: '-', netId: 'gnd' },
+                        ],
+                    },
                 ],
                 nets: [
-                    { id: 'vcc', name: 'VCC' }, { id: 'vee', name: 'VEE' }, { id: 'in', name: 'IN' },
-                    { id: 'inv', name: 'INV' }, { id: 'out', name: 'OUT' }, { id: 'gnd', name: 'GND', isGround: true },
+                    { id: 'vcc', name: 'VCC' },
+                    { id: 'vee', name: 'VEE' },
+                    { id: 'in', name: 'IN' },
+                    { id: 'inv', name: 'INV' },
+                    { id: 'out', name: 'OUT' },
+                    { id: 'gnd', name: 'GND', isGround: true },
                 ],
                 models: model === 'OPAMPGEN' ? [GENERIC_MODELS.opamp!] : undefined,
             };
@@ -468,8 +816,12 @@ describe('active devices', () => {
                 { pinId: 'in+', netId: 'gnd' },
                 { pinId: 'vcc', netId: 'vcc' },
             ];
-            const xCanon = generateNetlist(canonical, TRAN).split('\n').find((l) => l.startsWith('XU1 '))!;
-            const xShuf = generateNetlist(shuffled, TRAN).split('\n').find((l) => l.startsWith('XU1 '))!;
+            const xCanon = generateNetlist(canonical, TRAN)
+                .split('\n')
+                .find((l) => l.startsWith('XU1 '))!;
+            const xShuf = generateNetlist(shuffled, TRAN)
+                .split('\n')
+                .find((l) => l.startsWith('XU1 '))!;
             expect(xShuf).toBe(xCanon); // pinId binding => authored array order is irrelevant
             expect(xShuf.split(/\s+/)[2]).toBe('0'); // in+ still resolves to ground
         });
@@ -499,7 +851,9 @@ describe('active devices', () => {
             const issues = runErc(opampCircuit(undefined)).issues;
             expect(issues.some((i) => i.code === ErcCode.MODEL_REQUIRED && i.relatedIds.includes('u1'))).toBe(true);
             // variable arity -> subckt is exempt from the pin-count check
-            expect(issues.some((i) => i.code === ErcCode.PIN_COUNT_MISMATCH && i.relatedIds.includes('u1'))).toBe(false);
+            expect(issues.some((i) => i.code === ErcCode.PIN_COUNT_MISMATCH && i.relatedIds.includes('u1'))).toBe(
+                false,
+            );
         });
 
         it('library resolves OPAMPGEN and the host injects its body by name', () => {
@@ -544,14 +898,42 @@ describe('active devices', () => {
             return {
                 version: '1.0',
                 components: [
-                    { id: 'v1', type: 'voltage_source', designator: 'V1', value: 'DC 12', pins: [
-                        { pinId: '+', netId: 'vin' }, { pinId: '-', netId: 'gnd' }] },
-                    { id: 'r1', type: 'resistor', designator: 'R1', value: '1k', pins: [
-                        { pinId: '1', netId: 'vin' }, { pinId: '2', netId: 'reg' }] },
-                    { id: 'dz', type: 'zener', designator: 'DZ1', value, pins: [
-                        { pinId: 'cathode', netId: 'reg' }, { pinId: 'anode', netId: 'gnd' }] },
+                    {
+                        id: 'v1',
+                        type: 'voltage_source',
+                        designator: 'V1',
+                        value: 'DC 12',
+                        pins: [
+                            { pinId: '+', netId: 'vin' },
+                            { pinId: '-', netId: 'gnd' },
+                        ],
+                    },
+                    {
+                        id: 'r1',
+                        type: 'resistor',
+                        designator: 'R1',
+                        value: '1k',
+                        pins: [
+                            { pinId: '1', netId: 'vin' },
+                            { pinId: '2', netId: 'reg' },
+                        ],
+                    },
+                    {
+                        id: 'dz',
+                        type: 'zener',
+                        designator: 'DZ1',
+                        value,
+                        pins: [
+                            { pinId: 'cathode', netId: 'reg' },
+                            { pinId: 'anode', netId: 'gnd' },
+                        ],
+                    },
                 ],
-                nets: [{ id: 'vin', name: 'VIN' }, { id: 'reg', name: 'REG' }, { id: 'gnd', name: 'GND', isGround: true }],
+                nets: [
+                    { id: 'vin', name: 'VIN' },
+                    { id: 'reg', name: 'REG' },
+                    { id: 'gnd', name: 'GND', isGround: true },
+                ],
             };
         }
 
@@ -592,10 +974,26 @@ describe('active devices', () => {
 
         it('de-dupes identical Vz and emits distinct models for distinct Vz', () => {
             const c = zenerCircuit('5.1');
-            c.components.push({ id: 'dz2', type: 'zener', designator: 'DZ2', value: '5.1', pins: [
-                { pinId: 'anode', netId: 'gnd' }, { pinId: 'cathode', netId: 'reg' }] });
-            c.components.push({ id: 'dz3', type: 'zener', designator: 'DZ3', value: '12', pins: [
-                { pinId: 'anode', netId: 'gnd' }, { pinId: 'cathode', netId: 'reg' }] });
+            c.components.push({
+                id: 'dz2',
+                type: 'zener',
+                designator: 'DZ2',
+                value: '5.1',
+                pins: [
+                    { pinId: 'anode', netId: 'gnd' },
+                    { pinId: 'cathode', netId: 'reg' },
+                ],
+            });
+            c.components.push({
+                id: 'dz3',
+                type: 'zener',
+                designator: 'DZ3',
+                value: '12',
+                pins: [
+                    { pinId: 'anode', netId: 'gnd' },
+                    { pinId: 'cathode', netId: 'reg' },
+                ],
+            });
             const netlist = generateNetlist(c, OP);
             expect(netlist.match(/\.model DZ5P1 /g)!.length).toBe(1); // shared across DZ1+DZ2
             expect(netlist.match(/\.model DZ12 /g)!.length).toBe(1);
@@ -612,7 +1010,7 @@ describe('active devices', () => {
         it('zener is a simulatable type with a 2-pin ERC count', () => {
             expect(isSimulatable({ type: 'zener' })).toBe(true);
             const c = zenerCircuit('5.1');
-            (c.components.find((x) => x.id === 'dz')!).pins = [{ pinId: 'anode', netId: 'gnd' }]; // 1 pin
+            c.components.find((x) => x.id === 'dz')!.pins = [{ pinId: 'anode', netId: 'gnd' }]; // 1 pin
             expect(runErc(c).issues.some((i) => i.code === ErcCode.PIN_COUNT_MISMATCH)).toBe(true);
         });
     });
@@ -623,18 +1021,56 @@ describe('active devices', () => {
             return {
                 version: '1.0',
                 components: [
-                    { id: 'vdd', type: 'voltage_source', designator: 'V1', value: 'DC 5', pins: [
-                        { pinId: '+', netId: 'vdd' }, { pinId: '-', netId: 'gnd' }] },
-                    { id: 'vc', type: 'voltage_source', designator: 'V2', value: 'PULSE(0 5 0 1u 1u 20u 40u)', pins: [
-                        { pinId: '+', netId: 'ctrl' }, { pinId: '-', netId: 'gnd' }] },
+                    {
+                        id: 'vdd',
+                        type: 'voltage_source',
+                        designator: 'V1',
+                        value: 'DC 5',
+                        pins: [
+                            { pinId: '+', netId: 'vdd' },
+                            { pinId: '-', netId: 'gnd' },
+                        ],
+                    },
+                    {
+                        id: 'vc',
+                        type: 'voltage_source',
+                        designator: 'V2',
+                        value: 'PULSE(0 5 0 1u 1u 20u 40u)',
+                        pins: [
+                            { pinId: '+', netId: 'ctrl' },
+                            { pinId: '-', netId: 'gnd' },
+                        ],
+                    },
                     // control pins authored FIRST to prove canonical +,-,c+,c- binding
-                    { id: 's1', type: 'switch', designator: 'S1', model, pins: [
-                        { pinId: 'c+', netId: 'ctrl' }, { pinId: 'c-', netId: 'gnd' },
-                        { pinId: '+', netId: 'vdd' }, { pinId: '-', netId: 'out' }] },
-                    { id: 'rl', type: 'resistor', designator: 'RL1', value: '1k', pins: [
-                        { pinId: '1', netId: 'out' }, { pinId: '2', netId: 'gnd' }] },
+                    {
+                        id: 's1',
+                        type: 'switch',
+                        designator: 'S1',
+                        model,
+                        pins: [
+                            { pinId: 'c+', netId: 'ctrl' },
+                            { pinId: 'c-', netId: 'gnd' },
+                            { pinId: '+', netId: 'vdd' },
+                            { pinId: '-', netId: 'out' },
+                        ],
+                    },
+                    {
+                        id: 'rl',
+                        type: 'resistor',
+                        designator: 'RL1',
+                        value: '1k',
+                        pins: [
+                            { pinId: '1', netId: 'out' },
+                            { pinId: '2', netId: 'gnd' },
+                        ],
+                    },
                 ],
-                nets: [{ id: 'vdd', name: 'VDD' }, { id: 'ctrl', name: 'CTRL' }, { id: 'out', name: 'OUT' }, { id: 'gnd', name: 'GND', isGround: true }],
+                nets: [
+                    { id: 'vdd', name: 'VDD' },
+                    { id: 'ctrl', name: 'CTRL' },
+                    { id: 'out', name: 'OUT' },
+                    { id: 'gnd', name: 'GND', isGround: true },
+                ],
                 models: model === 'SWGEN' ? [GENERIC_MODELS.vswitch!] : undefined,
             };
         }
@@ -665,8 +1101,13 @@ describe('active devices', () => {
             const issues = runErc(swCircuit(undefined)).issues; // no model
             expect(issues.some((i) => i.code === ErcCode.MODEL_REQUIRED && i.relatedIds.includes('s1'))).toBe(true);
             const c = swCircuit('SWGEN');
-            (c.components.find((x) => x.id === 's1')!).pins = [{ pinId: '+', netId: 'vdd' }, { pinId: '-', netId: 'out' }];
-            expect(runErc(c).issues.some((i) => i.code === ErcCode.PIN_COUNT_MISMATCH && i.relatedIds.includes('s1'))).toBe(true);
+            c.components.find((x) => x.id === 's1')!.pins = [
+                { pinId: '+', netId: 'vdd' },
+                { pinId: '-', netId: 'out' },
+            ];
+            expect(
+                runErc(c).issues.some((i) => i.code === ErcCode.PIN_COUNT_MISMATCH && i.relatedIds.includes('s1')),
+            ).toBe(true);
         });
     });
 
@@ -675,18 +1116,56 @@ describe('active devices', () => {
             return {
                 version: '1.0',
                 components: [
-                    { id: 'v1', type: 'voltage_source', designator: 'V1', value: 'PULSE(0 1 0 0.1n 0.1n 5n 20n)', pins: [
-                        { pinId: '+', netId: 'src' }, { pinId: '-', netId: 'gnd' }] },
-                    { id: 'rs', type: 'resistor', designator: 'RS1', value: '50', pins: [
-                        { pinId: '1', netId: 'src' }, { pinId: '2', netId: 'pa' }] },
+                    {
+                        id: 'v1',
+                        type: 'voltage_source',
+                        designator: 'V1',
+                        value: 'PULSE(0 1 0 0.1n 0.1n 5n 20n)',
+                        pins: [
+                            { pinId: '+', netId: 'src' },
+                            { pinId: '-', netId: 'gnd' },
+                        ],
+                    },
+                    {
+                        id: 'rs',
+                        type: 'resistor',
+                        designator: 'RS1',
+                        value: '50',
+                        pins: [
+                            { pinId: '1', netId: 'src' },
+                            { pinId: '2', netId: 'pa' },
+                        ],
+                    },
                     // pins authored shuffled to prove canonical a+,a-,b+,b- binding
-                    { id: 't1', type: 'tline', designator: 'T1', properties: props, pins: [
-                        { pinId: 'b+', netId: 'pb' }, { pinId: 'a-', netId: 'gnd' },
-                        { pinId: 'b-', netId: 'gnd' }, { pinId: 'a+', netId: 'pa' }] },
-                    { id: 'rl', type: 'resistor', designator: 'RL1', value: '50', pins: [
-                        { pinId: '1', netId: 'pb' }, { pinId: '2', netId: 'gnd' }] },
+                    {
+                        id: 't1',
+                        type: 'tline',
+                        designator: 'T1',
+                        properties: props,
+                        pins: [
+                            { pinId: 'b+', netId: 'pb' },
+                            { pinId: 'a-', netId: 'gnd' },
+                            { pinId: 'b-', netId: 'gnd' },
+                            { pinId: 'a+', netId: 'pa' },
+                        ],
+                    },
+                    {
+                        id: 'rl',
+                        type: 'resistor',
+                        designator: 'RL1',
+                        value: '50',
+                        pins: [
+                            { pinId: '1', netId: 'pb' },
+                            { pinId: '2', netId: 'gnd' },
+                        ],
+                    },
                 ],
-                nets: [{ id: 'src', name: 'SRC' }, { id: 'pa', name: 'PA' }, { id: 'pb', name: 'PB' }, { id: 'gnd', name: 'GND', isGround: true }],
+                nets: [
+                    { id: 'src', name: 'SRC' },
+                    { id: 'pa', name: 'PA' },
+                    { id: 'pb', name: 'PB' },
+                    { id: 'gnd', name: 'GND', isGround: true },
+                ],
             };
         }
         const TR: TranAnalysis = { type: 'tran', stopTime: '25n', stepTime: '0.1n' };
@@ -700,12 +1179,18 @@ describe('active devices', () => {
             // trailing units are accepted (ngspice reads "10ns" as 10n, "50ohm" as 50) — the idiomatic form
             expect(parseTransmissionLineParams({ z0: '50ohm', td: '10ns' })).toEqual({ z0: '50ohm', td: '10ns' });
             // frequency form (F + optional normalized length NL), the alternate ngspice lossless-line spec
-            expect(parseTransmissionLineParams({ z0: '50', f: '100Meg', nl: '0.25' })).toEqual({ z0: '50', f: '100Meg', nl: '0.25' });
+            expect(parseTransmissionLineParams({ z0: '50', f: '100Meg', nl: '0.25' })).toEqual({
+                z0: '50',
+                f: '100Meg',
+                nl: '0.25',
+            });
             expect(parseTransmissionLineParams({ z0: '50', f: '1G' })).toEqual({ z0: '50', f: '1G' });
         });
 
         it('emits T<inst> a+ a- b+ b- Z0=.. TD=.. in canonical pin order', () => {
-            const t = generateNetlist(tlineCircuit({ z0: '50', td: '5n' }), TR).split('\n').find((l) => l.startsWith('T1 '))!;
+            const t = generateNetlist(tlineCircuit({ z0: '50', td: '5n' }), TR)
+                .split('\n')
+                .find((l) => l.startsWith('T1 '))!;
             expect(t).toMatch(/^T1 \S+ 0 \S+ 0 Z0=50 TD=5n$/);
             const parts = t.split(/\s+/); // T1 a+ a- b+ b- Z0=50 TD=5n
             expect(parts[2]).toBe('0'); // a- -> ground
@@ -723,9 +1208,12 @@ describe('active devices', () => {
 
         it('supports the F=/NL= frequency form (emit + round-trip), not just TD', () => {
             const t = generateNetlist(tlineCircuit({ z0: '50', f: '100Meg', nl: '0.25' }), TR)
-                .split('\n').find((l) => l.startsWith('T1 '))!;
+                .split('\n')
+                .find((l) => l.startsWith('T1 '))!;
             expect(t).toMatch(/Z0=50 F=100Meg NL=0\.25$/);
-            const rt = parseNetlist('T1 pa 0 pb 0 Z0=50 F=100Meg NL=0.25\n.end').circuit.components.find((c) => c.type === 'tline')!;
+            const rt = parseNetlist('T1 pa 0 pb 0 Z0=50 F=100Meg NL=0.25\n.end').circuit.components.find(
+                (c) => c.type === 'tline',
+            )!;
             expect(rt.properties).toMatchObject({ z0: '50', f: '100Meg', nl: '0.25' });
         });
 
@@ -738,11 +1226,19 @@ describe('active devices', () => {
 
         it('is a simulatable 4-pin type; ERC flags missing params', () => {
             expect(isSimulatable({ type: 'tline' })).toBe(true);
-            expect(runErc(tlineCircuit({ z0: '50' })).issues // missing td
-                .some((i) => i.code === ErcCode.MISSING_VALUE && i.relatedIds.includes('t1'))).toBe(true);
+            expect(
+                runErc(tlineCircuit({ z0: '50' }))
+                    .issues // missing td
+                    .some((i) => i.code === ErcCode.MISSING_VALUE && i.relatedIds.includes('t1')),
+            ).toBe(true);
             const c = tlineCircuit({ z0: '50', td: '5n' });
-            (c.components.find((x) => x.id === 't1')!).pins = [{ pinId: 'a+', netId: 'pa' }, { pinId: 'a-', netId: 'gnd' }];
-            expect(runErc(c).issues.some((i) => i.code === ErcCode.PIN_COUNT_MISMATCH && i.relatedIds.includes('t1'))).toBe(true);
+            c.components.find((x) => x.id === 't1')!.pins = [
+                { pinId: 'a+', netId: 'pa' },
+                { pinId: 'a-', netId: 'gnd' },
+            ];
+            expect(
+                runErc(c).issues.some((i) => i.code === ErcCode.PIN_COUNT_MISMATCH && i.relatedIds.includes('t1')),
+            ).toBe(true);
         });
     });
 
@@ -752,19 +1248,49 @@ describe('active devices', () => {
             return {
                 version: '1.0',
                 components: [
-                    { id: 'v1', type: 'voltage_source', designator: 'V1', value: 'DC 3', pins: [
-                        { pinId: '+', netId: 'in' }, { pinId: '-', netId: 'gnd' }] },
-                    { id: 'b1', type: 'bsource', designator: 'B1', value, pins: [
-                        { pinId: '+', netId: 'out' }, { pinId: '-', netId: 'gnd' }] },
-                    { id: 'rl', type: 'resistor', designator: 'RL1', value: '1k', pins: [
-                        { pinId: '1', netId: 'out' }, { pinId: '2', netId: 'gnd' }] },
+                    {
+                        id: 'v1',
+                        type: 'voltage_source',
+                        designator: 'V1',
+                        value: 'DC 3',
+                        pins: [
+                            { pinId: '+', netId: 'in' },
+                            { pinId: '-', netId: 'gnd' },
+                        ],
+                    },
+                    {
+                        id: 'b1',
+                        type: 'bsource',
+                        designator: 'B1',
+                        value,
+                        pins: [
+                            { pinId: '+', netId: 'out' },
+                            { pinId: '-', netId: 'gnd' },
+                        ],
+                    },
+                    {
+                        id: 'rl',
+                        type: 'resistor',
+                        designator: 'RL1',
+                        value: '1k',
+                        pins: [
+                            { pinId: '1', netId: 'out' },
+                            { pinId: '2', netId: 'gnd' },
+                        ],
+                    },
                 ],
-                nets: [{ id: 'in', name: 'IN' }, { id: 'out', name: 'OUT' }, { id: 'gnd', name: 'GND', isGround: true }],
+                nets: [
+                    { id: 'in', name: 'IN' },
+                    { id: 'out', name: 'OUT' },
+                    { id: 'gnd', name: 'GND', isGround: true },
+                ],
             };
         }
 
         it('rewrites v(netId) refs to sanitized SPICE nodes (and leaves i(...) untouched)', () => {
-            const b = generateNetlist(bCircuit('V=v(in)*v(in) + i(V1)'), OP).split('\n').find((l) => l.startsWith('B1 '))!;
+            const b = generateNetlist(bCircuit('V=v(in)*v(in) + i(V1)'), OP)
+                .split('\n')
+                .find((l) => l.startsWith('B1 '))!;
             expect(b).not.toMatch(/v\(in\)/); // the raw circuit net id must not survive
             expect(b).toMatch(/V\(\S*in\S*\)\s*\*\s*V\(\S*in\S*\)/i); // v(in) -> V(<sanitized in>)
             expect(b).toMatch(/i\(V1\)/i); // device-by-name current ref left as-is
@@ -772,8 +1298,12 @@ describe('active devices', () => {
 
         it('resolves v(...) refs case-insensitively (ngspice nodes are case-insensitive)', () => {
             // the expr writes V(IN) but the net id is 'in' — must resolve to the sanitized node, not a phantom
-            const upper = generateNetlist(bCircuit('V=V(IN)*2'), OP).split('\n').find((l) => l.startsWith('B1 '))!;
-            const lower = generateNetlist(bCircuit('V=v(in)*2'), OP).split('\n').find((l) => l.startsWith('B1 '))!;
+            const upper = generateNetlist(bCircuit('V=V(IN)*2'), OP)
+                .split('\n')
+                .find((l) => l.startsWith('B1 '))!;
+            const lower = generateNetlist(bCircuit('V=v(in)*2'), OP)
+                .split('\n')
+                .find((l) => l.startsWith('B1 '))!;
             expect(upper).toBe(lower); // V(IN) and v(in) produce the same resolved node ref
             expect(upper).not.toMatch(/\(\s*IN\s*\)/); // the raw wrong-case id must not survive
         });
@@ -787,13 +1317,31 @@ describe('active devices', () => {
 
         it('is a 2-pin simulatable type; ERC flags a missing / malformed / multi-line value', () => {
             expect(isSimulatable({ type: 'bsource' })).toBe(true);
-            expect(runErc(bCircuit(undefined)).issues.some((i) => i.code === ErcCode.MISSING_VALUE && i.relatedIds.includes('b1'))).toBe(true);
-            expect(runErc(bCircuit('v(in)*2')).issues.some((i) => i.code === ErcCode.INVALID_VALUE && i.relatedIds.includes('b1'))).toBe(true); // no V=/I=
-            expect(runErc(bCircuit('V=')).issues.some((i) => i.code === ErcCode.INVALID_VALUE && i.relatedIds.includes('b1'))).toBe(true); // empty RHS -> ngspice would fatally abort
-            expect(runErc(bCircuit('V=v(in)\n.malicious')).issues.some((i) => i.code === ErcCode.INVALID_VALUE && i.relatedIds.includes('b1'))).toBe(true); // newline
+            expect(
+                runErc(bCircuit(undefined)).issues.some(
+                    (i) => i.code === ErcCode.MISSING_VALUE && i.relatedIds.includes('b1'),
+                ),
+            ).toBe(true);
+            expect(
+                runErc(bCircuit('v(in)*2')).issues.some(
+                    (i) => i.code === ErcCode.INVALID_VALUE && i.relatedIds.includes('b1'),
+                ),
+            ).toBe(true); // no V=/I=
+            expect(
+                runErc(bCircuit('V=')).issues.some(
+                    (i) => i.code === ErcCode.INVALID_VALUE && i.relatedIds.includes('b1'),
+                ),
+            ).toBe(true); // empty RHS -> ngspice would fatally abort
+            expect(
+                runErc(bCircuit('V=v(in)\n.malicious')).issues.some(
+                    (i) => i.code === ErcCode.INVALID_VALUE && i.relatedIds.includes('b1'),
+                ),
+            ).toBe(true); // newline
             const c = bCircuit('V=v(in)');
-            (c.components.find((x) => x.id === 'b1')!).pins = [{ pinId: '+', netId: 'out' }]; // 1 pin
-            expect(runErc(c).issues.some((i) => i.code === ErcCode.PIN_COUNT_MISMATCH && i.relatedIds.includes('b1'))).toBe(true);
+            c.components.find((x) => x.id === 'b1')!.pins = [{ pinId: '+', netId: 'out' }]; // 1 pin
+            expect(
+                runErc(c).issues.some((i) => i.code === ErcCode.PIN_COUNT_MISMATCH && i.relatedIds.includes('b1')),
+            ).toBe(true);
         });
 
         it('does not emit a malformed / injection value (skipped, surfaced by ERC instead)', () => {
@@ -811,16 +1359,54 @@ describe('active devices', () => {
             return {
                 version: '1.0',
                 components: [
-                    { id: 'v1', type: 'voltage_source', designator: 'V1', value: 'DC 10', pins: [
-                        { pinId: '+', netId: 'aa' }, { pinId: '-', netId: 'gnd' }] },
-                    { id: 'ra', type: 'resistor', designator: 'RA1', value: '100', pins: [
-                        { pinId: '1', netId: 'aa' }, { pinId: '2', netId: 'a' }] },
-                    { id: 'vg', type: 'voltage_source', designator: 'V2', value: 'PULSE(0 3 5u 0.1u 0.1u 2u 500u)', pins: [
-                        { pinId: '+', netId: 'g' }, { pinId: '-', netId: 'gnd' }] },
-                    { id: 'x1', type: 'subckt', designator: 'X1', model, pins: [
-                        { pinId: 'gate', netId: 'g' }, { pinId: 'cathode', netId: 'gnd' }, { pinId: 'anode', netId: 'a' }] },
+                    {
+                        id: 'v1',
+                        type: 'voltage_source',
+                        designator: 'V1',
+                        value: 'DC 10',
+                        pins: [
+                            { pinId: '+', netId: 'aa' },
+                            { pinId: '-', netId: 'gnd' },
+                        ],
+                    },
+                    {
+                        id: 'ra',
+                        type: 'resistor',
+                        designator: 'RA1',
+                        value: '100',
+                        pins: [
+                            { pinId: '1', netId: 'aa' },
+                            { pinId: '2', netId: 'a' },
+                        ],
+                    },
+                    {
+                        id: 'vg',
+                        type: 'voltage_source',
+                        designator: 'V2',
+                        value: 'PULSE(0 3 5u 0.1u 0.1u 2u 500u)',
+                        pins: [
+                            { pinId: '+', netId: 'g' },
+                            { pinId: '-', netId: 'gnd' },
+                        ],
+                    },
+                    {
+                        id: 'x1',
+                        type: 'subckt',
+                        designator: 'X1',
+                        model,
+                        pins: [
+                            { pinId: 'gate', netId: 'g' },
+                            { pinId: 'cathode', netId: 'gnd' },
+                            { pinId: 'anode', netId: 'a' },
+                        ],
+                    },
                 ],
-                nets: [{ id: 'aa', name: 'AA' }, { id: 'a', name: 'A' }, { id: 'g', name: 'G' }, { id: 'gnd', name: 'GND', isGround: true }],
+                nets: [
+                    { id: 'aa', name: 'AA' },
+                    { id: 'a', name: 'A' },
+                    { id: 'g', name: 'G' },
+                    { id: 'gnd', name: 'GND', isGround: true },
+                ],
                 models: model === 'SCRGEN' ? [GENERIC_MODELS.scr!] : undefined,
             };
         }
@@ -839,9 +1425,16 @@ describe('active devices', () => {
         it('binds nodes by PORT order — a reordered pin array nets identically', () => {
             const shuffled = scrCircuit('SCRGEN');
             shuffled.components.find((c) => c.id === 'x1')!.pins = [
-                { pinId: 'anode', netId: 'a' }, { pinId: 'gate', netId: 'g' }, { pinId: 'cathode', netId: 'gnd' }];
-            const xCanon = generateNetlist(scrCircuit('SCRGEN'), OP).split('\n').find((l) => l.startsWith('X1 '))!;
-            const xShuf = generateNetlist(shuffled, OP).split('\n').find((l) => l.startsWith('X1 '))!;
+                { pinId: 'anode', netId: 'a' },
+                { pinId: 'gate', netId: 'g' },
+                { pinId: 'cathode', netId: 'gnd' },
+            ];
+            const xCanon = generateNetlist(scrCircuit('SCRGEN'), OP)
+                .split('\n')
+                .find((l) => l.startsWith('X1 '))!;
+            const xShuf = generateNetlist(shuffled, OP)
+                .split('\n')
+                .find((l) => l.startsWith('X1 '))!;
             expect(xShuf).toBe(xCanon);
         });
 
@@ -863,16 +1456,54 @@ describe('active devices', () => {
             return {
                 version: '1.0',
                 components: [
-                    { id: 'v1', type: 'voltage_source', designator: 'V1', value: 'DC 10', pins: [
-                        { pinId: '+', netId: 'cc' }, { pinId: '-', netId: 'gnd' }] },
-                    { id: 'rc', type: 'resistor', designator: 'RC1', value: '100', pins: [
-                        { pinId: '1', netId: 'cc' }, { pinId: '2', netId: 'c' }] },
-                    { id: 'vg', type: 'voltage_source', designator: 'V2', value: 'PULSE(0 10 5u 0.1u 0.1u 7u 500u)', pins: [
-                        { pinId: '+', netId: 'g' }, { pinId: '-', netId: 'gnd' }] },
-                    { id: 'x1', type: 'subckt', designator: 'X1', model, pins: [
-                        { pinId: 'c', netId: 'c' }, { pinId: 'g', netId: 'g' }, { pinId: 'e', netId: 'gnd' }] },
+                    {
+                        id: 'v1',
+                        type: 'voltage_source',
+                        designator: 'V1',
+                        value: 'DC 10',
+                        pins: [
+                            { pinId: '+', netId: 'cc' },
+                            { pinId: '-', netId: 'gnd' },
+                        ],
+                    },
+                    {
+                        id: 'rc',
+                        type: 'resistor',
+                        designator: 'RC1',
+                        value: '100',
+                        pins: [
+                            { pinId: '1', netId: 'cc' },
+                            { pinId: '2', netId: 'c' },
+                        ],
+                    },
+                    {
+                        id: 'vg',
+                        type: 'voltage_source',
+                        designator: 'V2',
+                        value: 'PULSE(0 10 5u 0.1u 0.1u 7u 500u)',
+                        pins: [
+                            { pinId: '+', netId: 'g' },
+                            { pinId: '-', netId: 'gnd' },
+                        ],
+                    },
+                    {
+                        id: 'x1',
+                        type: 'subckt',
+                        designator: 'X1',
+                        model,
+                        pins: [
+                            { pinId: 'c', netId: 'c' },
+                            { pinId: 'g', netId: 'g' },
+                            { pinId: 'e', netId: 'gnd' },
+                        ],
+                    },
                 ],
-                nets: [{ id: 'cc', name: 'CC' }, { id: 'c', name: 'C' }, { id: 'g', name: 'G' }, { id: 'gnd', name: 'GND', isGround: true }],
+                nets: [
+                    { id: 'cc', name: 'CC' },
+                    { id: 'c', name: 'C' },
+                    { id: 'g', name: 'G' },
+                    { id: 'gnd', name: 'GND', isGround: true },
+                ],
                 models: model === 'IGBTGEN' ? [GENERIC_MODELS.igbt!] : undefined,
             };
         }

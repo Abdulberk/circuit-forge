@@ -7,36 +7,126 @@ import type { CircuitJson } from '../src/types/circuit';
 const DIODE: CircuitJson = {
     version: '1.0',
     components: [
-        { id: 'v1', type: 'voltage_source', designator: 'V1', value: 'DC 5', pins: [{ pinId: '+', netId: 'in' }, { pinId: '-', netId: '0' }] },
-        { id: 'r1', type: 'resistor', designator: 'R1', value: '1k', pins: [{ pinId: '1', netId: 'in' }, { pinId: '2', netId: 'out' }] },
-        { id: 'd1', type: 'diode', designator: 'D1', pins: [{ pinId: 'anode', netId: 'out' }, { pinId: 'cathode', netId: '0' }] },
+        {
+            id: 'v1',
+            type: 'voltage_source',
+            designator: 'V1',
+            value: 'DC 5',
+            pins: [
+                { pinId: '+', netId: 'in' },
+                { pinId: '-', netId: '0' },
+            ],
+        },
+        {
+            id: 'r1',
+            type: 'resistor',
+            designator: 'R1',
+            value: '1k',
+            pins: [
+                { pinId: '1', netId: 'in' },
+                { pinId: '2', netId: 'out' },
+            ],
+        },
+        {
+            id: 'd1',
+            type: 'diode',
+            designator: 'D1',
+            pins: [
+                { pinId: 'anode', netId: 'out' },
+                { pinId: 'cathode', netId: '0' },
+            ],
+        },
     ],
-    nets: [{ id: 'in', name: 'in' }, { id: 'out', name: 'out' }, { id: '0', name: '0', isGround: true }],
+    nets: [
+        { id: 'in', name: 'in' },
+        { id: 'out', name: 'out' },
+        { id: '0', name: '0', isGround: true },
+    ],
 } as unknown as CircuitJson;
 
 /** Only passives → temperature-flat (not-applicable). */
 const PASSIVE: CircuitJson = {
     version: '1.0',
     components: [
-        { id: 'v1', type: 'voltage_source', designator: 'V1', value: 'DC 5', pins: [{ pinId: '+', netId: 'in' }, { pinId: '-', netId: '0' }] },
-        { id: 'r1', type: 'resistor', designator: 'R1', value: '1k', pins: [{ pinId: '1', netId: 'in' }, { pinId: '2', netId: 'out' }] },
-        { id: 'r2', type: 'resistor', designator: 'R2', value: '1k', pins: [{ pinId: '1', netId: 'out' }, { pinId: '2', netId: '0' }] },
+        {
+            id: 'v1',
+            type: 'voltage_source',
+            designator: 'V1',
+            value: 'DC 5',
+            pins: [
+                { pinId: '+', netId: 'in' },
+                { pinId: '-', netId: '0' },
+            ],
+        },
+        {
+            id: 'r1',
+            type: 'resistor',
+            designator: 'R1',
+            value: '1k',
+            pins: [
+                { pinId: '1', netId: 'in' },
+                { pinId: '2', netId: 'out' },
+            ],
+        },
+        {
+            id: 'r2',
+            type: 'resistor',
+            designator: 'R2',
+            value: '1k',
+            pins: [
+                { pinId: '1', netId: 'out' },
+                { pinId: '2', netId: '0' },
+            ],
+        },
     ],
-    nets: [{ id: 'in', name: 'in' }, { id: 'out', name: 'out' }, { id: '0', name: '0', isGround: true }],
+    nets: [
+        { id: 'in', name: 'in' },
+        { id: 'out', name: 'out' },
+        { id: '0', name: '0', isGround: true },
+    ],
 } as unknown as CircuitJson;
 
 /** Active device is ONLY a behavioral subckt (temp-flat macromodel) → not-applicable, with the subckt reason. */
 const SUBCKT: CircuitJson = {
     version: '1.0',
     components: [
-        { id: 'v1', type: 'voltage_source', designator: 'V1', value: 'DC 5', pins: [{ pinId: '+', netId: 'in' }, { pinId: '-', netId: '0' }] },
-        { id: 'u1', type: 'subckt', designator: 'U1', model: 'OPAMP', pins: [{ pinId: '1', netId: 'in' }, { pinId: '2', netId: 'out' }, { pinId: '3', netId: '0' }] },
+        {
+            id: 'v1',
+            type: 'voltage_source',
+            designator: 'V1',
+            value: 'DC 5',
+            pins: [
+                { pinId: '+', netId: 'in' },
+                { pinId: '-', netId: '0' },
+            ],
+        },
+        {
+            id: 'u1',
+            type: 'subckt',
+            designator: 'U1',
+            model: 'OPAMP',
+            pins: [
+                { pinId: '1', netId: 'in' },
+                { pinId: '2', netId: 'out' },
+                { pinId: '3', netId: '0' },
+            ],
+        },
     ],
-    nets: [{ id: 'in', name: 'in' }, { id: 'out', name: 'out' }, { id: '0', name: '0', isGround: true }],
+    nets: [
+        { id: 'in', name: 'in' },
+        { id: 'out', name: 'out' },
+        { id: '0', name: '0', isGround: true },
+    ],
 } as unknown as CircuitJson;
 
 const meas = (node: string, value: number): SimMeasurement => ({
-    node, min: value, max: value, final: value, pp: 0, avg: value, rms: Math.abs(value),
+    node,
+    min: value,
+    max: value,
+    final: value,
+    pp: 0,
+    avg: value,
+    rms: Math.abs(value),
     raw: { min: value, max: value, final: value, pp: 0, avg: value, rms: Math.abs(value) },
 });
 

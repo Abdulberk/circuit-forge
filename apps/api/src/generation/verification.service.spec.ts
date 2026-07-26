@@ -8,7 +8,12 @@ import type { SimulationService } from '../simulation/simulation.service';
 
 import type { CircuitSimulatorService, SimSummary } from './circuit-simulator.service';
 import type { AssertionDto } from './dto';
-import { VerificationService, isCurrentProbe, deriveToleranceBasis, robustnessManifestEntry } from './verification.service';
+import {
+    VerificationService,
+    isCurrentProbe,
+    deriveToleranceBasis,
+    robustnessManifestEntry,
+} from './verification.service';
 
 const okSim = (over: Partial<SimSummary> = {}): SimSummary => ({
     simStatus: 'ok',
@@ -30,7 +35,13 @@ function makeService(sim: SimSummary) {
     return { svc: new VerificationService(simulator), simulate };
 }
 
-const A = (probe: string, metric: AssertionDto['metric'], op: AssertionDto['op'], value: number, tol?: number): AssertionDto => ({
+const A = (
+    probe: string,
+    metric: AssertionDto['metric'],
+    op: AssertionDto['op'],
+    value: number,
+    tol?: number,
+): AssertionDto => ({
     probe,
     metric,
     op,
@@ -54,7 +65,10 @@ describe('VerificationService', () => {
     it('emits a scope manifest: run for sim/erc + the covered assertion dimension, honest not-run for the rest', async () => {
         const { svc } = makeService(okSim());
         // a voltage spec + a current spec (i() probe) → assertion.voltage + assertion.current covered
-        const ev = await svc.verify({}, undefined, [A('out', 'final', 'approx', 4.98), A('i(R1)', 'final', 'gt', 0.001)]);
+        const ev = await svc.verify({}, undefined, [
+            A('out', 'final', 'approx', 4.98),
+            A('i(R1)', 'final', 'gt', 0.001),
+        ]);
         const s = new Map(ev.scope.checks.map((c) => [c.id, c]));
         expect(s.get('sim')!.status).toBe('run');
         expect(s.get('erc')!.status).toBe('run');
@@ -81,7 +95,10 @@ describe('VerificationService', () => {
 
     it('matches probes with or without the v()/i() wrapper, case-insensitively', async () => {
         const { svc } = makeService(okSim());
-        const ev = await svc.verify({}, undefined, [A('V(OUT)', 'final', 'approx', 4.98), A('out', 'final', 'approx', 4.98)]);
+        const ev = await svc.verify({}, undefined, [
+            A('V(OUT)', 'final', 'approx', 4.98),
+            A('out', 'final', 'approx', 4.98),
+        ]);
         expect(ev.assertions.every((a) => a.actual === 4.98)).toBe(true);
         expect(ev.verdict).toBe('pass');
     });
@@ -98,14 +115,18 @@ describe('VerificationService', () => {
     });
 
     it('FAIL: an ERC error fails the verdict even with no assertions', async () => {
-        const { svc } = makeService(okSim({ ercErrors: [{ code: 'SHORT', message: 'short to ground', relatedIds: ['R1'] }] }));
+        const { svc } = makeService(
+            okSim({ ercErrors: [{ code: 'SHORT', message: 'short to ground', relatedIds: ['R1'] }] }),
+        );
         const ev = await svc.verify({}, undefined, []);
         expect(ev.verdict).toBe('fail');
         expect(ev.summary).toMatch(/ERC error/);
     });
 
     it('PASS with ERC warnings noted (warnings do not fail the verdict)', async () => {
-        const { svc } = makeService(okSim({ ercWarnings: [{ code: 'FLOAT_R', message: 'floating reactive node', relatedIds: ['C1'] }] }));
+        const { svc } = makeService(
+            okSim({ ercWarnings: [{ code: 'FLOAT_R', message: 'floating reactive node', relatedIds: ['C1'] }] }),
+        );
         const ev = await svc.verify({}, undefined, [A('out', 'final', 'approx', 4.98)]); // a met spec → genuine pass
         expect(ev.verdict).toBe('pass');
         expect(ev.summary).toMatch(/warning/i);
@@ -120,7 +141,14 @@ describe('VerificationService', () => {
     });
 
     it('FAIL: simulation that failed to run is a fail, assertions become unmet (actual null)', async () => {
-        const { svc } = makeService({ simStatus: 'failed', ercErrors: [], ercWarnings: [], measurements: [], nodeCount: 0, runError: 'timed out' });
+        const { svc } = makeService({
+            simStatus: 'failed',
+            ercErrors: [],
+            ercWarnings: [],
+            measurements: [],
+            nodeCount: 0,
+            runError: 'timed out',
+        });
         const ev = await svc.verify({}, undefined, [A('out', 'final', 'approx', 5)]);
         expect(ev.verdict).toBe('fail');
         expect(ev.assertions[0]!.actual).toBeNull();
@@ -128,7 +156,14 @@ describe('VerificationService', () => {
     });
 
     it('INCONCLUSIVE: ngspice not configured (skipped) cannot certify anything', async () => {
-        const { svc } = makeService({ simStatus: 'skipped', ercErrors: [], ercWarnings: [], measurements: [], nodeCount: 0, runError: 'simulation not configured' });
+        const { svc } = makeService({
+            simStatus: 'skipped',
+            ercErrors: [],
+            ercWarnings: [],
+            measurements: [],
+            nodeCount: 0,
+            runError: 'simulation not configured',
+        });
         const ev = await svc.verify({}, undefined, [A('out', 'final', 'approx', 5)]);
         expect(ev.verdict).toBe('inconclusive');
         expect(ev.assertions[0]!.pass).toBe(false);
@@ -175,7 +210,9 @@ describe('VerificationService', () => {
     });
 
     it('FAIL beats inconclusive: an ERC error on a no-data run is still a fail', async () => {
-        const { svc } = makeService(okSim({ measurements: [], ercErrors: [{ code: 'X', message: 'm', relatedIds: [] }] }));
+        const { svc } = makeService(
+            okSim({ measurements: [], ercErrors: [{ code: 'X', message: 'm', relatedIds: [] }] }),
+        );
         const ev = await svc.verify({}, undefined, []);
         expect(ev.verdict).toBe('fail');
     });
@@ -193,12 +230,43 @@ describe('VerificationService', () => {
 const DIVIDER: CircuitJson = {
     version: '1.0',
     components: [
-        { id: 'v1', type: 'voltage_source', designator: 'V1', value: 'DC 10', pins: [{ pinId: '+', netId: 'in' }, { pinId: '-', netId: 'gnd' }] },
-        { id: 'r1', type: 'resistor', designator: 'R1', value: '1k', pins: [{ pinId: '1', netId: 'in' }, { pinId: '2', netId: 'out' }] },
-        { id: 'r2', type: 'resistor', designator: 'R2', value: '1k', pins: [{ pinId: '1', netId: 'out' }, { pinId: '2', netId: 'gnd' }] },
+        {
+            id: 'v1',
+            type: 'voltage_source',
+            designator: 'V1',
+            value: 'DC 10',
+            pins: [
+                { pinId: '+', netId: 'in' },
+                { pinId: '-', netId: 'gnd' },
+            ],
+        },
+        {
+            id: 'r1',
+            type: 'resistor',
+            designator: 'R1',
+            value: '1k',
+            pins: [
+                { pinId: '1', netId: 'in' },
+                { pinId: '2', netId: 'out' },
+            ],
+        },
+        {
+            id: 'r2',
+            type: 'resistor',
+            designator: 'R2',
+            value: '1k',
+            pins: [
+                { pinId: '1', netId: 'out' },
+                { pinId: '2', netId: 'gnd' },
+            ],
+        },
         { id: 'gnd', type: 'ground', designator: 'GND1', pins: [{ pinId: '1', netId: 'gnd' }] },
     ],
-    nets: [{ id: 'in', name: 'in' }, { id: 'out', name: 'out' }, { id: 'gnd', name: 'gnd', isGround: true }],
+    nets: [
+        { id: 'in', name: 'in' },
+        { id: 'out', name: 'out' },
+        { id: 'gnd', name: 'gnd', isGround: true },
+    ],
 };
 
 /** The worker's SimulationResult — series names are the sanitized SPICE nodes ngspice actually emits
@@ -211,7 +279,9 @@ const workerResult = {
     ],
 };
 
-function makeWorkerService(opts: { status?: string; metrics?: unknown; result?: unknown; resultError?: string; createThrows?: boolean } = {}) {
+function makeWorkerService(
+    opts: { status?: string; metrics?: unknown; result?: unknown; resultError?: string; createThrows?: boolean } = {},
+) {
     const createQuickSim = jest.fn(async (_netlist: string, _analysis: unknown, _userId: string) => {
         if (opts.createThrows) throw new Error('Redis down');
         return { jobId: 'job-1' };
@@ -225,10 +295,28 @@ function makeWorkerService(opts: { status?: string; metrics?: unknown; result?: 
     const createMonteCarloJob = jest.fn(async () => ({ jobId: 'mc-1' }));
     const createTempCornerJob = jest.fn(async () => ({ jobId: 'temp-1' }));
     const createSupplyCornerJob = jest.fn(async () => ({ jobId: 'supply-1' }));
-    const simulation = { createQuickSim, getStatus, getResult, createCornerJob, createMonteCarloJob, createTempCornerJob, createSupplyCornerJob } as unknown as SimulationService;
+    const simulation = {
+        createQuickSim,
+        getStatus,
+        getResult,
+        createCornerJob,
+        createMonteCarloJob,
+        createTempCornerJob,
+        createSupplyCornerJob,
+    } as unknown as SimulationService;
     const simulateWithRemedies = jest.fn(); // must NOT be called on the worker path
     const simulator = { simulateWithRemedies } as unknown as CircuitSimulatorService;
-    return { svc: new VerificationService(simulator, simulation), createQuickSim, getStatus, getResult, createCornerJob, createMonteCarloJob, createTempCornerJob, createSupplyCornerJob, simulateWithRemedies };
+    return {
+        svc: new VerificationService(simulator, simulation),
+        createQuickSim,
+        getStatus,
+        getResult,
+        createCornerJob,
+        createMonteCarloJob,
+        createTempCornerJob,
+        createSupplyCornerJob,
+        simulateWithRemedies,
+    };
 }
 
 describe('VerificationService — worker delegation (prod path, userId present)', () => {
@@ -297,10 +385,31 @@ describe('VerificationService — worker delegation (prod path, userId present)'
         const noGround: CircuitJson = {
             version: '1.0',
             components: [
-                { id: 'v1', type: 'voltage_source', designator: 'V1', value: 'DC 5', pins: [{ pinId: '+', netId: 'a' }, { pinId: '-', netId: 'b' }] },
-                { id: 'r1', type: 'resistor', designator: 'R1', value: '1k', pins: [{ pinId: '1', netId: 'a' }, { pinId: '2', netId: 'b' }] },
+                {
+                    id: 'v1',
+                    type: 'voltage_source',
+                    designator: 'V1',
+                    value: 'DC 5',
+                    pins: [
+                        { pinId: '+', netId: 'a' },
+                        { pinId: '-', netId: 'b' },
+                    ],
+                },
+                {
+                    id: 'r1',
+                    type: 'resistor',
+                    designator: 'R1',
+                    value: '1k',
+                    pins: [
+                        { pinId: '1', netId: 'a' },
+                        { pinId: '2', netId: 'b' },
+                    ],
+                },
             ],
-            nets: [{ id: 'a', name: 'a' }, { id: 'b', name: 'b' }],
+            nets: [
+                { id: 'a', name: 'a' },
+                { id: 'b', name: 'b' },
+            ],
         };
         const { svc } = makeWorkerService({ createThrows: true });
         const ev = await svc.verify(noGround, { type: 'op' }, [], 'user-1');
@@ -309,7 +418,10 @@ describe('VerificationService — worker delegation (prod path, userId present)'
     });
 
     it('a worker INFRA failure (FAILED + failureClass=infra: bad NGSPICE_PATH / S3 / DB) is INCONCLUSIVE', async () => {
-        const { svc } = makeWorkerService({ status: 'FAILED', metrics: { failureClass: 'infra', error: 'ngspice could not be launched' } });
+        const { svc } = makeWorkerService({
+            status: 'FAILED',
+            metrics: { failureClass: 'infra', error: 'ngspice could not be launched' },
+        });
         const ev = await svc.verify(DIVIDER, { type: 'op' }, [A('out', 'final', 'approx', 5)], 'user-1');
         expect(ev.verdict).toBe('inconclusive');
         expect(ev.simStatus).toBe('skipped');
@@ -317,7 +429,10 @@ describe('VerificationService — worker delegation (prod path, userId present)'
     });
 
     it('a genuine ngspice failure (FAILED + failureClass=sim) is still a FAIL', async () => {
-        const { svc } = makeWorkerService({ status: 'FAILED', metrics: { failureClass: 'sim', error: 'ngspice exited with code 1' } });
+        const { svc } = makeWorkerService({
+            status: 'FAILED',
+            metrics: { failureClass: 'sim', error: 'ngspice exited with code 1' },
+        });
         const ev = await svc.verify(DIVIDER, { type: 'op' }, [A('out', 'final', 'approx', 5)], 'user-1');
         expect(ev.verdict).toBe('fail');
         expect(ev.simStatus).toBe('failed');
@@ -326,7 +441,14 @@ describe('VerificationService — worker delegation (prod path, userId present)'
     it('surfaces the worker Convergence Doctor report when a remedy rescued the run (recovered → PASS + report)', async () => {
         // The worker walked the ladder, the first remedy fixed a singular matrix, and it persisted the
         // report in metrics. verify() must surface it on the evidence even though the verdict is a clean pass.
-        const convergence = { recovered: true, kind: 'singular_matrix', diagnosis: 'matrix singular', remedyApplied: 'add gmin', rationale: 'a tiny conductance to ground', attempts: 1 };
+        const convergence = {
+            recovered: true,
+            kind: 'singular_matrix',
+            diagnosis: 'matrix singular',
+            remedyApplied: 'add gmin',
+            rationale: 'a tiny conductance to ground',
+            attempts: 1,
+        };
         const { svc } = makeWorkerService({ status: 'SUCCEEDED', metrics: { pointsCount: 1, convergence } });
         const ev = await svc.verify(DIVIDER, { type: 'op' }, [A('out', 'final', 'approx', 5.0, 0.1)], 'user-1');
         expect(ev.verdict).toBe('pass'); // the rescued run still passes the spec
@@ -335,8 +457,17 @@ describe('VerificationService — worker delegation (prod path, userId present)'
 
     it('surfaces a recovered:false Convergence report on a remedy-resistant FAILED run (FAIL + report)', async () => {
         // ngspice ran, the ladder was fully walked, nothing converged → a genuine, remedy-resistant fault.
-        const convergence = { recovered: false, kind: 'no_convergence', diagnosis: 'no solution at default accuracy', attempts: 3, triedRemedies: ['add gmin', 'relaxed tolerances + gmin', 'aggressive relaxation (last resort)'] };
-        const { svc } = makeWorkerService({ status: 'FAILED', metrics: { failureClass: 'sim', error: 'no convergence', convergence } });
+        const convergence = {
+            recovered: false,
+            kind: 'no_convergence',
+            diagnosis: 'no solution at default accuracy',
+            attempts: 3,
+            triedRemedies: ['add gmin', 'relaxed tolerances + gmin', 'aggressive relaxation (last resort)'],
+        };
+        const { svc } = makeWorkerService({
+            status: 'FAILED',
+            metrics: { failureClass: 'sim', error: 'no convergence', convergence },
+        });
         const ev = await svc.verify(DIVIDER, { type: 'op' }, [A('out', 'final', 'approx', 5)], 'user-1');
         expect(ev.verdict).toBe('fail');
         expect(ev.convergence).toMatchObject({ recovered: false, kind: 'no_convergence' });
@@ -344,7 +475,11 @@ describe('VerificationService — worker delegation (prod path, userId present)'
     });
 
     it('a SUCCEEDED job whose result is unavailable from storage (S3 outage) is INCONCLUSIVE, not a fail', async () => {
-        const { svc } = makeWorkerService({ status: 'SUCCEEDED', result: null, resultError: 'Result data is currently unavailable from storage.' });
+        const { svc } = makeWorkerService({
+            status: 'SUCCEEDED',
+            result: null,
+            resultError: 'Result data is currently unavailable from storage.',
+        });
         const ev = await svc.verify(DIVIDER, { type: 'op' }, [A('out', 'final', 'approx', 5)], 'user-1');
         expect(ev.verdict).toBe('inconclusive');
         expect(ev.simStatus).toBe('skipped');
@@ -363,10 +498,31 @@ describe('VerificationService — worker delegation (prod path, userId present)'
         const noGround: CircuitJson = {
             version: '1.0',
             components: [
-                { id: 'v1', type: 'voltage_source', designator: 'V1', value: 'DC 5', pins: [{ pinId: '+', netId: 'a' }, { pinId: '-', netId: 'b' }] },
-                { id: 'r1', type: 'resistor', designator: 'R1', value: '1k', pins: [{ pinId: '1', netId: 'a' }, { pinId: '2', netId: 'b' }] },
+                {
+                    id: 'v1',
+                    type: 'voltage_source',
+                    designator: 'V1',
+                    value: 'DC 5',
+                    pins: [
+                        { pinId: '+', netId: 'a' },
+                        { pinId: '-', netId: 'b' },
+                    ],
+                },
+                {
+                    id: 'r1',
+                    type: 'resistor',
+                    designator: 'R1',
+                    value: '1k',
+                    pins: [
+                        { pinId: '1', netId: 'a' },
+                        { pinId: '2', netId: 'b' },
+                    ],
+                },
             ],
-            nets: [{ id: 'a', name: 'a' }, { id: 'b', name: 'b' }],
+            nets: [
+                { id: 'a', name: 'a' },
+                { id: 'b', name: 'b' },
+            ],
         };
         const { svc } = makeWorkerService();
         const ev = await svc.verify(noGround, { type: 'op' }, [], 'user-1');
@@ -398,15 +554,36 @@ const OUT_NODE = `v(${sanitizeNodeName('out')})`;
 const resultWith = (extra: { thd?: number; gain?: number }) => ({
     meta: { analysisType: extra.gain !== undefined ? 'op' : 'tran', xLabel: 't', pointsCount: 2 },
     series: [
-        { name: `v(${sanitizeNodeName('in')})`, points: [{ x: 0, y: 10 }, { x: 1e-3, y: 10 }] },
-        { name: OUT_NODE, points: [{ x: 0, y: 5 }, { x: 1e-3, y: 5 }] },
+        {
+            name: `v(${sanitizeNodeName('in')})`,
+            points: [
+                { x: 0, y: 10 },
+                { x: 1e-3, y: 10 },
+            ],
+        },
+        {
+            name: OUT_NODE,
+            points: [
+                { x: 0, y: 5 },
+                { x: 1e-3, y: 5 },
+            ],
+        },
     ],
-    ...(extra.thd !== undefined ? { fourier: [{ probe: OUT_NODE, fundamentalFreq: 1000, thd: extra.thd, harmonics: [] }] } : {}),
-    ...(extra.gain !== undefined ? { transferFunction: { gain: extra.gain, outputNode: OUT_NODE, inputSource: 'V1' } } : {}),
+    ...(extra.thd !== undefined
+        ? { fourier: [{ probe: OUT_NODE, fundamentalFreq: 1000, thd: extra.thd, harmonics: [] }] }
+        : {}),
+    ...(extra.gain !== undefined
+        ? { transferFunction: { gain: extra.gain, outputNode: OUT_NODE, inputSource: 'V1' } }
+        : {}),
 });
 
 describe('VerificationService — THD / gain verdict-gating on the worker path (regression)', () => {
-    const TRAN = { type: 'tran', stopTime: '2m', stepTime: '5u', fourier: { fundamentalFreq: '1k', probes: ['v(out)'] } } as never;
+    const TRAN = {
+        type: 'tran',
+        stopTime: '2m',
+        stepTime: '5u',
+        fourier: { fundamentalFreq: '1k', probes: ['v(out)'] },
+    } as never;
     const OP_TF = { type: 'op', tf: { output: 'v(out)', inputSource: 'V1' } } as never;
 
     it('a thd criterion PASSES when the worker returned fourier data (THD folded onto the measurement)', async () => {
@@ -482,12 +659,22 @@ describe('VerificationService — THD / gain verdict-gating on the worker path (
 describe('VerificationService — worst-case (corner) robustness option (informational, never gates the verdict)', () => {
     const passing = [A('out', 'final', 'approx', 5.0, 0.1)]; // DIVIDER out≈5 → nominal PASS
     const wc = (over: Record<string, unknown> = {}) => ({
-        componentsCornered: ['R1', 'R2'], omitted: [], evaluated: 4, passed: 4, failed: 0, errored: 0,
-        passAllCorners: true, worstCorners: [], ...over,
+        componentsCornered: ['R1', 'R2'],
+        omitted: [],
+        evaluated: 4,
+        passed: 4,
+        failed: 0,
+        errored: 0,
+        passAllCorners: true,
+        worstCorners: [],
+        ...over,
     });
 
     it('runs the corner batch and folds passAllCorners into evidence.robustness when the nominal verdict is pass', async () => {
-        const { svc, createCornerJob } = makeWorkerService({ status: 'SUCCEEDED', metrics: { pointsCount: 1, worstCase: wc() } });
+        const { svc, createCornerJob } = makeWorkerService({
+            status: 'SUCCEEDED',
+            metrics: { pointsCount: 1, worstCase: wc() },
+        });
         const ev = await svc.verify(DIVIDER, { type: 'op' }, passing, 'user-1', { corner: true });
         expect(ev.verdict).toBe('pass');
         expect(createCornerJob).toHaveBeenCalledTimes(1);
@@ -505,15 +692,23 @@ describe('VerificationService — worst-case (corner) robustness option (informa
     });
 
     it('is SKIPPED entirely when the nominal verdict is not pass (no point cornering a failing design)', async () => {
-        const { svc, createCornerJob } = makeWorkerService({ status: 'SUCCEEDED', metrics: { pointsCount: 1, worstCase: wc() } });
-        const ev = await svc.verify(DIVIDER, { type: 'op' }, [A('out', 'final', 'approx', 99)], 'user-1', { corner: true }); // 5≉99 → fail
+        const { svc, createCornerJob } = makeWorkerService({
+            status: 'SUCCEEDED',
+            metrics: { pointsCount: 1, worstCase: wc() },
+        });
+        const ev = await svc.verify(DIVIDER, { type: 'op' }, [A('out', 'final', 'approx', 99)], 'user-1', {
+            corner: true,
+        }); // 5≉99 → fail
         expect(ev.verdict).toBe('fail');
         expect(createCornerJob).not.toHaveBeenCalled();
         expect(ev.robustness).toBeUndefined();
     });
 
     it('is not run at all when the caller does not request it', async () => {
-        const { svc, createCornerJob } = makeWorkerService({ status: 'SUCCEEDED', metrics: { pointsCount: 1, worstCase: wc() } });
+        const { svc, createCornerJob } = makeWorkerService({
+            status: 'SUCCEEDED',
+            metrics: { pointsCount: 1, worstCase: wc() },
+        });
         const ev = await svc.verify(DIVIDER, { type: 'op' }, passing, 'user-1'); // no robustness arg
         expect(createCornerJob).not.toHaveBeenCalled();
         expect(ev.robustness).toBeUndefined();
@@ -529,7 +724,10 @@ describe('VerificationService — worst-case (corner) robustness option (informa
     });
 
     it('reports "unavailable" (never throws / never a design fail) when the corner batch enqueue fails', async () => {
-        const { svc, createCornerJob } = makeWorkerService({ status: 'SUCCEEDED', metrics: { pointsCount: 1, worstCase: wc() } });
+        const { svc, createCornerJob } = makeWorkerService({
+            status: 'SUCCEEDED',
+            metrics: { pointsCount: 1, worstCase: wc() },
+        });
         (createCornerJob as jest.Mock).mockRejectedValueOnce(new Error('Redis down'));
         const ev = await svc.verify(DIVIDER, { type: 'op' }, passing, 'user-1', { corner: true });
         expect(ev.verdict).toBe('pass'); // infra failure of the informational check never touches the verdict
@@ -540,9 +738,30 @@ describe('VerificationService — worst-case (corner) robustness option (informa
 describe('VerificationService — Monte-Carlo robustness tier + gate', () => {
     const passSpec = [A('out', 'final', 'approx', 5.0, 0.1)]; // workerResult out=5 → nominal pass
     const withTol = (source: 'user' | 'catalog') =>
-        ({ ...DIVIDER, components: DIVIDER.components.map((c) => (c.id === 'r1' ? { ...c, tolerance: 0.01, toleranceSource: source } : c)) } as CircuitJson);
-    const atRisk = { total: 100, evaluated: 100, passed: 80, failed: 20, errored: 0, yield: 0.8, ci95: { low: 0.71, high: 0.87 } };
-    const robust = { total: 500, evaluated: 500, passed: 500, failed: 0, errored: 0, yield: 1, ci95: { low: 0.994, high: 1 } };
+        ({
+            ...DIVIDER,
+            components: DIVIDER.components.map((c) =>
+                c.id === 'r1' ? { ...c, tolerance: 0.01, toleranceSource: source } : c,
+            ),
+        }) as CircuitJson;
+    const atRisk = {
+        total: 100,
+        evaluated: 100,
+        passed: 80,
+        failed: 20,
+        errored: 0,
+        yield: 0.8,
+        ci95: { low: 0.71, high: 0.87 },
+    };
+    const robust = {
+        total: 500,
+        evaluated: 500,
+        passed: 500,
+        failed: 0,
+        errored: 0,
+        yield: 1,
+        ci95: { low: 0.994, high: 1 },
+    };
 
     it('at-risk tier on USER-specified tolerances GATES: the nominal pass flips to fail, disclosed', async () => {
         const { svc, createMonteCarloJob } = makeWorkerService({ metrics: { monteCarlo: atRisk } });
@@ -564,7 +783,16 @@ describe('VerificationService — Monte-Carlo robustness tier + gate', () => {
     it('at-risk on a MIXED (user + catalog) circuit does NOT gate — the at-risk is not purely user-caused', async () => {
         // r1 user-toleranced, r2 catalog-toleranced → basis 'mixed'. The worker perturbs both, so an at-risk
         // could be driven by the catalog spread; we must NOT auto-fail on tolerances the user didn't fully own.
-        const mixed = { ...DIVIDER, components: DIVIDER.components.map((c) => (c.id === 'r1' ? { ...c, tolerance: 0.01, toleranceSource: 'user' } : c.id === 'r2' ? { ...c, tolerance: 0.05, toleranceSource: 'catalog' } : c)) } as CircuitJson;
+        const mixed = {
+            ...DIVIDER,
+            components: DIVIDER.components.map((c) =>
+                c.id === 'r1'
+                    ? { ...c, tolerance: 0.01, toleranceSource: 'user' }
+                    : c.id === 'r2'
+                      ? { ...c, tolerance: 0.05, toleranceSource: 'catalog' }
+                      : c,
+            ),
+        } as CircuitJson;
         const { svc } = makeWorkerService({ metrics: { monteCarlo: atRisk } });
         const ev = await svc.verify(mixed, { type: 'op' }, passSpec, 'user-1', { montecarlo: true });
         expect(ev.montecarlo?.tier).toBe('at-risk');
@@ -593,7 +821,9 @@ describe('VerificationService — Monte-Carlo robustness tier + gate', () => {
 
     it('does NOT run Monte-Carlo when the nominal verdict is not pass (no point)', async () => {
         const { svc, createMonteCarloJob } = makeWorkerService({ metrics: { monteCarlo: atRisk } });
-        const ev = await svc.verify(withTol('user'), { type: 'op' }, [A('out', 'final', 'approx', 99)], 'user-1', { montecarlo: true });
+        const ev = await svc.verify(withTol('user'), { type: 'op' }, [A('out', 'final', 'approx', 99)], 'user-1', {
+            montecarlo: true,
+        });
         expect(ev.verdict).toBe('fail'); // nominal spec unmet
         expect(createMonteCarloJob).not.toHaveBeenCalled();
     });
@@ -626,28 +856,89 @@ describe('VerificationService — Monte-Carlo robustness tier + gate', () => {
 });
 
 describe('deriveToleranceBasis — the honest provenance the tier discloses + the gate keys on', () => {
-    const comp = (over: Record<string, unknown> = {}) => ({ id: 'r1', type: 'resistor', designator: 'R1', value: '1k', pins: [{ pinId: '1', netId: 'a' }, { pinId: '2', netId: 'b' }], ...over });
-    const circ = (comps: unknown[]) => ({ version: '1.0', components: comps, nets: [{ id: 'a', name: 'a' }, { id: 'b', name: 'b' }] } as CircuitJson);
+    const comp = (over: Record<string, unknown> = {}) => ({
+        id: 'r1',
+        type: 'resistor',
+        designator: 'R1',
+        value: '1k',
+        pins: [
+            { pinId: '1', netId: 'a' },
+            { pinId: '2', netId: 'b' },
+        ],
+        ...over,
+    });
+    const circ = (comps: unknown[]) =>
+        ({
+            version: '1.0',
+            components: comps,
+            nets: [
+                { id: 'a', name: 'a' },
+                { id: 'b', name: 'b' },
+            ],
+        }) as CircuitJson;
 
     it("'none' when nothing is toleranced", () => expect(deriveToleranceBasis(circ([comp()]))).toBe('none'));
-    it("'catalog' when EVERY toleranced part is catalog-sourced", () => expect(deriveToleranceBasis(circ([comp({ tolerance: 0.01, toleranceSource: 'catalog' })]))).toBe('catalog'));
+    it("'catalog' when EVERY toleranced part is catalog-sourced", () =>
+        expect(deriveToleranceBasis(circ([comp({ tolerance: 0.01, toleranceSource: 'catalog' })]))).toBe('catalog'));
     it("'user-specified' only when EVERY toleranced part is user-stated (the whole spread is user-owned)", () =>
-        expect(deriveToleranceBasis(circ([comp({ tolerance: 0.01, toleranceSource: 'user' }), comp({ id: 'r2', tolerance: 0.05, toleranceSource: 'user' })]))).toBe('user-specified'));
+        expect(
+            deriveToleranceBasis(
+                circ([
+                    comp({ tolerance: 0.01, toleranceSource: 'user' }),
+                    comp({ id: 'r2', tolerance: 0.05, toleranceSource: 'user' }),
+                ]),
+            ),
+        ).toBe('user-specified'));
     it("'mixed' when user + catalog tolerances coexist (NOT user-specified — the at-risk isn't purely user-caused)", () =>
-        expect(deriveToleranceBasis(circ([comp({ tolerance: 0.05, toleranceSource: 'catalog' }), comp({ id: 'r2', tolerance: 0.01, toleranceSource: 'user' })]))).toBe('mixed'));
-    it("'unspecified' when a tolerance carries no recorded source", () => expect(deriveToleranceBasis(circ([comp({ tolerance: 0.05 })]))).toBe('unspecified'));
+        expect(
+            deriveToleranceBasis(
+                circ([
+                    comp({ tolerance: 0.05, toleranceSource: 'catalog' }),
+                    comp({ id: 'r2', tolerance: 0.01, toleranceSource: 'user' }),
+                ]),
+            ),
+        ).toBe('mixed'));
+    it("'unspecified' when a tolerance carries no recorded source", () =>
+        expect(deriveToleranceBasis(circ([comp({ tolerance: 0.05 })]))).toBe('unspecified'));
 });
 
 describe('robustnessManifestEntry — composes every robustness sub-analysis (no early-return drop)', () => {
     const MC = { tier: 'robust', yieldLowerBound: 0.995, evaluated: 500, toleranceBasis: 'user-specified' } as never;
-    const CORNER = { worstCase: { componentsCornered: ['R1'], omitted: [], evaluated: 2, passed: 2, failed: 0, errored: 0, passAllCorners: true, worstCorners: [] } } as never;
+    const CORNER = {
+        worstCase: {
+            componentsCornered: ['R1'],
+            omitted: [],
+            evaluated: 2,
+            passed: 2,
+            failed: 0,
+            errored: 0,
+            passAllCorners: true,
+            worstCorners: [],
+        },
+    } as never;
     const tempRun = (over: Record<string, unknown> = {}) =>
-        ({ tempCorner: { applicable: true, temperaturesC: [0, 25, 70], rangeLabel: 'consumer 0 / 25 / 70 C', evaluated: 3, passed: 3, failed: 0, errored: 0, hasLimits: true, passAllTemps: true, drift: [], ...over } }) as never;
+        ({
+            tempCorner: {
+                applicable: true,
+                temperaturesC: [0, 25, 70],
+                rangeLabel: 'consumer 0 / 25 / 70 C',
+                evaluated: 3,
+                passed: 3,
+                failed: 0,
+                errored: 0,
+                hasLimits: true,
+                passAllTemps: true,
+                drift: [],
+                ...over,
+            },
+        }) as never;
 
     it('MC-only detail is BYTE-IDENTICAL to the pre-compose format (zero regression)', () => {
         const e = robustnessManifestEntry(MC);
         expect(e.status).toBe('run');
-        expect(e.detail).toBe('robust — 99.5% yield (95% CI lower bound), 500 Monte-Carlo runs; tolerances: user-specified — informational (does not gate)');
+        expect(e.detail).toBe(
+            'robust — 99.5% yield (95% CI lower bound), 500 Monte-Carlo runs; tolerances: user-specified — informational (does not gate)',
+        );
         expect(e.gradation).toBeUndefined();
         expect(e.detail).not.toContain(' | '); // a single clause never joins
     });
@@ -671,7 +962,16 @@ describe('robustnessManifestEntry — composes every robustness sub-analysis (no
     });
 
     it('a temperature corner that is NOT-APPLICABLE is disclosed but does not count as "run" on its own', () => {
-        const e = robustnessManifestEntry(undefined, undefined, tempRun({ applicable: false, notApplicableReason: 'not-applicable — no temperature-responsive device (passive-only)', hasLimits: false, passAllTemps: false }));
+        const e = robustnessManifestEntry(
+            undefined,
+            undefined,
+            tempRun({
+                applicable: false,
+                notApplicableReason: 'not-applicable — no temperature-responsive device (passive-only)',
+                hasLimits: false,
+                passAllTemps: false,
+            }),
+        );
         expect(e.status).toBe('not-run'); // not-applicable alone is not a run
         expect(e.detail).toContain('not-applicable');
         expect(e.gradation).toBeUndefined();
@@ -684,9 +984,22 @@ describe('robustnessManifestEntry — composes every robustness sub-analysis (no
 
 describe('VerificationService — temperature corner is INFORMATIONAL (never gates)', () => {
     it('a FAILED temperature corner does NOT flip the verdict; the result is surfaced', async () => {
-        const tempCorner = { applicable: true, temperaturesC: [0, 25, 70], rangeLabel: 'consumer 0 / 25 / 70 C', evaluated: 3, passed: 2, failed: 1, errored: 0, hasLimits: true, passAllTemps: false, drift: [] };
+        const tempCorner = {
+            applicable: true,
+            temperaturesC: [0, 25, 70],
+            rangeLabel: 'consumer 0 / 25 / 70 C',
+            evaluated: 3,
+            passed: 2,
+            failed: 1,
+            errored: 0,
+            hasLimits: true,
+            passAllTemps: false,
+            drift: [],
+        };
         const { svc, createTempCornerJob } = makeWorkerService({ metrics: { tempCorner } });
-        const ev = await svc.verify(DIVIDER, { type: 'op' }, [A('out', 'final', 'approx', 5.0, 0.1)], 'user-1', { temperature: true });
+        const ev = await svc.verify(DIVIDER, { type: 'op' }, [A('out', 'final', 'approx', 5.0, 0.1)], 'user-1', {
+            temperature: true,
+        });
         expect(createTempCornerJob).toHaveBeenCalledTimes(1);
         expect(ev.verdict).toBe('pass'); // nominal passed; a failing AMBIENT-only temperature corner NEVER gates
         expect(ev.tempcorner?.tempCorner?.failed).toBe(1);
@@ -701,7 +1014,22 @@ describe('VerificationService — temperature corner is INFORMATIONAL (never gat
 describe('robustnessManifestEntry — supply corner is a COMPOSED clause with an honest 3-way not-run', () => {
     const MC = { tier: 'robust', yieldLowerBound: 0.995, evaluated: 500, toleranceBasis: 'user-specified' } as never;
     const supply = () =>
-        ({ supplyCorner: { applicable: true, rails: [{ netId: 'vcc', status: 'trusted', driverDesignator: 'V1' }], omitted: [], tolerance: 0.05, rangeLabel: '±5%', evaluated: 2, passed: 2, failed: 0, errored: 0, hasLimits: true, passAllCorners: true, drift: [] } }) as never;
+        ({
+            supplyCorner: {
+                applicable: true,
+                rails: [{ netId: 'vcc', status: 'trusted', driverDesignator: 'V1' }],
+                omitted: [],
+                tolerance: 0.05,
+                rangeLabel: '±5%',
+                evaluated: 2,
+                passed: 2,
+                failed: 0,
+                errored: 0,
+                hasLimits: true,
+                passAllCorners: true,
+                drift: [],
+            },
+        }) as never;
 
     it('a RAN supply corner joins as its own clause (does not overwrite MC — the early-return bug stays dead)', () => {
         const e = robustnessManifestEntry(MC, undefined, undefined, supply());
@@ -712,13 +1040,41 @@ describe('robustnessManifestEntry — supply corner is a COMPOSED clause with an
     });
 
     it('not-run (c): NO power rail marked reads as "not yet marked", not broken (the common freeze-era case)', () => {
-        const e = robustnessManifestEntry(undefined, undefined, undefined, { supplyCorner: { applicable: false, rails: [], omitted: [], tolerance: 0.05, evaluated: 0, passed: 0, failed: 0, errored: 0, hasLimits: false, passAllCorners: false, drift: [] } } as never);
+        const e = robustnessManifestEntry(undefined, undefined, undefined, {
+            supplyCorner: {
+                applicable: false,
+                rails: [],
+                omitted: [],
+                tolerance: 0.05,
+                evaluated: 0,
+                passed: 0,
+                failed: 0,
+                errored: 0,
+                hasLimits: false,
+                passAllCorners: false,
+                drift: [],
+            },
+        } as never);
         expect(e.status).toBe('not-run');
         expect(e.detail).toMatch(/no power rail marked/i);
     });
 
     it('not-run (b): a marked rail that could not be validated surfaces the DEFERRAL reason (not silent)', () => {
-        const e = robustnessManifestEntry(undefined, undefined, undefined, { supplyCorner: { applicable: false, rails: [{ netId: 'vref', status: 'deferred', reason: 'no DC power source drives this net' }], omitted: [], tolerance: 0.05, evaluated: 0, passed: 0, failed: 0, errored: 0, hasLimits: false, passAllCorners: false, drift: [] } } as never);
+        const e = robustnessManifestEntry(undefined, undefined, undefined, {
+            supplyCorner: {
+                applicable: false,
+                rails: [{ netId: 'vref', status: 'deferred', reason: 'no DC power source drives this net' }],
+                omitted: [],
+                tolerance: 0.05,
+                evaluated: 0,
+                passed: 0,
+                failed: 0,
+                errored: 0,
+                hasLimits: false,
+                passAllCorners: false,
+                drift: [],
+            },
+        } as never);
         expect(e.status).toBe('not-run');
         expect(e.detail).toMatch(/could not be validated: no DC power source/i);
     });
@@ -726,9 +1082,24 @@ describe('robustnessManifestEntry — supply corner is a COMPOSED clause with an
 
 describe('VerificationService — supply corner is INFORMATIONAL (never gates)', () => {
     it('a FAILED supply corner does NOT flip the verdict; the result is surfaced', async () => {
-        const supplyCorner = { applicable: true, rails: [{ netId: 'rail', status: 'trusted', driverDesignator: 'V1' }], omitted: [], tolerance: 0.05, rangeLabel: '±5%', evaluated: 2, passed: 1, failed: 1, errored: 0, hasLimits: true, passAllCorners: false, drift: [] };
+        const supplyCorner = {
+            applicable: true,
+            rails: [{ netId: 'rail', status: 'trusted', driverDesignator: 'V1' }],
+            omitted: [],
+            tolerance: 0.05,
+            rangeLabel: '±5%',
+            evaluated: 2,
+            passed: 1,
+            failed: 1,
+            errored: 0,
+            hasLimits: true,
+            passAllCorners: false,
+            drift: [],
+        };
         const { svc, createSupplyCornerJob } = makeWorkerService({ metrics: { supplyCorner } });
-        const ev = await svc.verify(DIVIDER, { type: 'op' }, [A('out', 'final', 'approx', 5.0, 0.1)], 'user-1', { supply: true });
+        const ev = await svc.verify(DIVIDER, { type: 'op' }, [A('out', 'final', 'approx', 5.0, 0.1)], 'user-1', {
+            supply: true,
+        });
         expect(createSupplyCornerJob).toHaveBeenCalledTimes(1);
         expect(ev.verdict).toBe('pass'); // nominal passed; a failing supply corner NEVER gates (informational)
         expect(ev.supplycorner?.supplyCorner?.failed).toBe(1);

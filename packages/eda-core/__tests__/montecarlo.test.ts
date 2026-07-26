@@ -2,7 +2,14 @@
  * Monte-Carlo / tolerance tests (Faz B-2 foundation). Pure + seeded — deterministic, no ngspice. Proves the
  * perturbation stays within tolerance, only touches toleranced numeric components, and is reproducible.
  */
-import { perturbValue, perturbCircuit, monteCarloVariants, computeYield, classifyRobustness, ROBUSTNESS_PROFILES } from '../src/montecarlo';
+import {
+    perturbValue,
+    perturbCircuit,
+    monteCarloVariants,
+    computeYield,
+    classifyRobustness,
+    ROBUSTNESS_PROFILES,
+} from '../src/montecarlo';
 import type { CircuitJson } from '../src/types/circuit';
 import { mulberry32 } from '../src/utils/prng';
 import { parseSpiceValue } from '../src/utils/unit-parser';
@@ -42,11 +49,44 @@ describe('perturbValue', () => {
 const RC: CircuitJson = {
     version: '1.0',
     components: [
-        { id: 'v1', type: 'voltage_source', designator: 'V1', value: 'SIN(0 5 1k)', tolerance: 0.05, pins: [{ pinId: '+', netId: 'in' }, { pinId: '-', netId: '0' }] },
-        { id: 'r1', type: 'resistor', designator: 'R1', value: '1k', tolerance: 0.05, pins: [{ pinId: '1', netId: 'in' }, { pinId: '2', netId: 'out' }] },
-        { id: 'c1', type: 'capacitor', designator: 'C1', value: '100n', pins: [{ pinId: '1', netId: 'out' }, { pinId: '2', netId: '0' }] },
+        {
+            id: 'v1',
+            type: 'voltage_source',
+            designator: 'V1',
+            value: 'SIN(0 5 1k)',
+            tolerance: 0.05,
+            pins: [
+                { pinId: '+', netId: 'in' },
+                { pinId: '-', netId: '0' },
+            ],
+        },
+        {
+            id: 'r1',
+            type: 'resistor',
+            designator: 'R1',
+            value: '1k',
+            tolerance: 0.05,
+            pins: [
+                { pinId: '1', netId: 'in' },
+                { pinId: '2', netId: 'out' },
+            ],
+        },
+        {
+            id: 'c1',
+            type: 'capacitor',
+            designator: 'C1',
+            value: '100n',
+            pins: [
+                { pinId: '1', netId: 'out' },
+                { pinId: '2', netId: '0' },
+            ],
+        },
     ],
-    nets: [{ id: 'in', name: 'in' }, { id: 'out', name: 'out' }, { id: '0', name: '0', isGround: true }],
+    nets: [
+        { id: 'in', name: 'in' },
+        { id: 'out', name: 'out' },
+        { id: '0', name: '0', isGround: true },
+    ],
 };
 
 describe('perturbCircuit', () => {
@@ -69,9 +109,22 @@ describe('perturbCircuit', () => {
         const supply: CircuitJson = {
             version: '1.0',
             components: [
-                { id: 'v1', type: 'voltage_source', designator: 'V1', value: 'DC 5', tolerance: 0.05, pins: [{ pinId: '+', netId: 'in' }, { pinId: '-', netId: '0' }] },
+                {
+                    id: 'v1',
+                    type: 'voltage_source',
+                    designator: 'V1',
+                    value: 'DC 5',
+                    tolerance: 0.05,
+                    pins: [
+                        { pinId: '+', netId: 'in' },
+                        { pinId: '-', netId: '0' },
+                    ],
+                },
             ],
-            nets: [{ id: 'in', name: 'in' }, { id: '0', name: '0', isGround: true }],
+            nets: [
+                { id: 'in', name: 'in' },
+                { id: '0', name: '0', isGround: true },
+            ],
         };
         // Across many seeds the supply must actually move (and stay within ±5%), and re-emit as 'DC <x>'.
         const seen = new Set<string>();
@@ -91,9 +144,22 @@ describe('perturbCircuit', () => {
         const sci: CircuitJson = {
             version: '1.0',
             components: [
-                { id: 'r1', type: 'resistor', designator: 'R1', value: '1e3', tolerance: 0.05, pins: [{ pinId: '1', netId: 'in' }, { pinId: '2', netId: 'out' }] },
+                {
+                    id: 'r1',
+                    type: 'resistor',
+                    designator: 'R1',
+                    value: '1e3',
+                    tolerance: 0.05,
+                    pins: [
+                        { pinId: '1', netId: 'in' },
+                        { pinId: '2', netId: 'out' },
+                    ],
+                },
             ],
-            nets: [{ id: 'in', name: 'in' }, { id: 'out', name: 'out' }],
+            nets: [
+                { id: 'in', name: 'in' },
+                { id: 'out', name: 'out' },
+            ],
         };
         const r = perturbCircuit(sci, mulberry32(5)).components[0]!;
         const ohms = parseSpiceValue(r.value!).value;
@@ -124,7 +190,7 @@ describe('monteCarloVariants', () => {
 describe('classifyRobustness — yield → tier on the Wilson LOWER bound', () => {
     const rep = (yld: number, low: number, evaluated = 300) => ({ yield: yld, ci95: { low, high: 1 }, evaluated });
 
-    it("grades on ci95.low, not the point estimate: high yield but a low CI floor is NOT robust", () => {
+    it('grades on ci95.low, not the point estimate: high yield but a low CI floor is NOT robust', () => {
         // 100% observed but only 30 runs → Wilson low well under 0.99 → not robust (honest about sample size)
         expect(classifyRobustness(rep(1.0, 0.88)).tier).toBe('at-risk');
         expect(classifyRobustness(rep(1.0, 0.995)).tier).toBe('robust');
@@ -133,7 +199,7 @@ describe('classifyRobustness — yield → tier on the Wilson LOWER bound', () =
     it('consumer bars: >=0.99 robust, 0.90-0.99 marginal, <0.90 at-risk', () => {
         expect(classifyRobustness(rep(1, 0.99)).tier).toBe('robust');
         expect(classifyRobustness(rep(0.97, 0.95)).tier).toBe('marginal');
-        expect(classifyRobustness(rep(0.85, 0.80)).tier).toBe('at-risk');
+        expect(classifyRobustness(rep(0.85, 0.8)).tier).toBe('at-risk');
     });
 
     it('automotive/medical bars are stricter (0.999 / 0.99)', () => {
@@ -178,6 +244,12 @@ describe('computeYield', () => {
         expect(width(many)).toBeLessThan(width(few)); // more runs → narrower interval
     });
     it('empty input → zero yield, full [0,1] interval', () => {
-        expect(computeYield([])).toMatchObject({ total: 0, evaluated: 0, passed: 0, yield: 0, ci95: { low: 0, high: 1 } });
+        expect(computeYield([])).toMatchObject({
+            total: 0,
+            evaluated: 0,
+            passed: 0,
+            yield: 0,
+            ci95: { low: 0, high: 1 },
+        });
     });
 });

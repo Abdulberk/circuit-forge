@@ -68,7 +68,10 @@ export function reapDecision(row: ReapableRow, state: string, nowMs: number, run
         // BullMQ says the job is DONE (completed or failed) yet the row is still non-terminal → the worker
         // stopped before writing the outcome (a redelivery no-op'd, or it crashed). Reconcile to FAILED.
         case 'completed':
-            return { reap: true, reason: 'reaped: the queue job finished but the worker never wrote the result (it stopped mid-job)' };
+            return {
+                reap: true,
+                reason: 'reaped: the queue job finished but the worker never wrote the result (it stopped mid-job)',
+            };
         case 'failed':
             return { reap: true, reason: 'reaped: the queue job failed (the worker stopped unexpectedly)' };
 
@@ -134,10 +137,16 @@ export async function reapStaleLayoutJobs(deps: {
             });
             if (res.count > 0) {
                 reaped += res.count;
-                log?.warn({ jobId: row.id, was: row.status, queueState: state, reason: decision.reason }, 'Reaped orphaned layout job');
+                log?.warn(
+                    { jobId: row.id, was: row.status, queueState: state, reason: decision.reason },
+                    'Reaped orphaned layout job',
+                );
             }
         } catch (e) {
-            log?.warn({ jobId: row.id, error: e instanceof Error ? e.message : String(e) }, 'Reaper skipped a row after an error');
+            log?.warn(
+                { jobId: row.id, error: e instanceof Error ? e.message : String(e) },
+                'Reaper skipped a row after an error',
+            );
         }
     }
 

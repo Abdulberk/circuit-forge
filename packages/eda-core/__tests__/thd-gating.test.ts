@@ -3,8 +3,15 @@ import type { SimMeasurement } from '../src/analysis/measurements';
 import type { FourierResult } from '../src/types/simulation';
 
 const meas = (node: string, over: Partial<SimMeasurement> = {}): SimMeasurement => ({
-    node, min: 0, max: 0, final: 0, pp: 0, avg: 0, rms: 0,
-    raw: { min: 0, max: 0, final: 0, pp: 0, avg: 0, rms: 0 }, ...over,
+    node,
+    min: 0,
+    max: 0,
+    final: 0,
+    pp: 0,
+    avg: 0,
+    rms: 0,
+    raw: { min: 0, max: 0, final: 0, pp: 0, avg: 0, rms: 0 },
+    ...over,
 });
 const fr = (probe: string, thd: number): FourierResult => ({ probe, fundamentalFreq: 1000, thd, harmonics: [] });
 

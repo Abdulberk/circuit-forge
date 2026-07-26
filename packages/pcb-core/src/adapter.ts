@@ -194,7 +194,11 @@ function computePlacements(
     // outline (auto-sized boards are derived FROM the default pitch, so they keep it).
     const pitch = Math.max(
         1,
-        Math.min(GRID_PITCH_MM, (boardW - 2 * MARGIN_MM) / Math.max(1, cols - 1 || 1), (boardH - 2 * MARGIN_MM) / Math.max(1, rows - 1 || 1)),
+        Math.min(
+            GRID_PITCH_MM,
+            (boardW - 2 * MARGIN_MM) / Math.max(1, cols - 1 || 1),
+            (boardH - 2 * MARGIN_MM) / Math.max(1, rows - 1 || 1),
+        ),
     );
     physical.forEach((plan, i) => {
         const col = i % cols;

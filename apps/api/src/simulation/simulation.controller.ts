@@ -1,7 +1,17 @@
 /**
  * Simulation Controller
  */
-import { Controller, Get, Post, Body, Param, ParseUUIDPipe, Query, UseGuards, BadRequestException } from '@nestjs/common';
+import {
+    Controller,
+    Get,
+    Post,
+    Body,
+    Param,
+    ParseUUIDPipe,
+    Query,
+    UseGuards,
+    BadRequestException,
+} from '@nestjs/common';
 import { ApiTags, ApiOperation, ApiBearerAuth, ApiQuery } from '@nestjs/swagger';
 import { Throttle } from '@nestjs/throttler';
 
@@ -16,7 +26,7 @@ import { SimulationService } from './simulation.service';
 @UseGuards(JwtAuthGuard)
 @Controller()
 export class SimulationController {
-    constructor(private readonly simulationService: SimulationService) { }
+    constructor(private readonly simulationService: SimulationService) {}
 
     @Post('versions/:versionId/simulations')
     @Throttle({ default: { limit: 30, ttl: 60000 } })
@@ -38,10 +48,7 @@ export class SimulationController {
     @Post('simulations/quick')
     @Throttle({ default: { limit: 10, ttl: 60000 } })
     @ApiOperation({ summary: 'Quick simulation from netlist' })
-    async quickSim(
-        @Body() dto: QuickSimulationDto,
-        @CurrentUser() user: { id: string },
-    ) {
+    async quickSim(@Body() dto: QuickSimulationDto, @CurrentUser() user: { id: string }) {
         return this.simulationService.createQuickSim(dto.netlist, dto.analysisConfig, user.id, dto.modelAssetIds);
     }
 
@@ -52,8 +59,15 @@ export class SimulationController {
     }
 
     @Get('simulations/:jobId/result')
-    @ApiOperation({ summary: 'Get simulation result (?maxPoints=N decimates each series for display, min-max bucketing)' })
-    @ApiQuery({ name: 'maxPoints', required: false, description: 'Cap per-series points (10..100000); peaks survive (min-max). meta.downsampledFrom carries the original count.' })
+    @ApiOperation({
+        summary: 'Get simulation result (?maxPoints=N decimates each series for display, min-max bucketing)',
+    })
+    @ApiQuery({
+        name: 'maxPoints',
+        required: false,
+        description:
+            'Cap per-series points (10..100000); peaks survive (min-max). meta.downsampledFrom carries the original count.',
+    })
     async getResult(
         @Param('jobId', ParseUUIDPipe) jobId: string,
         @CurrentUser() user: { id: string },

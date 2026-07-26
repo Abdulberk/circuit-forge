@@ -1,480 +1,465 @@
 {
-  "name": "Battery Level Indicator (Green/Yellow/Red)",
-  "description": "A battery fuel gauge: as the battery sags 4.2V→3.0V, a zener reference + ladder and window comparators light EXACTLY ONE of three LEDs — green above 3.7V, yellow 3.4–3.7V, red below 3.4V. The measured handoffs land within 10mV of the 3.70/3.40 design points (the small offsets are real comparator input-loading physics). Run the transient and watch the green→yellow→red handover. (ngspice-validated: one LED at a time, correct thresholds.)",
-  "tags": [
-    "sensor",
-    "battery",
-    "monitor",
-    "led",
-    "window-comparator",
-    "zener"
-  ],
-  "analysisConfig": {
-    "analysis": {
-      "type": "tran",
-      "stopTime": "12",
-      "stepTime": "5m"
+    "name": "Battery Level Indicator (Green/Yellow/Red)",
+    "description": "A battery fuel gauge: as the battery sags 4.2V→3.0V, a zener reference + ladder and window comparators light EXACTLY ONE of three LEDs — green above 3.7V, yellow 3.4–3.7V, red below 3.4V. The measured handoffs land within 10mV of the 3.70/3.40 design points (the small offsets are real comparator input-loading physics). Run the transient and watch the green→yellow→red handover. (ngspice-validated: one LED at a time, correct thresholds.)",
+    "tags": ["sensor", "battery", "monitor", "led", "window-comparator", "zener"],
+    "analysisConfig": {
+        "analysis": {
+            "type": "tran",
+            "stopTime": "12",
+            "stepTime": "5m"
+        },
+        "probes": ["i(R7)", "i(R8)", "i(R9)", "v(vbat)", "v(vdiv)", "v(refh)", "v(refl)"]
     },
-    "probes": [
-      "i(R7)",
-      "i(R8)",
-      "i(R9)",
-      "v(vbat)",
-      "v(vdiv)",
-      "v(refh)",
-      "v(refl)"
-    ]
-  },
-  "circuitJson": {
-    "version": "1.0",
-    "components": [
-      {
-        "id": "vbat",
-        "type": "voltage_source",
-        "designator": "V1",
-        "value": "PULSE(4.2 3.0 0.5 9 1u 5 30)",
-        "pins": [
-          {
-            "pinId": "+",
-            "netId": "vbat"
-          },
-          {
-            "pinId": "-",
-            "netId": "0"
-          }
-        ]
-      },
-      {
-        "id": "vcc",
-        "type": "voltage_source",
-        "designator": "V2",
-        "value": "DC 5",
-        "pins": [
-          {
-            "pinId": "+",
-            "netId": "vcc"
-          },
-          {
-            "pinId": "-",
-            "netId": "0"
-          }
-        ]
-      },
-      {
-        "id": "rdiv_top",
-        "type": "resistor",
-        "designator": "R1",
-        "value": "40k",
-        "pins": [
-          {
-            "pinId": "1",
-            "netId": "vbat"
-          },
-          {
-            "pinId": "2",
-            "netId": "vdiv"
-          }
-        ]
-      },
-      {
-        "id": "rdiv_bot",
-        "type": "resistor",
-        "designator": "R2",
-        "value": "60k",
-        "pins": [
-          {
-            "pinId": "1",
-            "netId": "vdiv"
-          },
-          {
-            "pinId": "2",
-            "netId": "0"
-          }
-        ]
-      },
-      {
-        "id": "rz_bias",
-        "type": "resistor",
-        "designator": "R3",
-        "value": "1k",
-        "pins": [
-          {
-            "pinId": "1",
-            "netId": "vcc"
-          },
-          {
-            "pinId": "2",
-            "netId": "vref"
-          }
-        ]
-      },
-      {
-        "id": "dz_ref",
-        "type": "zener",
-        "designator": "D1",
-        "value": "2.5",
-        "pins": [
-          {
-            "pinId": "anode",
-            "netId": "0"
-          },
-          {
-            "pinId": "cathode",
-            "netId": "vref"
-          }
-        ]
-      },
-      {
-        "id": "rlad_top",
-        "type": "resistor",
-        "designator": "R4",
-        "value": "2.6k",
-        "pins": [
-          {
-            "pinId": "1",
-            "netId": "vref"
-          },
-          {
-            "pinId": "2",
-            "netId": "refh"
-          }
-        ]
-      },
-      {
-        "id": "rlad_mid",
-        "type": "resistor",
-        "designator": "R5",
-        "value": "1.8k",
-        "pins": [
-          {
-            "pinId": "1",
-            "netId": "refh"
-          },
-          {
-            "pinId": "2",
-            "netId": "refl"
-          }
-        ]
-      },
-      {
-        "id": "rlad_bot",
-        "type": "resistor",
-        "designator": "R6",
-        "value": "20.4k",
-        "pins": [
-          {
-            "pinId": "1",
-            "netId": "refl"
-          },
-          {
-            "pinId": "2",
-            "netId": "0"
-          }
-        ]
-      },
-      {
-        "id": "cmp_hi",
-        "type": "subckt",
-        "designator": "U1",
-        "model": "OPAMPGEN",
-        "pins": [
-          {
-            "pinId": "out",
-            "netId": "hi"
-          },
-          {
-            "pinId": "in+",
-            "netId": "vdiv"
-          },
-          {
-            "pinId": "in-",
-            "netId": "refh"
-          },
-          {
-            "pinId": "vcc",
-            "netId": "vcc"
-          },
-          {
-            "pinId": "vee",
-            "netId": "0"
-          }
-        ]
-      },
-      {
-        "id": "cmp_lo",
-        "type": "subckt",
-        "designator": "U2",
-        "model": "OPAMPGEN",
-        "pins": [
-          {
-            "pinId": "out",
-            "netId": "lo"
-          },
-          {
-            "pinId": "in+",
-            "netId": "vdiv"
-          },
-          {
-            "pinId": "in-",
-            "netId": "refl"
-          },
-          {
-            "pinId": "vcc",
-            "netId": "vcc"
-          },
-          {
-            "pinId": "vee",
-            "netId": "0"
-          }
-        ]
-      },
-      {
-        "id": "buf_grn",
-        "type": "logic_buffer",
-        "designator": "U3",
-        "pins": [
-          {
-            "pinId": "in1",
-            "netId": "hi"
-          },
-          {
-            "pinId": "out",
-            "netId": "grn_d"
-          }
-        ]
-      },
-      {
-        "id": "not_hi",
-        "type": "logic_not",
-        "designator": "U4",
-        "pins": [
-          {
-            "pinId": "in1",
-            "netId": "hi"
-          },
-          {
-            "pinId": "out",
-            "netId": "hib"
-          }
-        ]
-      },
-      {
-        "id": "and_yel",
-        "type": "logic_and",
-        "designator": "U5",
-        "pins": [
-          {
-            "pinId": "in1",
-            "netId": "lo"
-          },
-          {
-            "pinId": "in2",
-            "netId": "hib"
-          },
-          {
-            "pinId": "out",
-            "netId": "yel_d"
-          }
-        ]
-      },
-      {
-        "id": "not_lo",
-        "type": "logic_not",
-        "designator": "U6",
-        "pins": [
-          {
-            "pinId": "in1",
-            "netId": "lo"
-          },
-          {
-            "pinId": "out",
-            "netId": "red_d"
-          }
-        ]
-      },
-      {
-        "id": "r_grn",
-        "type": "resistor",
-        "designator": "R7",
-        "value": "330",
-        "pins": [
-          {
-            "pinId": "1",
-            "netId": "grn_d"
-          },
-          {
-            "pinId": "2",
-            "netId": "grn_a"
-          }
-        ]
-      },
-      {
-        "id": "led_grn",
-        "type": "diode",
-        "designator": "D2",
-        "model": "LEDGRN",
-        "pins": [
-          {
-            "pinId": "anode",
-            "netId": "grn_a"
-          },
-          {
-            "pinId": "cathode",
-            "netId": "0"
-          }
-        ]
-      },
-      {
-        "id": "r_yel",
-        "type": "resistor",
-        "designator": "R8",
-        "value": "330",
-        "pins": [
-          {
-            "pinId": "1",
-            "netId": "yel_d"
-          },
-          {
-            "pinId": "2",
-            "netId": "yel_a"
-          }
-        ]
-      },
-      {
-        "id": "led_yel",
-        "type": "diode",
-        "designator": "D3",
-        "model": "LEDYEL",
-        "pins": [
-          {
-            "pinId": "anode",
-            "netId": "yel_a"
-          },
-          {
-            "pinId": "cathode",
-            "netId": "0"
-          }
-        ]
-      },
-      {
-        "id": "r_red",
-        "type": "resistor",
-        "designator": "R9",
-        "value": "330",
-        "pins": [
-          {
-            "pinId": "1",
-            "netId": "red_d"
-          },
-          {
-            "pinId": "2",
-            "netId": "red_a"
-          }
-        ]
-      },
-      {
-        "id": "led_red",
-        "type": "diode",
-        "designator": "D4",
-        "model": "LEDRED",
-        "pins": [
-          {
-            "pinId": "anode",
-            "netId": "red_a"
-          },
-          {
-            "pinId": "cathode",
-            "netId": "0"
-          }
-        ]
-      }
-    ],
-    "nets": [
-      {
-        "id": "0",
-        "name": "GND",
-        "isGround": true
-      },
-      {
-        "id": "vbat",
-        "name": "VBAT"
-      },
-      {
-        "id": "vcc",
-        "name": "VCC"
-      },
-      {
-        "id": "vdiv",
-        "name": "VDIV"
-      },
-      {
-        "id": "vref",
-        "name": "VREF"
-      },
-      {
-        "id": "refh",
-        "name": "REFH"
-      },
-      {
-        "id": "refl",
-        "name": "REFL"
-      },
-      {
-        "id": "hi",
-        "name": "CMP_HI"
-      },
-      {
-        "id": "lo",
-        "name": "CMP_LO"
-      },
-      {
-        "id": "hib",
-        "name": "HI_BAR"
-      },
-      {
-        "id": "grn_d",
-        "name": "GRN_DRV"
-      },
-      {
-        "id": "yel_d",
-        "name": "YEL_DRV"
-      },
-      {
-        "id": "red_d",
-        "name": "RED_DRV"
-      },
-      {
-        "id": "grn_a",
-        "name": "GRN_A"
-      },
-      {
-        "id": "yel_a",
-        "name": "YEL_A"
-      },
-      {
-        "id": "red_a",
-        "name": "RED_A"
-      }
-    ],
-    "models": [
-      {
-        "name": "LEDGRN",
-        "device": "diode",
-        "body": ".model LEDGRN D(IS=1e-22 N=2.0 RS=2 CJO=10p)"
-      },
-      {
-        "name": "LEDYEL",
-        "device": "diode",
-        "body": ".model LEDYEL D(IS=1e-21 N=1.9 RS=2 CJO=10p)"
-      },
-      {
-        "name": "LEDRED",
-        "device": "diode",
-        "body": ".model LEDRED D(IS=1e-20 N=1.8 RS=2 CJO=10p)"
-      }
-    ],
-    "metadata": {
-      "name": "Battery Level Indicator (Green/Yellow/Red)"
+    "circuitJson": {
+        "version": "1.0",
+        "components": [
+            {
+                "id": "vbat",
+                "type": "voltage_source",
+                "designator": "V1",
+                "value": "PULSE(4.2 3.0 0.5 9 1u 5 30)",
+                "pins": [
+                    {
+                        "pinId": "+",
+                        "netId": "vbat"
+                    },
+                    {
+                        "pinId": "-",
+                        "netId": "0"
+                    }
+                ]
+            },
+            {
+                "id": "vcc",
+                "type": "voltage_source",
+                "designator": "V2",
+                "value": "DC 5",
+                "pins": [
+                    {
+                        "pinId": "+",
+                        "netId": "vcc"
+                    },
+                    {
+                        "pinId": "-",
+                        "netId": "0"
+                    }
+                ]
+            },
+            {
+                "id": "rdiv_top",
+                "type": "resistor",
+                "designator": "R1",
+                "value": "40k",
+                "pins": [
+                    {
+                        "pinId": "1",
+                        "netId": "vbat"
+                    },
+                    {
+                        "pinId": "2",
+                        "netId": "vdiv"
+                    }
+                ]
+            },
+            {
+                "id": "rdiv_bot",
+                "type": "resistor",
+                "designator": "R2",
+                "value": "60k",
+                "pins": [
+                    {
+                        "pinId": "1",
+                        "netId": "vdiv"
+                    },
+                    {
+                        "pinId": "2",
+                        "netId": "0"
+                    }
+                ]
+            },
+            {
+                "id": "rz_bias",
+                "type": "resistor",
+                "designator": "R3",
+                "value": "1k",
+                "pins": [
+                    {
+                        "pinId": "1",
+                        "netId": "vcc"
+                    },
+                    {
+                        "pinId": "2",
+                        "netId": "vref"
+                    }
+                ]
+            },
+            {
+                "id": "dz_ref",
+                "type": "zener",
+                "designator": "D1",
+                "value": "2.5",
+                "pins": [
+                    {
+                        "pinId": "anode",
+                        "netId": "0"
+                    },
+                    {
+                        "pinId": "cathode",
+                        "netId": "vref"
+                    }
+                ]
+            },
+            {
+                "id": "rlad_top",
+                "type": "resistor",
+                "designator": "R4",
+                "value": "2.6k",
+                "pins": [
+                    {
+                        "pinId": "1",
+                        "netId": "vref"
+                    },
+                    {
+                        "pinId": "2",
+                        "netId": "refh"
+                    }
+                ]
+            },
+            {
+                "id": "rlad_mid",
+                "type": "resistor",
+                "designator": "R5",
+                "value": "1.8k",
+                "pins": [
+                    {
+                        "pinId": "1",
+                        "netId": "refh"
+                    },
+                    {
+                        "pinId": "2",
+                        "netId": "refl"
+                    }
+                ]
+            },
+            {
+                "id": "rlad_bot",
+                "type": "resistor",
+                "designator": "R6",
+                "value": "20.4k",
+                "pins": [
+                    {
+                        "pinId": "1",
+                        "netId": "refl"
+                    },
+                    {
+                        "pinId": "2",
+                        "netId": "0"
+                    }
+                ]
+            },
+            {
+                "id": "cmp_hi",
+                "type": "subckt",
+                "designator": "U1",
+                "model": "OPAMPGEN",
+                "pins": [
+                    {
+                        "pinId": "out",
+                        "netId": "hi"
+                    },
+                    {
+                        "pinId": "in+",
+                        "netId": "vdiv"
+                    },
+                    {
+                        "pinId": "in-",
+                        "netId": "refh"
+                    },
+                    {
+                        "pinId": "vcc",
+                        "netId": "vcc"
+                    },
+                    {
+                        "pinId": "vee",
+                        "netId": "0"
+                    }
+                ]
+            },
+            {
+                "id": "cmp_lo",
+                "type": "subckt",
+                "designator": "U2",
+                "model": "OPAMPGEN",
+                "pins": [
+                    {
+                        "pinId": "out",
+                        "netId": "lo"
+                    },
+                    {
+                        "pinId": "in+",
+                        "netId": "vdiv"
+                    },
+                    {
+                        "pinId": "in-",
+                        "netId": "refl"
+                    },
+                    {
+                        "pinId": "vcc",
+                        "netId": "vcc"
+                    },
+                    {
+                        "pinId": "vee",
+                        "netId": "0"
+                    }
+                ]
+            },
+            {
+                "id": "buf_grn",
+                "type": "logic_buffer",
+                "designator": "U3",
+                "pins": [
+                    {
+                        "pinId": "in1",
+                        "netId": "hi"
+                    },
+                    {
+                        "pinId": "out",
+                        "netId": "grn_d"
+                    }
+                ]
+            },
+            {
+                "id": "not_hi",
+                "type": "logic_not",
+                "designator": "U4",
+                "pins": [
+                    {
+                        "pinId": "in1",
+                        "netId": "hi"
+                    },
+                    {
+                        "pinId": "out",
+                        "netId": "hib"
+                    }
+                ]
+            },
+            {
+                "id": "and_yel",
+                "type": "logic_and",
+                "designator": "U5",
+                "pins": [
+                    {
+                        "pinId": "in1",
+                        "netId": "lo"
+                    },
+                    {
+                        "pinId": "in2",
+                        "netId": "hib"
+                    },
+                    {
+                        "pinId": "out",
+                        "netId": "yel_d"
+                    }
+                ]
+            },
+            {
+                "id": "not_lo",
+                "type": "logic_not",
+                "designator": "U6",
+                "pins": [
+                    {
+                        "pinId": "in1",
+                        "netId": "lo"
+                    },
+                    {
+                        "pinId": "out",
+                        "netId": "red_d"
+                    }
+                ]
+            },
+            {
+                "id": "r_grn",
+                "type": "resistor",
+                "designator": "R7",
+                "value": "330",
+                "pins": [
+                    {
+                        "pinId": "1",
+                        "netId": "grn_d"
+                    },
+                    {
+                        "pinId": "2",
+                        "netId": "grn_a"
+                    }
+                ]
+            },
+            {
+                "id": "led_grn",
+                "type": "diode",
+                "designator": "D2",
+                "model": "LEDGRN",
+                "pins": [
+                    {
+                        "pinId": "anode",
+                        "netId": "grn_a"
+                    },
+                    {
+                        "pinId": "cathode",
+                        "netId": "0"
+                    }
+                ]
+            },
+            {
+                "id": "r_yel",
+                "type": "resistor",
+                "designator": "R8",
+                "value": "330",
+                "pins": [
+                    {
+                        "pinId": "1",
+                        "netId": "yel_d"
+                    },
+                    {
+                        "pinId": "2",
+                        "netId": "yel_a"
+                    }
+                ]
+            },
+            {
+                "id": "led_yel",
+                "type": "diode",
+                "designator": "D3",
+                "model": "LEDYEL",
+                "pins": [
+                    {
+                        "pinId": "anode",
+                        "netId": "yel_a"
+                    },
+                    {
+                        "pinId": "cathode",
+                        "netId": "0"
+                    }
+                ]
+            },
+            {
+                "id": "r_red",
+                "type": "resistor",
+                "designator": "R9",
+                "value": "330",
+                "pins": [
+                    {
+                        "pinId": "1",
+                        "netId": "red_d"
+                    },
+                    {
+                        "pinId": "2",
+                        "netId": "red_a"
+                    }
+                ]
+            },
+            {
+                "id": "led_red",
+                "type": "diode",
+                "designator": "D4",
+                "model": "LEDRED",
+                "pins": [
+                    {
+                        "pinId": "anode",
+                        "netId": "red_a"
+                    },
+                    {
+                        "pinId": "cathode",
+                        "netId": "0"
+                    }
+                ]
+            }
+        ],
+        "nets": [
+            {
+                "id": "0",
+                "name": "GND",
+                "isGround": true
+            },
+            {
+                "id": "vbat",
+                "name": "VBAT"
+            },
+            {
+                "id": "vcc",
+                "name": "VCC"
+            },
+            {
+                "id": "vdiv",
+                "name": "VDIV"
+            },
+            {
+                "id": "vref",
+                "name": "VREF"
+            },
+            {
+                "id": "refh",
+                "name": "REFH"
+            },
+            {
+                "id": "refl",
+                "name": "REFL"
+            },
+            {
+                "id": "hi",
+                "name": "CMP_HI"
+            },
+            {
+                "id": "lo",
+                "name": "CMP_LO"
+            },
+            {
+                "id": "hib",
+                "name": "HI_BAR"
+            },
+            {
+                "id": "grn_d",
+                "name": "GRN_DRV"
+            },
+            {
+                "id": "yel_d",
+                "name": "YEL_DRV"
+            },
+            {
+                "id": "red_d",
+                "name": "RED_DRV"
+            },
+            {
+                "id": "grn_a",
+                "name": "GRN_A"
+            },
+            {
+                "id": "yel_a",
+                "name": "YEL_A"
+            },
+            {
+                "id": "red_a",
+                "name": "RED_A"
+            }
+        ],
+        "models": [
+            {
+                "name": "LEDGRN",
+                "device": "diode",
+                "body": ".model LEDGRN D(IS=1e-22 N=2.0 RS=2 CJO=10p)"
+            },
+            {
+                "name": "LEDYEL",
+                "device": "diode",
+                "body": ".model LEDYEL D(IS=1e-21 N=1.9 RS=2 CJO=10p)"
+            },
+            {
+                "name": "LEDRED",
+                "device": "diode",
+                "body": ".model LEDRED D(IS=1e-20 N=1.8 RS=2 CJO=10p)"
+            }
+        ],
+        "metadata": {
+            "name": "Battery Level Indicator (Green/Yellow/Red)"
+        }
     }
-  }
 }

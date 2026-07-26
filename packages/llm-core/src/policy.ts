@@ -28,7 +28,7 @@ export const DEFAULT_TOKEN_BUDGET = 300_000;
  */
 export function isRetryableModelError(e: unknown): boolean {
     const status = (e as { status?: number } | null | undefined)?.status;
-    const name = ((e as { name?: string } | null | undefined)?.name) ?? '';
+    const name = (e as { name?: string } | null | undefined)?.name ?? '';
     const msg = e instanceof Error ? e.message : String(e);
 
     if (typeof status === 'number' && status >= 500) return true;
@@ -41,9 +41,7 @@ export function isRetryableModelError(e: unknown): boolean {
 }
 
 /** Sum input+output tokens from an Anthropic usage block, tolerating missing/partial fields. */
-export function tokensUsed(
-    usage: { input_tokens?: number; output_tokens?: number } | null | undefined,
-): number {
+export function tokensUsed(usage: { input_tokens?: number; output_tokens?: number } | null | undefined): number {
     if (!usage) return 0;
     return (usage.input_tokens ?? 0) + (usage.output_tokens ?? 0);
 }

@@ -9,4 +9,3 @@ import type { PlacementInput, PlacementOutput } from './placement';
  * without crashing the layout worker.
  */
 export type PlacementRunner = (input: PlacementInput) => Promise<PlacementOutput>;
-

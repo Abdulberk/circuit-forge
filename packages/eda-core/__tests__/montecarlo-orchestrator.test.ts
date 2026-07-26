@@ -13,11 +13,44 @@ import { parseSpiceValue } from '../src/utils/unit-parser';
 const DIVIDER: CircuitJson = {
     version: '1.0',
     components: [
-        { id: 'v1', type: 'voltage_source', designator: 'V1', value: 'DC 10', pins: [{ pinId: '+', netId: 'in' }, { pinId: '-', netId: '0' }] },
-        { id: 'r1', type: 'resistor', designator: 'R1', value: '1k', tolerance: 0.05, pins: [{ pinId: '1', netId: 'in' }, { pinId: '2', netId: 'mid' }] },
-        { id: 'r2', type: 'resistor', designator: 'R2', value: '1k', tolerance: 0.05, pins: [{ pinId: '1', netId: 'mid' }, { pinId: '2', netId: '0' }] },
+        {
+            id: 'v1',
+            type: 'voltage_source',
+            designator: 'V1',
+            value: 'DC 10',
+            pins: [
+                { pinId: '+', netId: 'in' },
+                { pinId: '-', netId: '0' },
+            ],
+        },
+        {
+            id: 'r1',
+            type: 'resistor',
+            designator: 'R1',
+            value: '1k',
+            tolerance: 0.05,
+            pins: [
+                { pinId: '1', netId: 'in' },
+                { pinId: '2', netId: 'mid' },
+            ],
+        },
+        {
+            id: 'r2',
+            type: 'resistor',
+            designator: 'R2',
+            value: '1k',
+            tolerance: 0.05,
+            pins: [
+                { pinId: '1', netId: 'mid' },
+                { pinId: '2', netId: '0' },
+            ],
+        },
     ],
-    nets: [{ id: 'in', name: 'in' }, { id: 'mid', name: 'mid' }, { id: '0', name: '0', isGround: true }],
+    nets: [
+        { id: 'in', name: 'in' },
+        { id: 'mid', name: 'mid' },
+        { id: '0', name: '0', isGround: true },
+    ],
 };
 
 /** Fake ngspice: compute the analytic divider output for the (perturbed) R1,R2 and return it as the measured
@@ -59,7 +92,12 @@ describe('runMonteCarlo', () => {
 
     it('adaptive-N stops early on a clearly-robust design (CI tight) — far fewer than n runs', async () => {
         const crit: AcceptanceCriterion[] = [{ probe: 'mid', metric: 'final', op: 'approx', value: 5, tol: 1 }]; // huge band → all pass
-        const y = await runMonteCarlo(DIVIDER, crit, dividerRunner, { n: 300, seed: 3, ciStopHalfWidth: 0.05, minRuns: 24 });
+        const y = await runMonteCarlo(DIVIDER, crit, dividerRunner, {
+            n: 300,
+            seed: 3,
+            ciStopHalfWidth: 0.05,
+            minRuns: 24,
+        });
         expect(y.stoppedEarly).toBe(true);
         expect(y.ran).toBeLessThan(300);
         expect(y.ran).toBeGreaterThanOrEqual(24);
@@ -81,7 +119,10 @@ describe('runMonteCarlo', () => {
         let calls = 0;
         // Stop after 10 variants have been drawn (simulates a wall-clock budget hit).
         const y = await runMonteCarlo(DIVIDER, crit, dividerRunner, {
-            n: 300, seed: 9, ciStopHalfWidth: 0, shouldStop: () => ++calls > 10,
+            n: 300,
+            seed: 9,
+            ciStopHalfWidth: 0,
+            shouldStop: () => ++calls > 10,
         });
         expect(y.stoppedEarly).toBe(true);
         expect(y.ran).toBeLessThan(300);
@@ -92,7 +133,10 @@ describe('runMonteCarlo', () => {
         const crit: AcceptanceCriterion[] = [{ probe: 'mid', metric: 'final', op: 'approx', value: 5, tol: 0.5 }];
         const seen: number[] = [];
         const y = await runMonteCarlo(DIVIDER, crit, dividerRunner, {
-            n: 15, seed: 4, ciStopHalfWidth: 0, onProgress: (r) => seen.push(r),
+            n: 15,
+            seed: 4,
+            ciStopHalfWidth: 0,
+            onProgress: (r) => seen.push(r),
         });
         expect(seen).toHaveLength(y.evaluated); // one checkpoint per evaluated variant
         expect(seen[seen.length - 1]).toBe(y.evaluated); // monotonic running count

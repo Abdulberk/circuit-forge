@@ -6,7 +6,10 @@ import { diagnoseConvergence, convergenceRemedyLadder, type ConvergenceKind } fr
 
 describe('diagnoseConvergence', () => {
     const cases: { text: string; kind: ConvergenceKind }[] = [
-        { text: 'simulation ended early at t=1.2e-06s of 5m (timestep collapse / non-convergence …)', kind: 'timestep_collapse' },
+        {
+            text: 'simulation ended early at t=1.2e-06s of 5m (timestep collapse / non-convergence …)',
+            kind: 'timestep_collapse',
+        },
         { text: 'Timestep too small; time = 1.0e-12', kind: 'timestep_collapse' },
         { text: 'ngspice: singular matrix: check nodes 3 and 4', kind: 'singular_matrix' },
         { text: 'Too many iterations without convergence', kind: 'iteration_limit' },

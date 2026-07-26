@@ -23,4 +23,4 @@ process.env.TME_BASE_URL = 'https://api.tme.eu';
 jest.setTimeout(30000);
 
 // Global test utilities
-export const delay = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
+export const delay = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));

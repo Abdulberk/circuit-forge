@@ -1,421 +1,413 @@
 {
-  "name": "Load-Cell Instrumentation Amplifier",
-  "description": "A strain-gauge / load-cell front end: a Wheatstone bridge (one arm detuned to model strain) feeds a classic 3-op-amp instrumentation amplifier with a gain-set resistor (gain ≈100). Run an operating-point (op) analysis — the ~5mV bridge differential is amplified to ~0.5V at the output while the large common-mode excitation is rejected. (Validated on ngspice: gain 99.9.)",
-  "tags": [
-    "sensor",
-    "instrumentation",
-    "load-cell",
-    "strain-gauge",
-    "wheatstone",
-    "opamp",
-    "advanced"
-  ],
-  "circuitJson": {
-    "version": "1.0",
-    "components": [
-      {
-        "id": "vp",
-        "type": "voltage_source",
-        "designator": "V1",
-        "value": "DC 15",
-        "pins": [
-          {
-            "pinId": "+",
-            "netId": "vcc"
-          },
-          {
-            "pinId": "-",
-            "netId": "0"
-          }
-        ]
-      },
-      {
-        "id": "vn",
-        "type": "voltage_source",
-        "designator": "V2",
-        "value": "DC -15",
-        "pins": [
-          {
-            "pinId": "+",
-            "netId": "vee"
-          },
-          {
-            "pinId": "-",
-            "netId": "0"
-          }
-        ]
-      },
-      {
-        "id": "vexc",
-        "type": "voltage_source",
-        "designator": "V3",
-        "value": "DC 10",
-        "pins": [
-          {
-            "pinId": "+",
-            "netId": "exc"
-          },
-          {
-            "pinId": "-",
-            "netId": "0"
-          }
-        ]
-      },
-      {
-        "id": "rb1",
-        "type": "resistor",
-        "designator": "R1",
-        "value": "350",
-        "pins": [
-          {
-            "pinId": "1",
-            "netId": "exc"
-          },
-          {
-            "pinId": "2",
-            "netId": "inp"
-          }
-        ]
-      },
-      {
-        "id": "rb3",
-        "type": "resistor",
-        "designator": "R3",
-        "value": "350.7",
-        "pins": [
-          {
-            "pinId": "1",
-            "netId": "inp"
-          },
-          {
-            "pinId": "2",
-            "netId": "0"
-          }
-        ]
-      },
-      {
-        "id": "rb2",
-        "type": "resistor",
-        "designator": "R2",
-        "value": "350",
-        "pins": [
-          {
-            "pinId": "1",
-            "netId": "exc"
-          },
-          {
-            "pinId": "2",
-            "netId": "inn"
-          }
-        ]
-      },
-      {
-        "id": "rb4",
-        "type": "resistor",
-        "designator": "R4",
-        "value": "350",
-        "pins": [
-          {
-            "pinId": "1",
-            "netId": "inn"
-          },
-          {
-            "pinId": "2",
-            "netId": "0"
-          }
-        ]
-      },
-      {
-        "id": "u1",
-        "type": "subckt",
-        "designator": "U1",
-        "model": "OPAMPGEN",
-        "pins": [
-          {
-            "pinId": "out",
-            "netId": "o1"
-          },
-          {
-            "pinId": "in+",
-            "netId": "inp"
-          },
-          {
-            "pinId": "in-",
-            "netId": "fb1"
-          },
-          {
-            "pinId": "vcc",
-            "netId": "vcc"
-          },
-          {
-            "pinId": "vee",
-            "netId": "vee"
-          }
-        ]
-      },
-      {
-        "id": "u2",
-        "type": "subckt",
-        "designator": "U2",
-        "model": "OPAMPGEN",
-        "pins": [
-          {
-            "pinId": "out",
-            "netId": "o2"
-          },
-          {
-            "pinId": "in+",
-            "netId": "inn"
-          },
-          {
-            "pinId": "in-",
-            "netId": "fb2"
-          },
-          {
-            "pinId": "vcc",
-            "netId": "vcc"
-          },
-          {
-            "pinId": "vee",
-            "netId": "vee"
-          }
-        ]
-      },
-      {
-        "id": "rf1",
-        "type": "resistor",
-        "designator": "RF1",
-        "value": "24.75k",
-        "pins": [
-          {
-            "pinId": "1",
-            "netId": "o1"
-          },
-          {
-            "pinId": "2",
-            "netId": "fb1"
-          }
-        ]
-      },
-      {
-        "id": "rg",
-        "type": "resistor",
-        "designator": "R5",
-        "value": "500",
-        "pins": [
-          {
-            "pinId": "1",
-            "netId": "fb1"
-          },
-          {
-            "pinId": "2",
-            "netId": "fb2"
-          }
-        ]
-      },
-      {
-        "id": "rf2",
-        "type": "resistor",
-        "designator": "RF2",
-        "value": "24.75k",
-        "pins": [
-          {
-            "pinId": "1",
-            "netId": "o2"
-          },
-          {
-            "pinId": "2",
-            "netId": "fb2"
-          }
-        ]
-      },
-      {
-        "id": "u3",
-        "type": "subckt",
-        "designator": "U3",
-        "model": "OPAMPGEN",
-        "pins": [
-          {
-            "pinId": "out",
-            "netId": "out"
-          },
-          {
-            "pinId": "in+",
-            "netId": "dp"
-          },
-          {
-            "pinId": "in-",
-            "netId": "dn"
-          },
-          {
-            "pinId": "vcc",
-            "netId": "vcc"
-          },
-          {
-            "pinId": "vee",
-            "netId": "vee"
-          }
-        ]
-      },
-      {
-        "id": "ri1",
-        "type": "resistor",
-        "designator": "RI1",
-        "value": "10k",
-        "pins": [
-          {
-            "pinId": "1",
-            "netId": "o2"
-          },
-          {
-            "pinId": "2",
-            "netId": "dn"
-          }
-        ]
-      },
-      {
-        "id": "rfb",
-        "type": "resistor",
-        "designator": "R6",
-        "value": "10k",
-        "pins": [
-          {
-            "pinId": "1",
-            "netId": "dn"
-          },
-          {
-            "pinId": "2",
-            "netId": "out"
-          }
-        ]
-      },
-      {
-        "id": "ri2",
-        "type": "resistor",
-        "designator": "RI2",
-        "value": "10k",
-        "pins": [
-          {
-            "pinId": "1",
-            "netId": "o1"
-          },
-          {
-            "pinId": "2",
-            "netId": "dp"
-          }
-        ]
-      },
-      {
-        "id": "rref",
-        "type": "resistor",
-        "designator": "R7",
-        "value": "10k",
-        "pins": [
-          {
-            "pinId": "1",
-            "netId": "dp"
-          },
-          {
-            "pinId": "2",
-            "netId": "ref"
-          }
-        ]
-      },
-      {
-        "id": "vref",
-        "type": "voltage_source",
-        "designator": "V4",
-        "value": "DC 0",
-        "pins": [
-          {
-            "pinId": "+",
-            "netId": "ref"
-          },
-          {
-            "pinId": "-",
-            "netId": "0"
-          }
-        ]
-      },
-      {
-        "id": "rload",
-        "type": "resistor",
-        "designator": "R8",
-        "value": "10k",
-        "pins": [
-          {
-            "pinId": "1",
-            "netId": "out"
-          },
-          {
-            "pinId": "2",
-            "netId": "0"
-          }
-        ]
-      }
-    ],
-    "nets": [
-      {
-        "id": "0",
-        "name": "GND",
-        "isGround": true
-      },
-      {
-        "id": "vcc",
-        "name": "VCC"
-      },
-      {
-        "id": "vee",
-        "name": "VEE"
-      },
-      {
-        "id": "exc",
-        "name": "EXC"
-      },
-      {
-        "id": "inp",
-        "name": "INP"
-      },
-      {
-        "id": "inn",
-        "name": "INN"
-      },
-      {
-        "id": "o1",
-        "name": "O1"
-      },
-      {
-        "id": "o2",
-        "name": "O2"
-      },
-      {
-        "id": "fb1",
-        "name": "FB1"
-      },
-      {
-        "id": "fb2",
-        "name": "FB2"
-      },
-      {
-        "id": "dp",
-        "name": "DP"
-      },
-      {
-        "id": "dn",
-        "name": "DN"
-      },
-      {
-        "id": "ref",
-        "name": "REF"
-      },
-      {
-        "id": "out",
-        "name": "OUT"
-      }
-    ],
-    "metadata": {
-      "name": "Load-Cell Instrumentation Amplifier",
-      "description": "A strain-gauge / load-cell front end: a Wheatstone bridge (one arm detuned to model strain) feeds a classic 3-op-amp instrumentation amplifier with a gain-set resistor (gain ≈100). Run an operating-point (op) analysis — the ~5mV bridge differential is amplified to ~0.5V at the output while the large common-mode excitation is rejected. (Validated on ngspice: gain 99.9.)"
+    "name": "Load-Cell Instrumentation Amplifier",
+    "description": "A strain-gauge / load-cell front end: a Wheatstone bridge (one arm detuned to model strain) feeds a classic 3-op-amp instrumentation amplifier with a gain-set resistor (gain ≈100). Run an operating-point (op) analysis — the ~5mV bridge differential is amplified to ~0.5V at the output while the large common-mode excitation is rejected. (Validated on ngspice: gain 99.9.)",
+    "tags": ["sensor", "instrumentation", "load-cell", "strain-gauge", "wheatstone", "opamp", "advanced"],
+    "circuitJson": {
+        "version": "1.0",
+        "components": [
+            {
+                "id": "vp",
+                "type": "voltage_source",
+                "designator": "V1",
+                "value": "DC 15",
+                "pins": [
+                    {
+                        "pinId": "+",
+                        "netId": "vcc"
+                    },
+                    {
+                        "pinId": "-",
+                        "netId": "0"
+                    }
+                ]
+            },
+            {
+                "id": "vn",
+                "type": "voltage_source",
+                "designator": "V2",
+                "value": "DC -15",
+                "pins": [
+                    {
+                        "pinId": "+",
+                        "netId": "vee"
+                    },
+                    {
+                        "pinId": "-",
+                        "netId": "0"
+                    }
+                ]
+            },
+            {
+                "id": "vexc",
+                "type": "voltage_source",
+                "designator": "V3",
+                "value": "DC 10",
+                "pins": [
+                    {
+                        "pinId": "+",
+                        "netId": "exc"
+                    },
+                    {
+                        "pinId": "-",
+                        "netId": "0"
+                    }
+                ]
+            },
+            {
+                "id": "rb1",
+                "type": "resistor",
+                "designator": "R1",
+                "value": "350",
+                "pins": [
+                    {
+                        "pinId": "1",
+                        "netId": "exc"
+                    },
+                    {
+                        "pinId": "2",
+                        "netId": "inp"
+                    }
+                ]
+            },
+            {
+                "id": "rb3",
+                "type": "resistor",
+                "designator": "R3",
+                "value": "350.7",
+                "pins": [
+                    {
+                        "pinId": "1",
+                        "netId": "inp"
+                    },
+                    {
+                        "pinId": "2",
+                        "netId": "0"
+                    }
+                ]
+            },
+            {
+                "id": "rb2",
+                "type": "resistor",
+                "designator": "R2",
+                "value": "350",
+                "pins": [
+                    {
+                        "pinId": "1",
+                        "netId": "exc"
+                    },
+                    {
+                        "pinId": "2",
+                        "netId": "inn"
+                    }
+                ]
+            },
+            {
+                "id": "rb4",
+                "type": "resistor",
+                "designator": "R4",
+                "value": "350",
+                "pins": [
+                    {
+                        "pinId": "1",
+                        "netId": "inn"
+                    },
+                    {
+                        "pinId": "2",
+                        "netId": "0"
+                    }
+                ]
+            },
+            {
+                "id": "u1",
+                "type": "subckt",
+                "designator": "U1",
+                "model": "OPAMPGEN",
+                "pins": [
+                    {
+                        "pinId": "out",
+                        "netId": "o1"
+                    },
+                    {
+                        "pinId": "in+",
+                        "netId": "inp"
+                    },
+                    {
+                        "pinId": "in-",
+                        "netId": "fb1"
+                    },
+                    {
+                        "pinId": "vcc",
+                        "netId": "vcc"
+                    },
+                    {
+                        "pinId": "vee",
+                        "netId": "vee"
+                    }
+                ]
+            },
+            {
+                "id": "u2",
+                "type": "subckt",
+                "designator": "U2",
+                "model": "OPAMPGEN",
+                "pins": [
+                    {
+                        "pinId": "out",
+                        "netId": "o2"
+                    },
+                    {
+                        "pinId": "in+",
+                        "netId": "inn"
+                    },
+                    {
+                        "pinId": "in-",
+                        "netId": "fb2"
+                    },
+                    {
+                        "pinId": "vcc",
+                        "netId": "vcc"
+                    },
+                    {
+                        "pinId": "vee",
+                        "netId": "vee"
+                    }
+                ]
+            },
+            {
+                "id": "rf1",
+                "type": "resistor",
+                "designator": "RF1",
+                "value": "24.75k",
+                "pins": [
+                    {
+                        "pinId": "1",
+                        "netId": "o1"
+                    },
+                    {
+                        "pinId": "2",
+                        "netId": "fb1"
+                    }
+                ]
+            },
+            {
+                "id": "rg",
+                "type": "resistor",
+                "designator": "R5",
+                "value": "500",
+                "pins": [
+                    {
+                        "pinId": "1",
+                        "netId": "fb1"
+                    },
+                    {
+                        "pinId": "2",
+                        "netId": "fb2"
+                    }
+                ]
+            },
+            {
+                "id": "rf2",
+                "type": "resistor",
+                "designator": "RF2",
+                "value": "24.75k",
+                "pins": [
+                    {
+                        "pinId": "1",
+                        "netId": "o2"
+                    },
+                    {
+                        "pinId": "2",
+                        "netId": "fb2"
+                    }
+                ]
+            },
+            {
+                "id": "u3",
+                "type": "subckt",
+                "designator": "U3",
+                "model": "OPAMPGEN",
+                "pins": [
+                    {
+                        "pinId": "out",
+                        "netId": "out"
+                    },
+                    {
+                        "pinId": "in+",
+                        "netId": "dp"
+                    },
+                    {
+                        "pinId": "in-",
+                        "netId": "dn"
+                    },
+                    {
+                        "pinId": "vcc",
+                        "netId": "vcc"
+                    },
+                    {
+                        "pinId": "vee",
+                        "netId": "vee"
+                    }
+                ]
+            },
+            {
+                "id": "ri1",
+                "type": "resistor",
+                "designator": "RI1",
+                "value": "10k",
+                "pins": [
+                    {
+                        "pinId": "1",
+                        "netId": "o2"
+                    },
+                    {
+                        "pinId": "2",
+                        "netId": "dn"
+                    }
+                ]
+            },
+            {
+                "id": "rfb",
+                "type": "resistor",
+                "designator": "R6",
+                "value": "10k",
+                "pins": [
+                    {
+                        "pinId": "1",
+                        "netId": "dn"
+                    },
+                    {
+                        "pinId": "2",
+                        "netId": "out"
+                    }
+                ]
+            },
+            {
+                "id": "ri2",
+                "type": "resistor",
+                "designator": "RI2",
+                "value": "10k",
+                "pins": [
+                    {
+                        "pinId": "1",
+                        "netId": "o1"
+                    },
+                    {
+                        "pinId": "2",
+                        "netId": "dp"
+                    }
+                ]
+            },
+            {
+                "id": "rref",
+                "type": "resistor",
+                "designator": "R7",
+                "value": "10k",
+                "pins": [
+                    {
+                        "pinId": "1",
+                        "netId": "dp"
+                    },
+                    {
+                        "pinId": "2",
+                        "netId": "ref"
+                    }
+                ]
+            },
+            {
+                "id": "vref",
+                "type": "voltage_source",
+                "designator": "V4",
+                "value": "DC 0",
+                "pins": [
+                    {
+                        "pinId": "+",
+                        "netId": "ref"
+                    },
+                    {
+                        "pinId": "-",
+                        "netId": "0"
+                    }
+                ]
+            },
+            {
+                "id": "rload",
+                "type": "resistor",
+                "designator": "R8",
+                "value": "10k",
+                "pins": [
+                    {
+                        "pinId": "1",
+                        "netId": "out"
+                    },
+                    {
+                        "pinId": "2",
+                        "netId": "0"
+                    }
+                ]
+            }
+        ],
+        "nets": [
+            {
+                "id": "0",
+                "name": "GND",
+                "isGround": true
+            },
+            {
+                "id": "vcc",
+                "name": "VCC"
+            },
+            {
+                "id": "vee",
+                "name": "VEE"
+            },
+            {
+                "id": "exc",
+                "name": "EXC"
+            },
+            {
+                "id": "inp",
+                "name": "INP"
+            },
+            {
+                "id": "inn",
+                "name": "INN"
+            },
+            {
+                "id": "o1",
+                "name": "O1"
+            },
+            {
+                "id": "o2",
+                "name": "O2"
+            },
+            {
+                "id": "fb1",
+                "name": "FB1"
+            },
+            {
+                "id": "fb2",
+                "name": "FB2"
+            },
+            {
+                "id": "dp",
+                "name": "DP"
+            },
+            {
+                "id": "dn",
+                "name": "DN"
+            },
+            {
+                "id": "ref",
+                "name": "REF"
+            },
+            {
+                "id": "out",
+                "name": "OUT"
+            }
+        ],
+        "metadata": {
+            "name": "Load-Cell Instrumentation Amplifier",
+            "description": "A strain-gauge / load-cell front end: a Wheatstone bridge (one arm detuned to model strain) feeds a classic 3-op-amp instrumentation amplifier with a gain-set resistor (gain ≈100). Run an operating-point (op) analysis — the ~5mV bridge differential is amplified to ~0.5V at the output while the large common-mode excitation is rejected. (Validated on ngspice: gain 99.9.)"
+        }
     }
-  }
 }

@@ -3,7 +3,14 @@
  * silently absent (it is always run / not-run / excluded), and that each producer fragment discloses exactly
  * its own checks with honest defaults. Pure functions — no mocks.
  */
-import { buildManifest, buildElectricalScope, buildLayoutScope, CHECK_IDS, CHECK_LABELS, type CheckId } from '../src/verification/manifest';
+import {
+    buildManifest,
+    buildElectricalScope,
+    buildLayoutScope,
+    CHECK_IDS,
+    CHECK_LABELS,
+    type CheckId,
+} from '../src/verification/manifest';
 
 const byId = (m: { checks: { id: CheckId; status: string; gradation?: string; detail?: string }[] }) =>
     new Map(m.checks.map((c) => [c.id, c]));
@@ -24,8 +31,15 @@ describe('buildManifest — the disclosure invariant', () => {
     });
 
     it('carries gradation + detail through when determined', () => {
-        const m = buildManifest(['decoupling'], { decoupling: { status: 'run', gradation: 'presence', detail: 'cap present' } });
-        expect(byId(m).get('decoupling')).toEqual({ id: 'decoupling', status: 'run', gradation: 'presence', detail: 'cap present' });
+        const m = buildManifest(['decoupling'], {
+            decoupling: { status: 'run', gradation: 'presence', detail: 'cap present' },
+        });
+        expect(byId(m).get('decoupling')).toEqual({
+            id: 'decoupling',
+            status: 'run',
+            gradation: 'presence',
+            detail: 'cap present',
+        });
     });
 
     it('every CheckId has a human label (registry + labels can never drift)', () => {
@@ -58,12 +72,14 @@ describe('buildElectricalScope — the /verify-design fragment', () => {
         expect(off.get('derating')!.status).toBe('not-run');
         expect(off.get('robustness')!.status).toBe('not-run');
         // when they produced a result → run
-        const on = byId(buildElectricalScope({
-            simRan: true,
-            coveredDimensions: [],
-            derating: { status: 'run', detail: 'resistor power vs rating' },
-            robustness: { status: 'run', detail: 'corner robustness' },
-        }));
+        const on = byId(
+            buildElectricalScope({
+                simRan: true,
+                coveredDimensions: [],
+                derating: { status: 'run', detail: 'resistor power vs rating' },
+                robustness: { status: 'run', detail: 'corner robustness' },
+            }),
+        );
         expect(on.get('derating')!.status).toBe('run');
         expect(on.get('robustness')!.status).toBe('run');
     });
@@ -73,7 +89,13 @@ describe('buildElectricalScope — the /verify-design fragment', () => {
     });
 
     it('accepts a determined decoupling entry (forward-compat with the detector slice)', () => {
-        const g = byId(buildElectricalScope({ simRan: true, coveredDimensions: [], decoupling: { status: 'run', gradation: 'presence' } }));
+        const g = byId(
+            buildElectricalScope({
+                simRan: true,
+                coveredDimensions: [],
+                decoupling: { status: 'run', gradation: 'presence' },
+            }),
+        );
         expect(g.get('decoupling')).toMatchObject({ status: 'run', gradation: 'presence' });
     });
 
@@ -87,7 +109,14 @@ describe('buildElectricalScope — the /verify-design fragment', () => {
 
 describe('buildLayoutScope — the /layouts fragment', () => {
     it('reports drc + manufacturability + connectivity with clean detail', () => {
-        const g = byId(buildLayoutScope({ parityPins: { checked: 17, expected: 17 }, drcClean: true, drcViolations: 0, manufacturable: true }));
+        const g = byId(
+            buildLayoutScope({
+                parityPins: { checked: 17, expected: 17 },
+                drcClean: true,
+                drcViolations: 0,
+                manufacturable: true,
+            }),
+        );
         expect(g.get('drc')).toMatchObject({ status: 'run' });
         expect(g.get('drc')!.detail).toMatch(/DRC-clean/);
         expect(g.get('manufacturability')!.detail).toMatch(/delivered/);
@@ -101,7 +130,9 @@ describe('buildLayoutScope — the /layouts fragment', () => {
     });
 
     it('lists exactly its three owned checks (no decoupling/polarity leakage)', () => {
-        const ids = buildLayoutScope({ drcClean: true, drcViolations: 0, manufacturable: true }).checks.map((c) => c.id).sort();
+        const ids = buildLayoutScope({ drcClean: true, drcViolations: 0, manufacturable: true })
+            .checks.map((c) => c.id)
+            .sort();
         expect(ids).toEqual(['connectivity-parity', 'drc', 'manufacturability']);
     });
 });

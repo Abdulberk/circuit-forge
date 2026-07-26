@@ -54,9 +54,33 @@ export interface FabProfile {
  * All verified to route DRC-clean through the quality pipeline (the via guard holds at each tier).
  */
 export const FAB_TIERS: Record<'economy' | 'standard' | 'advanced', FabProfile> = {
-    economy: { minTraceWidthMm: 0.2, minClearanceMm: 0.2, viaDrillMm: 0.3, viaAnnularMm: 0.15, copperOz: 1, deltaTC: 10, gndPour: true },
-    standard: { minTraceWidthMm: 0.127, minClearanceMm: 0.127, viaDrillMm: 0.25, viaAnnularMm: 0.13, copperOz: 1, deltaTC: 10, gndPour: true },
-    advanced: { minTraceWidthMm: 0.0889, minClearanceMm: 0.0889, viaDrillMm: 0.2, viaAnnularMm: 0.1, copperOz: 1, deltaTC: 10, gndPour: true },
+    economy: {
+        minTraceWidthMm: 0.2,
+        minClearanceMm: 0.2,
+        viaDrillMm: 0.3,
+        viaAnnularMm: 0.15,
+        copperOz: 1,
+        deltaTC: 10,
+        gndPour: true,
+    },
+    standard: {
+        minTraceWidthMm: 0.127,
+        minClearanceMm: 0.127,
+        viaDrillMm: 0.25,
+        viaAnnularMm: 0.13,
+        copperOz: 1,
+        deltaTC: 10,
+        gndPour: true,
+    },
+    advanced: {
+        minTraceWidthMm: 0.0889,
+        minClearanceMm: 0.0889,
+        viaDrillMm: 0.2,
+        viaAnnularMm: 0.1,
+        copperOz: 1,
+        deltaTC: 10,
+        gndPour: true,
+    },
 };
 
 /** JLC-compatible conservative default = the economy tier (backward-compatible). */
@@ -161,7 +185,10 @@ export function reportViaCompliance(
  * upstream converter nets its segments, injecting a pour would CREATE shorts on paper — so we refuse
  * unless the board's segments carry nets ('unsafe' result; the caller reports it honestly).
  */
-export type ZoneInjectionResult = { kind: 'ok'; kicadPcb: string } | { kind: 'no-net' } | { kind: 'unsafe-unnetted-copper' };
+export type ZoneInjectionResult =
+    | { kind: 'ok'; kicadPcb: string }
+    | { kind: 'no-net' }
+    | { kind: 'unsafe-unnetted-copper' };
 
 export function injectZone(kicadPcb: string, netName: string, layer: 'F.Cu' | 'B.Cu' = 'B.Cu'): ZoneInjectionResult {
     const netMatch = kicadPcb.match(new RegExp(`\\(net (\\d+) "${escapeRegExp(netName)}"\\)`));

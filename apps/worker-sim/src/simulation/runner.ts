@@ -147,7 +147,13 @@ export async function runSimulation(input: SimulationJobInput): Promise<Simulati
         // No remedy converged — return the ORIGINAL failure annotated with the diagnosis + what was tried.
         return {
             ...first,
-            convergence: { recovered: false, kind: diag.kind, diagnosis: diag.explanation, attempts: tried.length, triedRemedies: tried },
+            convergence: {
+                recovered: false,
+                kind: diag.kind,
+                diagnosis: diag.explanation,
+                attempts: tried.length,
+                triedRemedies: tried,
+            },
         };
     } catch (error) {
         const errorMessage = error instanceof Error ? error.message : String(error);
@@ -203,7 +209,14 @@ async function runOneAttempt(
     const { stdout, stderr, exitCode, timedOut, spawnError } = await executeNgspice(netlistPath);
 
     if (timedOut) {
-        return { success: false, stdout, stderr, runtimeMs: Date.now() - startTime, timedOut: true, error: 'Simulation timed out' };
+        return {
+            success: false,
+            stdout,
+            stderr,
+            runtimeMs: Date.now() - startTime,
+            timedOut: true,
+            error: 'Simulation timed out',
+        };
     }
 
     if (exitCode !== 0) {
@@ -211,9 +224,7 @@ async function runOneAttempt(
         // and "singular matrix") to the `-o` log file, not always to the stderr pipe. Fold the log tail
         // into stderr so BOTH the Convergence Doctor's diagnosis and the persisted debug info carry the
         // real cause. Skipped on a spawn error (ngspice never ran, so there's no log).
-        const logTail = spawnError
-            ? ''
-            : await fs.readFile(path.join(jobDir, 'stdout.log'), 'utf-8').catch(() => '');
+        const logTail = spawnError ? '' : await fs.readFile(path.join(jobDir, 'stdout.log'), 'utf-8').catch(() => '');
         const fullStderr = logTail ? `${stderr}\n${logTail}`.slice(-8000) : stderr;
         return {
             success: false,
@@ -285,7 +296,12 @@ async function runOneAttempt(
         const listing = `${stdout}\n${await fs.readFile(path.join(jobDir, 'stdout.log'), 'utf-8').catch(() => '')}`;
         const { series, totals } = parseNoise(outputContent, listing);
         result = {
-            meta: { analysisType: 'noise', xLabel: 'Frequency', xUnit: 'Hz', pointsCount: series[0]?.points.length ?? 0 },
+            meta: {
+                analysisType: 'noise',
+                xLabel: 'Frequency',
+                xUnit: 'Hz',
+                pointsCount: series[0]?.points.length ?? 0,
+            },
             series,
             noise: totals,
         };
@@ -357,10 +373,7 @@ async function runOneAttempt(
     }
 
     const runtimeMs = Date.now() - startTime;
-    logger.info(
-        { jobId: input.jobId, runtimeMs, pointsCount: result.meta.pointsCount },
-        'Simulation completed',
-    );
+    logger.info({ jobId: input.jobId, runtimeMs, pointsCount: result.meta.pointsCount }, 'Simulation completed');
 
     return {
         success: true,
@@ -393,7 +406,10 @@ export async function executeNgspice(
         // (bwrap + bash + ngspice) — and with bwrap's --unshare-pid that also tears down the inner namespace,
         // leaving no orphan. Off elsewhere (Windows dev runs ngspice directly as a single process).
         const detached = process.platform === 'linux' && sandbox.mode !== 'none';
-        logger.debug({ cmd: file, args: spawnArgs, cwd, sandbox: sandbox.mode, bwrap: !!sandbox.bwrap, detached }, 'Executing ngspice');
+        logger.debug(
+            { cmd: file, args: spawnArgs, cwd, sandbox: sandbox.mode, bwrap: !!sandbox.bwrap, detached },
+            'Executing ngspice',
+        );
 
         const child: ChildProcess = spawn(file, spawnArgs, {
             cwd,
@@ -421,7 +437,11 @@ export async function executeNgspice(
                 if (detached && child.pid) process.kill(-child.pid, 'SIGKILL');
                 else child.kill('SIGKILL');
             } catch {
-                try { child.kill('SIGKILL'); } catch { /* already gone */ }
+                try {
+                    child.kill('SIGKILL');
+                } catch {
+                    /* already gone */
+                }
             }
         };
 

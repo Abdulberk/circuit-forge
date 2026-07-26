@@ -28,28 +28,84 @@ describe('verify-design integration (infra → inconclusive, never a design fail
     let prevRedis: string | undefined;
     let prevPoll: string | undefined;
 
-    const testUser = { email: 'verifyinfra@test-verify.com', password: 'SecurePassword123!', name: 'Verify Infra Test' };
+    const testUser = {
+        email: 'verifyinfra@test-verify.com',
+        password: 'SecurePassword123!',
+        name: 'Verify Infra Test',
+    };
 
     // 10V / 1k / 1k divider — a perfectly sound design (out = 5V, ground present, ERC-clean).
     const DIVIDER = {
         version: '1.0',
         components: [
-            { id: 'v1', type: 'voltage_source', designator: 'V1', value: 'DC 10', pins: [{ pinId: '+', netId: 'in' }, { pinId: '-', netId: 'gnd' }] },
-            { id: 'r1', type: 'resistor', designator: 'R1', value: '1k', pins: [{ pinId: '1', netId: 'in' }, { pinId: '2', netId: 'out' }] },
-            { id: 'r2', type: 'resistor', designator: 'R2', value: '1k', pins: [{ pinId: '1', netId: 'out' }, { pinId: '2', netId: 'gnd' }] },
+            {
+                id: 'v1',
+                type: 'voltage_source',
+                designator: 'V1',
+                value: 'DC 10',
+                pins: [
+                    { pinId: '+', netId: 'in' },
+                    { pinId: '-', netId: 'gnd' },
+                ],
+            },
+            {
+                id: 'r1',
+                type: 'resistor',
+                designator: 'R1',
+                value: '1k',
+                pins: [
+                    { pinId: '1', netId: 'in' },
+                    { pinId: '2', netId: 'out' },
+                ],
+            },
+            {
+                id: 'r2',
+                type: 'resistor',
+                designator: 'R2',
+                value: '1k',
+                pins: [
+                    { pinId: '1', netId: 'out' },
+                    { pinId: '2', netId: 'gnd' },
+                ],
+            },
             { id: 'gnd', type: 'ground', designator: 'GND1', pins: [{ pinId: '1', netId: 'gnd' }] },
         ],
-        nets: [{ id: 'in', name: 'in' }, { id: 'out', name: 'out' }, { id: 'gnd', name: 'gnd', isGround: true }],
+        nets: [
+            { id: 'in', name: 'in' },
+            { id: 'out', name: 'out' },
+            { id: 'gnd', name: 'gnd', isGround: true },
+        ],
     };
 
     // Same circuit minus a ground net → a deterministic ERC error (no DC path to ground).
     const NO_GROUND = {
         version: '1.0',
         components: [
-            { id: 'v1', type: 'voltage_source', designator: 'V1', value: 'DC 5', pins: [{ pinId: '+', netId: 'a' }, { pinId: '-', netId: 'b' }] },
-            { id: 'r1', type: 'resistor', designator: 'R1', value: '1k', pins: [{ pinId: '1', netId: 'a' }, { pinId: '2', netId: 'b' }] },
+            {
+                id: 'v1',
+                type: 'voltage_source',
+                designator: 'V1',
+                value: 'DC 5',
+                pins: [
+                    { pinId: '+', netId: 'a' },
+                    { pinId: '-', netId: 'b' },
+                ],
+            },
+            {
+                id: 'r1',
+                type: 'resistor',
+                designator: 'R1',
+                value: '1k',
+                pins: [
+                    { pinId: '1', netId: 'a' },
+                    { pinId: '2', netId: 'b' },
+                ],
+            },
         ],
-        nets: [{ id: 'a', name: 'a' }, { id: 'b', name: 'b' }],
+        nets: [
+            { id: 'a', name: 'a' },
+            { id: 'b', name: 'b' },
+        ],
     };
 
     beforeAll(async () => {
@@ -86,8 +142,10 @@ describe('verify-design integration (infra → inconclusive, never a design fail
         await prisma.user.deleteMany({ where: { email: testUser.email } });
         await app.close();
         // Restore env (each jest file is isolated, but keep it tidy).
-        if (prevRedis === undefined) delete process.env.REDIS_URL; else process.env.REDIS_URL = prevRedis;
-        if (prevPoll === undefined) delete process.env.VERIFY_POLL_TIMEOUT_MS; else process.env.VERIFY_POLL_TIMEOUT_MS = prevPoll;
+        if (prevRedis === undefined) delete process.env.REDIS_URL;
+        else process.env.REDIS_URL = prevRedis;
+        if (prevPoll === undefined) delete process.env.VERIFY_POLL_TIMEOUT_MS;
+        else process.env.VERIFY_POLL_TIMEOUT_MS = prevPoll;
     });
 
     it('INCONCLUSIVE: a sound design whose job nothing consumes is NOT reported as a design fail', async () => {

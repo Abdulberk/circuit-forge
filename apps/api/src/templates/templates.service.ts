@@ -16,7 +16,7 @@ export class TemplatesService {
     constructor(
         private readonly prisma: PrismaService,
         private readonly orgsService: OrgsService,
-    ) { }
+    ) {}
 
     /**
      * Create a new template

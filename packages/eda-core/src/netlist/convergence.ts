@@ -67,7 +67,10 @@ const PATTERNS: { re: RegExp; kind: Exclude<ConvergenceKind, 'none'> }[] = [
     // NOTE: only genuine convergence phrasings here. NOT a bare "unable to find" — ngspice says
     // "unable to find definition of model X" for a MISSING MODEL (a netlist error remedies can't fix);
     // we only want "unable to converge" / "unable to find dc operating point".
-    { re: /no convergence|failed to converge|convergence (problem|failure)|unable to converge|unable to find (a |the )?dc/i, kind: 'no_convergence' },
+    {
+        re: /no convergence|failed to converge|convergence (problem|failure)|unable to converge|unable to find (a |the )?dc/i,
+        kind: 'no_convergence',
+    },
     { re: /no output|produced no output|degenerate/i, kind: 'no_output' },
 ];
 
@@ -75,13 +78,13 @@ const EXPLANATION: Record<Exclude<ConvergenceKind, 'none'>, string> = {
     timestep_collapse:
         "The transient solver's adaptive timestep collapsed toward zero — the circuit is stiff, has a very hard switching edge, or a near-floating node. Trying more iterations, gear integration, and a little extra gmin.",
     iteration_limit:
-        "ngspice hit its per-step Newton iteration limit before settling — common on stiff or strongly nonlinear circuits. Raising the iteration limit and relaxing tolerances.",
+        'ngspice hit its per-step Newton iteration limit before settling — common on stiff or strongly nonlinear circuits. Raising the iteration limit and relaxing tolerances.',
     singular_matrix:
-        "The conductance matrix is singular — almost always a floating node or a section with no DC path to ground. Adding gmin (a tiny conductance to ground) often resolves it; also check that every node has a DC return path.",
+        'The conductance matrix is singular — almost always a floating node or a section with no DC path to ground. Adding gmin (a tiny conductance to ground) often resolves it; also check that every node has a DC return path.',
     no_convergence:
-        "ngspice could not find a solution at the default accuracy. Relaxing tolerances and adding gmin usually lets it converge (slightly less precise, but a real answer).",
+        'ngspice could not find a solution at the default accuracy. Relaxing tolerances and adding gmin usually lets it converge (slightly less precise, but a real answer).',
     no_output:
-        "The run produced no usable data — typically a non-converging or degenerate operating point. Adding gmin and relaxing tolerances often produces a solvable circuit.",
+        'The run produced no usable data — typically a non-converging or degenerate operating point. Adding gmin and relaxing tolerances often produces a solvable circuit.',
 };
 
 /**
@@ -112,23 +115,27 @@ export function convergenceRemedyLadder(analysisType?: string): RemedyStep[] {
     if (isTransient) {
         ladder.push({
             label: 'raise transient iteration limit + gmin',
-            rationale: 'Gives the per-step solver more Newton iterations and a small conductance floor — the usual fix for a collapsing timestep.',
+            rationale:
+                'Gives the per-step solver more Newton iterations and a small conductance floor — the usual fix for a collapsing timestep.',
             options: { itl4: 500, gmin: '1e-10' },
         });
         ladder.push({
             label: 'gear integration + relaxed tolerances',
-            rationale: 'The Gear method damps numerical ringing on stiff circuits; relaxed reltol/vntol let it accept a slightly less precise but real solution.',
+            rationale:
+                'The Gear method damps numerical ringing on stiff circuits; relaxed reltol/vntol let it accept a slightly less precise but real solution.',
             options: { method: 'gear', itl4: 1000, reltol: '1e-2', vntol: '1e-4' },
         });
     } else {
         ladder.push({
             label: 'add gmin',
-            rationale: 'A tiny conductance to ground removes a singular/near-singular matrix from a floating or high-impedance node.',
+            rationale:
+                'A tiny conductance to ground removes a singular/near-singular matrix from a floating or high-impedance node.',
             options: { gmin: '1e-9' },
         });
         ladder.push({
             label: 'relaxed tolerances + gmin',
-            rationale: 'Relaxing reltol/abstol/vntol lets the operating-point solver accept a slightly less precise but real solution.',
+            rationale:
+                'Relaxing reltol/abstol/vntol lets the operating-point solver accept a slightly less precise but real solution.',
             options: { gmin: '1e-9', reltol: '1e-2', abstol: '1e-9', vntol: '1e-4' },
         });
     }
@@ -136,8 +143,16 @@ export function convergenceRemedyLadder(analysisType?: string): RemedyStep[] {
     // Final, most-aggressive step shared by both: everything relaxed at once.
     ladder.push({
         label: 'aggressive relaxation (last resort)',
-        rationale: 'Combines a higher gmin, relaxed tolerances, and a raised iteration limit — the broadest convergence aid before giving up.',
-        options: { gmin: '1e-8', reltol: '5e-2', abstol: '1e-8', vntol: '1e-3', itl4: 1000, ...(isTransient ? { method: 'gear' as const } : {}) },
+        rationale:
+            'Combines a higher gmin, relaxed tolerances, and a raised iteration limit — the broadest convergence aid before giving up.',
+        options: {
+            gmin: '1e-8',
+            reltol: '5e-2',
+            abstol: '1e-8',
+            vntol: '1e-3',
+            itl4: 1000,
+            ...(isTransient ? { method: 'gear' as const } : {}),
+        },
     });
 
     return ladder;

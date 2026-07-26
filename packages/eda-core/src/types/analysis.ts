@@ -220,7 +220,11 @@ export function analysisToSpice(config: AnalysisConfig): string {
         case 'tran': {
             const start = config.startTime || '0';
             // Bound output density so a tiny step over a long stop can't request billions of rows.
-            const step = clampStepToPointBudget(start, config.stopTime, config.stepTime || calculateDefaultStep(config.stopTime));
+            const step = clampStepToPointBudget(
+                start,
+                config.stopTime,
+                config.stepTime || calculateDefaultStep(config.stopTime),
+            );
             let cmd = `.tran ${step} ${config.stopTime} ${start}`;
             if (config.maxStep) {
                 cmd += ` ${config.maxStep}`;
@@ -280,4 +284,3 @@ function calculateDefaultStep(stopTime: string): string {
     if (!parsed.isValid || !(parsed.value > 0)) return stopTime;
     return formatSpiceValue(parsed.value / 1000);
 }
-

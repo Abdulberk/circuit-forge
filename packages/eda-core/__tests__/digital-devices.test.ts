@@ -56,10 +56,22 @@ describe('digital emission', () => {
         const c: CircuitJson = {
             version: '1.0',
             components: [
-                { id: 'u1', type: 'logic_and', designator: 'U1', pins: [
-                    { pinId: 'in1', netId: 'a' }, { pinId: 'in2', netId: 'b' }, { pinId: 'out', netId: 'y' }] },
+                {
+                    id: 'u1',
+                    type: 'logic_and',
+                    designator: 'U1',
+                    pins: [
+                        { pinId: 'in1', netId: 'a' },
+                        { pinId: 'in2', netId: 'b' },
+                        { pinId: 'out', netId: 'y' },
+                    ],
+                },
             ],
-            nets: [{ id: 'a', name: 'A' }, { id: 'b', name: 'B' }, { id: 'y', name: 'Y' }],
+            nets: [
+                { id: 'a', name: 'A' },
+                { id: 'b', name: 'B' },
+                { id: 'y', name: 'Y' },
+            ],
         };
         const netlist = generateNetlist(c, TRAN);
         expect(deviceLine(netlist, 'AU1')).toBe('AU1 [na nb] ny CFD_AND');
@@ -71,10 +83,20 @@ describe('digital emission', () => {
         const c: CircuitJson = {
             version: '1.0',
             components: [
-                { id: 'u1', type: 'logic_not', designator: 'U1', pins: [
-                    { pinId: 'in1', netId: 'a' }, { pinId: 'out', netId: 'y' }] },
+                {
+                    id: 'u1',
+                    type: 'logic_not',
+                    designator: 'U1',
+                    pins: [
+                        { pinId: 'in1', netId: 'a' },
+                        { pinId: 'out', netId: 'y' },
+                    ],
+                },
             ],
-            nets: [{ id: 'a', name: 'A' }, { id: 'y', name: 'Y' }],
+            nets: [
+                { id: 'a', name: 'A' },
+                { id: 'y', name: 'Y' },
+            ],
         };
         const netlist = generateNetlist(c, TRAN);
         expect(deviceLine(netlist, 'AU1')).toBe('AU1 na ny CFD_NOT');
@@ -87,11 +109,24 @@ describe('digital emission', () => {
             version: '1.0',
             components: [
                 // authored in3, in1, in2 — emission must sort to in1 in2 in3
-                { id: 'u1', type: 'logic_nand', designator: 'U1', pins: [
-                    { pinId: 'in3', netId: 'c3' }, { pinId: 'in1', netId: 'c1' },
-                    { pinId: 'in2', netId: 'c2' }, { pinId: 'out', netId: 'y' }] },
+                {
+                    id: 'u1',
+                    type: 'logic_nand',
+                    designator: 'U1',
+                    pins: [
+                        { pinId: 'in3', netId: 'c3' },
+                        { pinId: 'in1', netId: 'c1' },
+                        { pinId: 'in2', netId: 'c2' },
+                        { pinId: 'out', netId: 'y' },
+                    ],
+                },
             ],
-            nets: [{ id: 'c1', name: 'C1' }, { id: 'c2', name: 'C2' }, { id: 'c3', name: 'C3' }, { id: 'y', name: 'Y' }],
+            nets: [
+                { id: 'c1', name: 'C1' },
+                { id: 'c2', name: 'C2' },
+                { id: 'c3', name: 'C3' },
+                { id: 'y', name: 'Y' },
+            ],
         };
         const netlist = generateNetlist(c, TRAN);
         expect(deviceLine(netlist, 'AU1')).toBe('AU1 [nc1 nc2 nc3] ny CFD_NAND');
@@ -101,11 +136,24 @@ describe('digital emission', () => {
         const c: CircuitJson = {
             version: '1.0',
             components: [
-                { id: 'u1', type: 'dff', designator: 'U1', pins: [
-                    { pinId: 'd', netId: 'din' }, { pinId: 'clk', netId: 'clk' },
-                    { pinId: 'q', netId: 'q' }, { pinId: 'qb', netId: 'qb' }] },
+                {
+                    id: 'u1',
+                    type: 'dff',
+                    designator: 'U1',
+                    pins: [
+                        { pinId: 'd', netId: 'din' },
+                        { pinId: 'clk', netId: 'clk' },
+                        { pinId: 'q', netId: 'q' },
+                        { pinId: 'qb', netId: 'qb' },
+                    ],
+                },
             ],
-            nets: [{ id: 'din', name: 'DIN' }, { id: 'clk', name: 'CLK' }, { id: 'q', name: 'Q' }, { id: 'qb', name: 'QB' }],
+            nets: [
+                { id: 'din', name: 'DIN' },
+                { id: 'clk', name: 'CLK' },
+                { id: 'q', name: 'Q' },
+                { id: 'qb', name: 'QB' },
+            ],
         };
         const netlist = generateNetlist(c, TRAN);
         // set + rst both resolve to the same synthesized LOW rail node.
@@ -120,11 +168,26 @@ describe('digital emission', () => {
         const c: CircuitJson = {
             version: '1.0',
             components: [
-                { id: 'u1', type: 'jkff', designator: 'U1', pins: [
-                    { pinId: 'j', netId: 'ja' }, { pinId: 'k', netId: 'ka' }, { pinId: 'clk', netId: 'clk' },
-                    { pinId: 'q', netId: 'q' }, { pinId: 'qb', netId: 'qb' }] },
+                {
+                    id: 'u1',
+                    type: 'jkff',
+                    designator: 'U1',
+                    pins: [
+                        { pinId: 'j', netId: 'ja' },
+                        { pinId: 'k', netId: 'ka' },
+                        { pinId: 'clk', netId: 'clk' },
+                        { pinId: 'q', netId: 'q' },
+                        { pinId: 'qb', netId: 'qb' },
+                    ],
+                },
             ],
-            nets: [{ id: 'ja', name: 'JA' }, { id: 'ka', name: 'KA' }, { id: 'clk', name: 'CLK' }, { id: 'q', name: 'Q' }, { id: 'qb', name: 'QB' }],
+            nets: [
+                { id: 'ja', name: 'JA' },
+                { id: 'ka', name: 'KA' },
+                { id: 'clk', name: 'CLK' },
+                { id: 'q', name: 'Q' },
+                { id: 'qb', name: 'QB' },
+            ],
         };
         const netlist = generateNetlist(c, TRAN);
         expect(deviceLine(netlist, 'AU1')).toBe('AU1 nja nka nclk dlogic_lo dlogic_lo nq nqb CFD_JKFF');
@@ -135,11 +198,24 @@ describe('digital emission', () => {
         const c: CircuitJson = {
             version: '1.0',
             components: [
-                { id: 'u1', type: 'tff', designator: 'U1', pins: [
-                    { pinId: 't', netId: 'ta' }, { pinId: 'clk', netId: 'clk' },
-                    { pinId: 'q', netId: 'q' }, { pinId: 'qb', netId: 'qb' }] },
+                {
+                    id: 'u1',
+                    type: 'tff',
+                    designator: 'U1',
+                    pins: [
+                        { pinId: 't', netId: 'ta' },
+                        { pinId: 'clk', netId: 'clk' },
+                        { pinId: 'q', netId: 'q' },
+                        { pinId: 'qb', netId: 'qb' },
+                    ],
+                },
             ],
-            nets: [{ id: 'ta', name: 'TA' }, { id: 'clk', name: 'CLK' }, { id: 'q', name: 'Q' }, { id: 'qb', name: 'QB' }],
+            nets: [
+                { id: 'ta', name: 'TA' },
+                { id: 'clk', name: 'CLK' },
+                { id: 'q', name: 'Q' },
+                { id: 'qb', name: 'QB' },
+            ],
         };
         const netlist = generateNetlist(c, TRAN);
         expect(deviceLine(netlist, 'AU1')).toBe('AU1 nta nclk dlogic_lo dlogic_lo nq nqb CFD_TFF');
@@ -150,11 +226,24 @@ describe('digital emission', () => {
         const c: CircuitJson = {
             version: '1.0',
             components: [
-                { id: 'u1', type: 'dlatch', designator: 'U1', pins: [
-                    { pinId: 'd', netId: 'da' }, { pinId: 'en', netId: 'ena' },
-                    { pinId: 'q', netId: 'q' }, { pinId: 'qb', netId: 'qb' }] },
+                {
+                    id: 'u1',
+                    type: 'dlatch',
+                    designator: 'U1',
+                    pins: [
+                        { pinId: 'd', netId: 'da' },
+                        { pinId: 'en', netId: 'ena' },
+                        { pinId: 'q', netId: 'q' },
+                        { pinId: 'qb', netId: 'qb' },
+                    ],
+                },
             ],
-            nets: [{ id: 'da', name: 'DA' }, { id: 'ena', name: 'ENA' }, { id: 'q', name: 'Q' }, { id: 'qb', name: 'QB' }],
+            nets: [
+                { id: 'da', name: 'DA' },
+                { id: 'ena', name: 'ENA' },
+                { id: 'q', name: 'Q' },
+                { id: 'qb', name: 'QB' },
+            ],
         };
         const netlist = generateNetlist(c, TRAN);
         expect(deviceLine(netlist, 'AU1')).toBe('AU1 nda nena dlogic_lo dlogic_lo nq nqb CFD_DLATCH');
@@ -165,10 +254,22 @@ describe('digital emission', () => {
         const c: CircuitJson = {
             version: '1.0',
             components: [
-                { id: 'u1', type: 'tristate', designator: 'U1', pins: [
-                    { pinId: 'in1', netId: 'a' }, { pinId: 'en', netId: 'ena' }, { pinId: 'out', netId: 'bus' }] },
+                {
+                    id: 'u1',
+                    type: 'tristate',
+                    designator: 'U1',
+                    pins: [
+                        { pinId: 'in1', netId: 'a' },
+                        { pinId: 'en', netId: 'ena' },
+                        { pinId: 'out', netId: 'bus' },
+                    ],
+                },
             ],
-            nets: [{ id: 'a', name: 'A' }, { id: 'ena', name: 'ENA' }, { id: 'bus', name: 'BUS' }],
+            nets: [
+                { id: 'a', name: 'A' },
+                { id: 'ena', name: 'ENA' },
+                { id: 'bus', name: 'BUS' },
+            ],
         };
         const netlist = generateNetlist(c, TRAN);
         expect(deviceLine(netlist, 'AU1')).toBe('AU1 na nena nbus CFD_TRI');
@@ -181,13 +282,28 @@ describe('digital emission', () => {
         const c: CircuitJson = {
             version: '1.0',
             components: [
-                { id: 'u1', type: 'dff', designator: 'U1', pins: [
-                    { pinId: 'd', netId: 'din' }, { pinId: 'clk', netId: 'clk' },
-                    { pinId: 'set', netId: 's' }, { pinId: 'rst', netId: 'r' },
-                    { pinId: 'q', netId: 'q' }, { pinId: 'qb', netId: 'qb' }] },
+                {
+                    id: 'u1',
+                    type: 'dff',
+                    designator: 'U1',
+                    pins: [
+                        { pinId: 'd', netId: 'din' },
+                        { pinId: 'clk', netId: 'clk' },
+                        { pinId: 'set', netId: 's' },
+                        { pinId: 'rst', netId: 'r' },
+                        { pinId: 'q', netId: 'q' },
+                        { pinId: 'qb', netId: 'qb' },
+                    ],
+                },
             ],
-            nets: [{ id: 'din', name: 'D' }, { id: 'clk', name: 'CLK' }, { id: 's', name: 'S' },
-                { id: 'r', name: 'R' }, { id: 'q', name: 'Q' }, { id: 'qb', name: 'QB' }],
+            nets: [
+                { id: 'din', name: 'D' },
+                { id: 'clk', name: 'CLK' },
+                { id: 's', name: 'S' },
+                { id: 'r', name: 'R' },
+                { id: 'q', name: 'Q' },
+                { id: 'qb', name: 'QB' },
+            ],
         };
         const netlist = generateNetlist(c, TRAN);
         expect(deviceLine(netlist, 'AU1')).toBe('AU1 ndin nclk ns nr nq nqb CFD_DFF');
@@ -201,14 +317,35 @@ describe('automatic analog<->digital bridging', () => {
         const c: CircuitJson = {
             version: '1.0',
             components: [
-                { id: 'vclk', type: 'voltage_source', designator: 'V1', value: 'PULSE(0 5 0 1n 1n 50u 100u)', pins: [
-                    { pinId: '+', netId: 'clk' }, { pinId: '-', netId: 'gnd' }] },
-                { id: 'u1', type: 'dff', designator: 'U1', pins: [
-                    { pinId: 'd', netId: 'din' }, { pinId: 'clk', netId: 'clk' },
-                    { pinId: 'q', netId: 'q' }, { pinId: 'qb', netId: 'qb' }] },
+                {
+                    id: 'vclk',
+                    type: 'voltage_source',
+                    designator: 'V1',
+                    value: 'PULSE(0 5 0 1n 1n 50u 100u)',
+                    pins: [
+                        { pinId: '+', netId: 'clk' },
+                        { pinId: '-', netId: 'gnd' },
+                    ],
+                },
+                {
+                    id: 'u1',
+                    type: 'dff',
+                    designator: 'U1',
+                    pins: [
+                        { pinId: 'd', netId: 'din' },
+                        { pinId: 'clk', netId: 'clk' },
+                        { pinId: 'q', netId: 'q' },
+                        { pinId: 'qb', netId: 'qb' },
+                    ],
+                },
             ],
-            nets: [{ id: 'clk', name: 'CLK' }, { id: 'din', name: 'D' }, { id: 'q', name: 'Q' },
-                { id: 'qb', name: 'QB' }, { id: 'gnd', name: 'GND', isGround: true }],
+            nets: [
+                { id: 'clk', name: 'CLK' },
+                { id: 'din', name: 'D' },
+                { id: 'q', name: 'Q' },
+                { id: 'qb', name: 'QB' },
+                { id: 'gnd', name: 'GND', isGround: true },
+            ],
         };
         const nodeMap = nodeMapOf(c);
         const plan = planMixedSignal(c, nodeMap);
@@ -226,12 +363,31 @@ describe('automatic analog<->digital bridging', () => {
         const c: CircuitJson = {
             version: '1.0',
             components: [
-                { id: 'u1', type: 'logic_buffer', designator: 'U1', pins: [
-                    { pinId: 'in1', netId: 'a' }, { pinId: 'out', netId: 'y' }] },
-                { id: 'rl', type: 'resistor', designator: 'R1', value: '1k', pins: [
-                    { pinId: '1', netId: 'y' }, { pinId: '2', netId: 'gnd' }] },
+                {
+                    id: 'u1',
+                    type: 'logic_buffer',
+                    designator: 'U1',
+                    pins: [
+                        { pinId: 'in1', netId: 'a' },
+                        { pinId: 'out', netId: 'y' },
+                    ],
+                },
+                {
+                    id: 'rl',
+                    type: 'resistor',
+                    designator: 'R1',
+                    value: '1k',
+                    pins: [
+                        { pinId: '1', netId: 'y' },
+                        { pinId: '2', netId: 'gnd' },
+                    ],
+                },
             ],
-            nets: [{ id: 'a', name: 'A' }, { id: 'y', name: 'Y' }, { id: 'gnd', name: 'GND', isGround: true }],
+            nets: [
+                { id: 'a', name: 'A' },
+                { id: 'y', name: 'Y' },
+                { id: 'gnd', name: 'GND', isGround: true },
+            ],
         };
         const nodeMap = nodeMapOf(c);
         const plan = planMixedSignal(c, nodeMap);
@@ -247,10 +403,22 @@ describe('automatic analog<->digital bridging', () => {
         const c: CircuitJson = {
             version: '1.0',
             components: [
-                { id: 'u1', type: 'logic_and', designator: 'U1', pins: [
-                    { pinId: 'in1', netId: 'a' }, { pinId: 'in2', netId: 'b' }, { pinId: 'out', netId: 'y' }] },
+                {
+                    id: 'u1',
+                    type: 'logic_and',
+                    designator: 'U1',
+                    pins: [
+                        { pinId: 'in1', netId: 'a' },
+                        { pinId: 'in2', netId: 'b' },
+                        { pinId: 'out', netId: 'y' },
+                    ],
+                },
             ],
-            nets: [{ id: 'a', name: 'A' }, { id: 'b', name: 'B' }, { id: 'y', name: 'Y' }],
+            nets: [
+                { id: 'a', name: 'A' },
+                { id: 'b', name: 'B' },
+                { id: 'y', name: 'Y' },
+            ],
         };
         const nodeMap = nodeMapOf(c);
         const plan = planMixedSignal(c, nodeMap);
@@ -265,14 +433,42 @@ describe('analog-only NO-OP guarantee', () => {
     const rc: CircuitJson = {
         version: '1.0',
         components: [
-            { id: 'v1', type: 'voltage_source', designator: 'V1', value: 'DC 5', pins: [
-                { pinId: '+', netId: 'in' }, { pinId: '-', netId: 'gnd' }] },
-            { id: 'r1', type: 'resistor', designator: 'R1', value: '1k', pins: [
-                { pinId: '1', netId: 'in' }, { pinId: '2', netId: 'out' }] },
-            { id: 'c1', type: 'capacitor', designator: 'C1', value: '1u', pins: [
-                { pinId: '1', netId: 'out' }, { pinId: '2', netId: 'gnd' }] },
+            {
+                id: 'v1',
+                type: 'voltage_source',
+                designator: 'V1',
+                value: 'DC 5',
+                pins: [
+                    { pinId: '+', netId: 'in' },
+                    { pinId: '-', netId: 'gnd' },
+                ],
+            },
+            {
+                id: 'r1',
+                type: 'resistor',
+                designator: 'R1',
+                value: '1k',
+                pins: [
+                    { pinId: '1', netId: 'in' },
+                    { pinId: '2', netId: 'out' },
+                ],
+            },
+            {
+                id: 'c1',
+                type: 'capacitor',
+                designator: 'C1',
+                value: '1u',
+                pins: [
+                    { pinId: '1', netId: 'out' },
+                    { pinId: '2', netId: 'gnd' },
+                ],
+            },
         ],
-        nets: [{ id: 'in', name: 'IN' }, { id: 'out', name: 'OUT' }, { id: 'gnd', name: 'GND', isGround: true }],
+        nets: [
+            { id: 'in', name: 'IN' },
+            { id: 'out', name: 'OUT' },
+            { id: 'gnd', name: 'GND', isGround: true },
+        ],
     };
 
     it('planMixedSignal is inactive (no bridges, no overrides) with zero digital components', () => {
@@ -287,7 +483,16 @@ describe('analog-only NO-OP guarantee', () => {
 
     it('an analog-only netlist contains none of the digital/bridge artifacts', () => {
         const netlist = generateNetlist(rc, TRAN);
-        for (const token of ['axsyn', 'vxsyn', 'CFD_ADC', 'CFD_DAC', 'dlogic_lo', 'd_and', 'd_dff', 'Digital / bridge']) {
+        for (const token of [
+            'axsyn',
+            'vxsyn',
+            'CFD_ADC',
+            'CFD_DAC',
+            'dlogic_lo',
+            'd_and',
+            'd_dff',
+            'Digital / bridge',
+        ]) {
             expect(netlist).not.toContain(token);
         }
     });
@@ -298,26 +503,61 @@ describe('digital ERC', () => {
         const c: CircuitJson = {
             version: '1.0',
             components: [
-                { id: 'u1', type: 'logic_and', designator: 'U1', pins: [
-                    { pinId: 'in1', netId: 'a' }, { pinId: 'out', netId: 'y' }] }, // AND needs >=2 inputs
-                { id: 'vd', type: 'voltage_source', designator: 'V1', value: 'PULSE(0 5 0 1n 1n 1u 2u)', pins: [
-                    { pinId: '+', netId: 'a' }, { pinId: '-', netId: 'gnd' }] },
+                {
+                    id: 'u1',
+                    type: 'logic_and',
+                    designator: 'U1',
+                    pins: [
+                        { pinId: 'in1', netId: 'a' },
+                        { pinId: 'out', netId: 'y' },
+                    ],
+                }, // AND needs >=2 inputs
+                {
+                    id: 'vd',
+                    type: 'voltage_source',
+                    designator: 'V1',
+                    value: 'PULSE(0 5 0 1n 1n 1u 2u)',
+                    pins: [
+                        { pinId: '+', netId: 'a' },
+                        { pinId: '-', netId: 'gnd' },
+                    ],
+                },
             ],
-            nets: [{ id: 'a', name: 'A' }, { id: 'y', name: 'Y' }, { id: 'gnd', name: 'GND', isGround: true }],
+            nets: [
+                { id: 'a', name: 'A' },
+                { id: 'y', name: 'Y' },
+                { id: 'gnd', name: 'GND', isGround: true },
+            ],
         };
-        expect(runErc(c).issues.some((i) => i.code === ErcCode.DIGITAL_PIN_SHAPE && i.relatedIds.includes('u1'))).toBe(true);
+        expect(runErc(c).issues.some((i) => i.code === ErcCode.DIGITAL_PIN_SHAPE && i.relatedIds.includes('u1'))).toBe(
+            true,
+        );
     });
 
     it('flags a flip-flop missing a required pin (DIGITAL_PIN_SHAPE)', () => {
         const c: CircuitJson = {
             version: '1.0',
             components: [
-                { id: 'u1', type: 'dff', designator: 'U1', pins: [
-                    { pinId: 'd', netId: 'din' }, { pinId: 'clk', netId: 'clk' }, { pinId: 'q', netId: 'q' }] }, // no qb
+                {
+                    id: 'u1',
+                    type: 'dff',
+                    designator: 'U1',
+                    pins: [
+                        { pinId: 'd', netId: 'din' },
+                        { pinId: 'clk', netId: 'clk' },
+                        { pinId: 'q', netId: 'q' },
+                    ],
+                }, // no qb
             ],
-            nets: [{ id: 'din', name: 'D' }, { id: 'clk', name: 'CLK' }, { id: 'q', name: 'Q' }],
+            nets: [
+                { id: 'din', name: 'D' },
+                { id: 'clk', name: 'CLK' },
+                { id: 'q', name: 'Q' },
+            ],
         };
-        const shape = runErc(c).issues.filter((i) => i.code === ErcCode.DIGITAL_PIN_SHAPE && i.relatedIds.includes('u1'));
+        const shape = runErc(c).issues.filter(
+            (i) => i.code === ErcCode.DIGITAL_PIN_SHAPE && i.relatedIds.includes('u1'),
+        );
         expect(shape.length).toBeGreaterThan(0);
         expect(shape.some((i) => /qb/.test(i.message))).toBe(true);
     });
@@ -327,24 +567,56 @@ describe('digital ERC', () => {
             version: '1.0',
             components: [
                 // "fin" is touched only by the inverter input — undriven => unknown 'U'.
-                { id: 'u1', type: 'logic_not', designator: 'U1', pins: [
-                    { pinId: 'in1', netId: 'fin' }, { pinId: 'out', netId: 'y' }] },
+                {
+                    id: 'u1',
+                    type: 'logic_not',
+                    designator: 'U1',
+                    pins: [
+                        { pinId: 'in1', netId: 'fin' },
+                        { pinId: 'out', netId: 'y' },
+                    ],
+                },
             ],
-            nets: [{ id: 'fin', name: 'FIN' }, { id: 'y', name: 'Y' }],
+            nets: [
+                { id: 'fin', name: 'FIN' },
+                { id: 'y', name: 'Y' },
+            ],
         };
-        expect(runErc(c).issues.some((i) => i.code === ErcCode.FLOATING_DIGITAL_INPUT && i.relatedIds.includes('fin'))).toBe(true);
+        expect(
+            runErc(c).issues.some((i) => i.code === ErcCode.FLOATING_DIGITAL_INPUT && i.relatedIds.includes('fin')),
+        ).toBe(true);
     });
 
     it('does NOT flag a grounded digital input as floating', () => {
         const c: CircuitJson = {
             version: '1.0',
             components: [
-                { id: 'u1', type: 'logic_and', designator: 'U1', pins: [
-                    { pinId: 'in1', netId: 'a' }, { pinId: 'in2', netId: 'gnd' }, { pinId: 'out', netId: 'y' }] },
-                { id: 'vd', type: 'voltage_source', designator: 'V1', value: 'PULSE(0 5 0 1n 1n 1u 2u)', pins: [
-                    { pinId: '+', netId: 'a' }, { pinId: '-', netId: 'gnd' }] },
+                {
+                    id: 'u1',
+                    type: 'logic_and',
+                    designator: 'U1',
+                    pins: [
+                        { pinId: 'in1', netId: 'a' },
+                        { pinId: 'in2', netId: 'gnd' },
+                        { pinId: 'out', netId: 'y' },
+                    ],
+                },
+                {
+                    id: 'vd',
+                    type: 'voltage_source',
+                    designator: 'V1',
+                    value: 'PULSE(0 5 0 1n 1n 1u 2u)',
+                    pins: [
+                        { pinId: '+', netId: 'a' },
+                        { pinId: '-', netId: 'gnd' },
+                    ],
+                },
             ],
-            nets: [{ id: 'a', name: 'A' }, { id: 'y', name: 'Y' }, { id: 'gnd', name: 'GND', isGround: true }],
+            nets: [
+                { id: 'a', name: 'A' },
+                { id: 'y', name: 'Y' },
+                { id: 'gnd', name: 'GND', isGround: true },
+            ],
         };
         expect(runErc(c).issues.some((i) => i.code === ErcCode.FLOATING_DIGITAL_INPUT)).toBe(false);
     });
@@ -353,30 +625,77 @@ describe('digital ERC', () => {
         const c: CircuitJson = {
             version: '1.0',
             components: [
-                { id: 'u1', type: 'logic_buffer', designator: 'U1', pins: [
-                    { pinId: 'in1', netId: 'a' }, { pinId: 'out', netId: 'bus' }] },
-                { id: 'u2', type: 'logic_buffer', designator: 'U2', pins: [
-                    { pinId: 'in1', netId: 'b' }, { pinId: 'out', netId: 'bus' }] },
+                {
+                    id: 'u1',
+                    type: 'logic_buffer',
+                    designator: 'U1',
+                    pins: [
+                        { pinId: 'in1', netId: 'a' },
+                        { pinId: 'out', netId: 'bus' },
+                    ],
+                },
+                {
+                    id: 'u2',
+                    type: 'logic_buffer',
+                    designator: 'U2',
+                    pins: [
+                        { pinId: 'in1', netId: 'b' },
+                        { pinId: 'out', netId: 'bus' },
+                    ],
+                },
             ],
-            nets: [{ id: 'a', name: 'A' }, { id: 'b', name: 'B' }, { id: 'bus', name: 'BUS' }],
+            nets: [
+                { id: 'a', name: 'A' },
+                { id: 'b', name: 'B' },
+                { id: 'bus', name: 'BUS' },
+            ],
         };
-        expect(runErc(c).issues.some((i) => i.code === ErcCode.DIGITAL_BUS_CONTENTION && i.relatedIds.includes('bus'))).toBe(true);
+        expect(
+            runErc(c).issues.some((i) => i.code === ErcCode.DIGITAL_BUS_CONTENTION && i.relatedIds.includes('bus')),
+        ).toBe(true);
     });
 
     it('does NOT flag an all-tristate shared bus (the legitimate multi-driver pattern)', () => {
         const c: CircuitJson = {
             version: '1.0',
             components: [
-                { id: 'u1', type: 'tristate', designator: 'U1', pins: [
-                    { pinId: 'in1', netId: 'a' }, { pinId: 'en', netId: 'ena' }, { pinId: 'out', netId: 'bus' }] },
-                { id: 'u2', type: 'tristate', designator: 'U2', pins: [
-                    { pinId: 'in1', netId: 'b' }, { pinId: 'en', netId: 'enb' }, { pinId: 'out', netId: 'bus' }] },
-                { id: 'u3', type: 'logic_buffer', designator: 'U3', pins: [
-                    { pinId: 'in1', netId: 'bus' }, { pinId: 'out', netId: 'y' }] },
+                {
+                    id: 'u1',
+                    type: 'tristate',
+                    designator: 'U1',
+                    pins: [
+                        { pinId: 'in1', netId: 'a' },
+                        { pinId: 'en', netId: 'ena' },
+                        { pinId: 'out', netId: 'bus' },
+                    ],
+                },
+                {
+                    id: 'u2',
+                    type: 'tristate',
+                    designator: 'U2',
+                    pins: [
+                        { pinId: 'in1', netId: 'b' },
+                        { pinId: 'en', netId: 'enb' },
+                        { pinId: 'out', netId: 'bus' },
+                    ],
+                },
+                {
+                    id: 'u3',
+                    type: 'logic_buffer',
+                    designator: 'U3',
+                    pins: [
+                        { pinId: 'in1', netId: 'bus' },
+                        { pinId: 'out', netId: 'y' },
+                    ],
+                },
             ],
             nets: [
-                { id: 'a', name: 'A' }, { id: 'b', name: 'B' }, { id: 'ena', name: 'ENA' },
-                { id: 'enb', name: 'ENB' }, { id: 'bus', name: 'BUS' }, { id: 'y', name: 'Y' },
+                { id: 'a', name: 'A' },
+                { id: 'b', name: 'B' },
+                { id: 'ena', name: 'ENA' },
+                { id: 'enb', name: 'ENB' },
+                { id: 'bus', name: 'BUS' },
+                { id: 'y', name: 'Y' },
             ],
         };
         expect(runErc(c).issues.some((i) => i.code === ErcCode.DIGITAL_BUS_CONTENTION)).toBe(false);
@@ -386,70 +705,182 @@ describe('digital ERC', () => {
         const c: CircuitJson = {
             version: '1.0',
             components: [
-                { id: 'u1', type: 'tristate', designator: 'U1', pins: [
-                    { pinId: 'in1', netId: 'a' }, { pinId: 'en', netId: 'ena' }, { pinId: 'out', netId: 'bus' }] },
-                { id: 'u2', type: 'logic_buffer', designator: 'U2', pins: [
-                    { pinId: 'in1', netId: 'b' }, { pinId: 'out', netId: 'bus' }] },
+                {
+                    id: 'u1',
+                    type: 'tristate',
+                    designator: 'U1',
+                    pins: [
+                        { pinId: 'in1', netId: 'a' },
+                        { pinId: 'en', netId: 'ena' },
+                        { pinId: 'out', netId: 'bus' },
+                    ],
+                },
+                {
+                    id: 'u2',
+                    type: 'logic_buffer',
+                    designator: 'U2',
+                    pins: [
+                        { pinId: 'in1', netId: 'b' },
+                        { pinId: 'out', netId: 'bus' },
+                    ],
+                },
             ],
-            nets: [{ id: 'a', name: 'A' }, { id: 'b', name: 'B' }, { id: 'ena', name: 'ENA' }, { id: 'bus', name: 'BUS' }],
+            nets: [
+                { id: 'a', name: 'A' },
+                { id: 'b', name: 'B' },
+                { id: 'ena', name: 'ENA' },
+                { id: 'bus', name: 'BUS' },
+            ],
         };
-        expect(runErc(c).issues.some((i) => i.code === ErcCode.DIGITAL_BUS_CONTENTION && i.relatedIds.includes('bus'))).toBe(true);
+        expect(
+            runErc(c).issues.some((i) => i.code === ErcCode.DIGITAL_BUS_CONTENTION && i.relatedIds.includes('bus')),
+        ).toBe(true);
     });
 
     it('flags missing required pins on the new sequential/bus types (DIGITAL_PIN_SHAPE)', () => {
-        const mk = (type: CircuitJson['components'][0]['type'], pins: { pinId: string; netId: string }[]): CircuitJson => ({
+        const mk = (
+            type: CircuitJson['components'][0]['type'],
+            pins: { pinId: string; netId: string }[],
+        ): CircuitJson => ({
             version: '1.0',
             components: [{ id: 'u1', type, designator: 'U1', pins }],
             nets: [{ id: 'x', name: 'X' }],
         });
         // jkff without k; tff without t; dlatch without en; tristate without en — each must flag.
-        expect(runErc(mk('jkff', [{ pinId: 'j', netId: 'x' }, { pinId: 'clk', netId: 'x' }, { pinId: 'q', netId: 'x' }, { pinId: 'qb', netId: 'x' }]))
-            .issues.some((i) => i.code === ErcCode.DIGITAL_PIN_SHAPE && /missing required pin 'k'/.test(i.message))).toBe(true);
-        expect(runErc(mk('tff', [{ pinId: 'clk', netId: 'x' }, { pinId: 'q', netId: 'x' }, { pinId: 'qb', netId: 'x' }]))
-            .issues.some((i) => i.code === ErcCode.DIGITAL_PIN_SHAPE && /missing required pin 't'/.test(i.message))).toBe(true);
-        expect(runErc(mk('dlatch', [{ pinId: 'd', netId: 'x' }, { pinId: 'q', netId: 'x' }, { pinId: 'qb', netId: 'x' }]))
-            .issues.some((i) => i.code === ErcCode.DIGITAL_PIN_SHAPE && /missing required pin 'en'/.test(i.message))).toBe(true);
-        expect(runErc(mk('tristate', [{ pinId: 'in1', netId: 'x' }, { pinId: 'out', netId: 'x' }]))
-            .issues.some((i) => i.code === ErcCode.DIGITAL_PIN_SHAPE && /missing required pin 'en'/.test(i.message))).toBe(true);
+        expect(
+            runErc(
+                mk('jkff', [
+                    { pinId: 'j', netId: 'x' },
+                    { pinId: 'clk', netId: 'x' },
+                    { pinId: 'q', netId: 'x' },
+                    { pinId: 'qb', netId: 'x' },
+                ]),
+            ).issues.some((i) => i.code === ErcCode.DIGITAL_PIN_SHAPE && /missing required pin 'k'/.test(i.message)),
+        ).toBe(true);
+        expect(
+            runErc(
+                mk('tff', [
+                    { pinId: 'clk', netId: 'x' },
+                    { pinId: 'q', netId: 'x' },
+                    { pinId: 'qb', netId: 'x' },
+                ]),
+            ).issues.some((i) => i.code === ErcCode.DIGITAL_PIN_SHAPE && /missing required pin 't'/.test(i.message)),
+        ).toBe(true);
+        expect(
+            runErc(
+                mk('dlatch', [
+                    { pinId: 'd', netId: 'x' },
+                    { pinId: 'q', netId: 'x' },
+                    { pinId: 'qb', netId: 'x' },
+                ]),
+            ).issues.some((i) => i.code === ErcCode.DIGITAL_PIN_SHAPE && /missing required pin 'en'/.test(i.message)),
+        ).toBe(true);
+        expect(
+            runErc(
+                mk('tristate', [
+                    { pinId: 'in1', netId: 'x' },
+                    { pinId: 'out', netId: 'x' },
+                ]),
+            ).issues.some((i) => i.code === ErcCode.DIGITAL_PIN_SHAPE && /missing required pin 'en'/.test(i.message)),
+        ).toBe(true);
         // A complete jkff (set/rst omitted — they're optional) must NOT flag.
-        expect(runErc(mk('jkff', [
-            { pinId: 'j', netId: 'x' }, { pinId: 'k', netId: 'x' }, { pinId: 'clk', netId: 'x' },
-            { pinId: 'q', netId: 'x' }, { pinId: 'qb', netId: 'x' },
-        ])).issues.some((i) => i.code === ErcCode.DIGITAL_PIN_SHAPE)).toBe(false);
+        expect(
+            runErc(
+                mk('jkff', [
+                    { pinId: 'j', netId: 'x' },
+                    { pinId: 'k', netId: 'x' },
+                    { pinId: 'clk', netId: 'x' },
+                    { pinId: 'q', netId: 'x' },
+                    { pinId: 'qb', netId: 'x' },
+                ]),
+            ).issues.some((i) => i.code === ErcCode.DIGITAL_PIN_SHAPE),
+        ).toBe(false);
     });
 
     it('flags a digital output fighting an analog source on one net (MIXED_DRIVER_CONFLICT)', () => {
         const c: CircuitJson = {
             version: '1.0',
             components: [
-                { id: 'u1', type: 'logic_buffer', designator: 'U1', pins: [
-                    { pinId: 'in1', netId: 'a' }, { pinId: 'out', netId: 'm' }] },
-                { id: 'v1', type: 'voltage_source', designator: 'V1', value: 'DC 5', pins: [
-                    { pinId: '+', netId: 'm' }, { pinId: '-', netId: 'gnd' }] },
+                {
+                    id: 'u1',
+                    type: 'logic_buffer',
+                    designator: 'U1',
+                    pins: [
+                        { pinId: 'in1', netId: 'a' },
+                        { pinId: 'out', netId: 'm' },
+                    ],
+                },
+                {
+                    id: 'v1',
+                    type: 'voltage_source',
+                    designator: 'V1',
+                    value: 'DC 5',
+                    pins: [
+                        { pinId: '+', netId: 'm' },
+                        { pinId: '-', netId: 'gnd' },
+                    ],
+                },
             ],
-            nets: [{ id: 'a', name: 'A' }, { id: 'm', name: 'M' }, { id: 'gnd', name: 'GND', isGround: true }],
+            nets: [
+                { id: 'a', name: 'A' },
+                { id: 'm', name: 'M' },
+                { id: 'gnd', name: 'GND', isGround: true },
+            ],
         };
-        expect(runErc(c).issues.some((i) => i.code === ErcCode.MIXED_DRIVER_CONFLICT && i.relatedIds.includes('m'))).toBe(true);
+        expect(
+            runErc(c).issues.some((i) => i.code === ErcCode.MIXED_DRIVER_CONFLICT && i.relatedIds.includes('m')),
+        ).toBe(true);
     });
 
     it('passes a well-formed mixed-signal circuit (no digital ERC errors)', () => {
         const c: CircuitJson = {
             version: '1.0',
             components: [
-                { id: 'vclk', type: 'voltage_source', designator: 'V1', value: 'PULSE(0 5 0 1n 1n 50u 100u)', pins: [
-                    { pinId: '+', netId: 'clk' }, { pinId: '-', netId: 'gnd' }] },
-                { id: 'vd', type: 'voltage_source', designator: 'V2', value: 'DC 5', pins: [
-                    { pinId: '+', netId: 'din' }, { pinId: '-', netId: 'gnd' }] },
-                { id: 'u1', type: 'dff', designator: 'U1', pins: [
-                    { pinId: 'd', netId: 'din' }, { pinId: 'clk', netId: 'clk' },
-                    { pinId: 'q', netId: 'q' }, { pinId: 'qb', netId: 'qb' }] },
+                {
+                    id: 'vclk',
+                    type: 'voltage_source',
+                    designator: 'V1',
+                    value: 'PULSE(0 5 0 1n 1n 50u 100u)',
+                    pins: [
+                        { pinId: '+', netId: 'clk' },
+                        { pinId: '-', netId: 'gnd' },
+                    ],
+                },
+                {
+                    id: 'vd',
+                    type: 'voltage_source',
+                    designator: 'V2',
+                    value: 'DC 5',
+                    pins: [
+                        { pinId: '+', netId: 'din' },
+                        { pinId: '-', netId: 'gnd' },
+                    ],
+                },
+                {
+                    id: 'u1',
+                    type: 'dff',
+                    designator: 'U1',
+                    pins: [
+                        { pinId: 'd', netId: 'din' },
+                        { pinId: 'clk', netId: 'clk' },
+                        { pinId: 'q', netId: 'q' },
+                        { pinId: 'qb', netId: 'qb' },
+                    ],
+                },
             ],
-            nets: [{ id: 'clk', name: 'CLK' }, { id: 'din', name: 'D' }, { id: 'q', name: 'Q' },
-                { id: 'qb', name: 'QB' }, { id: 'gnd', name: 'GND', isGround: true }],
+            nets: [
+                { id: 'clk', name: 'CLK' },
+                { id: 'din', name: 'D' },
+                { id: 'q', name: 'Q' },
+                { id: 'qb', name: 'QB' },
+                { id: 'gnd', name: 'GND', isGround: true },
+            ],
         };
         const digitalCodes = new Set([
-            ErcCode.DIGITAL_PIN_SHAPE, ErcCode.FLOATING_DIGITAL_INPUT,
-            ErcCode.DIGITAL_BUS_CONTENTION, ErcCode.MIXED_DRIVER_CONFLICT,
+            ErcCode.DIGITAL_PIN_SHAPE,
+            ErcCode.FLOATING_DIGITAL_INPUT,
+            ErcCode.DIGITAL_BUS_CONTENTION,
+            ErcCode.MIXED_DRIVER_CONFLICT,
         ]);
         expect(runErc(c).issues.filter((i) => digitalCodes.has(i.code))).toHaveLength(0);
     });
@@ -467,19 +898,32 @@ describe('digital review fixes', () => {
         const andOnY: CircuitJson = {
             version: '1.0',
             components: [
-                { id: 'u1', type: 'logic_and', designator: 'U1', pins: [
-                    { pinId: 'in1', netId: 'a' }, { pinId: 'in2', netId: 'b' }, { pinId: 'out', netId: 'q' }] },
+                {
+                    id: 'u1',
+                    type: 'logic_and',
+                    designator: 'U1',
+                    pins: [
+                        { pinId: 'in1', netId: 'a' },
+                        { pinId: 'in2', netId: 'b' },
+                        { pinId: 'out', netId: 'q' },
+                    ],
+                },
             ],
-            nets: [{ id: 'a', name: 'A' }, { id: 'b', name: 'B' }, { id: 'q', name: 'Q' }],
+            nets: [
+                { id: 'a', name: 'A' },
+                { id: 'b', name: 'B' },
+                { id: 'q', name: 'Q' },
+            ],
         };
-        it.each([['net id', 'v(q)'], ['net name', 'v(Q)'], ['sanitized node', 'v(nq)']])(
-            'rewrites %s probe %s -> v(nq_p)',
-            (_label, probe) => {
-                const netlist = generateNetlist(andOnY, TRAN, { probes: [probe] });
-                expect(wrdataLine(netlist)).toContain('v(nq_p)');
-                expect(wrdataLine(netlist)).not.toMatch(/v\(nq\)/); // never the raw digital event node
-            },
-        );
+        it.each([
+            ['net id', 'v(q)'],
+            ['net name', 'v(Q)'],
+            ['sanitized node', 'v(nq)'],
+        ])('rewrites %s probe %s -> v(nq_p)', (_label, probe) => {
+            const netlist = generateNetlist(andOnY, TRAN, { probes: [probe] });
+            expect(wrdataLine(netlist)).toContain('v(nq_p)');
+            expect(wrdataLine(netlist)).not.toMatch(/v\(nq\)/); // never the raw digital event node
+        });
         it('default probes still resolve the same twin (unchanged behavior)', () => {
             expect(wrdataLine(generateNetlist(andOnY, TRAN))).toContain('v(nq_p)');
         });
@@ -493,20 +937,62 @@ describe('digital review fixes', () => {
         const gateFeedsBsource: CircuitJson = {
             version: '1.0',
             components: [
-                { id: 'vd', type: 'voltage_source', designator: 'VD1', value: 'DC 5', pins: [
-                    { pinId: '+', netId: 'vdd' }, { pinId: '-', netId: '0' }] },
-                { id: 'va', type: 'voltage_source', designator: 'VA1', value: 'PULSE(0 5 0 10n 10n 5u 10u)', pins: [
-                    { pinId: '+', netId: 'a' }, { pinId: '-', netId: '0' }] },
-                { id: 'u1', type: 'logic_not', designator: 'U1', pins: [
-                    { pinId: 'in1', netId: 'a' }, { pinId: 'out', netId: 'q' }] },
-                { id: 'b1', type: 'bsource', designator: 'B1', value: 'V=v(q)*0.5+1', pins: [
-                    { pinId: '+', netId: 'bout' }, { pinId: '-', netId: '0' }] },
-                { id: 'rl', type: 'resistor', designator: 'RL1', value: '1k', pins: [
-                    { pinId: '1', netId: 'bout' }, { pinId: '2', netId: '0' }] },
+                {
+                    id: 'vd',
+                    type: 'voltage_source',
+                    designator: 'VD1',
+                    value: 'DC 5',
+                    pins: [
+                        { pinId: '+', netId: 'vdd' },
+                        { pinId: '-', netId: '0' },
+                    ],
+                },
+                {
+                    id: 'va',
+                    type: 'voltage_source',
+                    designator: 'VA1',
+                    value: 'PULSE(0 5 0 10n 10n 5u 10u)',
+                    pins: [
+                        { pinId: '+', netId: 'a' },
+                        { pinId: '-', netId: '0' },
+                    ],
+                },
+                {
+                    id: 'u1',
+                    type: 'logic_not',
+                    designator: 'U1',
+                    pins: [
+                        { pinId: 'in1', netId: 'a' },
+                        { pinId: 'out', netId: 'q' },
+                    ],
+                },
+                {
+                    id: 'b1',
+                    type: 'bsource',
+                    designator: 'B1',
+                    value: 'V=v(q)*0.5+1',
+                    pins: [
+                        { pinId: '+', netId: 'bout' },
+                        { pinId: '-', netId: '0' },
+                    ],
+                },
+                {
+                    id: 'rl',
+                    type: 'resistor',
+                    designator: 'RL1',
+                    value: '1k',
+                    pins: [
+                        { pinId: '1', netId: 'bout' },
+                        { pinId: '2', netId: '0' },
+                    ],
+                },
             ],
             nets: [
-                { id: 'vdd', name: 'vdd' }, { id: 'a', name: 'a' }, { id: 'q', name: 'q' },
-                { id: 'bout', name: 'bout' }, { id: '0', name: '0', isGround: true },
+                { id: 'vdd', name: 'vdd' },
+                { id: 'a', name: 'a' },
+                { id: 'q', name: 'q' },
+                { id: 'bout', name: 'bout' },
+                { id: '0', name: '0', isGround: true },
             ],
         };
         it('rewrites v(q) in the B-source value to the analog twin v(nq_p), never the raw event node', () => {
@@ -519,16 +1005,46 @@ describe('digital review fixes', () => {
             const analog: CircuitJson = {
                 version: '1.0',
                 components: [
-                    { id: 'v1', type: 'voltage_source', designator: 'V1', value: 'SIN(0 2 1k)', pins: [
-                        { pinId: '+', netId: 'sig' }, { pinId: '-', netId: '0' }] },
-                    { id: 'b1', type: 'bsource', designator: 'B1', value: 'V=v(sig)*2', pins: [
-                        { pinId: '+', netId: 'bout' }, { pinId: '-', netId: '0' }] },
-                    { id: 'rl', type: 'resistor', designator: 'RL1', value: '1k', pins: [
-                        { pinId: '1', netId: 'bout' }, { pinId: '2', netId: '0' }] },
+                    {
+                        id: 'v1',
+                        type: 'voltage_source',
+                        designator: 'V1',
+                        value: 'SIN(0 2 1k)',
+                        pins: [
+                            { pinId: '+', netId: 'sig' },
+                            { pinId: '-', netId: '0' },
+                        ],
+                    },
+                    {
+                        id: 'b1',
+                        type: 'bsource',
+                        designator: 'B1',
+                        value: 'V=v(sig)*2',
+                        pins: [
+                            { pinId: '+', netId: 'bout' },
+                            { pinId: '-', netId: '0' },
+                        ],
+                    },
+                    {
+                        id: 'rl',
+                        type: 'resistor',
+                        designator: 'RL1',
+                        value: '1k',
+                        pins: [
+                            { pinId: '1', netId: 'bout' },
+                            { pinId: '2', netId: '0' },
+                        ],
+                    },
                 ],
-                nets: [{ id: 'sig', name: 'sig' }, { id: 'bout', name: 'bout' }, { id: '0', name: '0', isGround: true }],
+                nets: [
+                    { id: 'sig', name: 'sig' },
+                    { id: 'bout', name: 'bout' },
+                    { id: '0', name: '0', isGround: true },
+                ],
             };
-            const bLine = generateNetlist(analog, TRAN).split('\n').find((l) => l.startsWith('B1 '))!;
+            const bLine = generateNetlist(analog, TRAN)
+                .split('\n')
+                .find((l) => l.startsWith('B1 '))!;
             expect(bLine).toContain('V(nsig)');
             expect(bLine).not.toContain('_p');
         });
@@ -539,14 +1055,28 @@ describe('digital review fixes', () => {
         const c: CircuitJson = {
             version: '1.0',
             components: [
-                { id: 'u1', type: 'logic_not', designator: 'U1', pins: [
-                    { pinId: 'in1', netId: 'a' }, { pinId: 'in2', netId: 'b' }, { pinId: 'out', netId: 'y' }] },
+                {
+                    id: 'u1',
+                    type: 'logic_not',
+                    designator: 'U1',
+                    pins: [
+                        { pinId: 'in1', netId: 'a' },
+                        { pinId: 'in2', netId: 'b' },
+                        { pinId: 'out', netId: 'y' },
+                    ],
+                },
             ],
-            nets: [{ id: 'a', name: 'A' }, { id: 'b', name: 'B' }, { id: 'y', name: 'Y' }],
+            nets: [
+                { id: 'a', name: 'A' },
+                { id: 'b', name: 'B' },
+                { id: 'y', name: 'Y' },
+            ],
         };
         // Emission must NOT spill both inputs into the line (that would shift out/model columns).
         expect(deviceLine(generateNetlist(c, TRAN), 'AU1')).toBe('AU1 na ny CFD_NOT');
-        expect(runErc(c).issues.some((i) => i.code === ErcCode.DIGITAL_PIN_SHAPE && i.relatedIds.includes('u1'))).toBe(true);
+        expect(runErc(c).issues.some((i) => i.code === ErcCode.DIGITAL_PIN_SHAPE && i.relatedIds.includes('u1'))).toBe(
+            true,
+        );
     });
 
     // #8 — a duplicate input pinId would silently collapse to one net; ERC must flag it.
@@ -554,49 +1084,122 @@ describe('digital review fixes', () => {
         const c: CircuitJson = {
             version: '1.0',
             components: [
-                { id: 'u1', type: 'logic_and', designator: 'U1', pins: [
-                    { pinId: 'in1', netId: 'a' }, { pinId: 'in1', netId: 'b' }, { pinId: 'out', netId: 'y' }] },
+                {
+                    id: 'u1',
+                    type: 'logic_and',
+                    designator: 'U1',
+                    pins: [
+                        { pinId: 'in1', netId: 'a' },
+                        { pinId: 'in1', netId: 'b' },
+                        { pinId: 'out', netId: 'y' },
+                    ],
+                },
             ],
-            nets: [{ id: 'a', name: 'A' }, { id: 'b', name: 'B' }, { id: 'y', name: 'Y' }],
+            nets: [
+                { id: 'a', name: 'A' },
+                { id: 'b', name: 'B' },
+                { id: 'y', name: 'Y' },
+            ],
         };
-        const shape = runErc(c).issues.filter((i) => i.code === ErcCode.DIGITAL_PIN_SHAPE && i.relatedIds.includes('u1'));
+        const shape = runErc(c).issues.filter(
+            (i) => i.code === ErcCode.DIGITAL_PIN_SHAPE && i.relatedIds.includes('u1'),
+        );
         expect(shape.length).toBeGreaterThan(0);
         expect(shape.some((i) => /duplicate/i.test(i.message))).toBe(true);
     });
 
     // #4/#5 — a controlled/behavioral analog driver (vcvs/vccs/bsource) contending with a digital output.
-    it.each(['vcvs', 'vccs', 'bsource'])('flags a %s contending with a digital output (MIXED_DRIVER_CONFLICT)', (kind) => {
-        const driver =
-            kind === 'bsource'
-                ? { id: 's1', type: kind, designator: 'B1', value: 'V=5', pins: [{ pinId: '+', netId: 'm' }, { pinId: '-', netId: 'gnd' }] }
-                : { id: 's1', type: kind, designator: kind === 'vcvs' ? 'E1' : 'G1', value: '2', pins: [
-                    { pinId: '+', netId: 'm' }, { pinId: '-', netId: 'gnd' }, { pinId: 'c+', netId: 'a' }, { pinId: 'c-', netId: 'gnd' }] };
-        const c: CircuitJson = {
-            version: '1.0',
-            components: [
-                { id: 'u1', type: 'logic_buffer', designator: 'U1', pins: [{ pinId: 'in1', netId: 'a' }, { pinId: 'out', netId: 'm' }] },
-                driver as CircuitJson['components'][number],
-            ],
-            nets: [{ id: 'a', name: 'A' }, { id: 'm', name: 'M' }, { id: 'gnd', name: 'GND', isGround: true }],
-        };
-        expect(runErc(c).issues.some((i) => i.code === ErcCode.MIXED_DRIVER_CONFLICT && i.relatedIds.includes('m'))).toBe(true);
-    });
+    it.each(['vcvs', 'vccs', 'bsource'])(
+        'flags a %s contending with a digital output (MIXED_DRIVER_CONFLICT)',
+        (kind) => {
+            const driver =
+                kind === 'bsource'
+                    ? {
+                          id: 's1',
+                          type: kind,
+                          designator: 'B1',
+                          value: 'V=5',
+                          pins: [
+                              { pinId: '+', netId: 'm' },
+                              { pinId: '-', netId: 'gnd' },
+                          ],
+                      }
+                    : {
+                          id: 's1',
+                          type: kind,
+                          designator: kind === 'vcvs' ? 'E1' : 'G1',
+                          value: '2',
+                          pins: [
+                              { pinId: '+', netId: 'm' },
+                              { pinId: '-', netId: 'gnd' },
+                              { pinId: 'c+', netId: 'a' },
+                              { pinId: 'c-', netId: 'gnd' },
+                          ],
+                      };
+            const c: CircuitJson = {
+                version: '1.0',
+                components: [
+                    {
+                        id: 'u1',
+                        type: 'logic_buffer',
+                        designator: 'U1',
+                        pins: [
+                            { pinId: 'in1', netId: 'a' },
+                            { pinId: 'out', netId: 'm' },
+                        ],
+                    },
+                    driver as CircuitJson['components'][number],
+                ],
+                nets: [
+                    { id: 'a', name: 'A' },
+                    { id: 'm', name: 'M' },
+                    { id: 'gnd', name: 'GND', isGround: true },
+                ],
+            };
+            expect(
+                runErc(c).issues.some((i) => i.code === ErcCode.MIXED_DRIVER_CONFLICT && i.relatedIds.includes('m')),
+            ).toBe(true);
+        },
+    );
 
     // #9 — a driven digital output observed on its own net is not a dead end.
     it('does NOT flag a terminal digital output as NET_HAS_SINGLE_PIN', () => {
         const c: CircuitJson = {
             version: '1.0',
             components: [
-                { id: 'vclk', type: 'voltage_source', designator: 'V1', value: 'PULSE(0 5 0 1n 1n 1u 2u)', pins: [
-                    { pinId: '+', netId: 'clk' }, { pinId: '-', netId: 'gnd' }] },
+                {
+                    id: 'vclk',
+                    type: 'voltage_source',
+                    designator: 'V1',
+                    value: 'PULSE(0 5 0 1n 1n 1u 2u)',
+                    pins: [
+                        { pinId: '+', netId: 'clk' },
+                        { pinId: '-', netId: 'gnd' },
+                    ],
+                },
                 // qb fed back to d (toggle); q observed on its own terminal net.
-                { id: 'u1', type: 'dff', designator: 'U1', pins: [
-                    { pinId: 'd', netId: 'qb' }, { pinId: 'clk', netId: 'clk' },
-                    { pinId: 'q', netId: 'qout' }, { pinId: 'qb', netId: 'qb' }] },
+                {
+                    id: 'u1',
+                    type: 'dff',
+                    designator: 'U1',
+                    pins: [
+                        { pinId: 'd', netId: 'qb' },
+                        { pinId: 'clk', netId: 'clk' },
+                        { pinId: 'q', netId: 'qout' },
+                        { pinId: 'qb', netId: 'qb' },
+                    ],
+                },
             ],
-            nets: [{ id: 'clk', name: 'CLK' }, { id: 'qb', name: 'QB' }, { id: 'qout', name: 'QOUT' }, { id: 'gnd', name: 'GND', isGround: true }],
+            nets: [
+                { id: 'clk', name: 'CLK' },
+                { id: 'qb', name: 'QB' },
+                { id: 'qout', name: 'QOUT' },
+                { id: 'gnd', name: 'GND', isGround: true },
+            ],
         };
-        const single = runErc(c).issues.filter((i) => i.code === ErcCode.NET_HAS_SINGLE_PIN && i.relatedIds.includes('qout'));
+        const single = runErc(c).issues.filter(
+            (i) => i.code === ErcCode.NET_HAS_SINGLE_PIN && i.relatedIds.includes('qout'),
+        );
         expect(single).toHaveLength(0);
     });
 
@@ -605,10 +1208,21 @@ describe('digital review fixes', () => {
         const c: CircuitJson = {
             version: '1.0',
             components: [
-                { id: 'u1', type: 'logic_and', designator: 'U1', pins: [
-                    { pinId: 'in1', netId: 'a' }, { pinId: 'in2', netId: 'GHOST' }, { pinId: 'out', netId: 'y' }] },
+                {
+                    id: 'u1',
+                    type: 'logic_and',
+                    designator: 'U1',
+                    pins: [
+                        { pinId: 'in1', netId: 'a' },
+                        { pinId: 'in2', netId: 'GHOST' },
+                        { pinId: 'out', netId: 'y' },
+                    ],
+                },
             ],
-            nets: [{ id: 'a', name: 'A' }, { id: 'y', name: 'Y' }], // no 'GHOST'
+            nets: [
+                { id: 'a', name: 'A' },
+                { id: 'y', name: 'Y' },
+            ], // no 'GHOST'
         };
         expect(() => generateNetlist(c, TRAN)).toThrow(/Net not found: GHOST/);
     });
@@ -618,14 +1232,35 @@ describe('digital review fixes', () => {
         const c: CircuitJson = {
             version: '1.0',
             components: [
-                { id: 'vclk', type: 'voltage_source', designator: 'V1', value: 'PULSE(0 5 0 1n 1n 1u 2u)', pins: [
-                    { pinId: '+', netId: 'clk' }, { pinId: '-', netId: 'gnd' }] },
-                { id: 'u1', type: 'dff', designator: 'U1', pins: [
-                    { pinId: 'd', netId: 'din' }, { pinId: 'clk', netId: 'clk' },
-                    { pinId: 'q', netId: 'q' }, { pinId: 'qb', netId: 'qb' }] },
+                {
+                    id: 'vclk',
+                    type: 'voltage_source',
+                    designator: 'V1',
+                    value: 'PULSE(0 5 0 1n 1n 1u 2u)',
+                    pins: [
+                        { pinId: '+', netId: 'clk' },
+                        { pinId: '-', netId: 'gnd' },
+                    ],
+                },
+                {
+                    id: 'u1',
+                    type: 'dff',
+                    designator: 'U1',
+                    pins: [
+                        { pinId: 'd', netId: 'din' },
+                        { pinId: 'clk', netId: 'clk' },
+                        { pinId: 'q', netId: 'q' },
+                        { pinId: 'qb', netId: 'qb' },
+                    ],
+                },
             ],
-            nets: [{ id: 'clk', name: 'CLK' }, { id: 'din', name: 'D' }, { id: 'q', name: 'Q' },
-                { id: 'qb', name: 'QB' }, { id: 'gnd', name: 'GND', isGround: true }],
+            nets: [
+                { id: 'clk', name: 'CLK' },
+                { id: 'din', name: 'D' },
+                { id: 'q', name: 'Q' },
+                { id: 'qb', name: 'QB' },
+                { id: 'gnd', name: 'GND', isGround: true },
+            ],
             models: [{ name: 'ADCBRIDGE', device: 'digital', body: '.model ADCBRIDGE adc_bridge(in_low=1 in_high=4)' }],
         };
         expect(() => generateNetlist(c, TRAN)).not.toThrow();
@@ -637,14 +1272,29 @@ describe('digital review fixes', () => {
             version: '1.0',
             components: [
                 // 'axsyn0' is exactly the name planMixedSignal would use for its first synthesized bridge.
-                { id: 'u1', type: 'dff', designator: 'axsyn0', pins: [
-                    { pinId: 'd', netId: 'din' }, { pinId: 'clk', netId: 'clk' },
-                    { pinId: 'q', netId: 'q' }, { pinId: 'qb', netId: 'qb' }] },
+                {
+                    id: 'u1',
+                    type: 'dff',
+                    designator: 'axsyn0',
+                    pins: [
+                        { pinId: 'd', netId: 'din' },
+                        { pinId: 'clk', netId: 'clk' },
+                        { pinId: 'q', netId: 'q' },
+                        { pinId: 'qb', netId: 'qb' },
+                    ],
+                },
             ],
-            nets: [{ id: 'din', name: 'D' }, { id: 'clk', name: 'CLK' }, { id: 'q', name: 'Q' }, { id: 'qb', name: 'QB' }],
+            nets: [
+                { id: 'din', name: 'D' },
+                { id: 'clk', name: 'CLK' },
+                { id: 'q', name: 'Q' },
+                { id: 'qb', name: 'QB' },
+            ],
         };
         let netlist = '';
-        expect(() => { netlist = generateNetlist(c, TRAN); }).not.toThrow();
+        expect(() => {
+            netlist = generateNetlist(c, TRAN);
+        }).not.toThrow();
         expect(deviceLine(netlist, 'axsyn0')).toContain('CFD_DFF'); // the real dff keeps the name
         expect(netlist).toContain('axsyn0_1'); // the colliding synth bridge was renamed
     });
@@ -660,12 +1310,41 @@ describe('logic voltage (auto-detect + override)', () => {
     const mixed3v3: CircuitJson = {
         version: '1.0',
         components: [
-            { id: 'v1', type: 'voltage_source', designator: 'V1', value: 'PULSE(0 3.3 0 10n 10n 2u 4u)', pins: [
-                { pinId: '+', netId: 'a' }, { pinId: '-', netId: 'gnd' }] },
-            { id: 'u1', type: 'logic_not', designator: 'U1', pins: [{ pinId: 'in1', netId: 'a' }, { pinId: 'out', netId: 'y' }] },
-            { id: 'r1', type: 'resistor', designator: 'R1', value: '1k', pins: [{ pinId: '1', netId: 'y' }, { pinId: '2', netId: 'gnd' }] },
+            {
+                id: 'v1',
+                type: 'voltage_source',
+                designator: 'V1',
+                value: 'PULSE(0 3.3 0 10n 10n 2u 4u)',
+                pins: [
+                    { pinId: '+', netId: 'a' },
+                    { pinId: '-', netId: 'gnd' },
+                ],
+            },
+            {
+                id: 'u1',
+                type: 'logic_not',
+                designator: 'U1',
+                pins: [
+                    { pinId: 'in1', netId: 'a' },
+                    { pinId: 'out', netId: 'y' },
+                ],
+            },
+            {
+                id: 'r1',
+                type: 'resistor',
+                designator: 'R1',
+                value: '1k',
+                pins: [
+                    { pinId: '1', netId: 'y' },
+                    { pinId: '2', netId: 'gnd' },
+                ],
+            },
         ],
-        nets: [{ id: 'a', name: 'A' }, { id: 'y', name: 'Y' }, { id: 'gnd', name: 'GND', isGround: true }],
+        nets: [
+            { id: 'a', name: 'A' },
+            { id: 'y', name: 'Y' },
+            { id: 'gnd', name: 'GND', isGround: true },
+        ],
     };
 
     it('auto-detects the logic rail from the digital stimulus (3.3 V → 0/3.3 V swing, 30%/70% thresholds)', () => {
@@ -685,10 +1364,22 @@ describe('logic voltage (auto-detect + override)', () => {
         const c: CircuitJson = {
             version: '1.0',
             components: [
-                { id: 'u1', type: 'logic_and', designator: 'U1', pins: [
-                    { pinId: 'in1', netId: 'a' }, { pinId: 'in2', netId: 'b' }, { pinId: 'out', netId: 'y' }] },
+                {
+                    id: 'u1',
+                    type: 'logic_and',
+                    designator: 'U1',
+                    pins: [
+                        { pinId: 'in1', netId: 'a' },
+                        { pinId: 'in2', netId: 'b' },
+                        { pinId: 'out', netId: 'y' },
+                    ],
+                },
             ],
-            nets: [{ id: 'a', name: 'A' }, { id: 'b', name: 'B' }, { id: 'y', name: 'Y' }],
+            nets: [
+                { id: 'a', name: 'A' },
+                { id: 'b', name: 'B' },
+                { id: 'y', name: 'Y' },
+            ],
         };
         const netlist = generateNetlist(c, TRAN); // probed digital output → CFD_DAC twin emitted
         expect(modelCard(netlist, 'CFD_DAC')).toBe('.model CFD_DAC dac_bridge(out_low=0 out_high=5)');
@@ -698,16 +1389,45 @@ describe('logic voltage (auto-detect + override)', () => {
         const c: CircuitJson = {
             version: '1.0',
             components: [
-                { id: 'vclk', type: 'voltage_source', designator: 'V1', value: 'PULSE(0 5 0 1n 1n 50u 100u)', pins: [
-                    { pinId: '+', netId: 'clk' }, { pinId: '-', netId: 'gnd' }] },
-                { id: 'vd', type: 'voltage_source', designator: 'V2', value: 'DC 3.3', pins: [
-                    { pinId: '+', netId: 'din' }, { pinId: '-', netId: 'gnd' }] },
-                { id: 'u1', type: 'dff', designator: 'U1', pins: [
-                    { pinId: 'd', netId: 'din' }, { pinId: 'clk', netId: 'clk' },
-                    { pinId: 'q', netId: 'q' }, { pinId: 'qb', netId: 'qb' }] },
+                {
+                    id: 'vclk',
+                    type: 'voltage_source',
+                    designator: 'V1',
+                    value: 'PULSE(0 5 0 1n 1n 50u 100u)',
+                    pins: [
+                        { pinId: '+', netId: 'clk' },
+                        { pinId: '-', netId: 'gnd' },
+                    ],
+                },
+                {
+                    id: 'vd',
+                    type: 'voltage_source',
+                    designator: 'V2',
+                    value: 'DC 3.3',
+                    pins: [
+                        { pinId: '+', netId: 'din' },
+                        { pinId: '-', netId: 'gnd' },
+                    ],
+                },
+                {
+                    id: 'u1',
+                    type: 'dff',
+                    designator: 'U1',
+                    pins: [
+                        { pinId: 'd', netId: 'din' },
+                        { pinId: 'clk', netId: 'clk' },
+                        { pinId: 'q', netId: 'q' },
+                        { pinId: 'qb', netId: 'qb' },
+                    ],
+                },
             ],
-            nets: [{ id: 'clk', name: 'CLK' }, { id: 'din', name: 'D' }, { id: 'q', name: 'Q' },
-                { id: 'qb', name: 'QB' }, { id: 'gnd', name: 'GND', isGround: true }],
+            nets: [
+                { id: 'clk', name: 'CLK' },
+                { id: 'din', name: 'D' },
+                { id: 'q', name: 'Q' },
+                { id: 'qb', name: 'QB' },
+                { id: 'gnd', name: 'GND', isGround: true },
+            ],
         };
         expect(modelCard(generateNetlist(c, TRAN), 'CFD_DAC')).toBe('.model CFD_DAC dac_bridge(out_low=0 out_high=5)');
     });
@@ -717,25 +1437,75 @@ describe('logic voltage (auto-detect + override)', () => {
         const c: CircuitJson = {
             version: '1.0',
             components: [
-                { id: 'v12', type: 'voltage_source', designator: 'V1', value: 'DC 12', pins: [
-                    { pinId: '+', netId: 'hv' }, { pinId: '-', netId: 'gnd' }] },
-                { id: 'rload', type: 'resistor', designator: 'R1', value: '1k', pins: [
-                    { pinId: '1', netId: 'hv' }, { pinId: '2', netId: 'gnd' }] },
-                { id: 'vclk', type: 'voltage_source', designator: 'V2', value: 'PULSE(0 3.3 0 1n 1n 1u 2u)', pins: [
-                    { pinId: '+', netId: 'a' }, { pinId: '-', netId: 'gnd' }] },
-                { id: 'u1', type: 'logic_buffer', designator: 'U1', pins: [{ pinId: 'in1', netId: 'a' }, { pinId: 'out', netId: 'y' }] },
+                {
+                    id: 'v12',
+                    type: 'voltage_source',
+                    designator: 'V1',
+                    value: 'DC 12',
+                    pins: [
+                        { pinId: '+', netId: 'hv' },
+                        { pinId: '-', netId: 'gnd' },
+                    ],
+                },
+                {
+                    id: 'rload',
+                    type: 'resistor',
+                    designator: 'R1',
+                    value: '1k',
+                    pins: [
+                        { pinId: '1', netId: 'hv' },
+                        { pinId: '2', netId: 'gnd' },
+                    ],
+                },
+                {
+                    id: 'vclk',
+                    type: 'voltage_source',
+                    designator: 'V2',
+                    value: 'PULSE(0 3.3 0 1n 1n 1u 2u)',
+                    pins: [
+                        { pinId: '+', netId: 'a' },
+                        { pinId: '-', netId: 'gnd' },
+                    ],
+                },
+                {
+                    id: 'u1',
+                    type: 'logic_buffer',
+                    designator: 'U1',
+                    pins: [
+                        { pinId: 'in1', netId: 'a' },
+                        { pinId: 'out', netId: 'y' },
+                    ],
+                },
             ],
-            nets: [{ id: 'hv', name: 'HV' }, { id: 'a', name: 'A' }, { id: 'y', name: 'Y' }, { id: 'gnd', name: 'GND', isGround: true }],
+            nets: [
+                { id: 'hv', name: 'HV' },
+                { id: 'a', name: 'A' },
+                { id: 'y', name: 'Y' },
+                { id: 'gnd', name: 'GND', isGround: true },
+            ],
         };
         // 3.3 V (the source driving the digital input), not 12 V (the analog-only rail).
-        expect(modelCard(generateNetlist(c, TRAN), 'CFD_DAC')).toBe('.model CFD_DAC dac_bridge(out_low=0 out_high=3.3)');
+        expect(modelCard(generateNetlist(c, TRAN), 'CFD_DAC')).toBe(
+            '.model CFD_DAC dac_bridge(out_low=0 out_high=3.3)',
+        );
     });
 });
 
 describe('parametric digital timing (per-component, properties-driven)', () => {
-    const gate = (id: string, designator: string, properties?: Record<string, unknown>): CircuitJson['components'][number] => ({
-        id, type: 'logic_and', designator, properties,
-        pins: [{ pinId: 'in1', netId: `${id}a` }, { pinId: 'in2', netId: `${id}b` }, { pinId: 'out', netId: `${id}y` }],
+    const gate = (
+        id: string,
+        designator: string,
+        properties?: Record<string, unknown>,
+    ): CircuitJson['components'][number] => ({
+        id,
+        type: 'logic_and',
+        designator,
+        properties,
+        pins: [
+            { pinId: 'in1', netId: `${id}a` },
+            { pinId: 'in2', netId: `${id}b` },
+            { pinId: 'out', netId: `${id}y` },
+        ],
     });
     const wrap = (...comps: CircuitJson['components']): CircuitJson => ({
         version: '1.0',
@@ -776,20 +1546,36 @@ describe('parametric digital timing (per-component, properties-driven)', () => {
     });
 
     it('a flip-flop with ic=1 starts HIGH via its own model; default dff stays byte-identical', () => {
-        const dff = (id: string, designator: string, properties?: Record<string, unknown>): CircuitJson['components'][number] => ({
-            id, type: 'dff', designator, properties,
-            pins: [{ pinId: 'd', netId: `${id}d` }, { pinId: 'clk', netId: `${id}c` },
-                { pinId: 'q', netId: `${id}q` }, { pinId: 'qb', netId: `${id}qb` }],
+        const dff = (
+            id: string,
+            designator: string,
+            properties?: Record<string, unknown>,
+        ): CircuitJson['components'][number] => ({
+            id,
+            type: 'dff',
+            designator,
+            properties,
+            pins: [
+                { pinId: 'd', netId: `${id}d` },
+                { pinId: 'clk', netId: `${id}c` },
+                { pinId: 'q', netId: `${id}q` },
+                { pinId: 'qb', netId: `${id}qb` },
+            ],
         });
         const netlist = generateNetlist(wrap(dff('u1', 'U1', { ic: '1' }), dff('u2', 'U2')), TRAN);
         const u1model = deviceLine(netlist, 'AU1')!.split(/\s+/).pop()!;
         expect(modelCard(netlist, u1model)).toContain(' ic=1)');
         expect(deviceLine(netlist, 'AU2')!.split(/\s+/).pop()).toBe('CFD_DFF');
-        expect(modelCard(netlist, 'CFD_DFF')).toBe('.model CFD_DFF d_dff(clk_delay=1n set_delay=1n reset_delay=1n rise_delay=1n fall_delay=1n)');
+        expect(modelCard(netlist, 'CFD_DFF')).toBe(
+            '.model CFD_DFF d_dff(clk_delay=1n set_delay=1n reset_delay=1n rise_delay=1n fall_delay=1n)',
+        );
     });
 
     it('rejects a malformed/injection delay and falls back to the default (stays the base model)', () => {
-        const netlist = generateNetlist(wrap(gate('u1', 'U1', { riseDelay: '1n) evil .end' }), gate('u2', 'U2', { fallDelay: 'abc' })), TRAN);
+        const netlist = generateNetlist(
+            wrap(gate('u1', 'U1', { riseDelay: '1n) evil .end' }), gate('u2', 'U2', { fallDelay: 'abc' })),
+            TRAN,
+        );
         // Both bad values were rejected → both resolve to the all-default config → the clean base model.
         expect(deviceLine(netlist, 'AU1')!.split(/\s+/).pop()).toBe('CFD_AND');
         expect(deviceLine(netlist, 'AU2')!.split(/\s+/).pop()).toBe('CFD_AND');
@@ -799,10 +1585,26 @@ describe('parametric digital timing (per-component, properties-driven)', () => {
 });
 
 describe('subsystem audit hardening fixes', () => {
-    const src = (id: string, des: string, value: string, net: string): CircuitJson['components'][number] =>
-        ({ id, type: 'voltage_source', designator: des, value, pins: [{ pinId: '+', netId: net }, { pinId: '-', netId: 'gnd' }] });
-    const res = (id: string, des: string, a: string, b: string): CircuitJson['components'][number] =>
-        ({ id, type: 'resistor', designator: des, value: '1k', pins: [{ pinId: '1', netId: a }, { pinId: '2', netId: b }] });
+    const src = (id: string, des: string, value: string, net: string): CircuitJson['components'][number] => ({
+        id,
+        type: 'voltage_source',
+        designator: des,
+        value,
+        pins: [
+            { pinId: '+', netId: net },
+            { pinId: '-', netId: 'gnd' },
+        ],
+    });
+    const res = (id: string, des: string, a: string, b: string): CircuitJson['components'][number] => ({
+        id,
+        type: 'resistor',
+        designator: des,
+        value: '1k',
+        pins: [
+            { pinId: '1', netId: a },
+            { pinId: '2', netId: b },
+        ],
+    });
     const netsOf = (...ids: string[]): CircuitJson['nets'] =>
         ids.map((id) => (id === 'gnd' ? { id: 'gnd', name: 'GND', isGround: true } : { id, name: id.toUpperCase() }));
 
@@ -811,9 +1613,18 @@ describe('subsystem audit hardening fixes', () => {
         const c: CircuitJson = {
             version: '1.0',
             components: [
-                src('v1', 'V1', 'DC 5', 'ck5'), src('v2', 'V2', 'DC 3.3', 'd33'),
-                { id: 'u1', type: 'logic_and', designator: 'U1', pins: [
-                    { pinId: 'in1', netId: 'ck5' }, { pinId: 'in2', netId: 'd33' }, { pinId: 'out', netId: 'y' }] },
+                src('v1', 'V1', 'DC 5', 'ck5'),
+                src('v2', 'V2', 'DC 3.3', 'd33'),
+                {
+                    id: 'u1',
+                    type: 'logic_and',
+                    designator: 'U1',
+                    pins: [
+                        { pinId: 'in1', netId: 'ck5' },
+                        { pinId: 'in2', netId: 'd33' },
+                        { pinId: 'out', netId: 'y' },
+                    ],
+                },
                 res('r1', 'R1', 'y', 'gnd'),
             ],
             nets: netsOf('ck5', 'd33', 'y', 'gnd'),
@@ -827,12 +1638,22 @@ describe('subsystem audit hardening fixes', () => {
             version: '1.0',
             components: [
                 src('v1', 'V1', 'PULSE(0 -5 0 1n 1n 1u 2u)', 'a'),
-                { id: 'u1', type: 'logic_buffer', designator: 'U1', pins: [{ pinId: 'in1', netId: 'a' }, { pinId: 'out', netId: 'y' }] },
+                {
+                    id: 'u1',
+                    type: 'logic_buffer',
+                    designator: 'U1',
+                    pins: [
+                        { pinId: 'in1', netId: 'a' },
+                        { pinId: 'out', netId: 'y' },
+                    ],
+                },
                 res('r1', 'R1', 'y', 'gnd'),
             ],
             nets: netsOf('a', 'y', 'gnd'),
         };
-        expect(runErc(c).issues.some((i) => i.code === ErcCode.MIXED_LOGIC_LEVELS && /negative/i.test(i.message))).toBe(true);
+        expect(runErc(c).issues.some((i) => i.code === ErcCode.MIXED_LOGIC_LEVELS && /negative/i.test(i.message))).toBe(
+            true,
+        );
     });
 
     // #8b — a legitimate logic-LOW input (DC 0, reaches 0 but never goes negative) must NOT warn.
@@ -840,8 +1661,18 @@ describe('subsystem audit hardening fixes', () => {
         const c: CircuitJson = {
             version: '1.0',
             components: [
-                src('v1', 'V1', 'DC 5', 'a'), src('v0', 'V2', 'DC 0', 'b'), // a=1, b=0 — both single-rail (5V family)
-                { id: 'u1', type: 'logic_and', designator: 'U1', pins: [{ pinId: 'in1', netId: 'a' }, { pinId: 'in2', netId: 'b' }, { pinId: 'out', netId: 'y' }] },
+                src('v1', 'V1', 'DC 5', 'a'),
+                src('v0', 'V2', 'DC 0', 'b'), // a=1, b=0 — both single-rail (5V family)
+                {
+                    id: 'u1',
+                    type: 'logic_and',
+                    designator: 'U1',
+                    pins: [
+                        { pinId: 'in1', netId: 'a' },
+                        { pinId: 'in2', netId: 'b' },
+                        { pinId: 'out', netId: 'y' },
+                    ],
+                },
                 res('r1', 'R1', 'y', 'gnd'),
             ],
             nets: netsOf('a', 'b', 'y', 'gnd'),
@@ -864,9 +1695,18 @@ describe('subsystem audit hardening fixes', () => {
         const c: CircuitJson = {
             version: '1.0',
             components: [
-                { id: 'u1', type: 'logic_buffer', designator: 'U1', pins: [{ pinId: 'in1', netId: 'a' }, { pinId: 'out', netId: 'y' }] },
+                {
+                    id: 'u1',
+                    type: 'logic_buffer',
+                    designator: 'U1',
+                    pins: [
+                        { pinId: 'in1', netId: 'a' },
+                        { pinId: 'out', netId: 'y' },
+                    ],
+                },
                 res('r1', 'R1', 'y', 'gnd'), // makes net y mixed → digital twin node "ny_d"
-                src('v2', 'V2', 'DC 3', 'Y_d'), res('r2', 'R2', 'Y_d', 'gnd'), // real net Y_d → node "nY_d"
+                src('v2', 'V2', 'DC 3', 'Y_d'),
+                res('r2', 'R2', 'Y_d', 'gnd'), // real net Y_d → node "nY_d"
             ],
             nets: netsOf('a', 'y', 'Y_d', 'gnd'),
         };
@@ -882,9 +1722,27 @@ describe('subsystem audit hardening fixes', () => {
             version: '1.0',
             components: [
                 src('v1', 'V1', 'PULSE(0 5 0 1n 1n 1u 2u)', 'a'),
-                { id: 'u1', type: 'logic_buffer', designator: 'U1', pins: [{ pinId: 'in1', netId: 'a' }, { pinId: 'out', netId: 'sig' }] },
-                { id: 'e1', type: 'vcvs', designator: 'E1', value: '2', pins: [
-                    { pinId: '+', netId: 'outp' }, { pinId: '-', netId: 'gnd' }, { pinId: 'c+', netId: 'sig' }, { pinId: 'c-', netId: 'gnd' }] },
+                {
+                    id: 'u1',
+                    type: 'logic_buffer',
+                    designator: 'U1',
+                    pins: [
+                        { pinId: 'in1', netId: 'a' },
+                        { pinId: 'out', netId: 'sig' },
+                    ],
+                },
+                {
+                    id: 'e1',
+                    type: 'vcvs',
+                    designator: 'E1',
+                    value: '2',
+                    pins: [
+                        { pinId: '+', netId: 'outp' },
+                        { pinId: '-', netId: 'gnd' },
+                        { pinId: 'c+', netId: 'sig' },
+                        { pinId: 'c-', netId: 'gnd' },
+                    ],
+                },
                 res('r1', 'R1', 'outp', 'gnd'),
             ],
             nets: netsOf('a', 'sig', 'outp', 'gnd'),
@@ -897,13 +1755,32 @@ describe('subsystem audit hardening fixes', () => {
         const c: CircuitJson = {
             version: '1.0',
             components: [
-                { id: 'b1', type: 'bsource', designator: 'B1', value: 'V=3.3', pins: [{ pinId: '+', netId: 'a' }, { pinId: '-', netId: 'gnd' }] },
-                { id: 'u1', type: 'logic_buffer', designator: 'U1', pins: [{ pinId: 'in1', netId: 'a' }, { pinId: 'out', netId: 'y' }] },
+                {
+                    id: 'b1',
+                    type: 'bsource',
+                    designator: 'B1',
+                    value: 'V=3.3',
+                    pins: [
+                        { pinId: '+', netId: 'a' },
+                        { pinId: '-', netId: 'gnd' },
+                    ],
+                },
+                {
+                    id: 'u1',
+                    type: 'logic_buffer',
+                    designator: 'U1',
+                    pins: [
+                        { pinId: 'in1', netId: 'a' },
+                        { pinId: 'out', netId: 'y' },
+                    ],
+                },
                 res('r1', 'R1', 'y', 'gnd'),
             ],
             nets: netsOf('a', 'y', 'gnd'),
         };
-        expect(modelCard(generateNetlist(c, TRAN), 'CFD_DAC')).toBe('.model CFD_DAC dac_bridge(out_low=0 out_high=3.3)');
+        expect(modelCard(generateNetlist(c, TRAN), 'CFD_DAC')).toBe(
+            '.model CFD_DAC dac_bridge(out_low=0 out_high=3.3)',
+        );
     });
 
     // #7 — EXP() stimulus peak sets the rail (was mis-read as the 0 V initial value).
@@ -912,12 +1789,22 @@ describe('subsystem audit hardening fixes', () => {
             version: '1.0',
             components: [
                 src('v1', 'V1', 'EXP(0 3.3 1n 2n 3n 4n)', 'a'),
-                { id: 'u1', type: 'logic_buffer', designator: 'U1', pins: [{ pinId: 'in1', netId: 'a' }, { pinId: 'out', netId: 'y' }] },
+                {
+                    id: 'u1',
+                    type: 'logic_buffer',
+                    designator: 'U1',
+                    pins: [
+                        { pinId: 'in1', netId: 'a' },
+                        { pinId: 'out', netId: 'y' },
+                    ],
+                },
                 res('r1', 'R1', 'y', 'gnd'),
             ],
             nets: netsOf('a', 'y', 'gnd'),
         };
-        expect(modelCard(generateNetlist(c, TRAN), 'CFD_DAC')).toBe('.model CFD_DAC dac_bridge(out_low=0 out_high=3.3)');
+        expect(modelCard(generateNetlist(c, TRAN), 'CFD_DAC')).toBe(
+            '.model CFD_DAC dac_bridge(out_low=0 out_high=3.3)',
+        );
     });
 
     // #5 — an i() current probe on a digital a-device is dropped (it would abort the whole wrdata line).
@@ -925,9 +1812,18 @@ describe('subsystem audit hardening fixes', () => {
         const c: CircuitJson = {
             version: '1.0',
             components: [
-                src('v1', 'V1', 'PULSE(0 5 0 1n 1n 1u 2u)', 'a'), src('v2', 'V2', 'PULSE(0 5 0 1n 1n 1u 2u)', 'b'),
-                { id: 'u1', type: 'logic_and', designator: 'U1', pins: [
-                    { pinId: 'in1', netId: 'a' }, { pinId: 'in2', netId: 'b' }, { pinId: 'out', netId: 'q' }] },
+                src('v1', 'V1', 'PULSE(0 5 0 1n 1n 1u 2u)', 'a'),
+                src('v2', 'V2', 'PULSE(0 5 0 1n 1n 1u 2u)', 'b'),
+                {
+                    id: 'u1',
+                    type: 'logic_and',
+                    designator: 'U1',
+                    pins: [
+                        { pinId: 'in1', netId: 'a' },
+                        { pinId: 'in2', netId: 'b' },
+                        { pinId: 'out', netId: 'q' },
+                    ],
+                },
             ],
             nets: netsOf('a', 'b', 'q', 'gnd'),
         };
@@ -941,14 +1837,32 @@ describe('subsystem audit hardening fixes', () => {
         const c: CircuitJson = {
             version: '1.0',
             components: [
-                src('v1', 'V1', 'DC 5', 'a'), src('v2', 'V2', 'DC 5', 'b'), src('v3', 'V3', 'DC 5', 'cc'),
-                { id: 'u1', type: 'logic_and', designator: 'U1', pins: [
-                    { pinId: 'in1', netId: 'a' }, { pinId: 'in2', netId: 'b' }, { pinId: 'en', netId: 'cc' }, { pinId: 'out', netId: 'y' }] },
+                src('v1', 'V1', 'DC 5', 'a'),
+                src('v2', 'V2', 'DC 5', 'b'),
+                src('v3', 'V3', 'DC 5', 'cc'),
+                {
+                    id: 'u1',
+                    type: 'logic_and',
+                    designator: 'U1',
+                    pins: [
+                        { pinId: 'in1', netId: 'a' },
+                        { pinId: 'in2', netId: 'b' },
+                        { pinId: 'en', netId: 'cc' },
+                        { pinId: 'out', netId: 'y' },
+                    ],
+                },
                 res('r1', 'R1', 'y', 'gnd'),
             ],
             nets: netsOf('a', 'b', 'cc', 'y', 'gnd'),
         };
-        expect(runErc(c).issues.some((i) => i.code === ErcCode.DIGITAL_PIN_SHAPE && i.relatedIds.includes('u1') && /unexpected/i.test(i.message))).toBe(true);
+        expect(
+            runErc(c).issues.some(
+                (i) =>
+                    i.code === ErcCode.DIGITAL_PIN_SHAPE &&
+                    i.relatedIds.includes('u1') &&
+                    /unexpected/i.test(i.message),
+            ),
+        ).toBe(true);
     });
 
     // #6b — a dff with a duplicate pin id silently drops a connection: flag it.
@@ -956,12 +1870,23 @@ describe('subsystem audit hardening fixes', () => {
         const c: CircuitJson = {
             version: '1.0',
             components: [
-                { id: 'u1', type: 'dff', designator: 'U1', pins: [
-                    { pinId: 'd', netId: 'din' }, { pinId: 'clk', netId: 'clk' },
-                    { pinId: 'q', netId: 'q1' }, { pinId: 'q', netId: 'q2' }, { pinId: 'qb', netId: 'qb' }] },
+                {
+                    id: 'u1',
+                    type: 'dff',
+                    designator: 'U1',
+                    pins: [
+                        { pinId: 'd', netId: 'din' },
+                        { pinId: 'clk', netId: 'clk' },
+                        { pinId: 'q', netId: 'q1' },
+                        { pinId: 'q', netId: 'q2' },
+                        { pinId: 'qb', netId: 'qb' },
+                    ],
+                },
             ],
             nets: netsOf('din', 'clk', 'q1', 'q2', 'qb'),
         };
-        expect(runErc(c).issues.some((i) => i.code === ErcCode.DIGITAL_PIN_SHAPE && /duplicate/i.test(i.message))).toBe(true);
+        expect(runErc(c).issues.some((i) => i.code === ErcCode.DIGITAL_PIN_SHAPE && /duplicate/i.test(i.message))).toBe(
+            true,
+        );
     });
 });

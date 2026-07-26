@@ -133,7 +133,10 @@ function evaluateTempPoint(
 /** Per-node drift across the temperature set: baseline = the value at the temperature closest to 25 °C (room),
  *  worst = the largest absolute deviation from it. Largest %-drift first — the actionable "this node moves most". */
 function computeDrift(perMetric: Map<string, Map<number, number>>, temps: number[]): TempMetricDrift[] {
-    const baselineTempC = temps.reduce((best, t) => (Math.abs(t - 25) < Math.abs(best - 25) ? t : best), temps[0] ?? 25);
+    const baselineTempC = temps.reduce(
+        (best, t) => (Math.abs(t - 25) < Math.abs(best - 25) ? t : best),
+        temps[0] ?? 25,
+    );
     const drift: TempMetricDrift[] = [];
     for (const [metric, byTemp] of perMetric) {
         const baselineValue = byTemp.get(baselineTempC);
@@ -174,8 +177,23 @@ export async function runTempCorner(
     // Temperature-flat circuit → not-applicable (a no-op), never a spurious "passed". Distinguish a subckt-only
     // board (behavioral macromodels are temp-flat) from a truly passive one so the reason is VISIBLE downstream.
     if (!hasTemperatureResponsiveDevice(circuit)) {
-        const reason = circuit.components.some((c) => c.type === 'subckt') ? NOT_APPLICABLE_SUBCKT : NOT_APPLICABLE_PASSIVE;
-        return { applicable: false, notApplicableReason: reason, temperaturesC: temps, rangeLabel: spec.rangeLabel, points: [], evaluated: 0, passed: 0, failed: 0, errored: 0, hasLimits: criteria.length > 0, passAllTemps: false, drift: [] };
+        const reason = circuit.components.some((c) => c.type === 'subckt')
+            ? NOT_APPLICABLE_SUBCKT
+            : NOT_APPLICABLE_PASSIVE;
+        return {
+            applicable: false,
+            notApplicableReason: reason,
+            temperaturesC: temps,
+            rangeLabel: spec.rangeLabel,
+            points: [],
+            evaluated: 0,
+            passed: 0,
+            failed: 0,
+            errored: 0,
+            hasLimits: criteria.length > 0,
+            passAllTemps: false,
+            drift: [],
+        };
     }
 
     const hasLimits = criteria.length > 0;
@@ -208,5 +226,17 @@ export async function runTempCorner(
     const passAllTemps = hasLimits && evaluated > 0 && failed === 0 && errored === 0;
     const drift = computeDrift(perMetric, temps);
 
-    return { applicable: true, temperaturesC: temps, rangeLabel: spec.rangeLabel, points, evaluated, passed, failed, errored, hasLimits, passAllTemps, drift };
+    return {
+        applicable: true,
+        temperaturesC: temps,
+        rangeLabel: spec.rangeLabel,
+        points,
+        evaluated,
+        passed,
+        failed,
+        errored,
+        hasLimits,
+        passAllTemps,
+        drift,
+    };
 }

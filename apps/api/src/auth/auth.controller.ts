@@ -27,7 +27,7 @@ const ctxOf = (req: Request): AuthContext => ({
 @ApiTags('auth')
 @Controller('auth')
 export class AuthController {
-    constructor(private readonly authService: AuthService) { }
+    constructor(private readonly authService: AuthService) {}
 
     @Post('register')
     // Tight per-IP cap on account creation (anti-spam). Pairs with email verification (Batch 2).
@@ -55,8 +55,14 @@ export class AuthController {
     @Post('refresh')
     @HttpCode(HttpStatus.OK)
     @ApiOperation({ summary: 'Refresh access token (ROTATING: the old refresh token is single-use)' })
-    @ApiResponse({ status: 200, description: 'New token pair — REPLACE the stored refresh token with the returned one' })
-    @ApiResponse({ status: 401, description: 'Invalid/expired/already-used refresh token (reuse revokes the whole session)' })
+    @ApiResponse({
+        status: 200,
+        description: 'New token pair — REPLACE the stored refresh token with the returned one',
+    })
+    @ApiResponse({
+        status: 401,
+        description: 'Invalid/expired/already-used refresh token (reuse revokes the whole session)',
+    })
     async refresh(@Body() dto: RefreshDto, @Req() req: Request): Promise<TokensResponse> {
         return this.authService.refresh(dto.refreshToken, ctxOf(req));
     }

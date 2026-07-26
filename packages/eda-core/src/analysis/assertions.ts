@@ -184,7 +184,9 @@ export function evaluateAssertions(
                 actual: null,
                 distance: null,
                 pass: false,
-                detail: simOk ? `probe "${a.probe}" not found in simulation output` : 'simulation did not produce results',
+                detail: simOk
+                    ? `probe "${a.probe}" not found in simulation output`
+                    : 'simulation did not produce results',
             };
         }
         let measured: number;
@@ -349,7 +351,8 @@ export function criterionDimension(c: { probe: string; metric?: string }): SpecD
 const CURRENT_MAGNITUDE_RE = /(?<![a-z0-9.])\d+(?:\.\d+)?\s*(?:m|u|µ|n|k|p)?a\b/i; // 10mA, 5 A, 0.5A
 const CURRENT_WORD_RE = /(?<![a-z0-9.])\d+(?:\.\d+)?\s*(?:milli|micro|nano|kilo)?amp(?:ere)?s?\b/i; // 10 milliamps
 const FREQUENCY_MAGNITUDE_RE = /(?<![a-z0-9.])\d+(?:\.\d+)?\s*(?:k|m|g)?hz\b/i; // 1kHz, 60 Hz
-const FREQUENCY_WORD_RE = /\b(?:cutoff|corner\s+frequenc(?:y|ies)|bandwidth|-?\s*3\s*db|passband|stopband|resonant\s+frequency)\b/i;
+const FREQUENCY_WORD_RE =
+    /\b(?:cutoff|corner\s+frequenc(?:y|ies)|bandwidth|-?\s*3\s*db|passband|stopband|resonant\s+frequency)\b/i;
 // THD is magnitude-anchored like current/frequency above: a distortion TERM must sit next to a numeric BOUND
 // (a percent or a dB figure), in either order, within a short window. A bare mention is NOT enough — "warm
 // harmonic distortion" (a WANTED guitar/tube/tape effect), "M3 THD mounting holes" (THD = threaded), or "THD
@@ -357,7 +360,10 @@ const FREQUENCY_WORD_RE = /\b(?:cutoff|corner\s+frequenc(?:y|ies)|bandwidth|-?\s
 // Requiring the number keeps THD faithful to this module's contract: only a quantity the user put a NUMBER on.
 const THD_TERM = String.raw`(?:\bthd\b|\b(?:total\s+)?harmonic\s+distortion\b)`;
 const THD_BOUND = String.raw`\d+(?:\.\d+)?\s*(?:%|percent\b|db[c]?\b)`; // 1%, 0.1 %, 5 percent, -60 dB, dBc
-const THD_SPEC_RE = new RegExp(String.raw`${THD_TERM}[^.\n]{0,24}${THD_BOUND}|${THD_BOUND}[^.\n]{0,24}${THD_TERM}`, 'i');
+const THD_SPEC_RE = new RegExp(
+    String.raw`${THD_TERM}[^.\n]{0,24}${THD_BOUND}|${THD_BOUND}[^.\n]{0,24}${THD_TERM}`,
+    'i',
+);
 
 /** Quantities the user EXPLICITLY put a numeric target on, detected conservatively from the prompt —
  *  CODE-side, NOT model-trusted (the model is what under-specifies). Voltage is intentionally never

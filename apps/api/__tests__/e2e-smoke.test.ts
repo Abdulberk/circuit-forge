@@ -86,30 +86,27 @@ describe('E2E Smoke Test - Full Simulation Workflow', () => {
     afterAll(async () => {
         // Cleanup in reverse order of creation
         if (jobId) {
-            await prisma.simulationJob.deleteMany({ where: { id: jobId } }).catch(() => { });
+            await prisma.simulationJob.deleteMany({ where: { id: jobId } }).catch(() => {});
         }
         if (versionId) {
-            await prisma.projectVersion.deleteMany({ where: { id: versionId } }).catch(() => { });
+            await prisma.projectVersion.deleteMany({ where: { id: versionId } }).catch(() => {});
         }
         if (projectId) {
-            await prisma.project.deleteMany({ where: { id: projectId } }).catch(() => { });
+            await prisma.project.deleteMany({ where: { id: projectId } }).catch(() => {});
         }
         if (orgId) {
-            await prisma.orgMembership.deleteMany({ where: { orgId } }).catch(() => { });
-            await prisma.organization.deleteMany({ where: { id: orgId } }).catch(() => { });
+            await prisma.orgMembership.deleteMany({ where: { orgId } }).catch(() => {});
+            await prisma.organization.deleteMany({ where: { id: orgId } }).catch(() => {});
         }
         if (userId) {
-            await prisma.user.deleteMany({ where: { id: userId } }).catch(() => { });
+            await prisma.user.deleteMany({ where: { id: userId } }).catch(() => {});
         }
         await app.close();
     });
 
     describe('Step 1: User Registration', () => {
         it('should register a new user', async () => {
-            const response = await request(app.getHttpServer())
-                .post('/auth/register')
-                .send(testUser)
-                .expect(201);
+            const response = await request(app.getHttpServer()).post('/auth/register').send(testUser).expect(201);
 
             expect(response.body).toHaveProperty('accessToken');
             expect(response.body).toHaveProperty('refreshToken');
@@ -258,9 +255,7 @@ describe('E2E Smoke Test - Full Simulation Workflow', () => {
 
     describe('Step 9: Health Check', () => {
         it('should return healthy status', async () => {
-            const response = await request(app.getHttpServer())
-                .get('/health')
-                .expect(200);
+            const response = await request(app.getHttpServer()).get('/health').expect(200);
 
             expect(response.body).toHaveProperty('status', 'ok');
 

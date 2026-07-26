@@ -9,4 +9,5 @@ export {
     parseTimeValue,
     parseFrequencyValue,
     type ParsedValue,
-} from './unit-parser';export { downsamplePoints, downsampleResult } from './downsample';
+} from './unit-parser';
+export { downsamplePoints, downsampleResult } from './downsample';

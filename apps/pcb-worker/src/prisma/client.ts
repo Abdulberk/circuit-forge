@@ -12,7 +12,10 @@ export const prisma =
     globalForPrisma.prisma ??
     new PrismaClient({
         ...(datasourceUrl ? { datasources: { db: { url: datasourceUrl } } } : {}),
-        log: [{ level: 'error', emit: 'stdout' }, { level: 'warn', emit: 'stdout' }],
+        log: [
+            { level: 'error', emit: 'stdout' },
+            { level: 'warn', emit: 'stdout' },
+        ],
     });
 
 if (process.env.NODE_ENV !== 'production') globalForPrisma.prisma = prisma;

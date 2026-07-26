@@ -10,8 +10,24 @@ import type { SimulationResult } from '../src/types/simulation';
 const tranResult: SimulationResult = {
     meta: { analysisType: 'tran', xLabel: 'time', xUnit: 's', pointsCount: 4 },
     series: [
-        { name: 'v(a)', points: [{ x: 0, y: 0 }, { x: 1e-3, y: 5 }, { x: 2e-3, y: 2.5 }, { x: 3e-3, y: 0 }] },
-        { name: 'v(b)', points: [{ x: 0, y: 1 }, { x: 1e-3, y: 1 }, { x: 2e-3, y: 1 }, { x: 3e-3, y: 1 }] },
+        {
+            name: 'v(a)',
+            points: [
+                { x: 0, y: 0 },
+                { x: 1e-3, y: 5 },
+                { x: 2e-3, y: 2.5 },
+                { x: 3e-3, y: 0 },
+            ],
+        },
+        {
+            name: 'v(b)',
+            points: [
+                { x: 0, y: 1 },
+                { x: 1e-3, y: 1 },
+                { x: 2e-3, y: 1 },
+                { x: 3e-3, y: 1 },
+            ],
+        },
     ],
 };
 
@@ -26,7 +42,11 @@ describe('resultToCsv', () => {
 
     it('round-trips losslessly — splitting the CSV back reproduces every series value', () => {
         const csv = resultToCsv(tranResult);
-        const rows = csv.trim().split('\n').slice(1).map((l) => l.split(',').map(Number));
+        const rows = csv
+            .trim()
+            .split('\n')
+            .slice(1)
+            .map((l) => l.split(',').map(Number));
         for (let s = 0; s < tranResult.series.length; s++) {
             const col = s + 1; // column 0 is the x axis
             const got = rows.map((r) => r[col]);
@@ -38,7 +58,10 @@ describe('resultToCsv', () => {
     });
 
     it('quotes a series name containing the delimiter (RFC 4180)', () => {
-        const r: SimulationResult = { meta: { analysisType: 'dc', xLabel: 'v-sweep', pointsCount: 1 }, series: [{ name: 'i(R1,sense)', points: [{ x: 0, y: 1 }] }] };
+        const r: SimulationResult = {
+            meta: { analysisType: 'dc', xLabel: 'v-sweep', pointsCount: 1 },
+            series: [{ name: 'i(R1,sense)', points: [{ x: 0, y: 1 }] }],
+        };
         expect(resultToCsv(r).split('\n')[0]).toBe('v-sweep,"i(R1,sense)"');
     });
 
@@ -57,8 +80,22 @@ describe('resultToVcd', () => {
     const togglingResult: SimulationResult = {
         meta: { analysisType: 'tran', xLabel: 'time', xUnit: 's', pointsCount: 3 },
         series: [
-            { name: 'v(out)', points: [{ x: 0, y: 0 }, { x: 1e-6, y: 5 }, { x: 2e-6, y: 0 }] },
-            { name: 'v(clk)', points: [{ x: 0, y: 5 }, { x: 1e-6, y: 0 }, { x: 2e-6, y: 5 }] },
+            {
+                name: 'v(out)',
+                points: [
+                    { x: 0, y: 0 },
+                    { x: 1e-6, y: 5 },
+                    { x: 2e-6, y: 0 },
+                ],
+            },
+            {
+                name: 'v(clk)',
+                points: [
+                    { x: 0, y: 5 },
+                    { x: 1e-6, y: 0 },
+                    { x: 2e-6, y: 5 },
+                ],
+            },
         ],
     };
 
@@ -82,7 +119,18 @@ describe('resultToVcd', () => {
 
     it('honors an explicit logic threshold', () => {
         // threshold 4 → 5 is the only "1"; v(out) reads 0,1,0 still, but a 3.3V sample would read 0.
-        const r: SimulationResult = { meta: { analysisType: 'tran', xLabel: 'time', xUnit: 's', pointsCount: 2 }, series: [{ name: 'n', points: [{ x: 0, y: 3.3 }, { x: 1e-9, y: 5 }] }] };
+        const r: SimulationResult = {
+            meta: { analysisType: 'tran', xLabel: 'time', xUnit: 's', pointsCount: 2 },
+            series: [
+                {
+                    name: 'n',
+                    points: [
+                        { x: 0, y: 3.3 },
+                        { x: 1e-9, y: 5 },
+                    ],
+                },
+            ],
+        };
         const vcd = resultToVcd(r, { threshold: 4 });
         expect(vcd).toContain('0!'); // 3.3 < 4 → 0
         expect(vcd).toContain('1!'); // 5 >= 4 → 1

@@ -17,24 +17,91 @@ const rt = (c: CircuitJson) => parseNetlist(generateNetlist(c, TRAN)).circuit;
 const AND_GATE: CircuitJson = {
     version: '1.0',
     components: [
-        { id: 'va', type: 'voltage_source', designator: 'VA', value: 'PULSE(0 5 0 1n 1n 1m 2m)', pins: [{ pinId: '+', netId: 'a' }, { pinId: '-', netId: '0' }] },
-        { id: 'vb', type: 'voltage_source', designator: 'VB', value: 'PULSE(0 5 0 1n 1n 0.5m 1m)', pins: [{ pinId: '+', netId: 'b' }, { pinId: '-', netId: '0' }] },
-        { id: 'u1', type: 'logic_and', designator: 'U1', pins: [{ pinId: 'in1', netId: 'a' }, { pinId: 'in2', netId: 'b' }, { pinId: 'out', netId: 'y' }] },
+        {
+            id: 'va',
+            type: 'voltage_source',
+            designator: 'VA',
+            value: 'PULSE(0 5 0 1n 1n 1m 2m)',
+            pins: [
+                { pinId: '+', netId: 'a' },
+                { pinId: '-', netId: '0' },
+            ],
+        },
+        {
+            id: 'vb',
+            type: 'voltage_source',
+            designator: 'VB',
+            value: 'PULSE(0 5 0 1n 1n 0.5m 1m)',
+            pins: [
+                { pinId: '+', netId: 'b' },
+                { pinId: '-', netId: '0' },
+            ],
+        },
+        {
+            id: 'u1',
+            type: 'logic_and',
+            designator: 'U1',
+            pins: [
+                { pinId: 'in1', netId: 'a' },
+                { pinId: 'in2', netId: 'b' },
+                { pinId: 'out', netId: 'y' },
+            ],
+        },
     ],
-    nets: [{ id: 'a', name: 'a' }, { id: 'b', name: 'b' }, { id: 'y', name: 'y' }, { id: '0', name: '0', isGround: true }],
+    nets: [
+        { id: 'a', name: 'a' },
+        { id: 'b', name: 'b' },
+        { id: 'y', name: 'y' },
+        { id: '0', name: '0', isGround: true },
+    ],
 };
 
 const DFF: CircuitJson = {
     version: '1.0',
     components: [
-        { id: 'vclk', type: 'voltage_source', designator: 'VCLK', value: 'PULSE(0 5 0 1n 1n 0.5m 1m)', pins: [{ pinId: '+', netId: 'clk' }, { pinId: '-', netId: '0' }] },
-        { id: 'vd', type: 'voltage_source', designator: 'VD', value: 'PULSE(0 5 0 1n 1n 1.5m 3m)', pins: [{ pinId: '+', netId: 'd' }, { pinId: '-', netId: '0' }] },
-        { id: 'u1', type: 'dff', designator: 'U1', pins: [{ pinId: 'd', netId: 'd' }, { pinId: 'clk', netId: 'clk' }, { pinId: 'q', netId: 'q' }, { pinId: 'qb', netId: 'qb' }] },
+        {
+            id: 'vclk',
+            type: 'voltage_source',
+            designator: 'VCLK',
+            value: 'PULSE(0 5 0 1n 1n 0.5m 1m)',
+            pins: [
+                { pinId: '+', netId: 'clk' },
+                { pinId: '-', netId: '0' },
+            ],
+        },
+        {
+            id: 'vd',
+            type: 'voltage_source',
+            designator: 'VD',
+            value: 'PULSE(0 5 0 1n 1n 1.5m 3m)',
+            pins: [
+                { pinId: '+', netId: 'd' },
+                { pinId: '-', netId: '0' },
+            ],
+        },
+        {
+            id: 'u1',
+            type: 'dff',
+            designator: 'U1',
+            pins: [
+                { pinId: 'd', netId: 'd' },
+                { pinId: 'clk', netId: 'clk' },
+                { pinId: 'q', netId: 'q' },
+                { pinId: 'qb', netId: 'qb' },
+            ],
+        },
     ],
-    nets: [{ id: 'clk', name: 'clk' }, { id: 'd', name: 'd' }, { id: 'q', name: 'q' }, { id: 'qb', name: 'qb' }, { id: '0', name: '0', isGround: true }],
+    nets: [
+        { id: 'clk', name: 'clk' },
+        { id: 'd', name: 'd' },
+        { id: 'q', name: 'q' },
+        { id: 'qb', name: 'qb' },
+        { id: '0', name: '0', isGround: true },
+    ],
 };
 
-const pinNet = (c: { pins: { pinId: string; netId: string }[] }, pinId: string) => c.pins.find((p) => p.pinId === pinId)?.netId;
+const pinNet = (c: { pins: { pinId: string; netId: string }[] }, pinId: string) =>
+    c.pins.find((p) => p.pinId === pinId)?.netId;
 
 describe('digital round-trip — gates re-import with re-merged mixed nets (Faz A #2)', () => {
     it('a 2-input AND gate round-trips back to logic_and with inputs/output on the same nets as the sources', () => {
@@ -55,7 +122,12 @@ describe('digital round-trip — gates re-import with re-merged mixed nets (Faz 
         // No synthesized analog<->digital bridge or rail device leaked in as a component.
         expect(c.components.some((x) => /^a?xsyn/i.test(x.designator) || /^vxsyn/i.test(x.designator))).toBe(false);
         // Real components only: VA, VB, the gate, and the ground. No extra synthesized voltage source.
-        expect(c.components.filter((x) => x.type === 'voltage_source').map((x) => x.designator).sort()).toEqual(['VA', 'VB']);
+        expect(
+            c.components
+                .filter((x) => x.type === 'voltage_source')
+                .map((x) => x.designator)
+                .sort(),
+        ).toEqual(['VA', 'VB']);
         // The engine-synthesized CFD_* digital/bridge models are regenerated on export, not carried back.
         expect((c.models ?? []).some((m) => /^cfd_/i.test(m.name))).toBe(false);
     });

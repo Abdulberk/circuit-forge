@@ -20,7 +20,10 @@ const ConfigSchema = z.object({
     S3_SECRET_KEY: z.string(),
     S3_BUCKET: z.string(),
     S3_REGION: z.string().default('us-east-1'),
-    S3_FORCE_PATH_STYLE: z.string().transform((v) => v === 'true').default('true'),
+    S3_FORCE_PATH_STYLE: z
+        .string()
+        .transform((v) => v === 'true')
+        .default('true'),
 
     // Queue — SEPARATE from 'simulations'/'design'. PCB jobs are heavy (freerouting is CPU+memory bound,
     // 10–120s), so default concurrency 1 — the per-box lever against oversubscription (plan §5).

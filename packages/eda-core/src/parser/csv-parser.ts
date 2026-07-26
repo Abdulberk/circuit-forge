@@ -6,17 +6,13 @@ import type { SimulationResult, DataSeries, DataPoint, ResultMeta } from '../typ
 
 /**
  * Parse ngspice wrdata CSV output to SimulationResult
- * 
+ *
  * wrdata format:
  * - Whitespace-separated values
  * - First column is X axis (time, frequency, voltage depending on analysis)
  * - Subsequent columns are Y values for each probe
  */
-export function parseCsv(
-    csvContent: string,
-    probeNames: string[],
-    analysisType: string = 'tran',
-): SimulationResult {
+export function parseCsv(csvContent: string, probeNames: string[], analysisType: string = 'tran'): SimulationResult {
     const lines = csvContent.trim().split('\n');
 
     if (lines.length === 0) {
@@ -146,10 +142,7 @@ function createEmptyResult(analysisType: string): SimulationResult {
 /**
  * Parse ngspice raw ASCII format (alternative parser)
  */
-export function parseRawAscii(
-    rawContent: string,
-    analysisType: string = 'tran',
-): SimulationResult {
+export function parseRawAscii(rawContent: string, analysisType: string = 'tran'): SimulationResult {
     const lines = rawContent.split('\n');
 
     let inData = false;

@@ -81,7 +81,10 @@ export const CHECK_LABELS: Record<CheckId, string> = {
  * every owned check it did not set is emitted as status:'not-run' (the disclosure invariant — an owned
  * check is never silently absent).
  */
-export function buildManifest(owned: readonly CheckId[], determined: Partial<Record<CheckId, DeterminedEntry>>): ScopeManifest {
+export function buildManifest(
+    owned: readonly CheckId[],
+    determined: Partial<Record<CheckId, DeterminedEntry>>,
+): ScopeManifest {
     const notRun: DeterminedEntry = { status: 'not-run' };
     return { checks: owned.map((id) => ({ id, ...notRun, ...determined[id] })) };
 }
@@ -107,7 +110,18 @@ export function buildElectricalScope(input: {
     const dim = (d: SpecDimension): DeterminedEntry =>
         covered.has(d) ? { status: 'run', detail: 'an assertion checks this quantity' } : { status: 'not-run' };
     return buildManifest(
-        ['sim', 'erc', 'assertion.voltage', 'assertion.current', 'assertion.frequency', 'assertion.thd', 'derating', 'robustness', 'decoupling', 'polarity'],
+        [
+            'sim',
+            'erc',
+            'assertion.voltage',
+            'assertion.current',
+            'assertion.frequency',
+            'assertion.thd',
+            'derating',
+            'robustness',
+            'decoupling',
+            'polarity',
+        ],
         {
             sim: { status: input.simRan ? 'run' : 'not-run' },
             erc: { status: 'run' }, // ERC is a hard gate that always executes on this path
@@ -115,13 +129,19 @@ export function buildElectricalScope(input: {
             'assertion.current': dim('current'),
             'assertion.frequency': dim('frequency'),
             'assertion.thd': dim('thd'),
-            derating: input.derating ?? { status: 'not-run', detail: 'no resistor-power data (sim not ok / no resistors)' },
+            derating: input.derating ?? {
+                status: 'not-run',
+                detail: 'no resistor-power data (sim not ok / no resistors)',
+            },
             robustness: input.robustness ?? { status: 'not-run', detail: 'tolerance robustness not requested' },
             // Decoupling presence is DEFERRED, not merely unimplemented: the circuit model has no power-rail
             // marking, so a "rail" could only be guessed (a DC source may drive a signal/reference net), and
             // `generic` conflates ICs with connectors — either guess produces false findings. Disclosed
             // not-run until the schema carries an isPower net field / typed power-pin roles.
-            decoupling: input.decoupling ?? { status: 'not-run', detail: 'deferred — no power-rail marking in the model to identify a rail reliably (needs an isPower net field / power-pin roles)' },
+            decoupling: input.decoupling ?? {
+                status: 'not-run',
+                detail: 'deferred — no power-rail marking in the model to identify a rail reliably (needs an isPower net field / power-pin roles)',
+            },
             polarity: input.polarity ?? { status: 'not-run', detail: 'no polarized diode/zener/LED to evaluate' },
         },
     );
@@ -134,21 +154,22 @@ export function buildLayoutScope(input: {
     drcViolations: number;
     manufacturable: boolean;
 }): ScopeManifest {
-    return buildManifest(
-        ['connectivity-parity', 'drc', 'manufacturability'],
-        {
-            'connectivity-parity': {
-                status: 'run',
-                detail: input.parityPins ? `${input.parityPins.checked}/${input.parityPins.expected} pins isomorphic` : undefined,
-            },
-            drc: {
-                status: 'run',
-                detail: input.drcClean ? 'DRC-clean against the ordered fab rules' : `${input.drcViolations} rule violation(s)`,
-            },
-            manufacturability: {
-                status: 'run',
-                detail: input.manufacturable ? 'delivered (DRC-clean)' : 'fab bundle withheld (not DRC-clean)',
-            },
+    return buildManifest(['connectivity-parity', 'drc', 'manufacturability'], {
+        'connectivity-parity': {
+            status: 'run',
+            detail: input.parityPins
+                ? `${input.parityPins.checked}/${input.parityPins.expected} pins isomorphic`
+                : undefined,
         },
-    );
+        drc: {
+            status: 'run',
+            detail: input.drcClean
+                ? 'DRC-clean against the ordered fab rules'
+                : `${input.drcViolations} rule violation(s)`,
+        },
+        manufacturability: {
+            status: 'run',
+            detail: input.manufacturable ? 'delivered (DRC-clean)' : 'fab bundle withheld (not DRC-clean)',
+        },
+    });
 }

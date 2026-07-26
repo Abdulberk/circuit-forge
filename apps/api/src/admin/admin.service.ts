@@ -6,7 +6,13 @@
  *
  * Phase 1 = read-only observability. Phase 2 adds mutations (still routed through AuditService).
  */
-import { BadRequestException, ConflictException, Injectable, NotFoundException, ServiceUnavailableException } from '@nestjs/common';
+import {
+    BadRequestException,
+    ConflictException,
+    Injectable,
+    NotFoundException,
+    ServiceUnavailableException,
+} from '@nestjs/common';
 import { Prisma, SimJobStatus, DesignJobStatus } from '@prisma/client';
 
 import { AuditService } from '../common/audit/audit.service';
@@ -105,7 +111,11 @@ export class AdminService {
                 createdAt: true,
                 updatedAt: true,
                 memberships: {
-                    select: { role: true, createdAt: true, org: { select: { id: true, name: true, suspendedAt: true } } },
+                    select: {
+                        role: true,
+                        createdAt: true,
+                        org: { select: { id: true, name: true, suspendedAt: true } },
+                    },
                 },
             },
         });
@@ -128,9 +138,7 @@ export class AdminService {
     // ---------------------------------------------------------------- orgs
 
     async listOrgs(page: Page, search?: string): Promise<Paginated<unknown>> {
-        const where: Prisma.OrganizationWhereInput = search
-            ? { name: { contains: search, mode: 'insensitive' } }
-            : {};
+        const where: Prisma.OrganizationWhereInput = search ? { name: { contains: search, mode: 'insensitive' } } : {};
         const [items, total] = await Promise.all([
             this.prisma.organization.findMany({
                 where,
@@ -411,7 +419,11 @@ export class AdminService {
             await fn();
             return { status: 'ok', latencyMs: Date.now() - start };
         } catch (error) {
-            return { status: 'error', latencyMs: Date.now() - start, error: error instanceof Error ? error.message : 'Unknown error' };
+            return {
+                status: 'error',
+                latencyMs: Date.now() - start,
+                error: error instanceof Error ? error.message : 'Unknown error',
+            };
         }
     }
 
@@ -432,7 +444,10 @@ export class AdminService {
             // Locking also kills live sessions — otherwise a locked user keeps acting via an existing
             // refresh token (login gates on lockedUntil, but refresh/access don't).
             const revoked = dto.locked
-                ? await tx.refreshToken.updateMany({ where: { userId: id, revokedAt: null }, data: { revokedAt: new Date() } })
+                ? await tx.refreshToken.updateMany({
+                      where: { userId: id, revokedAt: null },
+                      data: { revokedAt: new Date() },
+                  })
                 : { count: 0 };
             await tx.auditLog.create({
                 data: this.audit.buildData({
@@ -489,7 +504,10 @@ export class AdminService {
         const sessionsRevoked = await this.prisma.$transaction(async (tx) => {
             await tx.user.update({ where: { id }, data: { platformRole: dto.platformRole } });
             const revoked = demoting
-                ? await tx.refreshToken.updateMany({ where: { userId: id, revokedAt: null }, data: { revokedAt: new Date() } })
+                ? await tx.refreshToken.updateMany({
+                      where: { userId: id, revokedAt: null },
+                      data: { revokedAt: new Date() },
+                  })
                 : { count: 0 };
             await tx.auditLog.create({
                 data: this.audit.buildData({
@@ -767,7 +785,10 @@ export class AdminService {
     // -------- jobs (cancel / retry)
 
     async cancelSimJob(id: string, dto: ActionReasonDto, actor: PlatformActor) {
-        const job = await this.prisma.simulationJob.findUnique({ where: { id }, select: { id: true, orgId: true, status: true } });
+        const job = await this.prisma.simulationJob.findUnique({
+            where: { id },
+            select: { id: true, orgId: true, status: true },
+        });
         if (!job) throw new NotFoundException('Simulation job not found');
         if (job.status === 'RUNNING') {
             throw new ConflictException('A running simulation is not interruptible; wait for it to finish.');
@@ -871,7 +892,10 @@ export class AdminService {
 
     /** Design cancel mirrors DesignJobService.requestCancel but bypasses the tenant membership check. */
     async cancelDesignJob(id: string, dto: ActionReasonDto, actor: PlatformActor) {
-        const job = await this.prisma.designJob.findUnique({ where: { id }, select: { id: true, orgId: true, status: true } });
+        const job = await this.prisma.designJob.findUnique({
+            where: { id },
+            select: { id: true, orgId: true, status: true },
+        });
         if (!job) throw new NotFoundException('Design job not found');
         if (job.status === DesignJobStatus.QUEUED) {
             await this.prisma.designJob.update({
@@ -884,7 +908,10 @@ export class AdminService {
         if (job.status === DesignJobStatus.RUNNING) {
             // The worker honors abortRequested mid-loop (round start + before each paid LLM call).
             await this.prisma.designJob.update({ where: { id }, data: { abortRequested: true } });
-            await this.auditDesignCancel(id, job.orgId, actor, dto.reason, 'RUNNING', { status: 'RUNNING', abortRequested: true });
+            await this.auditDesignCancel(id, job.orgId, actor, dto.reason, 'RUNNING', {
+                status: 'RUNNING',
+                abortRequested: true,
+            });
             return { id, status: 'RUNNING', abortRequested: true };
         }
         throw new ConflictException(`Design job is ${job.status} and cannot be canceled.`);

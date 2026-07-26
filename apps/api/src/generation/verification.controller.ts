@@ -27,14 +27,20 @@ export class VerificationController {
     @ApiOperation({
         summary: 'Verify a circuit by simulation: ERC + ngspice + spec assertions → a pass/fail evidence pack',
     })
-    @ApiResponse({ status: 200, description: 'DesignEvidence (verdict pass/fail/inconclusive + measurements + ERC + per-assertion results)' })
+    @ApiResponse({
+        status: 200,
+        description: 'DesignEvidence (verdict pass/fail/inconclusive + measurements + ERC + per-assertion results)',
+    })
     @ApiResponse({ status: 400, description: 'Invalid circuit or analysis config' })
     async verifyDesign(@Body() dto: VerifyDesignDto, @CurrentUser() user: { id: string }): Promise<DesignEvidence> {
         // A malformed circuit/analysis is a CLIENT error (400) — distinct from a valid circuit that
         // simply fails to verify (which returns a 200 evidence pack with verdict "fail").
         const circuit = safeValidateCircuitJson(dto.circuit);
         if (!circuit.success) {
-            const issues = circuit.error.errors.slice(0, 5).map((e) => `${e.path.join('.') || '(root)'}: ${e.message}`).join('; ');
+            const issues = circuit.error.errors
+                .slice(0, 5)
+                .map((e) => `${e.path.join('.') || '(root)'}: ${e.message}`)
+                .join('; ');
             throw new BadRequestException(`Invalid circuit: ${issues}`);
         }
 
@@ -42,7 +48,9 @@ export class VerificationController {
         // But a diode/transistor/subckt terminal current has no branch-current vector — the generator would
         // silently drop it and the assertion would read "probe not found" (a spurious fail). Reject THAT
         // up front with an actionable message instead (probe a series sense resistor's current).
-        const badCurrent = (dto.assertions ?? []).find((a) => isCurrentProbe(a.probe) && !isObservableCurrentProbe(a.probe));
+        const badCurrent = (dto.assertions ?? []).find(
+            (a) => isCurrentProbe(a.probe) && !isObservableCurrentProbe(a.probe),
+        );
         if (badCurrent) {
             throw new BadRequestException(
                 `Current probe "${badCurrent.probe}" can't be measured directly — a diode/transistor/subckt terminal current has no branch-current vector in ngspice. Probe a SERIES RESISTOR's current instead (e.g. "i(R1)").`,

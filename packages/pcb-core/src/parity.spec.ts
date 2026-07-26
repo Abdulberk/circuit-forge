@@ -9,15 +9,48 @@ function board(opts: {
     const els: TscElement[] = [
         { type: 'source_component', source_component_id: 'sc_R1', name: 'R1' },
         { type: 'source_component', source_component_id: 'sc_D1', name: 'D1' },
-        { type: 'source_port', source_port_id: 'p_R1_1', name: 'pin1', port_hints: ['pin1', '1'], source_component_id: 'sc_R1', subcircuit_connectivity_map_key: opts.connKeys?.p_R1_1 },
-        { type: 'source_port', source_port_id: 'p_R1_2', name: 'pin2', port_hints: ['pin2', '2'], source_component_id: 'sc_R1', subcircuit_connectivity_map_key: opts.connKeys?.p_R1_2 },
-        { type: 'source_port', source_port_id: 'p_D1_a', name: 'pin1', port_hints: ['anode', 'pos', 'pin1'], source_component_id: 'sc_D1', subcircuit_connectivity_map_key: opts.connKeys?.p_D1_a },
-        { type: 'source_port', source_port_id: 'p_D1_k', name: 'pin2', port_hints: ['cathode', 'neg', 'pin2'], source_component_id: 'sc_D1', subcircuit_connectivity_map_key: opts.connKeys?.p_D1_k },
+        {
+            type: 'source_port',
+            source_port_id: 'p_R1_1',
+            name: 'pin1',
+            port_hints: ['pin1', '1'],
+            source_component_id: 'sc_R1',
+            subcircuit_connectivity_map_key: opts.connKeys?.p_R1_1,
+        },
+        {
+            type: 'source_port',
+            source_port_id: 'p_R1_2',
+            name: 'pin2',
+            port_hints: ['pin2', '2'],
+            source_component_id: 'sc_R1',
+            subcircuit_connectivity_map_key: opts.connKeys?.p_R1_2,
+        },
+        {
+            type: 'source_port',
+            source_port_id: 'p_D1_a',
+            name: 'pin1',
+            port_hints: ['anode', 'pos', 'pin1'],
+            source_component_id: 'sc_D1',
+            subcircuit_connectivity_map_key: opts.connKeys?.p_D1_a,
+        },
+        {
+            type: 'source_port',
+            source_port_id: 'p_D1_k',
+            name: 'pin2',
+            port_hints: ['cathode', 'neg', 'pin2'],
+            source_component_id: 'sc_D1',
+            subcircuit_connectivity_map_key: opts.connKeys?.p_D1_k,
+        },
         { type: 'source_net', source_net_id: 'net_VIN', name: 'VIN' },
         { type: 'source_net', source_net_id: 'net_GND', name: 'GND' },
     ];
     for (const [a, b] of opts.traces) {
-        els.push({ type: 'source_trace', source_trace_id: `t_${a}_${b}`, connected_source_port_ids: [a, b].filter((x) => x.startsWith('p_')), connected_source_net_ids: [a, b].filter((x) => x.startsWith('net_')) });
+        els.push({
+            type: 'source_trace',
+            source_trace_id: `t_${a}_${b}`,
+            connected_source_port_ids: [a, b].filter((x) => x.startsWith('p_')),
+            connected_source_net_ids: [a, b].filter((x) => x.startsWith('net_')),
+        });
     }
     return els;
 }

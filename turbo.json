@@ -1,16 +1,10 @@
 {
     "$schema": "https://turbo.build/schema.json",
-    "globalDependencies": [
-        ".env"
-    ],
+    "globalDependencies": [".env"],
     "pipeline": {
         "build": {
-            "dependsOn": [
-                "^build"
-            ],
-            "outputs": [
-                "dist/**"
-            ]
+            "dependsOn": ["^build"],
+            "outputs": ["dist/**"]
         },
         "dev": {
             "cache": false,
@@ -23,31 +17,19 @@
             "outputs": []
         },
         "test": {
-            "dependsOn": [
-                "build"
-            ],
-            "outputs": [
-                "coverage/**"
-            ]
+            "dependsOn": ["build"],
+            "outputs": ["coverage/**"]
         },
         "test:cov": {
-            "dependsOn": [
-                "build"
-            ],
-            "outputs": [
-                "coverage/**"
-            ]
+            "dependsOn": ["build"],
+            "outputs": ["coverage/**"]
         },
         "test:e2e": {
-            "dependsOn": [
-                "build"
-            ],
+            "dependsOn": ["build"],
             "outputs": []
         },
         "typecheck": {
-            "dependsOn": [
-                "^build"
-            ],
+            "dependsOn": ["^build"],
             "outputs": []
         },
         "clean": {

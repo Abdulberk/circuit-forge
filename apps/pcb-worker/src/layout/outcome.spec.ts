@@ -59,7 +59,10 @@ describe('assessManufacturability — the manufacturability delivery gate', () =
 
     it('agrees with ParsedDrc.clean — the gate never disagrees with the DRC verdict', () => {
         expect(assessManufacturability(clean).manufacturable).toBe(clean.clean);
-        const dirty = parseDrcReport({ violations: [{ type: 'clearance', severity: 'error', description: 'x', items: [] }], unconnected_items: [] });
+        const dirty = parseDrcReport({
+            violations: [{ type: 'clearance', severity: 'error', description: 'x', items: [] }],
+            unconnected_items: [],
+        });
         expect(assessManufacturability(dirty).manufacturable).toBe(dirty.clean);
     });
 });

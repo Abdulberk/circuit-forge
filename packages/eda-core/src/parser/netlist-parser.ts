@@ -2,7 +2,14 @@
  * SPICE Netlist Parser
  * Parses SPICE netlists back to CircuitJson (for import functionality)
  */
-import type { AnalysisConfig, TranAnalysis, AcAnalysis, DcAnalysis, OpAnalysis, SolverOptions } from '../types/analysis';
+import type {
+    AnalysisConfig,
+    TranAnalysis,
+    AcAnalysis,
+    DcAnalysis,
+    OpAnalysis,
+    SolverOptions,
+} from '../types/analysis';
 import type { CircuitJson, Component, Net, ComponentType, ModelDef } from '../types/circuit';
 
 /**
@@ -46,9 +53,19 @@ const PREFIX_TO_TYPE: Record<string, ComponentType> = {
  * before lookup. Lets a digital 'A'-device line round-trip back to its gate / flip-flop / latch / tristate type.
  */
 const CFD_MODEL_TO_TYPE: Record<string, ComponentType> = {
-    CFD_AND: 'logic_and', CFD_OR: 'logic_or', CFD_NAND: 'logic_nand', CFD_NOR: 'logic_nor',
-    CFD_XOR: 'logic_xor', CFD_XNOR: 'logic_xnor', CFD_NOT: 'logic_not', CFD_BUF: 'logic_buffer',
-    CFD_DFF: 'dff', CFD_JKFF: 'jkff', CFD_TFF: 'tff', CFD_DLATCH: 'dlatch', CFD_TRI: 'tristate',
+    CFD_AND: 'logic_and',
+    CFD_OR: 'logic_or',
+    CFD_NAND: 'logic_nand',
+    CFD_NOR: 'logic_nor',
+    CFD_XOR: 'logic_xor',
+    CFD_XNOR: 'logic_xnor',
+    CFD_NOT: 'logic_not',
+    CFD_BUF: 'logic_buffer',
+    CFD_DFF: 'dff',
+    CFD_JKFF: 'jkff',
+    CFD_TFF: 'tff',
+    CFD_DLATCH: 'dlatch',
+    CFD_TRI: 'tristate',
 };
 
 /** Fixed XSPICE port orders (match the generator's emitDigitalComponent emission), for mapping a bare
@@ -158,7 +175,9 @@ export function parseNetlist(netlist: string): NetlistParseResult {
                     if (inner.toLowerCase().startsWith('.ends')) break;
                 }
                 if (j >= logical.length) {
-                    warnings.push(`Line ${lineNo}: .subckt '${name ?? '?'}' has no matching .ends — captured to end of file`);
+                    warnings.push(
+                        `Line ${lineNo}: .subckt '${name ?? '?'}' has no matching .ends — captured to end of file`,
+                    );
                 }
                 if (name && !seenModelNames.has(name.toLowerCase())) {
                     seenModelNames.add(name.toLowerCase());
@@ -267,7 +286,7 @@ export function parseNetlist(netlist: string): NetlistParseResult {
     if (analysis) {
         if (solverOptions && Object.keys(solverOptions).length > 0) analysis.options = solverOptions;
         if (initialConditions && Object.keys(initialConditions).length > 0 && analysis.type === 'tran') {
-            (analysis).initialConditions = initialConditions;
+            analysis.initialConditions = initialConditions;
         }
     }
 
@@ -361,12 +380,27 @@ function parseOptionsLine(line: string): SolverOptions {
         const key = m[1]!.toLowerCase();
         const val = m[2]!;
         switch (key) {
-            case 'reltol': opts.reltol = val; break;
-            case 'abstol': opts.abstol = val; break;
-            case 'vntol': opts.vntol = val; break;
-            case 'gmin': opts.gmin = val; break;
-            case 'method': if (val.toLowerCase() === 'trap' || val.toLowerCase() === 'gear') opts.method = val.toLowerCase() as 'trap' | 'gear'; break;
-            case 'itl4': { const n = parseInt(val, 10); if (Number.isFinite(n)) opts.itl4 = n; break; }
+            case 'reltol':
+                opts.reltol = val;
+                break;
+            case 'abstol':
+                opts.abstol = val;
+                break;
+            case 'vntol':
+                opts.vntol = val;
+                break;
+            case 'gmin':
+                opts.gmin = val;
+                break;
+            case 'method':
+                if (val.toLowerCase() === 'trap' || val.toLowerCase() === 'gear')
+                    opts.method = val.toLowerCase() as 'trap' | 'gear';
+                break;
+            case 'itl4': {
+                const n = parseInt(val, 10);
+                if (Number.isFinite(n)) opts.itl4 = n;
+                break;
+            }
         }
     }
     return opts;
@@ -434,14 +468,7 @@ function parseDigitalLine(
     if (!type) return null;
 
     // Node tokens between the instance name and the model name, with bracket grouping flattened, canon()'d.
-    const nodes = tok
-        .slice(1, -1)
-        .join(' ')
-        .replace(/[[\]]/g, ' ')
-        .trim()
-        .split(/\s+/)
-        .filter(Boolean)
-        .map(canon);
+    const nodes = tok.slice(1, -1).join(' ').replace(/[[\]]/g, ' ').trim().split(/\s+/).filter(Boolean).map(canon);
     if (nodes.length < 2) return null;
 
     counter['A'] = (counter['A'] || 0) + 1;

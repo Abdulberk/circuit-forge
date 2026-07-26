@@ -20,12 +20,54 @@ describe('SPICE round-trip — .model / .subckt survive (Faz A #1)', () => {
             version: '1.0',
             models: [bjtModel],
             components: [
-                { id: 'v1', type: 'voltage_source', designator: 'V1', value: 'DC 10', pins: [{ pinId: '+', netId: 'vcc' }, { pinId: '-', netId: '0' }] },
-                { id: 'rc', type: 'resistor', designator: 'RC1', value: '2.2k', pins: [{ pinId: '1', netId: 'vcc' }, { pinId: '2', netId: 'col' }] },
-                { id: 'rb', type: 'resistor', designator: 'RB1', value: '220k', pins: [{ pinId: '1', netId: 'vcc' }, { pinId: '2', netId: 'base' }] },
-                { id: 'q1', type: 'bjt', designator: 'Q1', model: 'QN1', pins: [{ pinId: 'c', netId: 'col' }, { pinId: 'b', netId: 'base' }, { pinId: 'e', netId: '0' }] },
+                {
+                    id: 'v1',
+                    type: 'voltage_source',
+                    designator: 'V1',
+                    value: 'DC 10',
+                    pins: [
+                        { pinId: '+', netId: 'vcc' },
+                        { pinId: '-', netId: '0' },
+                    ],
+                },
+                {
+                    id: 'rc',
+                    type: 'resistor',
+                    designator: 'RC1',
+                    value: '2.2k',
+                    pins: [
+                        { pinId: '1', netId: 'vcc' },
+                        { pinId: '2', netId: 'col' },
+                    ],
+                },
+                {
+                    id: 'rb',
+                    type: 'resistor',
+                    designator: 'RB1',
+                    value: '220k',
+                    pins: [
+                        { pinId: '1', netId: 'vcc' },
+                        { pinId: '2', netId: 'base' },
+                    ],
+                },
+                {
+                    id: 'q1',
+                    type: 'bjt',
+                    designator: 'Q1',
+                    model: 'QN1',
+                    pins: [
+                        { pinId: 'c', netId: 'col' },
+                        { pinId: 'b', netId: 'base' },
+                        { pinId: 'e', netId: '0' },
+                    ],
+                },
             ],
-            nets: [{ id: 'vcc', name: 'vcc' }, { id: 'col', name: 'col' }, { id: 'base', name: 'base' }, { id: '0', name: '0', isGround: true }],
+            nets: [
+                { id: 'vcc', name: 'vcc' },
+                { id: 'col', name: 'col' },
+                { id: 'base', name: 'base' },
+                { id: '0', name: '0', isGround: true },
+            ],
         };
 
         const parsed = roundTrip(circuit, { type: 'op' } as OpAnalysis);
@@ -50,11 +92,43 @@ describe('SPICE round-trip — .model / .subckt survive (Faz A #1)', () => {
             version: '1.0',
             models: [opamp],
             components: [
-                { id: 'v1', type: 'voltage_source', designator: 'V1', value: 'DC 1', pins: [{ pinId: '+', netId: 'sig' }, { pinId: '-', netId: '0' }] },
-                { id: 'x1', type: 'subckt', designator: 'X1', model: 'OPAMP1', pins: [{ pinId: 'out', netId: 'out' }, { pinId: 'inp', netId: 'sig' }, { pinId: 'inn', netId: '0' }] },
-                { id: 'rl', type: 'resistor', designator: 'RL1', value: '10k', pins: [{ pinId: '1', netId: 'out' }, { pinId: '2', netId: '0' }] },
+                {
+                    id: 'v1',
+                    type: 'voltage_source',
+                    designator: 'V1',
+                    value: 'DC 1',
+                    pins: [
+                        { pinId: '+', netId: 'sig' },
+                        { pinId: '-', netId: '0' },
+                    ],
+                },
+                {
+                    id: 'x1',
+                    type: 'subckt',
+                    designator: 'X1',
+                    model: 'OPAMP1',
+                    pins: [
+                        { pinId: 'out', netId: 'out' },
+                        { pinId: 'inp', netId: 'sig' },
+                        { pinId: 'inn', netId: '0' },
+                    ],
+                },
+                {
+                    id: 'rl',
+                    type: 'resistor',
+                    designator: 'RL1',
+                    value: '10k',
+                    pins: [
+                        { pinId: '1', netId: 'out' },
+                        { pinId: '2', netId: '0' },
+                    ],
+                },
             ],
-            nets: [{ id: 'sig', name: 'sig' }, { id: 'out', name: 'out' }, { id: '0', name: '0', isGround: true }],
+            nets: [
+                { id: 'sig', name: 'sig' },
+                { id: 'out', name: 'out' },
+                { id: '0', name: '0', isGround: true },
+            ],
         };
 
         const parsed = roundTrip(circuit, { type: 'op' } as OpAnalysis);
@@ -70,16 +144,27 @@ describe('SPICE round-trip — .model / .subckt survive (Faz A #1)', () => {
         expect(sub!.ports).toBeUndefined();
         // the macromodel + its instance re-export WITHOUT throwing (the bug the fix addresses) + still wires X1.
         expect(() => generateNetlist(parsed.circuit, { type: 'op' } as OpAnalysis)).not.toThrow();
-        expect(generateNetlist(parsed.circuit, { type: 'op' } as OpAnalysis)).toMatch(/^X1\s+\S+\s+\S+\s+\S+\s+OPAMP1/im);
+        expect(generateNetlist(parsed.circuit, { type: 'op' } as OpAnalysis)).toMatch(
+            /^X1\s+\S+\s+\S+\s+\S+\s+OPAMP1/im,
+        );
     });
 });
 
 describe('SPICE round-trip — .control output block is NOT parsed as components (audit #1)', () => {
     it('consumes a .control … .endc block instead of injecting phantom devices', () => {
         const deck = [
-            '* My amp', 'V1 in 0 DC 5', 'R1 in out 1k', 'R2 out 0 2k',
-            '.control', '  set filetype=ascii', '  tran 1u 1m', '  dc V1 0 5 0.1',
-            '  let ratio = v(out)/v(in)', '  wrdata output.csv v(out)', '.endc', '.end',
+            '* My amp',
+            'V1 in 0 DC 5',
+            'R1 in out 1k',
+            'R2 out 0 2k',
+            '.control',
+            '  set filetype=ascii',
+            '  tran 1u 1m',
+            '  dc V1 0 5 0.1',
+            '  let ratio = v(out)/v(in)',
+            '  wrdata output.csv v(out)',
+            '.endc',
+            '.end',
         ].join('\n');
         const parsed = parseNetlist(deck);
         // ONLY the real devices — no phantom tline/diode/inductor from tran/dc/let in the control body.
@@ -101,12 +186,38 @@ describe('SPICE round-trip — .options / .ic survive', () => {
         const circuit: CircuitJson = {
             version: '1.0',
             components: [
-                { id: 'v1', type: 'voltage_source', designator: 'V1', value: 'DC 5', pins: [{ pinId: '+', netId: 'a' }, { pinId: '-', netId: '0' }] },
-                { id: 'r1', type: 'resistor', designator: 'R1', value: '1k', pins: [{ pinId: '1', netId: 'a' }, { pinId: '2', netId: '0' }] },
+                {
+                    id: 'v1',
+                    type: 'voltage_source',
+                    designator: 'V1',
+                    value: 'DC 5',
+                    pins: [
+                        { pinId: '+', netId: 'a' },
+                        { pinId: '-', netId: '0' },
+                    ],
+                },
+                {
+                    id: 'r1',
+                    type: 'resistor',
+                    designator: 'R1',
+                    value: '1k',
+                    pins: [
+                        { pinId: '1', netId: 'a' },
+                        { pinId: '2', netId: '0' },
+                    ],
+                },
             ],
-            nets: [{ id: 'a', name: 'a' }, { id: '0', name: '0', isGround: true }],
+            nets: [
+                { id: 'a', name: 'a' },
+                { id: '0', name: '0', isGround: true },
+            ],
         };
-        const analysis: TranAnalysis = { type: 'tran', stopTime: '1m', stepTime: '1u', options: { reltol: '0.01', gmin: '1e-9', method: 'gear', itl4: 20 } };
+        const analysis: TranAnalysis = {
+            type: 'tran',
+            stopTime: '1m',
+            stepTime: '1u',
+            options: { reltol: '0.01', gmin: '1e-9', method: 'gear', itl4: 20 },
+        };
         const parsed = roundTrip(circuit, analysis);
         expect(parsed.analysis?.options).toEqual({ reltol: '0.01', gmin: '1e-9', method: 'gear', itl4: 20 });
     });
@@ -115,13 +226,49 @@ describe('SPICE round-trip — .options / .ic survive', () => {
         const circuit: CircuitJson = {
             version: '1.0',
             components: [
-                { id: 'v1', type: 'voltage_source', designator: 'V1', value: 'DC 5', pins: [{ pinId: '+', netId: 'a' }, { pinId: '-', netId: '0' }] },
-                { id: 'r1', type: 'resistor', designator: 'R1', value: '1k', pins: [{ pinId: '1', netId: 'a' }, { pinId: '2', netId: 'cap' }] },
-                { id: 'c1', type: 'capacitor', designator: 'C1', value: '1u', pins: [{ pinId: '1', netId: 'cap' }, { pinId: '2', netId: '0' }] },
+                {
+                    id: 'v1',
+                    type: 'voltage_source',
+                    designator: 'V1',
+                    value: 'DC 5',
+                    pins: [
+                        { pinId: '+', netId: 'a' },
+                        { pinId: '-', netId: '0' },
+                    ],
+                },
+                {
+                    id: 'r1',
+                    type: 'resistor',
+                    designator: 'R1',
+                    value: '1k',
+                    pins: [
+                        { pinId: '1', netId: 'a' },
+                        { pinId: '2', netId: 'cap' },
+                    ],
+                },
+                {
+                    id: 'c1',
+                    type: 'capacitor',
+                    designator: 'C1',
+                    value: '1u',
+                    pins: [
+                        { pinId: '1', netId: 'cap' },
+                        { pinId: '2', netId: '0' },
+                    ],
+                },
             ],
-            nets: [{ id: 'a', name: 'a' }, { id: 'cap', name: 'cap' }, { id: '0', name: '0', isGround: true }],
+            nets: [
+                { id: 'a', name: 'a' },
+                { id: 'cap', name: 'cap' },
+                { id: '0', name: '0', isGround: true },
+            ],
         };
-        const analysis: TranAnalysis = { type: 'tran', stopTime: '5m', stepTime: '5u', initialConditions: { cap: 0.5 } };
+        const analysis: TranAnalysis = {
+            type: 'tran',
+            stopTime: '5m',
+            stepTime: '5u',
+            initialConditions: { cap: 0.5 },
+        };
         const parsed = roundTrip(circuit, analysis);
         const ic = (parsed.analysis as TranAnalysis | undefined)?.initialConditions;
         expect(ic).toBeDefined();
@@ -160,11 +307,42 @@ describe('SPICE round-trip — idempotence on a model-free circuit', () => {
         const circuit: CircuitJson = {
             version: '1.0',
             components: [
-                { id: 'v1', type: 'voltage_source', designator: 'V1', value: 'DC 5', pins: [{ pinId: '+', netId: 'vin' }, { pinId: '-', netId: '0' }] },
-                { id: 'r1', type: 'resistor', designator: 'R1', value: '1k', pins: [{ pinId: '1', netId: 'vin' }, { pinId: '2', netId: 'vout' }] },
-                { id: 'r2', type: 'resistor', designator: 'R2', value: '1k', pins: [{ pinId: '1', netId: 'vout' }, { pinId: '2', netId: '0' }] },
+                {
+                    id: 'v1',
+                    type: 'voltage_source',
+                    designator: 'V1',
+                    value: 'DC 5',
+                    pins: [
+                        { pinId: '+', netId: 'vin' },
+                        { pinId: '-', netId: '0' },
+                    ],
+                },
+                {
+                    id: 'r1',
+                    type: 'resistor',
+                    designator: 'R1',
+                    value: '1k',
+                    pins: [
+                        { pinId: '1', netId: 'vin' },
+                        { pinId: '2', netId: 'vout' },
+                    ],
+                },
+                {
+                    id: 'r2',
+                    type: 'resistor',
+                    designator: 'R2',
+                    value: '1k',
+                    pins: [
+                        { pinId: '1', netId: 'vout' },
+                        { pinId: '2', netId: '0' },
+                    ],
+                },
             ],
-            nets: [{ id: 'vin', name: 'vin' }, { id: 'vout', name: 'vout' }, { id: '0', name: '0', isGround: true }],
+            nets: [
+                { id: 'vin', name: 'vin' },
+                { id: 'vout', name: 'vout' },
+                { id: '0', name: '0', isGround: true },
+            ],
         };
         const analysis: OpAnalysis = { type: 'op', options: { gmin: '1e-9' } };
         // Normalize the one deliberately non-deterministic line — the `* <ISO timestamp>` generation stamp —

@@ -3,9 +3,15 @@ import { resolveModel, injectModels, solveAlignment, KICAD_3DMODEL_BASE } from '
 
 describe('resolveModel — tscircuit footprint id -> KiCad bundled 3D model', () => {
     it('maps size-parametric passives per family + imperial size (harvested ids)', () => {
-        expect(resolveModel('tscircuit:resistor_res0603')).toBe(`${KICAD_3DMODEL_BASE}Resistor_SMD.3dshapes/R_0603_1608Metric.step`);
-        expect(resolveModel('tscircuit:capacitor_0402')).toBe(`${KICAD_3DMODEL_BASE}Capacitor_SMD.3dshapes/C_0402_1005Metric.step`);
-        expect(resolveModel('tscircuit:inductor_0805')).toBe(`${KICAD_3DMODEL_BASE}Inductor_SMD.3dshapes/L_0805_2012Metric.step`);
+        expect(resolveModel('tscircuit:resistor_res0603')).toBe(
+            `${KICAD_3DMODEL_BASE}Resistor_SMD.3dshapes/R_0603_1608Metric.step`,
+        );
+        expect(resolveModel('tscircuit:capacitor_0402')).toBe(
+            `${KICAD_3DMODEL_BASE}Capacitor_SMD.3dshapes/C_0402_1005Metric.step`,
+        );
+        expect(resolveModel('tscircuit:inductor_0805')).toBe(
+            `${KICAD_3DMODEL_BASE}Inductor_SMD.3dshapes/L_0805_2012Metric.step`,
+        );
         // LEDs deliberately get the ICONIC 5mm domed THT body (founder decision, 5 Tem 2026): the SMD
         // block model reads as "some square chip", not an LED. Centroid-aligned (substituted package).
         expect(resolveModel('tscircuit:led_1206')).toBe(`${KICAD_3DMODEL_BASE}LED_THT.3dshapes/LED_D5.0mm.step`);
@@ -26,7 +32,9 @@ describe('resolveModel — tscircuit footprint id -> KiCad bundled 3D model', ()
     });
 
     it('accepts a bare id (no tscircuit: prefix) and honours a custom base', () => {
-        expect(resolveModel('chip_soic8', '/models/')).toBe('/models/Package_SO.3dshapes/SOIC-8_3.9x4.9mm_P1.27mm.step');
+        expect(resolveModel('chip_soic8', '/models/')).toBe(
+            '/models/Package_SO.3dshapes/SOIC-8_3.9x4.9mm_P1.27mm.step',
+        );
     });
 
     it('returns null for an unknown footprint (caller reports; never guesses a body)', () => {
@@ -89,7 +97,11 @@ describe('body alignment — solved from pad constellations, never assumed (5 Te
     // The old zero-offset injection put the body 2.54mm off — one leg outside its hole. The solver
     // must recover that translation, with the honest 0.06mm/pin pitch residual (2.6 vs 2.54).
     it('TO-220: recovers the pin1→center translation within tolerance', () => {
-        const ours = [{ n: '1', x: -2.6, y: 0 }, { n: '2', x: 0, y: 0 }, { n: '3', x: 2.6, y: 0 }];
+        const ours = [
+            { n: '1', x: -2.6, y: 0 },
+            { n: '2', x: 0, y: 0 },
+            { n: '3', x: 2.6, y: 0 },
+        ];
         const sol = solveAlignment(ours, KICAD_ANCHORS['TO-220-3_Vertical']!.pads)!;
         expect(sol.thetaDeg).toBe(0);
         expect(sol.dx).toBeCloseTo(-2.54, 2);
@@ -100,7 +112,10 @@ describe('body alignment — solved from pad constellations, never assumed (5 Te
     // tscircuit pinrow2 is HORIZONTAL (±1.27, 0); KiCad's PinHeader_1x02 is VERTICAL (0,0)-(0,2.54).
     // The old injection left the header body facing 90° the wrong way next to an empty hole.
     it('PinHeader 1x02: solves the 90° rotation + pin1 translation exactly', () => {
-        const ours = [{ n: '1', x: -1.27, y: 0 }, { n: '2', x: 1.27, y: 0 }];
+        const ours = [
+            { n: '1', x: -1.27, y: 0 },
+            { n: '2', x: 1.27, y: 0 },
+        ];
         const sol = solveAlignment(ours, KICAD_ANCHORS['PinHeader_1x02_P2.54mm_Vertical']!.pads)!;
         expect(sol.thetaDeg).toBe(-90);
         expect(sol.dx).toBeCloseTo(-1.27, 4);
@@ -111,7 +126,10 @@ describe('body alignment — solved from pad constellations, never assumed (5 Te
     it('SOIC-8: tscircuit and KiCad are both centered — near-zero transform', () => {
         // shrunk mock of a centered SOIC-8 (exact tscircuit pad coords vary; symmetry is the point)
         const theirs = KICAD_ANCHORS['SOIC-8_3.9x4.9mm_P1.27mm']!.pads;
-        const sol = solveAlignment(theirs.map((p) => ({ ...p })), theirs)!;
+        const sol = solveAlignment(
+            theirs.map((p) => ({ ...p })),
+            theirs,
+        )!;
         expect(sol.residual).toBeCloseTo(0, 6);
         expect(Math.hypot(sol.dx, sol.dy)).toBeCloseTo(0, 6);
     });

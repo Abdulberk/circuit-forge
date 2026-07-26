@@ -116,8 +116,8 @@ export function checkConnectivityParity(evaluated: TscElement[], expectations: P
     for (const el of evaluated) {
         if (el.type !== 'source_trace') continue;
         const members = [
-            ...(((el.connected_source_port_ids as string[] | undefined) ?? [])),
-            ...(((el.connected_source_net_ids as string[] | undefined) ?? [])),
+            ...((el.connected_source_port_ids as string[] | undefined) ?? []),
+            ...((el.connected_source_net_ids as string[] | undefined) ?? []),
         ];
         for (let i = 1; i < members.length; i++) uf.union(members[0]!, members[i]!);
     }

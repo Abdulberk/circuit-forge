@@ -2,17 +2,7 @@
  * Templates Controller
  * Provides template CRUD endpoints
  */
-import {
-    Controller,
-    Get,
-    Post,
-    Delete,
-    Body,
-    Param,
-    Query,
-    UseGuards,
-    ParseUUIDPipe,
-} from '@nestjs/common';
+import { Controller, Get, Post, Delete, Body, Param, Query, UseGuards, ParseUUIDPipe } from '@nestjs/common';
 import { ApiTags, ApiOperation, ApiBearerAuth, ApiQuery, ApiParam } from '@nestjs/swagger';
 
 import { CurrentUser } from '../auth/decorators/current-user.decorator';
@@ -25,7 +15,7 @@ import { TemplatesService } from './templates.service';
 @ApiTags('templates')
 @Controller('templates')
 export class TemplatesController {
-    constructor(private readonly templatesService: TemplatesService) { }
+    constructor(private readonly templatesService: TemplatesService) {}
 
     /**
      * List templates
@@ -39,10 +29,7 @@ export class TemplatesController {
     @ApiQuery({ name: 'tag', required: false, description: 'Filter by tag' })
     @ApiQuery({ name: 'limit', required: false, description: 'Max results (default 50)' })
     @ApiQuery({ name: 'offset', required: false, description: 'Offset for pagination' })
-    async findAll(
-        @CurrentUser() user: { id: string } | null,
-        @Query() query: ListTemplatesQueryDto,
-    ) {
+    async findAll(@CurrentUser() user: { id: string } | null, @Query() query: ListTemplatesQueryDto) {
         return this.templatesService.findAll(user?.id || null, query);
     }
 
@@ -53,10 +40,7 @@ export class TemplatesController {
     @UseGuards(JwtAuthGuard)
     @ApiBearerAuth()
     @ApiOperation({ summary: 'Create a new template' })
-    async create(
-        @CurrentUser() user: { id: string },
-        @Body() dto: CreateTemplateDto,
-    ) {
+    async create(@CurrentUser() user: { id: string }, @Body() dto: CreateTemplateDto) {
         return this.templatesService.create(user.id, dto);
     }
 
@@ -67,10 +51,7 @@ export class TemplatesController {
     @UseGuards(OptionalJwtAuthGuard)
     @ApiOperation({ summary: 'Get template by ID' })
     @ApiParam({ name: 'templateId', description: 'Template ID' })
-    async findOne(
-        @CurrentUser() user: { id: string } | null,
-        @Param('templateId', ParseUUIDPipe) templateId: string,
-    ) {
+    async findOne(@CurrentUser() user: { id: string } | null, @Param('templateId', ParseUUIDPipe) templateId: string) {
         return this.templatesService.findOne(templateId, user?.id || null);
     }
 
@@ -83,10 +64,7 @@ export class TemplatesController {
     @ApiBearerAuth()
     @ApiOperation({ summary: 'Delete a template' })
     @ApiParam({ name: 'templateId', description: 'Template ID' })
-    async delete(
-        @CurrentUser() user: { id: string },
-        @Param('templateId', ParseUUIDPipe) templateId: string,
-    ) {
+    async delete(@CurrentUser() user: { id: string }, @Param('templateId', ParseUUIDPipe) templateId: string) {
         return this.templatesService.delete(templateId, user.id);
     }
 }

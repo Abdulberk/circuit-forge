@@ -246,8 +246,7 @@ export class UsageService {
      */
     hasDesignQuota(): boolean {
         return (
-            this.limit('QUOTA_DESIGN_CONCURRENT_PER_ORG') !== null ||
-            this.limit('QUOTA_DESIGN_JOBS_PER_MONTH') !== null
+            this.limit('QUOTA_DESIGN_CONCURRENT_PER_ORG') !== null || this.limit('QUOTA_DESIGN_JOBS_PER_MONTH') !== null
         );
     }
 
@@ -314,8 +313,7 @@ export class UsageService {
      */
     hasLayoutQuota(): boolean {
         return (
-            this.limit('QUOTA_LAYOUT_CONCURRENT_PER_ORG') !== null ||
-            this.limit('QUOTA_LAYOUT_JOBS_PER_MONTH') !== null
+            this.limit('QUOTA_LAYOUT_CONCURRENT_PER_ORG') !== null || this.limit('QUOTA_LAYOUT_JOBS_PER_MONTH') !== null
         );
     }
 
@@ -375,7 +373,10 @@ export class UsageService {
     // ---------------------------------------------------------------- storage
 
     /** Uploaded model assets + spilled result payloads (the ACTUAL persisted bytes), org-wide. */
-    private async storageBytes(orgId: string, db: Db = this.prisma): Promise<{ assetBytes: number; resultBytes: number }> {
+    private async storageBytes(
+        orgId: string,
+        db: Db = this.prisma,
+    ): Promise<{ assetBytes: number; resultBytes: number }> {
         const [assets, results] = await Promise.all([
             db.asset.aggregate({ where: { orgId }, _sum: { sizeBytes: true } }),
             // Only S3-spilled results occupy object storage. Count metrics.storedResultBytes — the downsampled +
@@ -395,7 +396,12 @@ export class UsageService {
     }
 
     /** Gate an upload of `addBytes` against QUOTA_STORAGE_BYTES_PER_ORG (unset = unlimited). */
-    async assertStorageQuota(orgId: string, addBytes: number, db: Db = this.prisma, override?: OrgQuotaOverride | null): Promise<void> {
+    async assertStorageQuota(
+        orgId: string,
+        addBytes: number,
+        db: Db = this.prisma,
+        override?: OrgQuotaOverride | null,
+    ): Promise<void> {
         const ov = override === undefined ? await this.loadOverride(orgId, db) : override;
         const limit = this.effective('QUOTA_STORAGE_BYTES_PER_ORG', ov?.storageBytes);
         if (limit === null) return;
@@ -433,7 +439,11 @@ export class UsageService {
      * for the same org independent. Different orgs never contend. Keep `fn` to the cheap check+insert
      * only — never wrap slow work (netlisting, S3) so lock hold time stays in the millisecond range.
      */
-    private withOrgLock<T>(domain: string, orgId: string, fn: (tx: Prisma.TransactionClient) => Promise<T>): Promise<T> {
+    private withOrgLock<T>(
+        domain: string,
+        orgId: string,
+        fn: (tx: Prisma.TransactionClient) => Promise<T>,
+    ): Promise<T> {
         return this.prisma.$transaction(async (tx) => {
             await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtextextended(${`${domain}:${orgId}`}, 0))`;
             return fn(tx);
@@ -493,18 +503,19 @@ export class UsageService {
     /** The usage snapshot for an org (+ the requesting user's parts calls). Membership checked by the caller. */
     async getOrgUsage(orgId: string, userId: string): Promise<OrgUsage> {
         const period = this.period();
-        const [sim, concurrent, designJobs, designConcurrent, layoutJobs, layoutConcurrent, storage, partsRow] = await Promise.all([
-            this.simUsageThisMonth(orgId),
-            this.simConcurrent(orgId),
-            this.designJobsThisMonth(orgId),
-            this.designConcurrent(orgId),
-            this.layoutJobsThisMonth(orgId),
-            this.layoutConcurrent(orgId),
-            this.storageBytes(orgId),
-            this.prisma.usageRecord.findUnique({
-                where: { scope_scopeId_metric_period: this.partsKey(userId, period) },
-            }),
-        ]);
+        const [sim, concurrent, designJobs, designConcurrent, layoutJobs, layoutConcurrent, storage, partsRow] =
+            await Promise.all([
+                this.simUsageThisMonth(orgId),
+                this.simConcurrent(orgId),
+                this.designJobsThisMonth(orgId),
+                this.designConcurrent(orgId),
+                this.layoutJobsThisMonth(orgId),
+                this.layoutConcurrent(orgId),
+                this.storageBytes(orgId),
+                this.prisma.usageRecord.findUnique({
+                    where: { scope_scopeId_metric_period: this.partsKey(userId, period) },
+                }),
+            ]);
         return {
             period,
             sim: {
@@ -618,16 +629,17 @@ export class UsageService {
      *  user-scoped parts count. Not membership-gated (the admin guard authorizes the caller). */
     async getOrgUsageForAdmin(orgId: string): Promise<AdminOrgUsage> {
         const period = this.period();
-        const [sim, concurrent, designJobs, designConcurrent, layoutJobs, layoutConcurrent, storage, override] = await Promise.all([
-            this.simUsageThisMonth(orgId),
-            this.simConcurrent(orgId),
-            this.designJobsThisMonth(orgId),
-            this.designConcurrent(orgId),
-            this.layoutJobsThisMonth(orgId),
-            this.layoutConcurrent(orgId),
-            this.storageBytes(orgId),
-            this.loadOverride(orgId),
-        ]);
+        const [sim, concurrent, designJobs, designConcurrent, layoutJobs, layoutConcurrent, storage, override] =
+            await Promise.all([
+                this.simUsageThisMonth(orgId),
+                this.simConcurrent(orgId),
+                this.designJobsThisMonth(orgId),
+                this.designConcurrent(orgId),
+                this.layoutJobsThisMonth(orgId),
+                this.layoutConcurrent(orgId),
+                this.storageBytes(orgId),
+                this.loadOverride(orgId),
+            ]);
         return {
             orgId,
             period,

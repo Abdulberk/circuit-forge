@@ -117,14 +117,16 @@ export function makeLocalSim(scope: string): DesignRunSim {
                 // sim fault (a dead corner is counted errored). The catch below is a defensive net only.
                 // One ngspice permit for the whole batch — it spawns variants SERIALLY, so it uses ≤1 ngspice
                 // at a time; holding one permit for the batch correctly reflects that against the global cap.
-                const s = await ngspiceSem.run(() => runMonteCarloBatch({
-                    jobId,
-                    circuit,
-                    analysis: (analysisConfig ?? {}) as unknown as AnalysisConfig,
-                    criteria,
-                    ...(opts.n ? { n: opts.n } : {}),
-                    ...(opts.seed ? { seed: opts.seed } : {}),
-                }));
+                const s = await ngspiceSem.run(() =>
+                    runMonteCarloBatch({
+                        jobId,
+                        circuit,
+                        analysis: (analysisConfig ?? {}) as unknown as AnalysisConfig,
+                        criteria,
+                        ...(opts.n ? { n: opts.n } : {}),
+                        ...(opts.seed ? { seed: opts.seed } : {}),
+                    }),
+                );
                 store.set(jobId, {
                     status: 'SUCCEEDED',
                     statusMetrics: {

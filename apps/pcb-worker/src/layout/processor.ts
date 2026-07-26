@@ -49,7 +49,9 @@ export function createLayoutWorker(): Worker<LayoutJobPayload> {
         { connection, concurrency: config.PCB_CONCURRENCY, lockDuration: 300_000 },
     );
     worker.on('completed', (job) => logger.info({ jobId: job.data.jobId }, 'Layout job completed'));
-    worker.on('failed', (job, err) => logger.error({ jobId: job?.data.jobId, error: err.message }, 'Layout job failed'));
+    worker.on('failed', (job, err) =>
+        logger.error({ jobId: job?.data.jobId, error: err.message }, 'Layout job failed'),
+    );
     worker.on('error', (err) => logger.error({ error: err.message }, 'Layout worker error'));
     logger.info({ queue: config.PCB_QUEUE_NAME, concurrency: config.PCB_CONCURRENCY }, 'Layout worker started');
     return worker;
@@ -58,7 +60,13 @@ export function createLayoutWorker(): Worker<LayoutJobPayload> {
 /** Write the terminal LayoutJob row. Best-effort: a failed DB write is logged, not thrown. */
 async function finish(
     jobId: string,
-    data: { status: 'SUCCEEDED' | 'FAILED' | 'CANCELED'; result?: Prisma.InputJsonValue; glbKey?: string; gerbersKey?: string; errorMessage?: string },
+    data: {
+        status: 'SUCCEEDED' | 'FAILED' | 'CANCELED';
+        result?: Prisma.InputJsonValue;
+        glbKey?: string;
+        gerbersKey?: string;
+        errorMessage?: string;
+    },
 ): Promise<void> {
     try {
         await prisma.layoutJob.update({
@@ -73,7 +81,10 @@ async function finish(
             },
         });
     } catch (e) {
-        logger.error({ jobId, error: e instanceof Error ? e.message : String(e) }, 'Could not persist terminal layout-job row');
+        logger.error(
+            { jobId, error: e instanceof Error ? e.message : String(e) },
+            'Could not persist terminal layout-job row',
+        );
     }
 }
 
@@ -93,7 +104,10 @@ async function processLayoutJob(job: Job<LayoutJobPayload>): Promise<void> {
     }
 
     try {
-        const row = await prisma.layoutJob.findUnique({ where: { id: jobId }, select: { circuit: true, options: true } });
+        const row = await prisma.layoutJob.findUnique({
+            where: { id: jobId },
+            select: { circuit: true, options: true },
+        });
         if (!row) {
             await finish(jobId, { status: 'FAILED', errorMessage: 'Layout job row vanished after claim' });
             return;
@@ -105,9 +119,10 @@ async function processLayoutJob(job: Job<LayoutJobPayload>): Promise<void> {
 
         const freeroute = makeNativeFreeroutingRunner();
         const kicad = makeNativeKicad({ log: logger });
-        const rustPlace = options.placer === 'rust'
-            ? makeRustPlacementRunner({ binary: config.RUST_PLACER_PATH, timeoutMs: config.RUST_PLACER_TIMEOUT_MS })
-            : undefined;
+        const rustPlace =
+            options.placer === 'rust'
+                ? makeRustPlacementRunner({ binary: config.RUST_PLACER_PATH, timeoutMs: config.RUST_PLACER_TIMEOUT_MS })
+                : undefined;
 
         const q = await layoutCircuit(circuit, {
             router: 'quality',
@@ -121,9 +136,16 @@ async function processLayoutJob(job: Job<LayoutJobPayload>): Promise<void> {
         });
 
         if (!q.ok || !q.outputs) {
-            const errs = q.diagnostics.filter((d) => d.severity === 'error').map((d) => `${d.code} ${d.message}`).join(' | ');
+            const errs = q.diagnostics
+                .filter((d) => d.severity === 'error')
+                .map((d) => `${d.code} ${d.message}`)
+                .join(' | ');
             logger.warn({ jobId, errs }, 'layoutCircuit not ok');
-            await finish(jobId, { status: 'FAILED', errorMessage: (errs || 'layout failed').slice(0, 500), result: { diagnostics: q.diagnostics } as unknown as Prisma.InputJsonValue });
+            await finish(jobId, {
+                status: 'FAILED',
+                errorMessage: (errs || 'layout failed').slice(0, 500),
+                result: { diagnostics: q.diagnostics } as unknown as Prisma.InputJsonValue,
+            });
             return;
         }
 
@@ -169,7 +191,12 @@ async function processLayoutJob(job: Job<LayoutJobPayload>): Promise<void> {
             );
             await finish(jobId, {
                 status: 'SUCCEEDED',
-                result: { ...inspection, bodies: null, render: null, manufacturing: null } as unknown as Prisma.InputJsonValue,
+                result: {
+                    ...inspection,
+                    bodies: null,
+                    render: null,
+                    manufacturing: null,
+                } as unknown as Prisma.InputJsonValue,
             });
             return;
         }
@@ -190,10 +217,16 @@ async function processLayoutJob(job: Job<LayoutJobPayload>): Promise<void> {
         const pourInjected = q.diagnostics.some((d) => d.code === 'PCB032');
         const gndPlane = pourInjected && (gerbers.layers['B_Cu'] ?? '').includes('G36');
         if (pourInjected && !gndPlane) {
-            throw new Error('GND pour injected but the exported B.Cu gerber has no filled copper region — refusing to ship a board missing its advertised ground plane');
+            throw new Error(
+                'GND pour injected but the exported B.Cu gerber has no filled copper region — refusing to ship a board missing its advertised ground plane',
+            );
         }
         const gerbersKey = `layouts/${jobId}/manufacturing.json`;
-        await uploadFile(gerbersKey, JSON.stringify({ gerbers, bomCsv: q.outputs.bomCsv, pnpCsv: q.outputs.pnpCsv }), 'application/json');
+        await uploadFile(
+            gerbersKey,
+            JSON.stringify({ gerbers, bomCsv: q.outputs.bomCsv, pnpCsv: q.outputs.pnpCsv }),
+            'application/json',
+        );
 
         // 3D render is BEST-EFFORT: a GLB export failure (missing 3D model, timeout, ENOBUFS) must not sink an
         // already-manufacturable board — deliver the gerbers with the render omitted rather than failing the job.
@@ -206,7 +239,10 @@ async function processLayoutJob(job: Job<LayoutJobPayload>): Promise<void> {
             await uploadFile(glbKey, glb, 'model/gltf-binary');
             bodies = { injected: inj.injected, unmatched: inj.unmatched.map((u) => u.id) };
         } catch (e) {
-            logger.warn({ jobId, error: e instanceof Error ? e.message : String(e) }, 'Manufacturable board: 3D GLB render failed — delivering the fab bundle without it');
+            logger.warn(
+                { jobId, error: e instanceof Error ? e.message : String(e) },
+                'Manufacturable board: 3D GLB render failed — delivering the fab bundle without it',
+            );
         }
 
         const result: Prisma.InputJsonValue = {
@@ -216,9 +252,15 @@ async function processLayoutJob(job: Job<LayoutJobPayload>): Promise<void> {
             manufacturing: { gerbersKey, gndPlane },
         };
         await finish(jobId, { status: 'SUCCEEDED', result, glbKey, gerbersKey });
-        logger.info({ jobId, ms: Date.now() - t0, traces: q.stats.traces, manufacturable: true, rendered: !!glbKey }, 'Layout job succeeded (manufacturable)');
+        logger.info(
+            { jobId, ms: Date.now() - t0, traces: q.stats.traces, manufacturable: true, rendered: !!glbKey },
+            'Layout job succeeded (manufacturable)',
+        );
     } catch (e) {
         logger.error({ jobId, error: e instanceof Error ? e.message : String(e) }, 'Layout job threw');
-        await finish(jobId, { status: 'FAILED', errorMessage: (e instanceof Error ? e.message : String(e)).slice(0, 500) });
+        await finish(jobId, {
+            status: 'FAILED',
+            errorMessage: (e instanceof Error ? e.message : String(e)).slice(0, 500),
+        });
     }
 }

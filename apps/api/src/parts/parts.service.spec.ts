@@ -6,7 +6,14 @@ import { PartsService } from './parts.service';
 import type { CatalogPart, PartProvider } from './provider/part-provider.interface';
 
 /** Minimal real-ish part; the mapper is stubbed so its exact shape doesn't matter. */
-const PART = { mpn: 'WR06X1002FTL', supplierId: 'WR06X1002FTL', manufacturer: 'WALSIN', parameters: [], priceBreaks: [], supplier: 'tme' } as unknown as CatalogPart;
+const PART = {
+    mpn: 'WR06X1002FTL',
+    supplierId: 'WR06X1002FTL',
+    manufacturer: 'WALSIN',
+    parameters: [],
+    priceBreaks: [],
+    supplier: 'tme',
+} as unknown as CatalogPart;
 
 function config(): ConfigService {
     const v: Record<string, string> = { TME_PRODUCT_TTL_MS: '300000' };

@@ -167,18 +167,20 @@ export function shapeLayoutResult(evaluated: TscElement[], opts: ShapeOptions = 
     for (const e of of('source_port')) {
         const sp = str(e.source_port_id);
         if (!sp) continue;
-        const hints = Array.isArray(e.port_hints) ? (e.port_hints as unknown[]).filter((h) => typeof h === 'string') : [];
+        const hints = Array.isArray(e.port_hints)
+            ? (e.port_hints as unknown[]).filter((h) => typeof h === 'string')
+            : [];
         pinBySrcPort.set(sp, str(e.name) ?? (hints[hints.length - 1] as string) ?? sp);
     }
     const netByPcbPort = (pcbPortId: string | null): string | null => {
         if (!pcbPortId) return null;
         const sp = srcPortIdByPcbPort.get(pcbPortId);
-        return sp ? netBySrcPort.get(sp) ?? null : null;
+        return sp ? (netBySrcPort.get(sp) ?? null) : null;
     };
     const pinByPcbPort = (pcbPortId: string | null): string | null => {
         if (!pcbPortId) return null;
         const sp = srcPortIdByPcbPort.get(pcbPortId);
-        return sp ? pinBySrcPort.get(sp) ?? null : null;
+        return sp ? (pinBySrcPort.get(sp) ?? null) : null;
     };
 
     // component id + designator resolver keyed by pcb_component_id
@@ -200,8 +202,10 @@ export function shapeLayoutResult(evaluated: TscElement[], opts: ShapeOptions = 
         const h = num(e.height);
         if (!pid || !c || w === null || h === null) continue;
         courtyardByPcbComp.set(pid, [
-            { x: r3(c.x - w / 2), y: r3(c.y - h / 2) }, { x: r3(c.x + w / 2), y: r3(c.y - h / 2) },
-            { x: r3(c.x + w / 2), y: r3(c.y + h / 2) }, { x: r3(c.x - w / 2), y: r3(c.y + h / 2) },
+            { x: r3(c.x - w / 2), y: r3(c.y - h / 2) },
+            { x: r3(c.x + w / 2), y: r3(c.y - h / 2) },
+            { x: r3(c.x + w / 2), y: r3(c.y + h / 2) },
+            { x: r3(c.x - w / 2), y: r3(c.y + h / 2) },
         ]);
     }
     for (const e of of('pcb_courtyard_outline')) {
@@ -215,12 +219,17 @@ export function shapeLayoutResult(evaluated: TscElement[], opts: ShapeOptions = 
     const bw = (boardEl && num(boardEl.width)) ?? 0;
     const bh = (boardEl && num(boardEl.height)) ?? 0;
     const bc = (boardEl && pt(boardEl.center)) ?? { x: 0, y: 0 };
-    const explicitOutline = boardEl && Array.isArray(boardEl.outline) ? (boardEl.outline as unknown[]).map(pt).filter((p): p is Pt => !!p) : [];
+    const explicitOutline =
+        boardEl && Array.isArray(boardEl.outline)
+            ? (boardEl.outline as unknown[]).map(pt).filter((p): p is Pt => !!p)
+            : [];
     const outline = explicitOutline.length
         ? dedupe(explicitOutline)
         : [
-              { x: r3(bc.x - bw / 2), y: r3(bc.y - bh / 2) }, { x: r3(bc.x + bw / 2), y: r3(bc.y - bh / 2) },
-              { x: r3(bc.x + bw / 2), y: r3(bc.y + bh / 2) }, { x: r3(bc.x - bw / 2), y: r3(bc.y + bh / 2) },
+              { x: r3(bc.x - bw / 2), y: r3(bc.y - bh / 2) },
+              { x: r3(bc.x + bw / 2), y: r3(bc.y - bh / 2) },
+              { x: r3(bc.x + bw / 2), y: r3(bc.y + bh / 2) },
+              { x: r3(bc.x - bw / 2), y: r3(bc.y + bh / 2) },
           ];
     const numLayers = (boardEl && num(boardEl.num_layers)) ?? 2;
     const layers = numLayers >= 2 ? [{ name: 'top' }, { name: 'bottom' }] : [{ name: 'top' }];
@@ -253,7 +262,7 @@ export function shapeLayoutResult(evaluated: TscElement[], opts: ShapeOptions = 
         const comp = compRefByPcbComp.get(str(e.pcb_component_id) ?? '');
         pads.push({
             id: str(e.pcb_smtpad_id) ?? `smt_${pads.length}`,
-            componentId: comp?.id ?? (str(e.pcb_component_id) ?? ''),
+            componentId: comp?.id ?? str(e.pcb_component_id) ?? '',
             pin: pinByPcbPort(pcbPort),
             net: netByPcbPort(pcbPort),
             x: r3(num(e.x) ?? 0),
@@ -268,10 +277,12 @@ export function shapeLayoutResult(evaluated: TscElement[], opts: ShapeOptions = 
     for (const e of of('pcb_plated_hole')) {
         const pcbPort = str(e.pcb_port_id);
         const comp = compRefByPcbComp.get(str(e.pcb_component_id) ?? '');
-        const layersArr = Array.isArray(e.layers) ? (e.layers as unknown[]).filter((l): l is string => typeof l === 'string') : ['top', 'bottom'];
+        const layersArr = Array.isArray(e.layers)
+            ? (e.layers as unknown[]).filter((l): l is string => typeof l === 'string')
+            : ['top', 'bottom'];
         pads.push({
             id: str(e.pcb_plated_hole_id) ?? `pth_${pads.length}`,
-            componentId: comp?.id ?? (str(e.pcb_component_id) ?? ''),
+            componentId: comp?.id ?? str(e.pcb_component_id) ?? '',
             pin: pinByPcbPort(pcbPort),
             net: netByPcbPort(pcbPort),
             x: r3(num(e.x) ?? 0),
@@ -287,12 +298,15 @@ export function shapeLayoutResult(evaluated: TscElement[], opts: ShapeOptions = 
     // ---- traces: split the route into per-layer polylines (a trace can change layer through a via)
     const traces: LayoutTrace[] = of('pcb_trace').map((e) => {
         const connSrcNet = str(e.connection_name); // present on the fast route; absent after freerouting splice
-        const net = connSrcNet ? netNameBySrcNet.get(connSrcNet) ?? null : null;
+        const net = connSrcNet ? (netNameBySrcNet.get(connSrcNet) ?? null) : null;
         const route = Array.isArray(e.route) ? (e.route as Array<Record<string, unknown>>) : [];
         const segments: LayoutTrace['segments'] = [];
         let cur: LayoutTrace['segments'][number] | null = null;
         for (const p of route) {
-            if (str(p.route_type) === 'via') { cur = null; continue; } // layer transition — break the polyline
+            if (str(p.route_type) === 'via') {
+                cur = null;
+                continue;
+            } // layer transition — break the polyline
             const x = num(p.x);
             const y = num(p.y);
             if (x === null || y === null) continue;
@@ -316,7 +330,7 @@ export function shapeLayoutResult(evaluated: TscElement[], opts: ShapeOptions = 
     for (const t of of('pcb_trace')) {
         const id = str(t.pcb_trace_id);
         const cn = str(t.connection_name);
-        if (id) netByTraceId.set(id, cn ? netNameBySrcNet.get(cn) ?? null : null);
+        if (id) netByTraceId.set(id, cn ? (netNameBySrcNet.get(cn) ?? null) : null);
     }
     const vias: LayoutVia[] = of('pcb_via').map((e, i) => ({
         id: str(e.pcb_via_id) ?? `via_${i}`,

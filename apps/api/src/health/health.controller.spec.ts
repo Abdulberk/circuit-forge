@@ -23,7 +23,9 @@ function makeController(fail: { db?: Error; redis?: Error; s3?: Error } = {}) {
 }
 
 /** Invoke readiness() and return either the resolved body or the thrown exception. */
-async function callReadiness(controller: HealthController): Promise<{ ok: boolean; body: any; exc?: ServiceUnavailableException }> {
+async function callReadiness(
+    controller: HealthController,
+): Promise<{ ok: boolean; body: any; exc?: ServiceUnavailableException }> {
     try {
         const body = await controller.readiness();
         return { ok: true, body };
@@ -115,8 +117,8 @@ describe('HealthController.readiness', () => {
         const { controller, prisma, readinessService } = makeController();
         await callReadiness(controller);
 
-        expect((prisma.$queryRaw as jest.Mock)).toHaveBeenCalledTimes(1);
-        expect((readinessService.pingRedis as jest.Mock)).toHaveBeenCalledTimes(1);
-        expect((readinessService.pingS3 as jest.Mock)).toHaveBeenCalledTimes(1);
+        expect(prisma.$queryRaw as jest.Mock).toHaveBeenCalledTimes(1);
+        expect(readinessService.pingRedis as jest.Mock).toHaveBeenCalledTimes(1);
+        expect(readinessService.pingS3 as jest.Mock).toHaveBeenCalledTimes(1);
     });
 });

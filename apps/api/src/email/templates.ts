@@ -107,7 +107,9 @@ export function passwordResetEmail(link: string): EmailContent {
         text: `We received a request to reset your password. If it was you, choose a new one:\n${link}\n(This link expires in 1 hour. If it wasn't you, ignore this email.)`,
         html: layout({
             heading: `Reset your password`,
-            paragraphs: [`We received a request to reset your ${BRAND} password. If it was you, choose a new one below.`],
+            paragraphs: [
+                `We received a request to reset your ${BRAND} password. If it was you, choose a new one below.`,
+            ],
             button: { label: 'Choose a new password', url: link },
             footnote: "This link expires in 1 hour. If it wasn't you, you can safely ignore this email.",
         }),
