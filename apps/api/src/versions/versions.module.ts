@@ -2,10 +2,12 @@
  * Versions Module
  */
 import { Module } from '@nestjs/common';
+
+import { ProjectsModule } from '../projects/projects.module';
+
+import { BomService } from './bom.service';
 import { VersionsController } from './versions.controller';
 import { VersionsService } from './versions.service';
-import { BomService } from './bom.service';
-import { ProjectsModule } from '../projects/projects.module';
 
 @Module({
     imports: [ProjectsModule],

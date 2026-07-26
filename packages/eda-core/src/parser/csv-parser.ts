@@ -153,7 +153,7 @@ export function parseRawAscii(
     const lines = rawContent.split('\n');
 
     let inData = false;
-    let variables: string[] = [];
+    const variables: string[] = [];
     const dataBlocks: number[][] = [];
 
     for (const line of lines) {

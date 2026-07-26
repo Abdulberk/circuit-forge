@@ -6,8 +6,9 @@
  */
 import { Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
-import { requireTmeConfig, type TmeConfig } from './tme.config';
+
 import { TmeApiError, TmeNetworkError } from './tme-errors';
+import { requireTmeConfig, type TmeConfig } from './tme.config';
 
 const REFRESH_AHEAD_MS = 30_000;
 

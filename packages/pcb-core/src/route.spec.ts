@@ -1,5 +1,5 @@
-import { applyFabRulesToDsn, applyPerNetWidths, stripRouting, enlargeBoard, findFullyUnroutedNets, fixPlaceRotations } from './route';
 import { JLC_FAB_PROFILE } from './fab-profile';
+import { applyFabRulesToDsn, applyPerNetWidths, stripRouting, enlargeBoard, findFullyUnroutedNets, fixPlaceRotations } from './route';
 
 // applyFabRulesToDsn is a pure string transform (no ESM dsn-converter), so it lives in jest; exportDsn
 // and mergeSes exercise dsn-converter and are covered by the `pnpm test:layout` harness instead.

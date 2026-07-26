@@ -1,8 +1,8 @@
 /**
  * Simulation DTOs
  */
-import { IsObject, IsString, IsArray, IsOptional, ArrayMaxSize } from 'class-validator';
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
+import { IsObject, IsString, IsArray, IsOptional, ArrayMaxSize } from 'class-validator';
 
 export class CreateSimulationDto {
     @ApiProperty({ description: 'Analysis configuration' })

@@ -1,6 +1,7 @@
+import type { CircuitJson } from '@circuit-forge/eda-core';
+
 import { placeParts, computeHpwl, rot, type PlacementInput, type PlaceablePart } from './placement';
 import { buildNetWeights, deriveExtraEdges } from './placement-bridge';
-import type { CircuitJson } from '@circuit-forge/eda-core';
 
 const R = (id: string, net1: string, net2: string): PlaceablePart => ({
     id, w: 1.6, h: 0.8, role: 'part',

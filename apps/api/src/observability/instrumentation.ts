@@ -13,6 +13,7 @@
  * the SDK or exports test telemetry. The unit spec exercises telemetry.ts directly instead.
  */
 import * as path from 'path';
+
 import { startTelemetry } from './telemetry';
 
 if (process.env.NODE_ENV !== 'test') {

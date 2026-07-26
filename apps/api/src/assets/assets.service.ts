@@ -2,7 +2,9 @@
  * Assets Service
  * Handles presigned URL generation and asset management
  */
-import { Injectable, NotFoundException, BadRequestException, Logger } from '@nestjs/common';
+import { randomUUID } from 'crypto';
+
+
 import {
     S3Client,
     PutObjectCommand,
@@ -11,12 +13,16 @@ import {
     DeleteObjectCommand,
 } from '@aws-sdk/client-s3';
 import { getSignedUrl } from '@aws-sdk/s3-request-presigner';
-import { PrismaService } from '../prisma/prisma.service';
-import { OrgsService } from '../orgs/orgs.service';
-import { UsageService } from '../usage/usage.service';
+import { Injectable, NotFoundException, BadRequestException, Logger } from '@nestjs/common';
+import { Prisma, type AssetType } from '@prisma/client';
+
 import { paginated } from '../common/dto/pagination.dto';
+import { OrgsService } from '../orgs/orgs.service';
+import { PrismaService } from '../prisma/prisma.service';
+import { UsageService } from '../usage/usage.service';
+
 import { PresignUploadDto, CommitAssetDto } from './dto';
-import { randomUUID } from 'crypto';
+
 
 @Injectable()
 export class AssetsService {
@@ -141,10 +147,10 @@ export class AssetsService {
     /**
      * List assets for an organization
      */
-    async listAssets(orgId: string, userId: string, page: { limit: number; offset: number }, type?: string) {
+    async listAssets(orgId: string, userId: string, page: { limit: number; offset: number }, type?: AssetType) {
         await this.orgsService.requireMembership(orgId, userId);
 
-        const where: any = { orgId };
+        const where: Prisma.AssetWhereInput = { orgId };
         if (type) {
             where.type = type;
         }

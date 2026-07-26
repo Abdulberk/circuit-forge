@@ -7,11 +7,12 @@
  */
 import { Injectable, NotFoundException, ForbiddenException, BadRequestException, ConflictException } from '@nestjs/common';
 import { OrgRole } from '@prisma/client';
-import { PrismaService } from '../prisma/prisma.service';
-import { EmailService } from '../email/email.service';
+
 import { AuditService } from '../common/audit/audit.service';
-import { paginated, type Paginated } from '../common/dto/pagination.dto';
 import { newLinkToken, hashLinkToken, normalizeEmail } from '../common/crypto/link-token';
+import { paginated, type Paginated } from '../common/dto/pagination.dto';
+import { EmailService } from '../email/email.service';
+import { PrismaService } from '../prisma/prisma.service';
 
 const INVITE_TTL_MS = 7 * 24 * 60 * 60 * 1000; // 7 days
 

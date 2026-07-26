@@ -12,13 +12,12 @@
  * per-call temp dir with a hard timeout + SIGKILL, the output is size-capped, and NO untrusted `.include`
  * files are ever written (only vetted generic model bodies attached by `attachGenericModels`).
  */
-import { Injectable } from '@nestjs/common';
-import { ConfigService } from '@nestjs/config';
 import { spawn, type ChildProcess } from 'child_process';
+import { randomUUID } from 'crypto';
 import { promises as fs } from 'fs';
 import * as os from 'os';
 import * as path from 'path';
-import { randomUUID } from 'crypto';
+
 import {
     safeValidateCircuitJson,
     runErc,
@@ -40,6 +39,9 @@ import {
     type ConvergenceReport,
     type SimMeasurement,
 } from '@circuit-forge/eda-core';
+import { Injectable } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
+
 import { attachGenericModels } from './model-resolution';
 import { sandboxedCommand, resolveSandboxConfig, type SandboxConfig } from './sandbox';
 

@@ -8,13 +8,14 @@
  * longer abandons in-flight work). This service owns only the row lifecycle + the cancel signal; it does
  * NOT run the loop.
  */
-import { Injectable, NotFoundException, ServiceUnavailableException, Logger } from '@nestjs/common';
 import { InjectQueue } from '@nestjs/bullmq';
-import { Queue } from 'bullmq';
-import { type DesignJobStatus } from '@prisma/client';
+import { Injectable, NotFoundException, ServiceUnavailableException, Logger } from '@nestjs/common';
 import { propagation, context as otelContext } from '@opentelemetry/api';
-import { PrismaService } from '../prisma/prisma.service';
+import { type DesignJobStatus } from '@prisma/client';
+import { Queue } from 'bullmq';
+
 import { OrgsService } from '../orgs/orgs.service';
+import { PrismaService } from '../prisma/prisma.service';
 import { UsageService } from '../usage/usage.service';
 
 export interface DesignJobInput {

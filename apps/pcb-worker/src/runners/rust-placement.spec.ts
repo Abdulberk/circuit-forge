@@ -2,7 +2,9 @@ import { execFile } from 'node:child_process';
 import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
+
 import type { PlacementInput, PlacementOutput } from '@circuit-forge/pcb-core';
+
 import { makeRustPlacementRunner } from './rust-placement';
 
 jest.mock('node:child_process', () => ({ execFile: jest.fn() }));

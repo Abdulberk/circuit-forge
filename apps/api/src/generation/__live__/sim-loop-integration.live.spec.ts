@@ -23,15 +23,16 @@ jest.mock('@anthropic-ai/sdk', () => ({
 }));
 
 import { ConfigService } from '@nestjs/config';
-import { GenerationService } from '../generation.service';
-import { CatalogGroundingService } from '../catalog-grounding.service';
-import { CircuitSimulatorService } from '../circuit-simulator.service';
-import { PartsService } from '../../parts/parts.service';
+
 import { TtlCache } from '../../parts/cache/ttl-cache';
 import { ComponentMapper } from '../../parts/mappers/component-mapper';
+import { PartsService } from '../../parts/parts.service';
+import { TmeProvider } from '../../parts/provider/tme.provider';
 import { TmeClient } from '../../parts/tme/tme-client';
 import { TmeTokenCache } from '../../parts/tme/tme-token-cache';
-import { TmeProvider } from '../../parts/provider/tme.provider';
+import { CatalogGroundingService } from '../catalog-grounding.service';
+import { CircuitSimulatorService } from '../circuit-simulator.service';
+import { GenerationService } from '../generation.service';
 
 const GATE = process.env.SIMLOOP_LIVE === '1';
 

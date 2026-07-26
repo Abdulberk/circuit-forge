@@ -1,17 +1,21 @@
 /**
  * Assets DTOs
  */
-import { IsString, IsInt, Min, Max, IsHash, IsOptional } from 'class-validator';
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
+import { AssetType } from '@prisma/client';
+import { IsString, IsInt, Min, Max, IsHash, IsOptional, IsEnum } from 'class-validator';
+
 import { PaginationQueryDto } from '../../common/dto/pagination.dto';
 
 /** List query: pagination (limit/offset) + an optional type filter. Extends the shared pagination DTO so all
  *  three params are whitelisted together (the global forbidNonWhitelisted pipe would 400 a stray query). */
 export class AssetListQueryDto extends PaginationQueryDto {
-    @ApiPropertyOptional({ description: 'Filter by asset type (e.g. SPICE_MODEL)' })
-    @IsString()
+    // Validated against the Prisma enum, not a bare string: an unrecognised value used to reach Prisma
+    // and surface as a 500 instead of a clean 400. The `any` on the service's where-clause hid this.
+    @ApiPropertyOptional({ description: 'Filter by asset type', enum: AssetType })
+    @IsEnum(AssetType)
     @IsOptional()
-    type?: string;
+    type?: AssetType;
 }
 
 export class PresignUploadDto {

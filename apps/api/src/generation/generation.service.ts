@@ -4,6 +4,15 @@
  * Generate / edit / explain circuits via the (server-side only) llm-core. The provider API key
  * lives in LLM_API_KEY and is NEVER exposed to clients.
  */
+import { safeValidateCircuitJson, type CircuitJson } from '@circuit-forge/eda-core';
+import {
+    generateCircuit,
+    editCircuit,
+    explainCircuit,
+    CircuitGenerationError,
+    type GenerateCircuitConfig,
+    type GenerateCircuitResult,
+} from '@circuitforge/llm-core';
 import {
     Injectable,
     Logger,
@@ -13,18 +22,10 @@ import {
     UnprocessableEntityException,
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
-import {
-    generateCircuit,
-    editCircuit,
-    explainCircuit,
-    CircuitGenerationError,
-    type GenerateCircuitConfig,
-    type GenerateCircuitResult,
-} from '@circuitforge/llm-core';
-import { safeValidateCircuitJson, type CircuitJson } from '@circuit-forge/eda-core';
+
 import { CatalogGroundingService } from './catalog-grounding.service';
-import { attachGenericModels } from './model-resolution';
 import { GenerateCircuitDto, EditCircuitDto, ExplainCircuitDto } from './dto';
+import { attachGenericModels } from './model-resolution';
 
 @Injectable()
 export class GenerationService {

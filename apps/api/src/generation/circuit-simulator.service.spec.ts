@@ -7,8 +7,10 @@
  *     pnpm --filter api exec jest circuit-simulator
  */
 import { existsSync } from 'fs';
-import type { ConfigService } from '@nestjs/config';
+
 import type { CircuitJson } from '@circuit-forge/eda-core';
+import type { ConfigService } from '@nestjs/config';
+
 import { CircuitSimulatorService } from './circuit-simulator.service';
 import { VerificationService } from './verification.service';
 

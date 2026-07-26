@@ -4,8 +4,9 @@
  * design-spec-satisfaction suite (mocked SDK + sim); here we only lock the NEW abort hook, which fires at the
  * first checkpoint BEFORE any LLM/sim call — so it needs no Anthropic SDK mock.
  */
-import { runDesignLoop, DesignAbortedError, specCloseness, selectFinalists, screenSpecsMet, classifyRobustness, preserveMetricOverlays, pollBackoffMs, type DesignDeps, type ScreenResult } from './design-core';
 import type { AssertionResult, AcceptanceCriterion, CircuitJson } from '@circuit-forge/eda-core';
+
+import { runDesignLoop, DesignAbortedError, specCloseness, selectFinalists, screenSpecsMet, classifyRobustness, preserveMetricOverlays, pollBackoffMs, type DesignDeps, type ScreenResult } from './design-core';
 
 const A = (over: Partial<AssertionResult>): AssertionResult => ({
     label: 'x', probe: 'out', metric: 'final', op: 'approx', target: 5, tol: 0.5, actual: 5, pass: true, distance: 0, detail: '', ...over,

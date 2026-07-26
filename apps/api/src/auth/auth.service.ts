@@ -1,6 +1,8 @@
 /**
  * Auth Service
  */
+import { randomBytes, randomUUID, createHash } from 'crypto';
+
 import {
     Injectable,
     UnauthorizedException,
@@ -11,13 +13,13 @@ import {
     HttpStatus,
     Logger,
 } from '@nestjs/common';
-import { JwtService } from '@nestjs/jwt';
 import { ConfigService } from '@nestjs/config';
-import { randomBytes, randomUUID, createHash } from 'crypto';
-import * as argon2 from 'argon2';
+import { JwtService } from '@nestjs/jwt';
 import { Prisma } from '@prisma/client';
-import { PrismaService } from '../prisma/prisma.service';
+import * as argon2 from 'argon2';
+
 import { EmailService } from '../email/email.service';
+import { PrismaService } from '../prisma/prisma.service';
 
 /** Request metadata threaded from the controller into audit rows / session records. */
 export interface AuthContext {

@@ -6,6 +6,7 @@
  * loop's framework-free errors onto HTTP exceptions. The synchronous path never aborts mid-loop
  * (isAborted → false); the async queue worker supplies a real abort check.
  */
+import { runDesignLoop, DesignAbortedError, CircuitGenerationError } from '@circuitforge/llm-core';
 import {
     Injectable,
     Logger,
@@ -15,8 +16,9 @@ import {
     UnprocessableEntityException,
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
-import { runDesignLoop, DesignAbortedError, CircuitGenerationError } from '@circuitforge/llm-core';
+
 import { SimulationService } from '../simulation/simulation.service';
+
 import { CatalogGroundingService } from './catalog-grounding.service';
 import { DesignCircuitDto } from './dto';
 

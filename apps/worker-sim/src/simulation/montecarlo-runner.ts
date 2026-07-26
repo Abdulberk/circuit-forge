@@ -12,8 +12,6 @@
  *     spec failure — we can't tell a solver hiccup from a genuinely-broken corner, so we exclude it (and the
  *     `errored` count surfaces it). Reuses the IDENTICAL sandboxed executeNgspice as a normal sim.
  */
-import { config } from '../config';
-import { logger } from '../logger';
 import {
     runMonteCarlo,
     extraProbesForCriteria,
@@ -22,6 +20,10 @@ import {
     type AcceptanceCriterion,
     type MonteCarloYield,
 } from '@circuit-forge/eda-core';
+
+import { config } from '../config';
+import { logger } from '../logger';
+
 import { withVariantJobDir } from './job-dir';
 
 export interface MonteCarloBatchInput {

@@ -7,8 +7,11 @@
  */
 import * as fs from 'fs/promises';
 import * as path from 'path';
-import { config } from '../config';
+
 import type { AnalysisConfig } from '@circuit-forge/eda-core';
+
+import { config } from '../config';
+
 import { makeVariantRunner } from './variant-runner';
 
 /** The per-variant ngspice runner shape (stale-CSV safety + OOM guard + THD/gain fold) — see variant-runner.ts. */

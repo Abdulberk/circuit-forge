@@ -16,6 +16,7 @@
  * real, reliable check rather than a guess.
  */
 import type { CircuitJson, Component } from '../types/circuit';
+
 import type { DeterminedEntry } from './manifest';
 
 // ---------------------------------------------------------------- orientation role-consistency

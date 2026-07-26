@@ -1,18 +1,20 @@
 /**
  * Simulation Service
  */
-import { Injectable, NotFoundException, BadRequestException, Logger } from '@nestjs/common';
-import { InjectQueue } from '@nestjs/bullmq';
-import { Queue } from 'bullmq';
-import { Prisma } from '@prisma/client';
 import { S3Client, GetObjectCommand } from '@aws-sdk/client-s3';
-import { PrismaService } from '../prisma/prisma.service';
-import { VersionsService } from '../versions/versions.service';
-import { OrgsService } from '../orgs/orgs.service';
-import { UsageService } from '../usage/usage.service';
 import { generateNetlist, safeValidateCircuitJson, safeValidateAnalysisConfig, downsampleResult } from '@circuit-forge/eda-core';
 import type { CircuitJson, AnalysisConfig, SimulationResult, AcceptanceCriterion, CornerSpec, TempCornerSpec, SupplyCornerSpec } from '@circuit-forge/eda-core';
+import { InjectQueue } from '@nestjs/bullmq';
+import { Injectable, NotFoundException, BadRequestException, Logger } from '@nestjs/common';
 import { propagation, context as otelContext } from '@opentelemetry/api';
+import { Prisma } from '@prisma/client';
+import { Queue } from 'bullmq';
+
+import { OrgsService } from '../orgs/orgs.service';
+import { PrismaService } from '../prisma/prisma.service';
+import { UsageService } from '../usage/usage.service';
+import { VersionsService } from '../versions/versions.service';
+
 
 /** Capture the current trace context as a W3C carrier to ride on the queued job, so the worker's
  *  processing span links back to this API request (one end-to-end trace). Empty when telemetry is off. */
@@ -454,7 +456,7 @@ export class SimulationService {
         for (const a of assets) {
             const filename = a.s3Key.split('/').pop() ?? '';
             // Must be a bare, sandbox-safe filename — it is written into the job dir and `.include`d.
-            if (!/^[A-Za-z0-9_.\-]+$/.test(filename) || filename.includes('..')) {
+            if (!/^[A-Za-z0-9_.-]+$/.test(filename) || filename.includes('..')) {
                 throw new BadRequestException(`Model asset has an unsafe filename: "${filename}"`);
             }
             // Never let an uploaded file clobber the worker's own job files (the runner writes the
@@ -569,7 +571,7 @@ export class SimulationService {
      * Returns the parsed SimulationResult ({ meta, series }), or null if it cannot be
      * fetched/parsed — callers already treat a null result as "data unavailable".
      */
-    private async fetchResultFromS3(key: string): Promise<unknown | null> {
+    private async fetchResultFromS3(key: string): Promise<unknown> {
         try {
             const response = await this.s3.send(
                 new GetObjectCommand({ Bucket: this.bucket, Key: key }),

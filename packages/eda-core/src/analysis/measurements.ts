@@ -4,6 +4,7 @@
  * which is why it lives in eda-core rather than the API.
  */
 import type { DataSeries } from '../types/simulation';
+
 import { cutoffFrequency, isAcMagnitudeSeries } from './ac-measurements';
 
 /** One node's behaviour over the run, distilled to a few numbers the model can reason about. */

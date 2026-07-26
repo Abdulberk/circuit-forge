@@ -3,12 +3,13 @@
  * to freerouting + kicad-cli which the pcb-runtime image provides). Mirrors worker-sim's lifecycle:
  * connect Prisma → start the worker → drain in-flight work on SIGTERM/SIGINT.
  */
+import type { Worker } from 'bullmq';
+
+import { config } from './config';
 import { createLayoutWorker } from './layout/processor';
 import { startLayoutReaper } from './layout/reaper';
-import { prisma, disconnectPrisma } from './prisma/client';
 import { logger } from './logger';
-import { config } from './config';
-import type { Worker } from 'bullmq';
+import { prisma, disconnectPrisma } from './prisma/client';
 
 let worker: Worker | null = null;
 let reaper: { stop: () => Promise<void> } | null = null;
@@ -49,8 +50,11 @@ async function main(): Promise<void> {
     // gap. Idempotent + conditional, so running it on every worker instance is safe.
     reaper = startLayoutReaper();
 
-    process.on('SIGTERM', () => shutdown('SIGTERM'));
-    process.on('SIGINT', () => shutdown('SIGINT'));
+    // `void`: shutdown() owns its own error handling end-to-end (try/catch → logger → process.exit),
+    // so there is nothing for the caller to await or catch. Marking it explicitly keeps the promise
+    // from being silently discarded by a void-returning signal handler.
+    process.on('SIGTERM', () => void shutdown('SIGTERM'));
+    process.on('SIGINT', () => void shutdown('SIGINT'));
     logger.info('pcb-worker is running');
 }
 

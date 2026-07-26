@@ -1,5 +1,6 @@
-import { TmeProvider } from './tme.provider';
 import type { TmeClient } from '../tme/tme-client';
+
+import { TmeProvider } from './tme.provider';
 
 /** Minimal TmeClient stub exposing just what TmeProvider.getManufacturers touches. */
 function makeClient(

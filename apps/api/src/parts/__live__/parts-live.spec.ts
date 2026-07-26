@@ -9,13 +9,15 @@
  */
 import { readFileSync } from 'fs';
 import { resolve } from 'path';
-import { ConfigService } from '@nestjs/config';
+
 import { NotFoundException } from '@nestjs/common';
-import { TmeTokenCache } from '../tme/tme-token-cache';
-import { TmeClient } from '../tme/tme-client';
-import { TmeProvider } from '../provider/tme.provider';
+import { ConfigService } from '@nestjs/config';
+
 import { ComponentMapper } from '../mappers/component-mapper';
 import type { CatalogPart } from '../provider/part-provider.interface';
+import { TmeProvider } from '../provider/tme.provider';
+import { TmeClient } from '../tme/tme-client';
+import { TmeTokenCache } from '../tme/tme-token-cache';
 
 const LIVE = process.env.TME_LIVE === '1';
 

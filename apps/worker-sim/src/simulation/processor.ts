@@ -2,23 +2,27 @@
  * Simulation Job Processor
  * BullMQ processor for handling simulation jobs
  */
-import { Job, Worker } from 'bullmq';
-import Redis from 'ioredis';
-import { prisma } from '../prisma/client';
-import { config } from '../config';
-import { logger } from '../logger';
-import { runSimulation, type SimulationJobResult } from './runner';
-import { runMonteCarloBatch } from './montecarlo-runner';
-import { runCornerBatch } from './corner-runner';
-import { runTempCornerBatch } from './temp-corner-runner';
-import { runSupplyCornerBatch } from './supply-corner-runner';
-import { classifyJobOutcome, isFinalAttempt, deriveFailureStatus, buildFailureMetrics, buildSuccessMetrics } from './outcome';
-import { downloadFile, uploadJsonResult } from '../storage/s3-client';
 import { downsampleResult } from '@circuit-forge/eda-core';
 import type { CircuitJson, AnalysisConfig, AcceptanceCriterion, CornerSpec, TempCornerSpec, SupplyCornerSpec } from '@circuit-forge/eda-core';
-import { Prisma } from '@prisma/client';
-import { recordSim } from '../observability/telemetry';
 import { propagation, context as otelContext, trace, SpanStatusCode } from '@opentelemetry/api';
+import { Prisma } from '@prisma/client';
+import { Job, Worker } from 'bullmq';
+import Redis from 'ioredis';
+
+import { config } from '../config';
+import { logger } from '../logger';
+import { recordSim } from '../observability/telemetry';
+import { prisma } from '../prisma/client';
+import { downloadFile, uploadJsonResult } from '../storage/s3-client';
+
+import { runCornerBatch } from './corner-runner';
+import { runMonteCarloBatch } from './montecarlo-runner';
+import { classifyJobOutcome, isFinalAttempt, deriveFailureStatus, buildFailureMetrics, buildSuccessMetrics } from './outcome';
+import { runSimulation, type SimulationJobResult } from './runner';
+import { runSupplyCornerBatch } from './supply-corner-runner';
+import { runTempCornerBatch } from './temp-corner-runner';
+
+
 
 /**
  * Thrown to push an INFRA failure back to BullMQ for retry (or final failure). By the time it's thrown,

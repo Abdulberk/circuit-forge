@@ -2,8 +2,8 @@
  * ERC (Electrical Rule Check) Tests
  */
 import { runErc } from '../src/erc/checker';
-import { ErcCode } from '../src/types/erc';
 import type { CircuitJson, Component, Net } from '../src/types/circuit';
+import { ErcCode } from '../src/types/erc';
 
 // Helper to create a component
 function createComponent(

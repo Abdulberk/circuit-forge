@@ -6,9 +6,10 @@
  * the DURABLE versionId (route state) instead of the ephemeral jobId. Boots the real app + DB + Redis; the
  * pcb-worker is not running, so jobs stay QUEUED — which is all this contract needs. Requires Postgres + Redis.
  */
-import { Test, TestingModule } from '@nestjs/testing';
 import { INestApplication, ValidationPipe } from '@nestjs/common';
+import { Test, TestingModule } from '@nestjs/testing';
 import request from 'supertest';
+
 import { AppModule } from '../src/app.module';
 import { PrismaService } from '../src/prisma/prisma.service';
 

@@ -1,8 +1,8 @@
-import { sweepVariants, runParametricSweep, type SweepSpec } from '../src/sweep';
-import { parseSpiceValue } from '../src/utils/unit-parser';
-import type { CircuitJson } from '../src/types/circuit';
-import type { SimMeasurement } from '../src/analysis/measurements';
 import type { AcceptanceCriterion } from '../src/analysis/assertions';
+import type { SimMeasurement } from '../src/analysis/measurements';
+import { sweepVariants, runParametricSweep, type SweepSpec } from '../src/sweep';
+import type { CircuitJson } from '../src/types/circuit';
+import { parseSpiceValue } from '../src/utils/unit-parser';
 
 const DIVIDER: CircuitJson = {
     version: '1.0',

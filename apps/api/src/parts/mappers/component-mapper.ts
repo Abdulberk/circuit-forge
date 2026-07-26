@@ -7,7 +7,6 @@
  * `simulatable: false`. The mapper deliberately does NOT assign id/designator/pins: the schematic
  * layer owns those (avoids designator collisions when the same part is placed multiple times).
  */
-import { Injectable, Logger } from '@nestjs/common';
 import {
     parseSpiceValue,
     formatSpiceValue,
@@ -18,7 +17,10 @@ import {
     type ComponentSourcing,
     type ModelDef,
 } from '@circuit-forge/eda-core';
+import { Injectable, Logger } from '@nestjs/common';
+
 import type { CatalogParameter, CatalogPart } from '../provider/part-provider.interface';
+
 import { typeFromCategoryId, subtypeFromCategoryId, isLedCategory } from './tme-category-map';
 
 /** A partial Component (no id/designator/pins — assigned by the schematic layer). */

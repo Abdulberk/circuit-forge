@@ -2,10 +2,13 @@
  * Templates Service
  * Handles template CRUD operations with public/org scope
  */
-import { Injectable, NotFoundException, ForbiddenException, BadRequestException } from '@nestjs/common';
 import { safeValidateAnalysisConfig } from '@circuit-forge/eda-core';
-import { PrismaService } from '../prisma/prisma.service';
+import { Injectable, NotFoundException, ForbiddenException, BadRequestException } from '@nestjs/common';
+import { Prisma } from '@prisma/client';
+
 import { OrgsService } from '../orgs/orgs.service';
+import { PrismaService } from '../prisma/prisma.service';
+
 import { CreateTemplateDto, ListTemplatesQueryDto } from './dto';
 
 @Injectable()
@@ -49,8 +52,8 @@ export class TemplatesService {
                 orgId: dto.orgId || null,
                 name: dto.name,
                 tags: dto.tags || [],
-                circuitJson: dto.circuitJson as any,
-                analysisConfig: (dto.analysisConfig as any) ?? undefined,
+                circuitJson: dto.circuitJson as Prisma.InputJsonValue,
+                analysisConfig: (dto.analysisConfig as Prisma.InputJsonValue | undefined) ?? undefined,
             },
         });
     }
@@ -61,7 +64,7 @@ export class TemplatesService {
      * - With orgId: list org templates (requires membership)
      */
     async findAll(userId: string | null, query: ListTemplatesQueryDto) {
-        const where: any = {};
+        const where: Prisma.TemplateWhereInput = {};
 
         if (query.orgId) {
             // Org-specific templates require membership

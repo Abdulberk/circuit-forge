@@ -1,9 +1,9 @@
 /**
  * Component-catalog DTOs.
  */
-import { IsString, IsOptional, MinLength, MaxLength, IsInt, Min, Max } from 'class-validator';
-import { Type } from 'class-transformer';
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
+import { Type } from 'class-transformer';
+import { IsString, IsOptional, MinLength, MaxLength, IsInt, Min, Max } from 'class-validator';
 
 export class SearchPartsDto {
     @ApiProperty({

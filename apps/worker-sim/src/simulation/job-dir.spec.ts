@@ -11,9 +11,11 @@ jest.mock('./variant-runner', () => ({ makeVariantRunner: jest.fn(() => fakeRunn
 
 import * as fs from 'fs/promises';
 import * as path from 'path';
+
 import { config } from '../config';
-import { makeVariantRunner } from './variant-runner';
+
 import { withVariantJobDir } from './job-dir';
+import { makeVariantRunner } from './variant-runner';
 
 const mock = <T extends (...a: never[]) => unknown>(fn: T) => fn as unknown as jest.Mock;
 const analysis = { type: 'op' } as never;

@@ -7,11 +7,13 @@
  *     pnpm --filter api exec jest verify-design-live
  */
 import { existsSync } from 'fs';
-import type { ConfigService } from '@nestjs/config';
+
 import type { CircuitJson } from '@circuit-forge/eda-core';
+import type { ConfigService } from '@nestjs/config';
+
 import { CircuitSimulatorService } from '../circuit-simulator.service';
-import { VerificationService } from '../verification.service';
 import type { AssertionDto } from '../dto';
+import { VerificationService } from '../verification.service';
 
 function resolveNgspice(): string {
     if (process.env.NGSPICE_PATH && existsSync(process.env.NGSPICE_PATH)) return process.env.NGSPICE_PATH;

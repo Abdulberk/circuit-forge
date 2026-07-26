@@ -1,0 +1,21 @@
+// Type-checking project for ESLint ONLY — never built, never emitted.
+//
+// Why a separate project: the repo's type-aware lint rules (no-floating-promises,
+// no-misused-promises, await-thenable) need `parserOptions.project`, but every workspace
+// tsconfig deliberately EXCLUDES tests (`**/*.spec.ts`, `**/*.test.ts`) and apps/api only
+// includes `src/**/*`, leaving `apps/api/__tests__/` out entirely. Pointing ESLint at those
+// build configs would fail with "file not included in project" on every test file — and tests
+// are exactly where an unawaited promise hides. So this project widens the net to everything
+// ESLint lints, without touching what tsc builds.
+{
+  "extends": "./tsconfig.base.json",
+  "compilerOptions": {
+    "noEmit": true,
+    // The build configs run these; ESLint has its own no-unused-vars rule and should not
+    // duplicate (or double-report) tsc's diagnostics.
+    "noUnusedLocals": false,
+    "noUnusedParameters": false
+  },
+  "include": ["apps/**/*.ts", "apps/**/*.tsx", "packages/**/*.ts"],
+  "exclude": ["**/node_modules/**", "**/dist/**", "**/coverage/**", "**/.next/**"]
+}

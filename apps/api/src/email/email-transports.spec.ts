@@ -1,4 +1,5 @@
 import { ConfigService } from '@nestjs/config';
+
 import { resolveEmailTransport } from './email-transports';
 
 const cfg = (vals: Record<string, string>) => ({ get: (k: string) => vals[k] }) as unknown as ConfigService;

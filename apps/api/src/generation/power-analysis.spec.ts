@@ -1,6 +1,7 @@
 import { sanitizeNodeName, type CircuitJson } from '@circuit-forge/eda-core';
-import { computeResistorPower } from './power-analysis';
+
 import type { SimMeasurement } from './circuit-simulator.service';
+import { computeResistorPower } from './power-analysis';
 
 /** Build a node-voltage measurement keyed the way the simulator reports it: v(<sanitized node>). */
 const v = (netId: string, final: number): SimMeasurement => ({

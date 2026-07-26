@@ -8,7 +8,6 @@
  * ⇒ ≤256 corners). A caller with many toleranced parts should pre-rank the most influential ones (e.g. via a
  * `.sens` run) and pass them in `corner.components`; that sensitivity-guided selection is a caller-side concern.
  */
-import { logger } from '../logger';
 import {
     runWorstCase,
     extraProbesForCriteria,
@@ -18,6 +17,9 @@ import {
     type CornerSpec,
     type WorstCaseResult,
 } from '@circuit-forge/eda-core';
+
+import { logger } from '../logger';
+
 import { withVariantJobDir } from './job-dir';
 
 export interface CornerBatchInput {

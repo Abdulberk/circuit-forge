@@ -7,8 +7,9 @@
  * it operates on the already-summarized per-node measurements.
  */
 import { sanitizeNodeName } from '../netlist/sanitizer';
-import type { SimMeasurement } from './measurements';
 import type { FourierResult, TransferFunctionResult } from '../types/simulation';
+
+import type { SimMeasurement } from './measurements';
 
 /**
  * A measurable pass/fail check derived from the user's stated numeric intent (the plain shape; the API's

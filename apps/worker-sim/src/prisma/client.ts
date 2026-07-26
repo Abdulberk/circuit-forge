@@ -2,7 +2,9 @@
  * Prisma client singleton for worker
  */
 import { PrismaClient } from '@prisma/client';
+
 import { logger } from '../logger';
+
 import { withConnectionLimit } from './connection-limit';
 
 const globalForPrisma = globalThis as unknown as {

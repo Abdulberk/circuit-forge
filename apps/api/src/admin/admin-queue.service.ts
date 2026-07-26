@@ -5,8 +5,8 @@
  * inline connection, mirroring GenerationModule) — a separate client to the SAME named Redis queues, so
  * job counts and (Phase 3) pause/resume act on the real queues without depending on the feature modules.
  */
-import { BadRequestException, Injectable } from '@nestjs/common';
 import { InjectQueue } from '@nestjs/bullmq';
+import { BadRequestException, Injectable } from '@nestjs/common';
 import { Queue } from 'bullmq';
 
 export interface QueueHealth {

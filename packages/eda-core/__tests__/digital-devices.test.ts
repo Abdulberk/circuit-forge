@@ -4,14 +4,14 @@
  * tie-off to a synthesized constant-LOW rail, the analog-only NO-OP guarantee, and the digital ERC
  * rules. Pure netlist-string / logic assertions (the live ngspice proofs run separately, offline).
  */
-import { generateNetlist } from '../src/netlist/generator';
-import { planMixedSignal } from '../src/netlist/digital';
-import { sanitizeNodeName } from '../src/netlist/sanitizer';
 import { runErc } from '../src/erc/checker';
-import { ErcCode } from '../src/types/erc';
+import { planMixedSignal } from '../src/netlist/digital';
+import { generateNetlist } from '../src/netlist/generator';
+import { sanitizeNodeName } from '../src/netlist/sanitizer';
+import type { TranAnalysis } from '../src/types/analysis';
 import { isDigitalType, digitalPinRole, isLogicGateType, isSingleInputGate } from '../src/types/circuit';
 import type { CircuitJson } from '../src/types/circuit';
-import type { TranAnalysis } from '../src/types/analysis';
+import { ErcCode } from '../src/types/erc';
 
 const TRAN: TranAnalysis = { type: 'tran', stopTime: '1m' };
 

@@ -8,15 +8,16 @@
  */
 import { BadRequestException, ConflictException, Injectable, NotFoundException, ServiceUnavailableException } from '@nestjs/common';
 import { Prisma, SimJobStatus, DesignJobStatus } from '@prisma/client';
-import { PrismaService } from '../prisma/prisma.service';
+
 import { AuditService } from '../common/audit/audit.service';
-import { UsageService, toQuotaOverrideView } from '../usage/usage.service';
+import { paginated, type Paginated } from '../common/dto/pagination.dto';
 import { ReadinessService } from '../health/readiness.service';
+import { PrismaService } from '../prisma/prisma.service';
+import { UsageService, toQuotaOverrideView } from '../usage/usage.service';
+
 import { AdminQueueService } from './admin-queue.service';
 import { AdminStorageService } from './admin-storage.service';
-import { paginated, type Paginated } from '../common/dto/pagination.dto';
 import { PlatformActor } from './decorators/platform-actor.decorator';
-import { PLATFORM_ROLE_RANK } from './platform-role.util';
 import {
     LockUserDto,
     SetPlatformRoleDto,
@@ -30,6 +31,7 @@ import {
     PurgeQueueDto,
     SweepOrphanModelsDto,
 } from './dto';
+import { PLATFORM_ROLE_RANK } from './platform-role.util';
 
 /** Far-future timestamp used for an "indefinite" account lock (no natural expiry). */
 const INDEFINITE_LOCK = new Date('9999-12-31T23:59:59.000Z');

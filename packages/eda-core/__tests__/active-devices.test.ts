@@ -2,14 +2,14 @@
  * Active-device (BJT / MOSFET) support: model-based netlist emission, canonical node ordering,
  * circuit.models de-dup, the generic model library, and the ERC rules.
  */
+import { runErc } from '../src/erc/checker';
+import { GENERIC_MODELS, resolveModelForPart, resolveGenericModels, buildZenerModel, normalizeControlledSourceGain, parseTransformerParams, parseTransmissionLineParams } from '../src/models/library';
 import { generateNetlist } from '../src/netlist/generator';
 import { parseNetlist } from '../src/parser/netlist-parser';
-import { runErc } from '../src/erc/checker';
-import { ErcCode } from '../src/types/erc';
-import { GENERIC_MODELS, resolveModelForPart, resolveGenericModels, buildZenerModel, normalizeControlledSourceGain, parseTransformerParams, parseTransmissionLineParams } from '../src/models/library';
+import type { TranAnalysis } from '../src/types/analysis';
 import { isSimulatable } from '../src/types/circuit';
 import type { CircuitJson, ModelDef } from '../src/types/circuit';
-import type { TranAnalysis } from '../src/types/analysis';
+import { ErcCode } from '../src/types/erc';
 
 const NPN: ModelDef = GENERIC_MODELS.npn!;
 const TRAN: TranAnalysis = { type: 'tran', stopTime: '1m' };

@@ -3,15 +3,17 @@
  */
 // MUST stay first: starts OpenTelemetry (when configured) before any instrumented module loads.
 import './observability/instrumentation';
-import { createSimulationWorker } from './simulation/processor';
+import type { Worker } from 'bullmq';
+
+import { config } from './config';
 import { createDesignWorker } from './design/processor';
 import { startDesignReaper } from './design/reaper';
-import { prisma, disconnectPrisma } from './prisma/client';
 import { logger } from './logger';
-import { config } from './config';
 import { shutdownTelemetry } from './observability/telemetry';
+import { prisma, disconnectPrisma } from './prisma/client';
+import { createSimulationWorker } from './simulation/processor';
 import { probeBwrap, isBwrapEnabled } from './simulation/sandbox';
-import type { Worker } from 'bullmq';
+
 
 let worker: ReturnType<typeof createSimulationWorker> | null = null;
 let designWorker: Worker | null = null;
@@ -106,8 +108,11 @@ async function main(): Promise<void> {
     }
 
     // Setup shutdown handlers
-    process.on('SIGTERM', () => shutdown('SIGTERM'));
-    process.on('SIGINT', () => shutdown('SIGINT'));
+    // `void`: shutdown() owns its own error handling end-to-end (try/catch → logger → process.exit),
+    // so there is nothing for the caller to await or catch. Marking it explicitly keeps the promise
+    // from being silently discarded by a void-returning signal handler.
+    process.on('SIGTERM', () => void shutdown('SIGTERM'));
+    process.on('SIGINT', () => void shutdown('SIGINT'));
 
     logger.info('Worker-sim is running');
 }

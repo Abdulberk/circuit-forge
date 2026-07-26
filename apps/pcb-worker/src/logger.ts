@@ -1,5 +1,6 @@
 /** Structured logger (mirrors worker-sim). */
 import pino from 'pino';
+
 import { config } from './config';
 
 export const logger = pino({

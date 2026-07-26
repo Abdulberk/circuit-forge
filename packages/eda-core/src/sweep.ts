@@ -11,11 +11,11 @@
  * Pure + deterministic: no ngspice, no I/O. The N simulations + criteria evaluation happen in the injected
  * `runVariant` (the worker supplies real ngspice; tests supply a fake), so this orchestrator stays testable.
  */
-import type { CircuitJson } from './types/circuit';
-import { parseSpiceValue, formatSpiceValue } from './utils/unit-parser';
 import { evaluateAssertions, type AcceptanceCriterion } from './analysis/assertions';
 import type { SimMeasurement } from './analysis/measurements';
 import type { VariantRunner } from './montecarlo';
+import type { CircuitJson } from './types/circuit';
+import { parseSpiceValue, formatSpiceValue } from './utils/unit-parser';
 
 /** How the swept values are chosen. Either an explicit `values` list OR a generated `start`/`stop` range. */
 export interface SweepSpec {

@@ -4,8 +4,8 @@
  * that this string-merge yields the same `.options` token set the generator would emit if it regenerated
  * the netlist with those options.
  */
-import { solverOptionTokens, applySolverOptions } from '../src/netlist/solver-options';
 import { generateNetlist } from '../src/netlist/generator';
+import { solverOptionTokens, applySolverOptions } from '../src/netlist/solver-options';
 import type { SolverOptions } from '../src/types/analysis';
 import type { CircuitJson } from '../src/types/circuit';
 

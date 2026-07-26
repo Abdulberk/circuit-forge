@@ -21,6 +21,7 @@
  * rating would be worse than surfacing it. (Active-device power is a follow-up.)
  */
 import { sanitizeNodeName, parseSpiceValue, type CircuitJson } from '@circuit-forge/eda-core';
+
 import type { SimMeasurement } from './circuit-simulator.service';
 
 /** Standard through-hole/SMD resistor rating when the component doesn't declare one. */

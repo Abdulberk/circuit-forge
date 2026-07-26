@@ -14,17 +14,19 @@
  * client polls (BullMQ is just the transport — the row is the source of truth). This handler NEVER throws: it
  * always lands a terminal row (SUCCEEDED / CANCELED / FAILED), mirroring runDetached's never-throw contract.
  */
+import { DesignAbortedError, CircuitGenerationError } from '@circuitforge/llm-core';
+import { propagation, context as otelContext, trace, SpanStatusCode } from '@opentelemetry/api';
+import { Prisma } from '@prisma/client';
 import { Job, Worker } from 'bullmq';
 import Redis from 'ioredis';
-import { Prisma } from '@prisma/client';
-import { DesignAbortedError, CircuitGenerationError } from '@circuitforge/llm-core';
-import { runMultiCandidateDesign } from './multi-candidate';
-import { propagation, context as otelContext, trace, SpanStatusCode } from '@opentelemetry/api';
-import { prisma } from '../prisma/client';
+
 import { config } from '../config';
 import { logger } from '../logger';
+import { prisma } from '../prisma/client';
+
 import { noopGround } from './grounding';
 import { makeLocalSim } from './local-sim';
+import { runMultiCandidateDesign } from './multi-candidate';
 
 /** Queue payload the API enqueues for an async design job (DesignJob.id + the loop inputs). */
 export interface DesignJobPayload {
@@ -133,7 +135,9 @@ async function processDesignJob(job: Job<DesignJobPayload>): Promise<void> {
                     { prompt, constraints, maxRounds },
                     {
                         llmConfig: buildLlmConfig(),
-                        runSim: makeLocalSim(),
+                        // Scoped by the DesignJob id: sim ids become temp DIRECTORY names, so two
+                        // concurrent jobs must never derive the same one (see makeLocalSim).
+                        runSim: makeLocalSim(jobId),
                         ground: noopGround,
                         userId,
                         pollTimeoutMs: config.DESIGN_POLL_TIMEOUT_MS ?? 90_000,

@@ -1,5 +1,6 @@
-import { attachGenericModels } from './model-resolution';
 import type { CircuitJson } from '@circuit-forge/eda-core';
+
+import { attachGenericModels } from './model-resolution';
 
 describe('attachGenericModels', () => {
     it('injects the body of a referenced generic model into circuit.models', () => {

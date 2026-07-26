@@ -2,13 +2,14 @@
  * SPICE Netlist Generator
  * Converts CircuitJson to ngspice-compatible netlist format
  */
-import type { CircuitJson, Component, Net, ModelDef } from '../types/circuit';
-import type { AnalysisConfig } from '../types/analysis';
-import { SPICE_PREFIXES, COMPONENT_PINS, COMPONENT_TYPES, isDigitalType } from '../types/circuit';
-import { analysisToSpice } from '../types/analysis';
 import { buildZenerModel, normalizeControlledSourceGain, parseTransformerParams, parseTransmissionLineParams } from '../models/library';
-import { sanitizeNodeName, validateIncludePaths } from './sanitizer';
+import type { AnalysisConfig } from '../types/analysis';
+import { analysisToSpice } from '../types/analysis';
+import type { CircuitJson, Component, Net, ModelDef } from '../types/circuit';
+import { SPICE_PREFIXES, COMPONENT_PINS, COMPONENT_TYPES, isDigitalType } from '../types/circuit';
+
 import { planMixedSignal, emitDigitalComponent, aInstanceName, type MixedSignalPlan } from './digital';
+import { sanitizeNodeName, validateIncludePaths } from './sanitizer';
 import { solverOptionTokens } from './solver-options';
 
 /** All valid ComponentType values, for a fail-loud guard against an unknown type slipping through. */

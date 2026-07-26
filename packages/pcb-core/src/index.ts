@@ -7,17 +7,18 @@
  * pass silently) -> Gerber/.kicad_pcb/.kicad_pro/BOM/PnP (fab profile enforced downstream too).
  */
 import type { CircuitJson, UiJson } from '@circuit-forge/eda-core';
-import { classifyCircuit, type LayoutabilityResult, type LayoutDiagnostic } from './layoutability';
+
 import { generateTscircuitCode, type AdapterResult } from './adapter';
 import { evaluateTscircuit } from './evaluate';
+import { boardExtraProps, reportViaCompliance, injectZone, kicadProjectJson, JLC_FAB_PROFILE, type FabProfile } from './fab-profile';
+import { ipc2221WidthMm } from './ipc2221';
+import { classifyCircuit, type LayoutabilityResult, type LayoutDiagnostic } from './layoutability';
+import { generateGerbers, generateKicadPcb, buildBomCsv, buildPnpCsv, type GerberOutputs } from './outputs';
 import { checkConnectivityParity, type ParityResult, type TscElement } from './parity';
 import { placeParts, computeHpwl, type PlacementInput, type PlacementOutput } from './placement';
-import type { PlacementRunner } from './placement-engine';
 import { extractPlacementParts, gridPositions, buildNetWeights, deriveExtraEdges } from './placement-bridge';
-import { boardExtraProps, reportViaCompliance, injectZone, kicadProjectJson, JLC_FAB_PROFILE, type FabProfile } from './fab-profile';
-import { generateGerbers, generateKicadPcb, buildBomCsv, buildPnpCsv, type GerberOutputs } from './outputs';
+import type { PlacementRunner } from './placement-engine';
 import { exportDsn, mergeSes, stripRouting, enlargeBoard, findFullyUnroutedNets, type FreeroutingRunner } from './route';
-import { ipc2221WidthMm } from './ipc2221';
 
 export interface LayoutOptions {
     ui?: UiJson;

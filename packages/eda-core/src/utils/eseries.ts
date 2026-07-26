@@ -5,8 +5,9 @@
  * 1591.5 Ω) — values you cannot BUY and the BOM/sourcing layer cannot map to a real MPN. Snapping to the
  * nearest preferred value yields a manufacturable design. Pure: numbers in, numbers/strings out.
  */
-import { parseSpiceValue, formatSpiceValue } from './unit-parser';
 import type { CircuitJson } from '../types/circuit';
+
+import { parseSpiceValue, formatSpiceValue } from './unit-parser';
 
 export type ESeries = 'E12' | 'E24' | 'E96';
 

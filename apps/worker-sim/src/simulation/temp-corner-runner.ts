@@ -7,7 +7,6 @@
  * INFORMATIONAL + ambient-only: never gates the verdict (the API keeps it informational; the ambient-only ceiling
  * makes gating unjustifiable). A temperature the runner can't evaluate is counted `errored`, never a spec failure.
  */
-import { logger } from '../logger';
 import {
     runTempCorner,
     extraProbesForCriteria,
@@ -17,6 +16,9 @@ import {
     type TempCornerSpec,
     type TempCornerResult,
 } from '@circuit-forge/eda-core';
+
+import { logger } from '../logger';
+
 import { withVariantJobDir } from './job-dir';
 import { makeTempRunner } from './variant-runner';
 

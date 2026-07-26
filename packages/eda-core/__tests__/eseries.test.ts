@@ -1,8 +1,8 @@
 /**
  * IEC 60063 E-series snapping tests (Faz B-1). Pure number/string math — closed-form expected values.
  */
-import { nearestESeries, isESeriesValue, snapValueString, snapCircuitToESeries } from '../src/utils/eseries';
 import type { CircuitJson } from '../src/types/circuit';
+import { nearestESeries, isESeriesValue, snapValueString, snapCircuitToESeries } from '../src/utils/eseries';
 
 describe('nearestESeries', () => {
     it('snaps a computed value to the nearest E24 preferred value (in log space)', () => {

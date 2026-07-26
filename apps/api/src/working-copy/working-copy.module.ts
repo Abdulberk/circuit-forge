@@ -3,9 +3,11 @@
  * VersionsModule owns the immutable "photo archive"). Imports ProjectsModule for membership authz.
  */
 import { Module } from '@nestjs/common';
+
+import { ProjectsModule } from '../projects/projects.module';
+
 import { WorkingCopyController } from './working-copy.controller';
 import { WorkingCopyService } from './working-copy.service';
-import { ProjectsModule } from '../projects/projects.module';
 
 @Module({
     imports: [ProjectsModule],

@@ -40,7 +40,7 @@ export class TtlCache {
             });
 
         this.inflight.set(key, promise);
-        return promise as Promise<T>;
+        return promise;
     }
 
     clear(): void {

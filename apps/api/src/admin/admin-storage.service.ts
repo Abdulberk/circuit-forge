@@ -18,8 +18,9 @@
  * the DTO allows 0 for tests). The decision is a PURE function (exported for unit tests, mirroring
  * the reaper pattern); dryRun returns the same tally without deleting.
  */
-import { Injectable, Logger } from '@nestjs/common';
 import { S3Client, ListObjectsV2Command, DeleteObjectsCommand } from '@aws-sdk/client-s3';
+import { Injectable, Logger } from '@nestjs/common';
+
 import { PrismaService } from '../prisma/prisma.service';
 
 export interface SweepableObject {

@@ -1,5 +1,5 @@
-import { resolveModel, injectModels, solveAlignment, KICAD_3DMODEL_BASE } from './models3d';
 import { KICAD_ANCHORS } from './kicad-anchors.generated';
+import { resolveModel, injectModels, solveAlignment, KICAD_3DMODEL_BASE } from './models3d';
 
 describe('resolveModel — tscircuit footprint id -> KiCad bundled 3D model', () => {
     it('maps size-parametric passives per family + imperial size (harvested ids)', () => {

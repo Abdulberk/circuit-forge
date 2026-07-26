@@ -15,7 +15,7 @@
  */
 import * as fs from 'fs/promises';
 import * as path from 'path';
-import { config } from '../config';
+
 import {
     generateNetlist,
     sanitizeNetlist,
@@ -32,6 +32,9 @@ import {
     type AnalysisConfig,
     type SimMeasurement,
 } from '@circuit-forge/eda-core';
+
+import { config } from '../config';
+
 import { executeNgspice } from './runner';
 
 /**

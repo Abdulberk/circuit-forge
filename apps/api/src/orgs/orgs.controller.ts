@@ -4,11 +4,13 @@
 import { Controller, Get, Post, Patch, Delete, Body, Param, Query, ParseUUIDPipe, UseGuards } from '@nestjs/common';
 import { ApiTags, ApiOperation, ApiBearerAuth } from '@nestjs/swagger';
 import { OrgRole } from '@prisma/client';
-import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
+
 import { CurrentUser } from '../auth/decorators/current-user.decorator';
+import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { PaginationQueryDto } from '../common/dto/pagination.dto';
-import { OrgsService } from './orgs.service';
+
 import { CreateOrgDto, OrgAuditQueryDto, UpdateMemberRoleDto, RemoveMemberDto } from './dto';
+import { OrgsService } from './orgs.service';
 
 @ApiTags('organizations')
 @ApiBearerAuth()

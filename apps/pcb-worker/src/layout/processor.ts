@@ -7,9 +7,6 @@
  * heavy blobs (GLB + Gerbers/BOM/PnP) to S3, and lands a terminal LayoutJob row (the client polls the row;
  * BullMQ is just transport). NEVER throws — every failure is captured onto the row.
  */
-import { Job, Worker } from 'bullmq';
-import Redis from 'ioredis';
-import { Prisma } from '@prisma/client';
 import {
     layoutCircuit,
     injectModels,
@@ -19,14 +16,19 @@ import {
     airwiresFromDrc,
     buildLayoutScope,
 } from '@circuit-forge/pcb-core';
-import { prisma } from '../prisma/client';
-import { assessManufacturability } from './outcome';
+import { Prisma } from '@prisma/client';
+import { Job, Worker } from 'bullmq';
+import Redis from 'ioredis';
+
 import { config } from '../config';
 import { logger } from '../logger';
+import { prisma } from '../prisma/client';
 import { makeNativeFreeroutingRunner } from '../runners/freerouting';
 import { makeNativeKicad } from '../runners/kicad';
 import { makeRustPlacementRunner } from '../runners/rust-placement';
 import { uploadFile } from '../storage/s3';
+
+import { assessManufacturability } from './outcome';
 
 /** Queue payload the API enqueues. The circuit + options live on the row (they can be large); the payload
  *  carries only the row id (and an optional W3C trace carrier for future span-linking). */

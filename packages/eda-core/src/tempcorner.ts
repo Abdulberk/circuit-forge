@@ -16,9 +16,9 @@
  * fail on certainty it doesn't model). Pure + deterministic given the injected per-temperature runner (worker
  * supplies real ngspice; tests supply a fake), mirroring corner.ts / montecarlo.ts.
  */
-import type { CircuitJson } from './types/circuit';
 import { evaluateAssertions, type AcceptanceCriterion } from './analysis/assertions';
 import type { SimMeasurement } from './analysis/measurements';
+import type { CircuitJson } from './types/circuit';
 
 /** Component types whose SPICE models carry temperature physics (so a `.temp` sweep is meaningful). Passives
  *  (R/C/L) are temperature-flat here — no TC1/TC2 emitted — so a circuit with none of these is temperature-flat. */

@@ -10,10 +10,17 @@
 # into a failure — in this gate "couldn't run" must never pass as green (the exact silent-green trap).
 name: PCB quality gate
 
+# NOTE on the filter: eda-core is listed because pcb-core imports it at BUILD AND RUNTIME — this
+# workflow compiles it explicitly below for that reason. Without it, an eda-core change could break the
+# layout pipeline and this gate would never run: the one dependency the gate needs but could not see.
+# Deliberately NOT listed: apps/pcb-worker/** (its unit tests run in ci.yml, which has no path filter,
+# and layout-check.mjs exercises pcb-core rather than the worker) and docker/** (the gate pulls the two
+# PINNED public images, it does not build anything from that directory).
 on:
   pull_request:
     paths:
       - 'packages/pcb-core/**'
+      - 'packages/eda-core/**'
       - 'scripts/layout-check.mjs'
       - 'scripts/lib/**'
       - '.github/workflows/pcb-gate.yml'
@@ -21,6 +28,7 @@ on:
     branches: [main]
     paths:
       - 'packages/pcb-core/**'
+      - 'packages/eda-core/**'
       - 'scripts/layout-check.mjs'
       - 'scripts/lib/**'
       - '.github/workflows/pcb-gate.yml'

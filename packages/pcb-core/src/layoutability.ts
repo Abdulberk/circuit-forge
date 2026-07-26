@@ -12,6 +12,7 @@
  *  - footprint pins beyond the mapped ports are declared NC explicitly (info), never silently.
  */
 import type { CircuitJson, Component } from '@circuit-forge/eda-core';
+
 import { resolveFootprint, isLedDiode, soicForPinCount, footprintPadCount, type FootprintResolution } from './footprints';
 
 export type LayoutRole = 'direct' | 'chip-fallback' | 'connectorized' | 'net-only' | 'excluded';

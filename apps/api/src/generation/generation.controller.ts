@@ -4,9 +4,11 @@
 import { Controller, Post, Body, UseGuards } from '@nestjs/common';
 import { ApiTags, ApiOperation, ApiBearerAuth } from '@nestjs/swagger';
 import { Throttle } from '@nestjs/throttler';
+
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
-import { GenerationService } from './generation.service';
+
 import { GenerateCircuitDto, EditCircuitDto, ExplainCircuitDto } from './dto';
+import { GenerationService } from './generation.service';
 
 @ApiTags('ai')
 @ApiBearerAuth()

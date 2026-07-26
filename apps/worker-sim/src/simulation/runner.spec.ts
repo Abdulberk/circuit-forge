@@ -7,8 +7,6 @@
  * control flow deterministically. eda-core parsers are stubbed (their own suites cover them); the convergence
  * DIAGNOSIS + remedy ladder + solver-option injection are kept REAL so the ladder walk is exercised truthfully.
  */
-import { EventEmitter } from 'events';
-
 jest.mock('child_process', () => ({ spawn: jest.fn() }));
 jest.mock('fs/promises', () => ({ mkdir: jest.fn(), writeFile: jest.fn(), readFile: jest.fn(), rm: jest.fn(), chmod: jest.fn() }));
 jest.mock('../config', () => ({
@@ -35,8 +33,11 @@ jest.mock('@circuit-forge/eda-core', () => {
 });
 
 import { spawn } from 'child_process';
+import { EventEmitter } from 'events';
 import * as fs from 'fs/promises';
+
 import * as eda from '@circuit-forge/eda-core';
+
 import { runSimulation } from './runner';
 
 const mock = <T extends (...a: never[]) => unknown>(fn: T) => fn as unknown as jest.Mock;

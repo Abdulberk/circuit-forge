@@ -1,5 +1,6 @@
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
+
 import { JLC_FAB_PROFILE, FAB_TIERS, boardExtraProps, kicadProjectJson, injectZone, reportViaCompliance } from './fab-profile';
 
 const realPcb = readFileSync(join(__dirname, '..', '__fixtures__', 'small.kicad_pcb'), 'utf8');

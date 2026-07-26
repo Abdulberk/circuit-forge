@@ -2,6 +2,8 @@
  * Pure assertion evaluation — the shared rubric used by BOTH verify-design and the AI design loop.
  * No mocks, no ngspice: operates on already-summarized measurements.
  */
+import { sanitizeNodeName } from '@circuit-forge/eda-core';
+
 import {
     evaluateAssertions,
     describeFailure,
@@ -15,7 +17,6 @@ import {
 } from './assertions';
 import type { SimMeasurement } from './circuit-simulator.service';
 import type { AssertionDto } from './dto';
-import { sanitizeNodeName } from '@circuit-forge/eda-core';
 
 const OUT = `v(${sanitizeNodeName('out')})`; // the SPICE node a probe "out" resolves to
 const meas = (node: string, over: Partial<SimMeasurement>): SimMeasurement => ({ node, min: 0, max: 0, final: 0, pp: 0, avg: 0, rms: 0, ...over });

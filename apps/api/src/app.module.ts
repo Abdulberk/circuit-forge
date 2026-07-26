@@ -5,26 +5,27 @@ import { Module, NestModule, MiddlewareConsumer } from '@nestjs/common';
 import { ConfigModule } from '@nestjs/config';
 import { APP_GUARD } from '@nestjs/core';
 import { ThrottlerModule, ThrottlerGuard } from '@nestjs/throttler';
-import { validateEnv } from './config/env.validation';
-import { requestContextMiddleware } from './common/context/request-context';
-import { AuditModule } from './common/audit/audit.module';
-import { PrismaModule } from './prisma/prisma.module';
+
+import { AdminModule } from './admin/admin.module';
+import { AssetsModule } from './assets/assets.module';
 import { AuthModule } from './auth/auth.module';
+import { AuditModule } from './common/audit/audit.module';
+import { requestContextMiddleware } from './common/context/request-context';
+import { validateEnv } from './config/env.validation';
+import { GenerationModule } from './generation/generation.module';
+import { HealthModule } from './health/health.module';
+import { InvitationsModule } from './invitations/invitations.module';
+import { LayoutModule } from './layout/layout.module';
+import { NetlistModule } from './netlist/netlist.module';
 import { OrgsModule } from './orgs/orgs.module';
+import { PartsModule } from './parts/parts.module';
+import { PrismaModule } from './prisma/prisma.module';
 import { ProjectsModule } from './projects/projects.module';
+import { SimulationModule } from './simulation/simulation.module';
+import { TemplatesModule } from './templates/templates.module';
+import { UsageModule } from './usage/usage.module';
 import { VersionsModule } from './versions/versions.module';
 import { WorkingCopyModule } from './working-copy/working-copy.module';
-import { InvitationsModule } from './invitations/invitations.module';
-import { TemplatesModule } from './templates/templates.module';
-import { AssetsModule } from './assets/assets.module';
-import { SimulationModule } from './simulation/simulation.module';
-import { GenerationModule } from './generation/generation.module';
-import { LayoutModule } from './layout/layout.module';
-import { PartsModule } from './parts/parts.module';
-import { NetlistModule } from './netlist/netlist.module';
-import { UsageModule } from './usage/usage.module';
-import { HealthModule } from './health/health.module';
-import { AdminModule } from './admin/admin.module';
 
 @Module({
     imports: [

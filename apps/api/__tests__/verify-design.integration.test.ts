@@ -13,9 +13,10 @@
  * verify-design-live.spec.ts (inline + real ngspice) and verification.service.spec.ts (mocked worker);
  * not repeated here. Requires the local Postgres/Redis the other integration tests use.
  */
-import { Test, TestingModule } from '@nestjs/testing';
 import { INestApplication, ValidationPipe } from '@nestjs/common';
+import { Test, TestingModule } from '@nestjs/testing';
 import request from 'supertest';
+
 import { AppModule } from '../src/app.module';
 import { PrismaService } from '../src/prisma/prisma.service';
 

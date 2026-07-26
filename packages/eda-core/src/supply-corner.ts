@@ -20,11 +20,11 @@
  * corner.ts / montecarlo.ts / tempcorner.ts. Reuses the SAME variant runner as those (a supply corner is a
  * component-VALUE perturbation on the source, exactly what the variant runner already does).
  */
-import type { CircuitJson, Component } from './types/circuit';
-import { parseComponentMagnitude } from './utils/unit-parser';
 import { evaluateAssertions, type AcceptanceCriterion } from './analysis/assertions';
 import type { SimMeasurement } from './analysis/measurements';
 import type { VariantRunner } from './montecarlo';
+import type { CircuitJson, Component } from './types/circuit';
+import { parseComponentMagnitude } from './utils/unit-parser';
 
 /** The DC (steady-supply) magnitude of a source value, else null. Handles every source form our circuits use:
  *  "DC 12" → 12; a BARE number "5" → 5 (SPICE treats a bare source value as DC); "DC 0 AC 1" → 0; "AC 1" → null
@@ -179,7 +179,7 @@ function supplyDrivers(circuit: CircuitJson, rails: RailValidation[], cap: numbe
         seen.add(r.driverDesignator);
         all.push({ component: c, nominal: mag.value, rebuild: mag.rebuild });
     }
-    return { drivers: all.slice(0, cap), omitted: all.slice(cap).map((d) => d.component.designator!).filter(Boolean) };
+    return { drivers: all.slice(0, cap), omitted: all.slice(cap).map((d) => d.component.designator).filter(Boolean) };
 }
 
 /** The reference (all-nominal) circuit + the 2^k ±tolerance supply corners. corner:null marks the nominal run. */
@@ -192,7 +192,7 @@ function supplyVariants(circuit: CircuitJson, drivers: SupplyDriver[], tol: numb
         for (let i = 0; i < k; i++) {
             const d = drivers[i]!;
             const hi = (mask & (1 << i)) !== 0;
-            corner[d.component.designator!] = hi ? 'hi' : 'lo';
+            corner[d.component.designator] = hi ? 'hi' : 'lo';
             overrides.set(d.component, d.rebuild(d.nominal * (hi ? 1 + tol : 1 - tol)));
         }
         variants.push({ corner, circuit: { ...circuit, components: circuit.components.map((c) => (overrides.has(c) ? { ...c, value: overrides.get(c)! } : c)) } });

@@ -6,9 +6,10 @@
  * (the editor rehydrates from it), (4) a draft can't point at another project's version, (5) full member
  * authz. Boots the real app + DB; no worker/S3 needed. Requires Postgres + Redis.
  */
-import { Test, TestingModule } from '@nestjs/testing';
 import { INestApplication, ValidationPipe } from '@nestjs/common';
+import { Test, TestingModule } from '@nestjs/testing';
 import request from 'supertest';
+
 import { AppModule } from '../src/app.module';
 import { PrismaService } from '../src/prisma/prisma.service';
 

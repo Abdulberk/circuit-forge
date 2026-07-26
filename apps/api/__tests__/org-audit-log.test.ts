@@ -6,9 +6,10 @@
  * unexpected top-level meta keys, and operators' internal `reason` on non-suspension actions. Audit rows are
  * seeded directly (only platform-admin actions write them today). Boots the real app + DB. Requires Postgres.
  */
-import { Test, TestingModule } from '@nestjs/testing';
 import { INestApplication, ValidationPipe } from '@nestjs/common';
+import { Test, TestingModule } from '@nestjs/testing';
 import request from 'supertest';
+
 import { AppModule } from '../src/app.module';
 import { PrismaService } from '../src/prisma/prisma.service';
 

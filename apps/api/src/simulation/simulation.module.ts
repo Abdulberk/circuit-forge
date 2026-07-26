@@ -1,14 +1,16 @@
 /**
  * Simulation Module
  */
-import { Module } from '@nestjs/common';
 import { BullModule } from '@nestjs/bullmq';
+import { Module } from '@nestjs/common';
 import { ConfigModule, ConfigService } from '@nestjs/config';
-import { SimulationController } from './simulation.controller';
-import { SimulationService } from './simulation.service';
-import { VersionsModule } from '../versions/versions.module';
+
 import { OrgsModule } from '../orgs/orgs.module';
 import { UsageModule } from '../usage/usage.module';
+import { VersionsModule } from '../versions/versions.module';
+
+import { SimulationController } from './simulation.controller';
+import { SimulationService } from './simulation.service';
 
 @Module({
     imports: [

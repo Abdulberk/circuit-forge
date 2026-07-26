@@ -2,11 +2,13 @@
  * VerificationService — assertion evaluation + verdict logic. CircuitSimulatorService is stubbed so
  * the suite is deterministic and ngspice-free; the assertion math and verdict rules are the contract.
  */
-import { VerificationService, isCurrentProbe, deriveToleranceBasis, robustnessManifestEntry } from './verification.service';
-import type { CircuitSimulatorService, SimSummary } from './circuit-simulator.service';
-import type { SimulationService } from '../simulation/simulation.service';
 import { sanitizeNodeName, type CircuitJson } from '@circuit-forge/eda-core';
+
+import type { SimulationService } from '../simulation/simulation.service';
+
+import type { CircuitSimulatorService, SimSummary } from './circuit-simulator.service';
 import type { AssertionDto } from './dto';
+import { VerificationService, isCurrentProbe, deriveToleranceBasis, robustnessManifestEntry } from './verification.service';
 
 const okSim = (over: Partial<SimSummary> = {}): SimSummary => ({
     simStatus: 'ok',

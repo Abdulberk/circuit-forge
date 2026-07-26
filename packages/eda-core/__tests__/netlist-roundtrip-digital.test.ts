@@ -8,8 +8,8 @@
  */
 import { generateNetlist } from '../src/netlist/generator';
 import { parseNetlist } from '../src/parser/netlist-parser';
-import type { CircuitJson } from '../src/types/circuit';
 import type { TranAnalysis } from '../src/types/analysis';
+import type { CircuitJson } from '../src/types/circuit';
 
 const TRAN: TranAnalysis = { type: 'tran', stopTime: '2m', stepTime: '5u' };
 const rt = (c: CircuitJson) => parseNetlist(generateNetlist(c, TRAN)).circuit;

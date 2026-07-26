@@ -5,12 +5,13 @@
  * raw token lives only in the emailed link (never in the API response), so the accept cases seed an
  * invitation with a KNOWN token via the REAL hashLinkToken util (no mocks). Boots the real app + DB.
  */
-import { Test, TestingModule } from '@nestjs/testing';
 import { INestApplication, ValidationPipe } from '@nestjs/common';
+import { Test, TestingModule } from '@nestjs/testing';
 import request from 'supertest';
+
 import { AppModule } from '../src/app.module';
-import { PrismaService } from '../src/prisma/prisma.service';
 import { hashLinkToken } from '../src/common/crypto/link-token';
+import { PrismaService } from '../src/prisma/prisma.service';
 
 describe('Org invitations (invite → accept)', () => {
     let app: INestApplication;

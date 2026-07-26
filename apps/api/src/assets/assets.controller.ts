@@ -14,8 +14,10 @@ import {
     ParseUUIDPipe,
 } from '@nestjs/common';
 import { ApiTags, ApiOperation, ApiBearerAuth, ApiParam } from '@nestjs/swagger';
-import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
+
 import { CurrentUser } from '../auth/decorators/current-user.decorator';
+import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
+
 import { AssetsService } from './assets.service';
 import { PresignUploadDto, CommitAssetDto, AssetListQueryDto } from './dto';
 

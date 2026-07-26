@@ -2,8 +2,8 @@
  * Min-max bucketing downsampler: the display decimation MUST preserve peaks/glitches (that's the
  * whole reason it isn't naive every-Nth sampling) and stay within the requested cap.
  */
-import { downsamplePoints, downsampleResult } from '../src/utils/downsample';
 import type { SimulationResult } from '../src/types/simulation';
+import { downsamplePoints, downsampleResult } from '../src/utils/downsample';
 
 describe('downsamplePoints', () => {
     it('returns the original array when already under the cap', () => {

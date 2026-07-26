@@ -3,9 +3,9 @@
  * perturbation stays within tolerance, only touches toleranced numeric components, and is reproducible.
  */
 import { perturbValue, perturbCircuit, monteCarloVariants, computeYield, classifyRobustness, ROBUSTNESS_PROFILES } from '../src/montecarlo';
+import type { CircuitJson } from '../src/types/circuit';
 import { mulberry32 } from '../src/utils/prng';
 import { parseSpiceValue } from '../src/utils/unit-parser';
-import type { CircuitJson } from '../src/types/circuit';
 
 describe('perturbValue', () => {
     it('keeps a gaussian sample within ±tolerance (hard-clamped) over many draws', () => {

@@ -1,7 +1,8 @@
-import { PrismaClient, OrgRole, Prisma } from '@prisma/client';
-import * as argon2 from 'argon2';
 import { readFileSync, readdirSync, existsSync } from 'fs';
 import { resolve } from 'path';
+
+import { PrismaClient, OrgRole, Prisma } from '@prisma/client';
+import * as argon2 from 'argon2';
 
 // This script runs standalone via ts-node (outside Nest's ConfigModule), so load the
 // monorepo root .env ourselves. In Docker/CI env vars are injected directly (file absent).
@@ -600,11 +601,15 @@ async function main(): Promise<void> {
     console.log('  Password: demo123456');
 }
 
+// Prisma's documented teardown shape: `.then`/`.catch` both ACCEPT an async callback (their promise is
+// awaited), whereas `.finally(async () => ...)` hands a promise to a void-returning slot — so the
+// disconnect was not guaranteed to complete before the process exited.
 main()
-    .catch((e) => {
-        console.error('❌ Seed failed:', e);
-        process.exit(1);
-    })
-    .finally(async () => {
+    .then(async () => {
         await prisma.$disconnect();
+    })
+    .catch(async (e) => {
+        console.error('❌ Seed failed:', e);
+        await prisma.$disconnect();
+        process.exit(1);
     });

@@ -1,9 +1,10 @@
 /**
  * Organizations DTOs
  */
-import { IsString, IsOptional, IsUUID, IsEnum, MinLength, MaxLength } from 'class-validator';
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import { OrgRole } from '@prisma/client';
+import { IsString, IsOptional, IsUUID, IsEnum, MinLength, MaxLength } from 'class-validator';
+
 import { PaginationQueryDto } from '../../common/dto/pagination.dto';
 
 export class CreateOrgDto {

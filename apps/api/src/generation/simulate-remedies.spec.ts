@@ -3,6 +3,7 @@
  * so the ladder logic is tested deterministically without ngspice.
  */
 import type { ConfigService } from '@nestjs/config';
+
 import { CircuitSimulatorService, type SimSummary } from './circuit-simulator.service';
 
 const cfg = { get: (k: string) => (k === 'NGSPICE_PATH' ? '/fake/ngspice' : undefined) } as unknown as ConfigService;

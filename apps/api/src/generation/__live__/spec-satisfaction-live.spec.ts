@@ -10,10 +10,11 @@
  * Gated on NGSPICE_PATH (skips in CI / when ngspice isn't configured). Run locally with, e.g.:
  *   NGSPICE_PATH="C:/.../ngspice_con.exe" pnpm --filter api test -- spec-satisfaction-live
  */
-import type { ConfigService } from '@nestjs/config';
-import { CircuitSimulatorService } from '../circuit-simulator.service';
-import { evaluateAssertions } from '../assertions';
 import type { CircuitJson } from '@circuit-forge/eda-core';
+import type { ConfigService } from '@nestjs/config';
+
+import { evaluateAssertions } from '../assertions';
+import { CircuitSimulatorService } from '../circuit-simulator.service';
 
 const NGSPICE_PATH = process.env.NGSPICE_PATH;
 const live = NGSPICE_PATH ? describe : describe.skip;
