@@ -208,6 +208,16 @@ jobs:
           NGSPICE_PATH: ngspice
         run: node scripts/fuzz-circuits.mjs
 
+      # Tier reachability. The engine grades a design against a bar and separately decides when to stop
+      # sampling; those two were written independently and contradicted each other, so a design that never
+      # failed a single variant could only ever be graded "marginal". Both halves had passing unit tests —
+      # the contradiction lived only where they MEET, so it needs a check that runs the real sampler and
+      # grades its real output. ~380 ngspice runs, a few seconds.
+      - name: "Robustness tier is reachable (real ngspice — the product's headline claim)"
+        env:
+          NGSPICE_PATH: ngspice
+        run: node scripts/robustness-tier-check.mjs
+
   matrix-alpine:
     name: ngspice coverage matrix (Alpine/musl — the PROD binary)
     # The apt matrix above tests ngspice-42; PRODUCTION runs the Alpine/musl ngspice from
