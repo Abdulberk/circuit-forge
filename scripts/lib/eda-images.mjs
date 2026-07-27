@@ -2,15 +2,19 @@
  * The EXACT EDA container images the product runs — by immutable digest, in one place.
  *
  * Why this file exists. `kicad/kicad:10.0-full` is a ROLLING tag: upstream republishes it for every 10.0.x
- * patch. Production has always been safe, because docker/pcb-runtime/Dockerfile pins the digest. The CI
- * gate and the local harnesses did not — they pulled the bare tag — so the moment upstream moved the tag,
- * the gate began judging boards with a KiCad that the product never runs.
+ * patch. Production is not exposed, because docker/pcb-runtime/Dockerfile pins the digest — but the CI gate
+ * and the local harnesses pulled the bare tag, so the day upstream moves it they would begin judging boards
+ * with a KiCad the product never runs, silently and with nothing to detect it.
  *
  * That is worse than a flaky gate. DRC is our manufacturability authority: if the gate's DRC and
- * production's DRC are different binaries, a green gate stops being evidence about the shipped product,
- * in either direction. Measured 27 Tem 2026: the tag resolved to sha256:142fed45…, while production runs
- * sha256:fd4b9a49… — a silent divergence that no test could see, because every side was "correct" about
- * the tag it was told to use.
+ * production's DRC are different binaries, a green gate stops being evidence about the shipped product, in
+ * either direction — and every side would still be "correct" about the tag it was told to use.
+ *
+ * As of 27 Tem 2026 the tag has NOT moved: it still resolves to the pinned sha256:fd4b9a49…, so this is
+ * prevention, not a repair. (Checking that is easy to get wrong: `docker manifest inspect --verbose`
+ * reports the per-PLATFORM sub-manifests of a multi-arch tag, so linux/amd64 shows sha256:142fed45… — a
+ * digest that looks like drift but is a layer of the SAME manifest list. `docker buildx imagetools inspect`
+ * prints the list digest, which is the one a pin must match.)
  *
  * The rule is therefore: ONE place names the images, it names them by digest, and it refuses to disagree
  * with the production Dockerfile. Bumping KiCad means changing the Dockerfile and this file together —
