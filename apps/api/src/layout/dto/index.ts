@@ -1,8 +1,55 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import { Type } from 'class-transformer';
-import { IsObject, IsOptional, IsIn, IsUUID, IsNumber, IsPositive, IsBoolean, ValidateNested } from 'class-validator';
+import {
+    IsObject,
+    IsOptional,
+    IsIn,
+    IsUUID,
+    IsNumber,
+    IsPositive,
+    IsBoolean,
+    ValidateNested,
+    Validate,
+    ValidatorConstraint,
+    type ValidatorConstraintInterface,
+    type ValidationArguments,
+} from 'class-validator';
 
 import { PaginationQueryDto } from '../../common/dto/pagination.dto';
+
+/**
+ * Every value of a `Record<string, number>` must be a positive finite number.
+ *
+ * `@IsObject()` alone checks the container and never looks inside, so a declared `Record<string, number>`
+ * happily carried `"2A"`, `{}` or `-1` all the way to the sink. The consequence was not a crash but
+ * something worse: the IPC-2221 sizing produced NaN, its envelope clamp could not fire (every comparison
+ * with NaN is false), so no diagnostic was raised and the net simply routed at the board's signal-floor
+ * width. A rail the caller declared at 2 A shipped as a 0.2 mm trace, and DRC could not object because the
+ * board carries a single global minimum width that the trace meets.
+ *
+ * Rejecting at the edge is the cheap half; pcb-core also refuses the value defensively, for callers that
+ * are not this HTTP endpoint (worker replays, rows written before this constraint existed).
+ */
+@ValidatorConstraint({ name: 'positiveNumberRecord', async: false })
+export class PositiveNumberRecord implements ValidatorConstraintInterface {
+    validate(value: unknown): boolean {
+        if (typeof value !== 'object' || value === null || Array.isArray(value)) return false;
+        return Object.values(value as Record<string, unknown>).every(
+            (v) => typeof v === 'number' && Number.isFinite(v) && v > 0,
+        );
+    }
+
+    defaultMessage(args: ValidationArguments): string {
+        const value = args.value as Record<string, unknown> | undefined;
+        const bad =
+            value && typeof value === 'object' && !Array.isArray(value)
+                ? Object.entries(value)
+                      .filter(([, v]) => typeof v !== 'number' || !Number.isFinite(v) || v <= 0)
+                      .map(([k, v]) => `${k}=${JSON.stringify(v)}`)
+                : [];
+        return `${args.property} must map each net to a positive finite number${bad.length ? ` (rejected: ${bad.join(', ')})` : ''}`;
+    }
+}
 
 /**
  * Manufacturing overrides on top of a named fab tier.
@@ -116,12 +163,14 @@ export class CreateLayoutDto {
     fabProfile?: FabProfileDto;
 
     @ApiPropertyOptional({
-        description: 'RMS current (A) per emitted net name → IPC-2221 per-net trace width',
+        description:
+            'RMS current (A) per emitted net name → IPC-2221 per-net trace width. Every value must be a positive finite number.',
         type: 'object',
-        additionalProperties: true,
+        additionalProperties: { type: 'number' },
     })
     @IsOptional()
     @IsObject()
+    @Validate(PositiveNumberRecord)
     netCurrentsA?: Record<string, number>;
 }
 

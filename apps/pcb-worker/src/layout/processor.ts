@@ -182,6 +182,14 @@ export async function processLayoutJob(job: Job<LayoutJobPayload>): Promise<void
             // was indistinguishable from a freerouting board the notary certified. A caller could not tell
             // the two apart, which is precisely how a dead quality tier stays unnoticed.
             delivery: q.delivery as unknown as Prisma.InputJsonValue,
+            // Everything the pipeline had to SAY about this board. Warnings do not affect `ok`, so until now
+            // they were persisted only on the FAILED path — meaning a delivered board never told its owner
+            // that a net routed narrower than its IPC-2221 target, that a stated current was refused, or
+            // that a fab-profile override was raised. None of those are visible anywhere else: the DRC
+            // checks are rule violations, and KiCad cannot flag an under-width net because the board carries
+            // a single global minimum width that the trace meets. Same key as the FAILED path, so
+            // `result.diagnostics` is uniform across all three result shapes.
+            diagnostics: q.diagnostics as unknown as Prisma.InputJsonValue,
             // Scope disclosure for the layout verdict: what this endpoint checked (connectivity/DRC/
             // manufacturability) — decoupling/polarity are the electrical endpoint's concern, absent here.
             scope: buildLayoutScope({

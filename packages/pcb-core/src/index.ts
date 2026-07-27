@@ -568,6 +568,20 @@ function computeIpcWidths(
     const widths: Record<string, number> = { ...(profile.perNetMinWidthMm ?? {}) };
     if (!netCurrentsA) return widths;
     for (const [net, currentA] of Object.entries(netCurrentsA)) {
+        // A current we cannot size from must be REFUSED, never silently treated as "no current stated".
+        // `Math.abs('2A')` is NaN, the envelope clamp cannot fire on NaN (a comparison with NaN is always
+        // false), so `clamped` stays false, PCB040/PCB041 both stay quiet, and the net drops to the signal
+        // floor — a rail the caller declared at 2 A ships as a 0.2 mm trace with nothing anywhere saying so.
+        // KiCad DRC cannot catch it either: the board carries one global minimum width, which that trace
+        // meets. Same posture as resolveFabProfile's per-entry handling of perNetMinWidthMm.
+        if (typeof currentA !== 'number' || !Number.isFinite(currentA) || currentA <= 0) {
+            diagnostics.push({
+                code: 'PCB041',
+                severity: 'warning',
+                message: `net ${net}: ignored current ${JSON.stringify(currentA)} — not a positive finite number, so no IPC-2221 width was computed and the net routes at the ${profile.minTraceWidthMm}mm signal default.`,
+            });
+            continue;
+        }
         const r = ipc2221WidthMm({ currentA, copperOz: profile.copperOz, deltaTC: profile.deltaTC });
         const widthMm = Math.max(r.widthMm, profile.minTraceWidthMm, widths[net] ?? 0);
         widths[net] = widthMm;

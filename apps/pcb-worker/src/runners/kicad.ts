@@ -54,6 +54,52 @@ export interface NativeKicad {
  */
 const isDrcReport = (r: KicadDrcJson): boolean => Array.isArray(r.violations) && Array.isArray(r.unconnected_items);
 
+/**
+ * The layers a two-layer board cannot be manufactured without. Copper defines the circuit, Edge_Cuts
+ * defines the outline the fab routes to, and the soldermask layers define where solder may go — a board
+ * plotted without mask is not a cheaper board, it is an unassemblable one.
+ */
+const REQUIRED_LAYERS = ['F_Cu', 'B_Cu', 'Edge_Cuts', 'F_Mask', 'B_Mask'] as const;
+
+/**
+ * A Gerber with no operation code plots nothing: headers, then `M02*`. Existence ≠ content.
+ *
+ * D01 draw / D02 move / D03 flash are the only three commands that put anything on a layer, and they
+ * terminate a coordinate block (`X0Y0D02*`) rather than standing alone — so no word boundary before the
+ * `D`, and the trailing `*` is what separates them from an aperture definition (`%ADD10C,0.1*%`, whose
+ * codes start at D10 by spec).
+ */
+const hasGeometry = (gerber: string): boolean => /D0[123]\*/.test(gerber);
+
+/**
+ * Fail-closed post-condition on the DELIVERED artifact — the same posture drcReport takes thirty lines
+ * above, for the same reason: this is the boundary where files become the deliverable.
+ *
+ * Without it exportGerbers returned whatever `readdirSync` happened to find, and the processor uploaded
+ * that as the manufacturing bundle. Nothing downstream looks inside: the manufacturability verdict is
+ * computed purely from DRC violation and unconnected counts, so it is blind to what was PLOTTED. Measured
+ * against the pinned production image: a board whose enabled-layer stack is reduced exports exit-0 with
+ * six layers instead of twenty — no soldermask, no silkscreen, no paste — and yields a byte-identical DRC
+ * verdict. The customer would download a bundle stamped manufacturable that no fab can build.
+ *
+ * Latent today (the pinned KiCad and the exact-pinned circuit-json-to-kicad both export a full set), but
+ * the trigger is a KiCad-image or converter bump — precisely the event the PCB gate exists to catch, and
+ * the one thing that gate does not check, because it verifies DRC rather than delivery.
+ */
+function assertDeliverable(layers: Record<string, string>): void {
+    const missing = REQUIRED_LAYERS.filter((l) => layers[l] === undefined);
+    if (missing.length > 0)
+        throw new Error(
+            `kicad-cli exported an incomplete fab bundle — missing ${missing.join(', ')} (got: ${Object.keys(layers).join(', ') || 'nothing'}). Refusing to deliver a board that cannot be manufactured.`,
+        );
+    // Edge_Cuts is the one layer whose emptiness is silently catastrophic: the fab has no outline to route
+    // to, and every other layer still looks perfectly well-formed.
+    if (!hasGeometry(layers.Edge_Cuts!))
+        throw new Error(
+            'kicad-cli exported an Edge_Cuts layer with no geometry — the board has no outline for the fab to route. Refusing to deliver it.',
+        );
+}
+
 export function makeNativeKicad(opts: KicadOpts = {}): NativeKicad {
     const cli = opts.cli ?? process.env.KICAD_CLI ?? 'kicad-cli';
     const timeoutMs = opts.timeoutMs ?? 300_000;
@@ -230,6 +276,7 @@ export function makeNativeKicad(opts: KicadOpts = {}): NativeKicad {
                 // Record<layer, content> shape the delivery already used from circuit-json-to-gerber.
                 layers[f.replace(/^b-/, '').replace(/\.[^.]+$/, '')] = readFileSync(join(out, f), 'utf8');
             }
+            assertDeliverable(layers);
             return { layers, drill };
         });
 

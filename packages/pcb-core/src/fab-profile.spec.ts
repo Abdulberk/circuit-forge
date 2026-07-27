@@ -10,6 +10,7 @@ import {
     reportViaCompliance,
     resolveFabProfile,
 } from './fab-profile';
+import { ipc2221WidthMm } from './ipc2221';
 
 const realPcb = readFileSync(join(__dirname, '..', '__fixtures__', 'small.kicad_pcb'), 'utf8');
 
@@ -240,5 +241,29 @@ describe('resolveFabProfile — the default caller', () => {
         expect(tier).toBe('economy');
         expect(profile).toEqual(JLC_FAB_PROFILE);
         expect(adjustments).toEqual([]);
+    });
+});
+
+/**
+ * The IPC-2221 sizing boundary. A current that is not a positive finite number does NOT fail loudly — it
+ * produces NaN, the envelope clamp cannot fire (every comparison with NaN is false), so `clamped` stays
+ * false, no diagnostic is raised, and the net silently drops to the board's signal-floor width. A rail
+ * declared at 2 A would ship as a 0.2 mm trace with nothing anywhere saying so, and KiCad DRC cannot
+ * object because the board carries one global minimum width that the trace meets.
+ */
+describe('ipc2221WidthMm — what happens when the current is not a current', () => {
+    it('sizes a real current above the signal floor', () => {
+        const r = ipc2221WidthMm({ currentA: 2, copperOz: 1, deltaTC: 10 });
+        expect(r.widthMm).toBeGreaterThan(0.2);
+        expect(Number.isFinite(r.widthMm)).toBe(true);
+    });
+
+    it('produces a NaN width from a NaN current WITHOUT reporting it as clamped', () => {
+        // This is the mechanism, pinned so it cannot be mistaken for safe behaviour: the function itself
+        // cannot defend here (its clamp is numeric), which is exactly why the callers must refuse first.
+        const r = ipc2221WidthMm({ currentA: Number.NaN, copperOz: 1, deltaTC: 10 });
+        expect(Number.isNaN(r.widthMm)).toBe(true);
+        expect(r.clamped).toBe(false);
+        expect(r.notes).toEqual([]);
     });
 });
