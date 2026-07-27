@@ -10,7 +10,7 @@ import { writeFileSync, mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
-import { KICAD_IMAGE } from './eda-images.mjs';
+import { KICAD_IMAGE, dockerUserArgs } from './eda-images.mjs';
 
 /** @param {{ image?: string, timeoutMs?: number, workDir?: string, keep?: boolean }} [opts] */
 export function makeKicadDrcRunner(opts = {}) {
@@ -26,7 +26,7 @@ export function makeKicadDrcRunner(opts = {}) {
             try {
                 execFileSync(
                     'docker',
-                    ['run', '--rm', '-v', mount, image, 'kicad-cli', 'pcb', 'drc',
+                    ['run', '--rm', ...dockerUserArgs(), '-v', mount, image, 'kicad-cli', 'pcb', 'drc',
                         '--refill-zones', '--exit-code-violations', '--severity-error', '--format', 'json',
                         '--output', '/work/d.json', '/work/b.kicad_pcb'],
                     { stdio: 'pipe', timeout: timeoutMs, env: { ...process.env, MSYS_NO_PATHCONV: '1' } },
@@ -34,7 +34,14 @@ export function makeKicadDrcRunner(opts = {}) {
                 return true; // exit 0 → clean
             } catch (e) {
                 if (e.status === 5) return false; // 5 → violations and/or unconnected present
-                throw e; // anything else → the notary itself failed
+                // Anything else is the notary failing, not a verdict — and the caller records this text as a
+                // degradation diagnostic and truncates it, so raise what the TOOL said rather than
+                // execFileSync's "Command failed: <the whole docker command>", which fills the whole budget
+                // with the command line and leaves no room for the reason.
+                const said = String(e.stderr ?? '').trim() || String(e.stdout ?? '').trim();
+                throw new Error(
+                    `kicad-cli DRC failed (exit ${e.status ?? '?'})${said ? `: ${said.slice(-400)}` : ' with no output'}`,
+                );
             }
         } finally {
             if (!opts.keep) rmSync(dir, { recursive: true, force: true });

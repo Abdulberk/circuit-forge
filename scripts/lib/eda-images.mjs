@@ -38,6 +38,32 @@ export const FR_IMAGE =
 const digestOf = (ref) => ref.slice(ref.indexOf('@') + 1);
 
 /**
+ * Extra `docker run` flags so the container can WRITE into a bind-mounted host directory.
+ *
+ * The KiCad image runs as a non-root user (`kicad`, uid 1000). On a GitHub-hosted Linux runner the
+ * workspace belongs to `runner` (uid 1001) with mode 0755, so that container can READ the board but not
+ * write beside it. The result was a gate that looked like a routing failure and was not one: kicad-cli
+ * read the board, ran DRC, exited 5 because it found violations, and then could not write its report — so
+ * the harness saw "no findings", and the DRC oracle inside the margin ladder threw, which dropped every
+ * board to the local fast router. freerouting was never the problem; its image runs as root, which is why
+ * it wrote its SES file happily from the same mount on the same runner.
+ *
+ * Invisible on Windows/macOS, where Docker Desktop's file sharing ignores container uids entirely — which
+ * is exactly why this passed locally and failed only in CI. Hence the platform guard: matching the host
+ * uid is the fix on Linux and meaningless (MSYS uids are not Linux uids) anywhere else.
+ *
+ * HOME is redirected because overriding --user leaves a uid with no /etc/passwd entry, so tools that want
+ * a home directory would otherwise try to write to `/`.
+ *
+ * Production is NOT affected: the pcb-worker runs kicad-cli natively inside its own image, with no bind
+ * mount and no `docker run` anywhere in the path.
+ */
+export function dockerUserArgs() {
+    if (process.platform !== 'linux') return [];
+    return ['--user', `${process.getuid()}:${process.getgid()}`, '-e', 'HOME=/tmp'];
+}
+
+/**
  * Fail loudly if these refs have drifted from the image production actually builds on. Called by the
  * harnesses at startup so the check runs everywhere the images do, rather than living in a CI step that
  * only fires on some paths.
