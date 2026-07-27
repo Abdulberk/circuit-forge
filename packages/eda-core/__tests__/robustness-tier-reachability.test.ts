@@ -21,6 +21,8 @@ import {
     runMonteCarlo,
     classifyRobustness,
     requiredRunsForBar,
+    barsForProfile,
+    DEFAULT_ROBUSTNESS_PROFILE,
     ROBUSTNESS_PROFILES,
     type VariantRunner,
 } from '../src/montecarlo';
@@ -345,9 +347,104 @@ describe('the note must send the user to the RIGHT action', () => {
         expect(v.note).toMatch(/NOT a design signal/i);
     });
 
-    it('one usable sample is still graded — the guard is "zero", not "few"', () => {
+    it('one usable sample is not silently dropped — the zero-sample guard is about zero, not "few"', () => {
         const v = classifyRobustness({ yield: 1, evaluated: 1, errored: 9, ci95: { low: 0.2, high: 1 } }, 'consumer');
-        expect(v.tier).not.toBe('unknown');
         expect(v.evaluated).toBe(1);
+        expect(v.yieldLowerBound).toBe(0.2);
     });
+});
+
+/**
+ * `at-risk` is the ONLY tier that gates — verification.service flips /verify-design to `fail` on it. So it
+ * must be EARNED from evidence, never inferred from a wide interval. Ten flawless variants give a Wilson
+ * lower bound of 10/(10+z²) = 0.72, under marginalMin 0.9: before the guard, a design that failed NOTHING
+ * was graded a design fault and could fail the whole verdict. "Never false-fail a correct design" is this
+ * engine's stated first principle, so this is the sharpest edge in the module.
+ */
+describe('at-risk must be earned, not inferred from a small sample', () => {
+    const wilson = (passed: number, n: number): { low: number; high: number } => {
+        const z = 1.959963984540054;
+        const z2 = z * z;
+        const p = passed / n;
+        const denom = 1 + z2 / n;
+        const centre = (p + z2 / (2 * n)) / denom;
+        const half = (z * Math.sqrt((p * (1 - p)) / n + z2 / (4 * n * n))) / denom;
+        return { low: Math.max(0, centre - half), high: Math.min(1, centre + half) };
+    };
+
+    it('a FLAWLESS 10-variant run is not at-risk — the interval has not ruled out the bar', () => {
+        const ci = wilson(10, 10);
+        expect(ci.low).toBeLessThan(0.9); // the trap: the lower bound alone says "at-risk"
+        expect(ci.high).toBeGreaterThanOrEqual(0.9); // ...but the upper bound says we simply do not know yet
+        const v = classifyRobustness({ yield: 1, evaluated: 10, ci95: ci }, 'consumer');
+        expect(v.tier).not.toBe('at-risk');
+        expect(v.tier).toBe('unknown');
+        expect(v.note).toMatch(/NOT a design fault/i);
+    });
+
+    it.each([5, 10, 20, 34])('a flawless run of %i variants is never called a design fault', (n) => {
+        const v = classifyRobustness({ yield: 1, evaluated: n, ci95: wilson(n, n) }, 'consumer');
+        expect(v.tier).not.toBe('at-risk');
+    });
+
+    it('a genuinely bad design IS still at-risk — the guard must not blunt the real signal', () => {
+        // 200 variants at 50% pass: the interval sits entirely below the 0.9 bar, so "bad" is decided.
+        const ci = wilson(100, 200);
+        expect(ci.high).toBeLessThan(0.9);
+        const v = classifyRobustness({ yield: 0.5, evaluated: 200, ci95: ci }, 'consumer');
+        expect(v.tier).toBe('at-risk');
+        expect(v.note).toMatch(/At risk/i);
+    });
+
+    it('the sampler and the grader agree on when a tier is decided', async () => {
+        // Same invariant, both halves: a run that stops on a decided tier must not then be graded "unknown".
+        const bars = ROBUSTNESS_PROFILES.consumer!;
+        const report = await runMonteCarlo(CIRCUIT, CRITERIA, runnerPassing(0.5), {
+            seed: 3,
+            stopBars: { robustMin: bars.robustMin, marginalMin: bars.marginalMin },
+        });
+        const v = classifyRobustness(report as unknown as Record<string, unknown>, 'consumer');
+        expect(v.tier).not.toBe('unknown');
+    }, 60_000);
+});
+
+/**
+ * The default profile. classifyRobustness has always defaulted an absent profile to 'consumer'; the sampler
+ * did not. A caller who names no profile therefore ran a bar-less (fixed ±3%) sample and was then graded
+ * against consumer bars — the sampler aiming at one target while the verdict is scored against another,
+ * which is the original defect one layer up. barsForProfile is the single resolver both halves use.
+ */
+describe('an absent profile resolves to the SAME bars in both halves', () => {
+    it('barsForProfile falls back to the documented default', () => {
+        expect(barsForProfile(undefined)).toEqual(ROBUSTNESS_PROFILES[DEFAULT_ROBUSTNESS_PROFILE]);
+        expect(barsForProfile('consumer')).toEqual(ROBUSTNESS_PROFILES.consumer);
+        expect(barsForProfile('automotive')).toEqual(ROBUSTNESS_PROFILES.automotive);
+    });
+
+    it('an unknown or inherited key falls back rather than resolving to junk', () => {
+        // 'constructor'/'toString' come off Object.prototype on a plain-object lookup — a bare
+        // ROBUSTNESS_PROFILES[name] would hand back a Function and every bar comparison would silently fail.
+        for (const bad of ['nope', '', 'constructor', 'toString', '__proto__', 'CONSUMER']) {
+            expect(barsForProfile(bad)).toEqual(ROBUSTNESS_PROFILES[DEFAULT_ROBUSTNESS_PROFILE]);
+        }
+    });
+
+    it('classifyRobustness with no profile argument grades on the default bars', () => {
+        const ci = { low: 0.995, high: 1 };
+        expect(classifyRobustness({ yield: 1, evaluated: 400, ci95: ci }).tier).toBe('robust');
+        expect(classifyRobustness({ yield: 1, evaluated: 400, ci95: ci }, 'automotive').tier).not.toBe('robust');
+    });
+
+    it('THE DEFAULT PATH: a profile-less flawless run still earns the top tier', async () => {
+        // The shipped default request carries no profile. Before this fix that meant no bars at all, so the
+        // run stopped at 61 and a flawless design was graded "marginal" — the exact defect the previous
+        // commit claimed to fix, still live on the path almost every request takes.
+        const bars = barsForProfile(undefined);
+        const report = await runMonteCarlo(CIRCUIT, CRITERIA, runnerPassing(1), {
+            seed: 1,
+            stopBars: { robustMin: bars.robustMin, marginalMin: bars.marginalMin },
+        });
+        expect(classifyRobustness(report as unknown as Record<string, unknown>).tier).toBe('robust');
+        expect(report.evaluated).toBe(requiredRunsForBar(bars.robustMin));
+    }, 60_000);
 });

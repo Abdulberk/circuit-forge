@@ -17,7 +17,8 @@ import {
     criterionDimension,
     checkOrientationConsistency,
     classifyRobustness,
-    ROBUSTNESS_PROFILES,
+    barsForProfile,
+    DEFAULT_ROBUSTNESS_PROFILE,
     TEMP_CORNER_CEILING,
     type AnalysisConfig,
     type SimulationResult,
@@ -733,8 +734,12 @@ export class VerificationService {
         // The temperature range comes from the SAME robustness profile (one grade concept — not a separate temp grade).
         let tempcorner: TempCornerEvidence | undefined;
         if (robustness?.temperature && verdict === 'pass' && this.simulation && userId && circuitJson) {
-            const profileName = robustness.profile ?? 'consumer';
-            const bars = ROBUSTNESS_PROFILES[profileName] ?? ROBUSTNESS_PROFILES.consumer!;
+            // Resolve through the SHARED helper rather than a hand-rolled lookup: the sampler, the grader and
+            // this corner sweep have to agree on which bars apply, and a second copy of the fallback is exactly
+            // how they drift apart. It also refuses inherited keys, so a profile name off the wire cannot reach
+            // Object.prototype and hand back a bars-shaped object that is not a profile.
+            const profileName = robustness.profile ?? DEFAULT_ROBUSTNESS_PROFILE;
+            const bars = barsForProfile(robustness.profile);
             const temperaturesC = [...bars.tempCornersC];
             const spec: TempCornerSpec = { temperaturesC, rangeLabel: `${profileName} ${temperaturesC.join(' / ')} C` };
             tempcorner = await this.runTempCorner(circuit, analysis, assertions, spec, userId);

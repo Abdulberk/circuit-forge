@@ -188,18 +188,30 @@ describe('monteCarloVariants', () => {
 });
 
 describe('classifyRobustness — yield → tier on the Wilson LOWER bound', () => {
-    const rep = (yld: number, low: number, evaluated = 300) => ({ yield: yld, ci95: { low, high: 1 }, evaluated });
+    // `high` is as load-bearing as `low`. Grading a run `at-risk` is a claim that the true yield CANNOT be
+    // acceptable, and that is only earned when the WHOLE interval sits below the marginal bar. A fixture that
+    // hard-set high:1 was asserting "the true yield could still be 100% — call it at-risk", which is the exact
+    // false-accusation this engine must not make, so each case now carries a realistic upper bound.
+    const rep = (yld: number, low: number, evaluated = 300, high = 1) => ({
+        yield: yld,
+        ci95: { low, high },
+        evaluated,
+    });
 
     it('grades on ci95.low, not the point estimate: high yield but a low CI floor is NOT robust', () => {
-        // 100% observed but only 30 runs → Wilson low well under 0.99 → not robust (honest about sample size)
-        expect(classifyRobustness(rep(1.0, 0.88)).tier).toBe('at-risk');
+        // 100% observed but few runs → Wilson low under 0.99 → NOT robust, and honest about why: with a
+        // [0.88, 1.0] interval the design may well be flawless, so the verdict is "undecided", not "faulty".
+        // Calling this at-risk would blame the parts for what is purely a sample-count artefact.
+        expect(classifyRobustness(rep(1.0, 0.88)).tier).toBe('unknown');
         expect(classifyRobustness(rep(1.0, 0.995)).tier).toBe('robust');
     });
 
-    it('consumer bars: >=0.99 robust, 0.90-0.99 marginal, <0.90 at-risk', () => {
+    it('consumer bars: >=0.99 robust, 0.90-0.99 marginal, whole interval <0.90 at-risk', () => {
         expect(classifyRobustness(rep(1, 0.99)).tier).toBe('robust');
         expect(classifyRobustness(rep(0.97, 0.95)).tier).toBe('marginal');
-        expect(classifyRobustness(rep(0.85, 0.8)).tier).toBe('at-risk');
+        // p̂=0.85 over 300 runs → the real Wilson interval is ≈[0.80, 0.89]: entirely under the bar, so the
+        // accusation is earned by the evidence rather than by an arbitrary point estimate.
+        expect(classifyRobustness(rep(0.85, 0.8, 300, 0.89)).tier).toBe('at-risk');
     });
 
     it('automotive/medical bars are stricter (0.999 / 0.99)', () => {
@@ -215,7 +227,8 @@ describe('classifyRobustness — yield → tier on the Wilson LOWER bound', () =
     });
 
     it('carries the honest disclosure fields (yieldLowerBound + evaluated + note)', () => {
-        const v = classifyRobustness(rep(0.8, 0.72, 200));
+        // p̂=0.8 over 200 runs → ≈[0.72, 0.85], wholly below the 0.90 bar.
+        const v = classifyRobustness(rep(0.8, 0.72, 200, 0.85));
         expect(v.tier).toBe('at-risk');
         expect(v.yieldLowerBound).toBe(0.72);
         expect(v.evaluated).toBe(200);

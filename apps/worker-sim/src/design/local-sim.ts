@@ -125,6 +125,11 @@ export function makeLocalSim(scope: string): DesignRunSim {
                         criteria,
                         ...(opts.n ? { n: opts.n } : {}),
                         ...(opts.seed ? { seed: opts.seed } : {}),
+                        // Forward the profile so the design loop's own MC pass is sampled against the same
+                        // bars it will be graded with. Absent is fine — the batch runner resolves the engine
+                        // default — but silently dropping a CHOSEN profile would sample for consumer and
+                        // grade for automotive.
+                        ...(opts.profile ? { profile: opts.profile } : {}),
                     }),
                 );
                 store.set(jobId, {
