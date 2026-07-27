@@ -10,9 +10,11 @@ import { writeFileSync, mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
+import { KICAD_IMAGE } from './eda-images.mjs';
+
 /** @param {{ image?: string, timeoutMs?: number, workDir?: string, keep?: boolean }} [opts] */
 export function makeKicadDrcRunner(opts = {}) {
-    const image = opts.image ?? 'kicad/kicad:10.0-full';
+    const image = opts.image ?? KICAD_IMAGE;
     const timeoutMs = opts.timeoutMs ?? 300_000;
     const baseDir = opts.workDir ?? tmpdir();
     return async function notaryDrc(kicadPcb, kicadPro) {

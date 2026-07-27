@@ -12,12 +12,14 @@ import { writeFileSync, readFileSync, mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
+import { FR_IMAGE } from './eda-images.mjs';
+
 /**
  * @param {{ image?: string, passes?: number, timeoutMs?: number, workDir?: string, keep?: boolean }} [opts]
  * @returns {(dsn: string) => Promise<string>} a runner matching pcb-core's FreeroutingRunner type
  */
 export function makeFreeroutingRunner(opts = {}) {
-    const image = opts.image ?? 'ghcr.io/freerouting/freerouting:2.2.4';
+    const image = opts.image ?? FR_IMAGE;
     const passes = opts.passes ?? 30;
     const timeoutMs = opts.timeoutMs ?? 300_000;
     const baseDir = opts.workDir ?? tmpdir();
