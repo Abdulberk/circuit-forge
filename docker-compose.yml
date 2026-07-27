@@ -201,6 +201,20 @@ services:
   # PCB layout worker — consumes the 'pcb-layout' queue and runs pcb-core's quality pipeline natively
   # (freerouting + kicad-cli, baked into the image). NO source volume mounts: the image is a self-contained
   # `pnpm deploy` bundle; mounting the workspace over it would shadow the baked node_modules + toolchain.
+  # The EDA toolchain layer (kicad-cli 10 + freerouting 2.2.4, both digest-pinned) that pcb-worker builds
+  # FROM. It lives here because `pcb-runtime:local` is the tag docker/pcb-worker/Dockerfile expects, and
+  # nothing else in the repo produced it — so `docker compose build pcb-worker` failed on a clean machine
+  # with a missing-image error that reads like a registry problem rather than a missing build step.
+  #
+  # Build order matters (compose does not infer it from a FROM): `docker compose build pcb-runtime pcb-worker`.
+  # It has no `command`/`depends_on` because it is a build stage, not a service to run.
+  pcb-runtime:
+    build:
+      context: .
+      dockerfile: docker/pcb-runtime/Dockerfile
+    image: pcb-runtime:local
+    profiles: ['build-only']
+
   pcb-worker:
     build:
       context: .

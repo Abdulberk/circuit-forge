@@ -142,8 +142,13 @@ describe('classifyRobustness (tolerance-aware tier layered on top of nominal ver
         expect(classifyRobustness(rep(0.999, 0.95, 1.0)).tier).toBe('marginal');
     });
 
-    it('at-risk when the lower bound is below the marginal floor (<90%)', () => {
-        expect(classifyRobustness(rep(0.85, 0.8, 0.9)).tier).toBe('at-risk');
+    it('at-risk when the WHOLE interval sits below the marginal floor (<90%)', () => {
+        // p̂=0.85 over 200 runs → ≈[0.79, 0.89]. The upper bound matters as much as the lower one: calling a
+        // design faulty is a claim its true yield CANNOT be acceptable, and an interval that still reaches
+        // the bar has not established that. (Exactly touching the bar is undecided too — the true value
+        // could BE the bar, which is marginal, not faulty.)
+        expect(classifyRobustness(rep(0.85, 0.8, 0.89)).tier).toBe('at-risk');
+        expect(classifyRobustness(rep(0.85, 0.8, 0.9)).tier).toBe('unknown');
     });
 
     it("unknown (= 'verified at nominal only') when no Monte-Carlo ran or yield is unavailable", () => {

@@ -396,6 +396,17 @@ describe('at-risk must be earned, not inferred from a small sample', () => {
         expect(v.note).toMatch(/At risk/i);
     });
 
+    it('an interval that exactly TOUCHES the bar is undecided, not faulty', () => {
+        // The boundary the predicate has to get right. If the upper bound equals marginalMin, the true yield
+        // could BE the bar — and a design sitting exactly on the bar is marginal, not a design fault. Only a
+        // strictly-below interval has ruled the acceptable range out.
+        const bar = ROBUSTNESS_PROFILES.consumer!.marginalMin;
+        const touching = classifyRobustness({ yield: 0.85, evaluated: 200, ci95: { low: 0.8, high: bar } });
+        expect(touching.tier).toBe('unknown');
+        const below = classifyRobustness({ yield: 0.85, evaluated: 200, ci95: { low: 0.8, high: bar - 1e-9 } });
+        expect(below.tier).toBe('at-risk');
+    });
+
     it('the sampler and the grader agree on when a tier is decided', async () => {
         // Same invariant, both halves: a run that stops on a decided tier must not then be graded "unknown".
         const bars = ROBUSTNESS_PROFILES.consumer!;

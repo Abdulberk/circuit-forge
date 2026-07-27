@@ -88,7 +88,9 @@ async function finish(
     }
 }
 
-async function processLayoutJob(job: Job<LayoutJobPayload>): Promise<void> {
+/** Exported for the delivery-gate spec: the withhold branch below is the only thing between a board KiCad
+ *  rejected and a downloadable fab bundle, so it is tested directly rather than through BullMQ. */
+export async function processLayoutJob(job: Job<LayoutJobPayload>): Promise<void> {
     const { jobId } = job.data;
     const t0 = Date.now();
 

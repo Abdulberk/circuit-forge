@@ -40,6 +40,15 @@ export interface NativeKicad {
     exportGerbers: (kicadPcb: string) => Promise<GerberOutputs>;
 }
 
+/**
+ * A kicad-cli 10 DRC report ALWAYS carries both arrays (verified against real reports). One that does not
+ * is not evidence of a clean board — and it would be READ as one: pcb-core's parseDrcReport defaults a
+ * missing `violations`/`unconnected_items` to `[]`, which becomes clean → manufacturable → the fab bundle
+ * ships. That tolerance is right for a pure normalizer taking partial fixtures and wrong here, because
+ * this is the boundary where the file becomes the verdict. So the shape is asserted where it is read.
+ */
+const isDrcReport = (r: KicadDrcJson): boolean => Array.isArray(r.violations) && Array.isArray(r.unconnected_items);
+
 export function makeNativeKicad(opts: KicadOpts = {}): NativeKicad {
     const cli = opts.cli ?? process.env.KICAD_CLI ?? 'kicad-cli';
     const timeoutMs = opts.timeoutMs ?? 300_000;
@@ -100,12 +109,13 @@ export function makeNativeKicad(opts: KicadOpts = {}): NativeKicad {
             // to drcReport's (only --exit-code-violations differs, which sets the exit code, not the output). Cache
             // it best-effort so drcReport can skip a redundant run — a parse failure must NEVER flip the verdict.
             try {
-                if (existsSync(out))
-                    lastDrc = {
-                        board: kicadPcb,
-                        pro: kicadPro,
-                        report: JSON.parse(readFileSync(out, 'utf8')) as KicadDrcJson,
-                    };
+                lastDrc = null;
+                if (existsSync(out)) {
+                    const report = JSON.parse(readFileSync(out, 'utf8')) as KicadDrcJson;
+                    // Only memoize a report that IS one. Caching an unrecognised shape would hand drcReport a
+                    // report it would otherwise have rejected, quietly routing around the guard below.
+                    if (isDrcReport(report)) lastDrc = { board: kicadPcb, pro: kicadPro, report };
+                }
             } catch {
                 lastDrc = null;
             }
@@ -145,6 +155,13 @@ export function makeNativeKicad(opts: KicadOpts = {}): NativeKicad {
             if (!existsSync(out))
                 throw new Error('kicad-cli DRC produced no report file — refusing to assume the board is DRC-clean');
             const report = JSON.parse(readFileSync(out, 'utf8')) as KicadDrcJson;
+            // Same reasoning one step further in: a file that exists but is not a DRC report is no more
+            // evidence than no file at all. Without this, a report whose keys were renamed or emptied reads
+            // downstream as zero violations and zero unconnected items — i.e. as a perfect board.
+            if (!isDrcReport(report))
+                throw new Error(
+                    'kicad-cli DRC report is missing violations/unconnected_items — refusing to assume the board is DRC-clean',
+                );
             lastDrc = { board: kicadPcb, pro: kicadPro, report };
             return report;
         });

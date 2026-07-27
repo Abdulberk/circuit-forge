@@ -103,9 +103,14 @@ export function drcToChecks(report: ParsedDrc): DrcCheck[] {
         type: v.type,
         severity: v.severity,
         message: v.description,
-        location: v.items[0]?.pos ?? null,
+        // `items` is present on every real kicad-cli 10 entry, but an entry without it must still be
+        // REPORTED as a violation with no location — losing the whole verdict to a missing detail field
+        // would turn an honest "not manufacturable" into an opaque crash.
+        location: v.items?.[0]?.pos ?? null,
         refs: [
-            ...new Set(v.items.map((it) => parseItemDesc(it.description)?.designator).filter((d): d is string => !!d)),
+            ...new Set(
+                (v.items ?? []).map((it) => parseItemDesc(it.description)?.designator).filter((d): d is string => !!d),
+            ),
         ],
     }));
 }
@@ -138,7 +143,9 @@ export function airwiresFromDrc(report: ParsedDrc, geo: LayoutGeometry): { airwi
     const airwires: Airwire[] = [];
     let unmatched = 0;
     for (const entry of report.unconnected) {
-        const parsed = entry.items.map((it) => parseItemDesc(it.description));
+        // Same reasoning: an entry we cannot read becomes an UNMATCHED airwire (counted, disclosed),
+        // never an exception that discards every other finding in the report.
+        const parsed = (entry.items ?? []).map((it) => parseItemDesc(it.description));
         const net = parsed.find((p) => p?.net)?.net ?? '';
         if (!net || parsed.length < 2 || !parsed[0] || !parsed[1]) {
             unmatched++;

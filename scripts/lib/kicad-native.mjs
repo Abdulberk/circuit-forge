@@ -44,13 +44,23 @@ export function makeNativeKicad(opts = {}) {
             }
         });
 
-    /** Parsed DRC report (no --exit-code-violations so it never throws on findings) → { violations, unconnected_items }. */
+    /** Parsed DRC report (no --exit-code-violations so it never throws on findings) → { violations, unconnected_items }.
+     *
+     *  FAIL-CLOSED, matching apps/pcb-worker/src/runners/kicad.ts. This used to synthesize an empty report
+     *  when kicad-cli wrote nothing, which downstream reads as ZERO violations — i.e. a flawless board — for
+     *  a board DRC never actually checked. Since the production runner is documented as a port of this file,
+     *  the old form was also a copy-paste trap: reverting to "the reference implementation" would have
+     *  reintroduced the exact hole. Neither copy may guess. */
     const drcReport = async (kicadPcb, kicadPro) =>
         withBoard(kicadPcb, kicadPro, (dir) => {
             const out = join(dir, 'd.json');
             execFileSync(cli, ['pcb', 'drc', '--refill-zones', '--severity-error', '--format', 'json',
                 '--output', out, join(dir, 'b.kicad_pcb')], { stdio: 'pipe', timeout: timeoutMs });
-            return existsSync(out) ? JSON.parse(readFileSync(out, 'utf8')) : { violations: [], unconnected_items: [] };
+            if (!existsSync(out)) throw new Error('kicad-cli DRC produced no report file — refusing to assume the board is DRC-clean');
+            const report = JSON.parse(readFileSync(out, 'utf8'));
+            if (!Array.isArray(report.violations) || !Array.isArray(report.unconnected_items))
+                throw new Error('kicad-cli DRC report is missing violations/unconnected_items — refusing to assume the board is DRC-clean');
+            return report;
         });
 
     /** Export the bodied board to a GLB (Buffer). --subst-models resolves /usr/share/kicad/3dmodels bodies. */
