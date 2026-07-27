@@ -52,3 +52,8 @@ temp/
 .stress/
 output.csv
 stdout.log
+
+# Git-Bash crash dumps — noise, never content
+*.stackdump
+# Unpacked copy of a published npm tarball, kept for diffing releases against the source tree
+eda-check/
