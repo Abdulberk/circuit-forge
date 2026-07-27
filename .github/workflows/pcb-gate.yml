@@ -71,8 +71,10 @@ jobs:
       # Pull the images BY DIGEST, taken from the same module the harness uses, which in turn refuses to
       # disagree with docker/pcb-runtime/Dockerfile. This job used to pull the bare `kicad/kicad:10.0-full`
       # tag — a ROLLING tag upstream republishes for every 10.0.x patch — while production pinned a digest.
-      # Once the tag moved, the gate was judging boards with a KiCad the product does not run, so a red (or
-      # green) result here said nothing about the shipped board. Verified drifted 27 Tem 2026.
+      # The day upstream moves that tag, this gate would judge boards with a KiCad the product does not
+      # run, and a red (or green) result here would say nothing about the shipped board. As of 27 Tem 2026
+      # the tag has NOT moved — this is prevention, not a repair, and it is NOT the explanation for any
+      # past red run.
       # Pulling up front also means a registry hiccup fails here with a clear message, not mid-harness.
       - name: Pull the EDA images production runs (digest-pinned)
         run: |
