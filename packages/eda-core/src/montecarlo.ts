@@ -340,12 +340,34 @@ export interface RobustnessBars {
     tempCornersC: readonly number[];
 }
 
+/**
+ * The profile applied when a caller names none. It is exported and used by BOTH halves on purpose: the
+ * grader has always defaulted to 'consumer', so a RUN that resolves no bars while the GRADE silently
+ * applies consumer bars reproduces the exact split this module exists to close — the sampler optimising
+ * for one target while the verdict is scored against another. Resolve the default here, once.
+ */
+export const DEFAULT_ROBUSTNESS_PROFILE = 'consumer';
+
 /** Yield bars per domain — DEFAULTS, configurable; customer/contract requirements override (Cpk 1.33 vs 1.67). */
 export const ROBUSTNESS_PROFILES: Record<string, RobustnessBars> = {
     consumer: { robustMin: 0.99, marginalMin: 0.9, tempCornersC: [0, 25, 70] }, // general "capable" bar (≈ Cpk 1.33 / 4σ); commercial 0–70 °C
     automotive: { robustMin: 0.999, marginalMin: 0.99, tempCornersC: [-40, 25, 125] }, // safety/critical (≈ Cpk 1.67 / 5σ, IATF 16949); AEC-Q100 grade 1
     medical: { robustMin: 0.999, marginalMin: 0.99, tempCornersC: [-40, 25, 85] }, // industrial-equivalent -40–85 °C
 };
+
+/**
+ * Resolve a profile name to bars, applying DEFAULT_ROBUSTNESS_PROFILE when it is absent or unknown.
+ *
+ * The single resolver both halves must go through. When the SAMPLER skipped this and the GRADER did not,
+ * a caller who named no profile got a run tuned to no bar at all and a verdict scored against consumer
+ * bars — the same sampler/verdict split as the original defect, only one layer up. Own-property lookup on
+ * purpose: a name like "constructor" must fall back, not resolve to something off Object.prototype.
+ */
+export function barsForProfile(profileName?: string): RobustnessBars {
+    const key =
+        profileName && Object.hasOwn(ROBUSTNESS_PROFILES, profileName) ? profileName : DEFAULT_ROBUSTNESS_PROFILE;
+    return ROBUSTNESS_PROFILES[key] ?? ROBUSTNESS_PROFILES[DEFAULT_ROBUSTNESS_PROFILE]!;
+}
 
 export interface RobustnessVerdict {
     tier: RobustnessTier;
@@ -365,9 +387,9 @@ export interface RobustnessVerdict {
  *  when no MC ran (no toleranced parts / capacity) — which honestly means "verified at NOMINAL values only". */
 export function classifyRobustness(
     yieldReport: Record<string, unknown> | undefined,
-    profileName = 'consumer',
+    profileName: string = DEFAULT_ROBUSTNESS_PROFILE,
 ): RobustnessVerdict {
-    const bars = ROBUSTNESS_PROFILES[profileName] ?? ROBUSTNESS_PROFILES.consumer!;
+    const bars = barsForProfile(profileName);
     const yld = typeof yieldReport?.yield === 'number' ? yieldReport.yield : null;
     const ci = yieldReport?.ci95 as { low?: number; high?: number } | undefined;
     const lo = typeof ci?.low === 'number' ? ci.low : null;
@@ -393,7 +415,37 @@ export function classifyRobustness(
                 : 'Robustness not assessed (no toleranced parts or no Monte-Carlo) — verified at NOMINAL component values only.',
         };
     }
-    const tier: RobustnessTier = lo >= bars.robustMin ? 'robust' : lo >= bars.marginalMin ? 'marginal' : 'at-risk';
+    // `at-risk` must be EARNED, not inferred from a wide interval. It is the one tier that gates — it flips
+    // /verify-design to `fail` — so awarding it on evidence that has not actually ruled out the marginal bar
+    // FALSE-FAILS a correct design, the one thing this engine promises never to do. Ten flawless variants
+    // give a lower bound of 0.72 (10/(10+z²)) which is under marginalMin 0.9: before this guard, a design
+    // that failed nothing was called a design fault. Require the UPPER bound to be below the bar — the same
+    // "is the tier decided?" test the sampler uses in tierDecided, so the two halves cannot disagree again.
+    // An interval that still straddles the bar is `unknown`: not assessed, and `unknown` never gates.
+    const hi = typeof ci?.high === 'number' ? ci.high : 1;
+    const tier: RobustnessTier =
+        lo >= bars.robustMin
+            ? 'robust'
+            : lo >= bars.marginalMin
+              ? 'marginal'
+              : hi < bars.marginalMin
+                ? 'at-risk'
+                : 'unknown';
+
+    if (tier === 'unknown') {
+        return {
+            tier,
+            profile: profileName,
+            yield: yld,
+            yieldLowerBound: lo,
+            evaluated,
+            note:
+                `Not assessed — ${evaluated} variant(s) is too small a sample to place this design: the 95% interval ` +
+                `[${pct(lo)}, ${pct(hi)}] still spans the ${pct(bars.marginalMin)} bar, so the data neither clears nor ` +
+                `condemns it. Re-run with more variants (about ${requiredRunsForBar(bars.robustMin)} clean runs earn the ` +
+                `top tier for this profile). NOT a design fault — no verdict is gated on this.`,
+        };
+    }
     const tail = `(component-tolerance Monte-Carlo, ${evaluated ?? '?'} runs; ~${pct(lo)} is the 95% lower bound; short-term, not long-term-drift-adjusted)`;
 
     // A short run and a genuinely marginal design produce the SAME tier but need OPPOSITE actions, and the
@@ -401,7 +453,6 @@ export function classifyRobustness(
     // ruled out `robust` — the missing ingredient is samples, not part quality. Telling that user to buy ±1%
     // parts sends them to spend money on a statistics artefact. Only advise tightening once the upper bound
     // has fallen below the bar, i.e. the design itself cannot reach it.
-    const hi = typeof ci?.high === 'number' ? ci.high : 1;
     const sampleLimited = hi >= bars.robustMin;
     const needed = requiredRunsForBar(bars.robustMin);
     const marginalNote = sampleLimited

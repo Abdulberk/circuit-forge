@@ -26,6 +26,7 @@ import {
     runMonteCarlo,
     classifyRobustness,
     requiredRunsForBar,
+    barsForProfile,
     ROBUSTNESS_PROFILES,
 } from '../packages/eda-core/dist/index.js';
 
@@ -142,20 +143,26 @@ async function main() {
     }
     console.log(`preflight: criterion passes at nominal — ${pre[0].detail ?? pre[0].label}\n`);
 
-    // BEFORE — the shipped fixed-precision rule, with no idea what bar it will be graded against.
+    // LEGACY — the fixed-precision rule, with no idea what bar it will be graded against. Kept as the
+    // contrast arm only; nothing ships this any more.
     const before = await runMonteCarlo(CIRCUIT, CRITERIA, realRunner, { seed: 7, ciStopHalfWidth: 0.03 });
     const beforeVerdict = classifyRobustness(before, 'consumer');
 
-    // AFTER — the same design, graded against the same bar, with the run told what that bar is.
+    // DEFAULT PATH — deliberately built the way a request that names NO profile is now handled: bars come
+    // from barsForProfile(undefined), and the grade is taken with no profile argument either. An earlier
+    // version of this harness passed a hand-set profile on both sides, which meant its "before" arm WAS the
+    // shipped default and the check stayed green while the product path was still broken. Prove the path
+    // almost every request actually takes, not a configuration only a test uses.
+    const defaultBars = barsForProfile(undefined);
     const after = await runMonteCarlo(CIRCUIT, CRITERIA, realRunner, {
         seed: 7,
-        stopBars: { robustMin: bars.robustMin, marginalMin: bars.marginalMin },
+        stopBars: { robustMin: defaultBars.robustMin, marginalMin: defaultBars.marginalMin },
     });
-    const afterVerdict = classifyRobustness(after, 'consumer');
+    const afterVerdict = classifyRobustness(after);
 
     const row = (l, b, a) => console.log(`  │ ${l.padEnd(27)} │ ${String(b).padEnd(13)} │ ${String(a).padEnd(13)} │`);
     console.log('  ┌─────────────────────────────┬───────────────┬───────────────┐');
-    console.log('  │                             │  BEFORE (fix) │  AFTER (bars) │');
+    console.log('  │                             │ LEGACY  rule  │ DEFAULT path  │');
     console.log('  ├─────────────────────────────┼───────────────┼───────────────┤');
     row('variants evaluated', before.evaluated, after.evaluated);
     row('failed variants', before.failed, after.failed);
@@ -166,22 +173,25 @@ async function main() {
     ok(before.failed === 0 && after.failed === 0, 'the design is genuinely sound — zero failing variants in both runs');
     ok(
         beforeVerdict.tier === 'marginal',
-        `BEFORE: a flawless design is capped at "marginal" (got ${beforeVerdict.tier})`,
+        `LEGACY: a flawless design was capped at "marginal" (got ${beforeVerdict.tier})`,
     );
-    ok(before.evaluated === 61, `BEFORE: the fixed ±3% rule stops at 61 samples (got ${before.evaluated})`);
-    ok(afterVerdict.tier === 'robust', `AFTER: the same flawless design earns "robust" (got ${afterVerdict.tier})`);
+    ok(before.evaluated === 61, `LEGACY: the fixed ±3% rule stops at 61 samples (got ${before.evaluated})`);
+    ok(
+        afterVerdict.tier === 'robust',
+        `DEFAULT PATH (no profile named): the same flawless design earns "robust" (got ${afterVerdict.tier})`,
+    );
     ok(
         after.evaluated === needed,
-        `AFTER: it runs exactly the ${needed} samples the bar requires (got ${after.evaluated})`,
+        `DEFAULT PATH: it runs exactly the ${needed} samples the bar requires (got ${after.evaluated})`,
     );
     ok(
         after.ci95.low >= bars.robustMin,
-        `AFTER: the lower bound clears the bar (${after.ci95.low.toFixed(4)} ≥ ${bars.robustMin})`,
+        `DEFAULT PATH: the lower bound clears the bar (${after.ci95.low.toFixed(4)} ≥ ${bars.robustMin})`,
     );
     ok(
         /more variants|Undecided/i.test(beforeVerdict.note) &&
             !/Tighten component tolerances/i.test(beforeVerdict.note),
-        'BEFORE: the note blames the sample count, not the parts (it used to say "buy ±1% parts")',
+        'LEGACY: the note blames the sample count, not the parts (it used to say "buy ±1% parts")',
     );
 
     console.log(

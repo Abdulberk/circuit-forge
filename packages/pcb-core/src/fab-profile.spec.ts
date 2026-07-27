@@ -8,6 +8,7 @@ import {
     kicadProjectJson,
     injectZone,
     reportViaCompliance,
+    resolveFabProfile,
 } from './fab-profile';
 
 const realPcb = readFileSync(join(__dirname, '..', '__fixtures__', 'small.kicad_pcb'), 'utf8');
@@ -100,5 +101,144 @@ describe('reportViaCompliance — NON-mutating (post-route enlargement manufactu
         const r = reportViaCompliance(evaluated, JLC_FAB_PROFILE);
         expect(r).toEqual({ total: 2, undersized: 1 });
         expect(evaluated[0]).toMatchObject({ hole_diameter: 0.2, outer_diameter: 0.3 }); // untouched
+    });
+});
+
+/**
+ * resolveFabProfile is the boundary between "what a caller typed" and "the rules a physical board is built
+ * and judged by". Everything here is a failure that reached the manufacturing outputs before it existed.
+ */
+describe('resolveFabProfile — a partial override must never leave the board half-specified', () => {
+    it('completes a single-field override from the tier instead of replacing the whole profile', () => {
+        // The original bug: `{minTraceWidthMm: 0.25}` became the ENTIRE profile, so via geometry was
+        // undefined and the KiCad rules — computed as drill + 2*annular — shipped as NaN.
+        const { profile } = resolveFabProfile({ minTraceWidthMm: 0.25 });
+        expect(profile.minTraceWidthMm).toBe(0.25);
+        expect(profile.viaDrillMm).toBe(FAB_TIERS.economy.viaDrillMm);
+        expect(profile.viaAnnularMm).toBe(FAB_TIERS.economy.viaAnnularMm);
+        expect(profile.minClearanceMm).toBe(FAB_TIERS.economy.minClearanceMm);
+    });
+
+    it('the completed profile produces FINITE KiCad design rules (the NaN rulebook regression)', () => {
+        const { profile } = resolveFabProfile({ minTraceWidthMm: 0.25 });
+        const rules = JSON.parse(kicadProjectJson(profile)).board.design_settings.rules;
+        for (const value of Object.values(rules)) {
+            if (typeof value === 'number') expect(Number.isFinite(value)).toBe(true);
+        }
+        expect(rules.min_via_diameter).toBeCloseTo(0.6); // 0.3 + 2*0.15, not NaN
+    });
+
+    it('keeps the ground pour ON when the override simply does not mention it', () => {
+        // An absent gndPour used to be indistinguishable from a deliberate false, so any override
+        // silently deleted the ground plane.
+        expect(resolveFabProfile({ minClearanceMm: 0.3 }).profile.gndPour).toBe(true);
+        expect(resolveFabProfile({}).profile.gndPour).toBe(true);
+        expect(resolveFabProfile().profile.gndPour).toBe(true);
+    });
+
+    it('an EXPLICIT gndPour:false is still honoured — the fix must not take the choice away', () => {
+        expect(resolveFabProfile({ gndPour: false }).profile.gndPour).toBe(false);
+    });
+});
+
+describe('resolveFabProfile — overrides may only make a board easier to manufacture', () => {
+    it('raises a below-limit value to the tier floor and says so', () => {
+        const { profile, adjustments } = resolveFabProfile({ minTraceWidthMm: 0.05 });
+        expect(profile.minTraceWidthMm).toBe(0.2); // economy limit, not the unmanufacturable 0.05
+        expect(adjustments.join(' ')).toMatch(/minTraceWidthMm.*0\.2/);
+    });
+
+    it('accepts a MORE conservative value untouched (a wider trace is always buildable)', () => {
+        const { profile, adjustments } = resolveFabProfile({ minTraceWidthMm: 0.4 });
+        expect(profile.minTraceWidthMm).toBe(0.4);
+        expect(adjustments).toEqual([]);
+    });
+
+    it('a finer process is reached by naming a finer tier, and its floors then apply', () => {
+        const { profile, tier } = resolveFabProfile({ tier: 'advanced', minTraceWidthMm: 0.1 });
+        expect(tier).toBe('advanced');
+        expect(profile.minTraceWidthMm).toBe(0.1); // above the 0.0889 advanced limit → kept
+        expect(profile.viaDrillMm).toBe(FAB_TIERS.advanced.viaDrillMm);
+    });
+
+    it('clamps every floor field, not just the one that was noticed', () => {
+        const { profile } = resolveFabProfile({
+            minTraceWidthMm: 0.01,
+            minClearanceMm: 0.01,
+            viaDrillMm: 0.01,
+            viaAnnularMm: 0.01,
+        });
+        expect(profile).toMatchObject(FAB_TIERS.economy);
+    });
+});
+
+describe('resolveFabProfile — hostile and malformed input', () => {
+    it.each([
+        ['a negative number', -1],
+        ['zero', 0],
+        ['a string', '0.15'],
+        ['null', null],
+        ['NaN', NaN],
+        ['Infinity', Infinity],
+        ['an object', { mm: 0.15 }],
+    ])('ignores %s for a numeric field and keeps the tier value', (_label, bad) => {
+        const { profile, adjustments } = resolveFabProfile({ minClearanceMm: bad });
+        expect(profile.minClearanceMm).toBe(FAB_TIERS.economy.minClearanceMm);
+        expect(adjustments).toHaveLength(1);
+    });
+
+    it('falls back to economy on an unknown tier rather than producing an undefined base', () => {
+        const { profile, tier, adjustments } = resolveFabProfile({ tier: 'hdi-6-layer' as never });
+        expect(tier).toBe('economy');
+        expect(profile).toMatchObject(FAB_TIERS.economy);
+        expect(adjustments.join(' ')).toMatch(/unknown fab tier/);
+    });
+
+    it('refuses an inherited key as a tier — a name off the wire cannot reach Object.prototype', () => {
+        for (const name of ['constructor', '__proto__', 'toString']) {
+            const { tier, profile } = resolveFabProfile({ tier: name as never });
+            expect(tier).toBe('economy');
+            expect(profile.minTraceWidthMm).toBe(0.2);
+        }
+    });
+
+    it('never mutates the shared tier constants (a resolved profile is a fresh object)', () => {
+        const { profile } = resolveFabProfile({ minTraceWidthMm: 0.9 });
+        expect(profile).not.toBe(FAB_TIERS.economy);
+        expect(FAB_TIERS.economy.minTraceWidthMm).toBe(0.2);
+    });
+
+    it('drops a non-boolean gndPour instead of coercing it', () => {
+        const { profile, adjustments } = resolveFabProfile({ gndPour: 'yes' });
+        expect(profile.gndPour).toBe(true); // the tier default, not a truthy string
+        expect(adjustments.join(' ')).toMatch(/gndPour/);
+    });
+});
+
+describe('resolveFabProfile — per-net widths', () => {
+    it('raises a per-net width below the board minimum (an unroutable rule, not a width)', () => {
+        const { profile, adjustments } = resolveFabProfile({ perNetMinWidthMm: { GND: 0.05, VBUS: 0.8 } });
+        expect(profile.perNetMinWidthMm).toEqual({ GND: 0.2, VBUS: 0.8 });
+        expect(adjustments.join(' ')).toMatch(/GND/);
+    });
+
+    it('drops individually bad entries and keeps the good ones', () => {
+        const { profile } = resolveFabProfile({ perNetMinWidthMm: { GND: 'wide', VBUS: 0.8 } });
+        expect(profile.perNetMinWidthMm).toEqual({ VBUS: 0.8 });
+    });
+
+    it('ignores a non-object entirely rather than half-reading it', () => {
+        const { profile, adjustments } = resolveFabProfile({ perNetMinWidthMm: [0.3] });
+        expect(profile.perNetMinWidthMm).toBeUndefined();
+        expect(adjustments).toHaveLength(1);
+    });
+});
+
+describe('resolveFabProfile — the default caller', () => {
+    it('an absent profile resolves to the documented economy default, complete', () => {
+        const { profile, tier, adjustments } = resolveFabProfile();
+        expect(tier).toBe('economy');
+        expect(profile).toEqual(JLC_FAB_PROFILE);
+        expect(adjustments).toEqual([]);
     });
 });

@@ -375,6 +375,48 @@ try {
     fail(`freerouting bridge: ${String(e).slice(0, 300)}`);
 }
 
+// ---------------------------------------------------------------- partial fab profile (real pipeline)
+//
+// A caller who overrides ONE manufacturing field used to replace the whole profile, leaving via geometry
+// undefined — so the KiCad design rules, which are computed arithmetically from it, shipped with NaN in
+// them and the DRC notary judged the board against a rulebook that was not a rulebook. The same gap also
+// switched the ground pour off, because an absent flag was indistinguishable from a deliberate "no".
+// Unit tests cover the resolver; this proves the REAL pipeline end to end on a real fixture.
+console.log(`
+── partial fab profile survives the real pipeline`);
+try {
+    const partial = await layoutCircuit(dividerLed, { fabProfile: { minTraceWidthMm: 0.25 } });
+    if (!partial.ok) {
+        fail(`partial profile: layout not ok — ${partial.diagnostics.filter((d) => d.severity === `error`).map((d) => d.code).join(`,`)}`);
+    } else {
+        ok(`layout ok with a one-field override — traces=${partial.stats.traces} vias=${partial.stats.vias}`);
+
+        const rules = JSON.parse(partial.outputs.kicadPro).board.design_settings.rules;
+        const bad = Object.entries(rules).filter(([, v]) => typeof v === `number` && !Number.isFinite(v));
+        if (bad.length) fail(`design rules contain non-finite values: ${JSON.stringify(bad)}`);
+        else ok(`design rules all finite — min_via_diameter=${rules.min_via_diameter} (drill+2*annular, was NaN)`);
+
+        if (rules.min_track_width !== 0.25) fail(`the override did not reach the rules (min_track_width=${rules.min_track_width})`);
+        else ok(`the override itself is honoured — min_track_width=0.25`);
+
+        if (partial.fab?.tier !== `economy`) fail(`resolved tier not recorded (got ${JSON.stringify(partial.fab)})`);
+        else ok(`the board records the rules it was built by — tier=${partial.fab.tier}, ${Object.keys(partial.fab.profile).length} complete fields`);
+
+        if (partial.fab?.profile?.gndPour !== true) fail(`the ground pour was silently switched off by an unrelated override`);
+        else ok(`ground pour still ON — an unrelated override no longer deletes the ground plane`);
+    }
+
+    // The other half of the contract: a value the fab cannot build is raised to its published limit and
+    // disclosed, rather than quietly routed and then rejected at the panel.
+    const tooFine = await layoutCircuit(dividerLed, { fabProfile: { minClearanceMm: 0.02 } });
+    const raised = tooFine.diagnostics.find((d) => d.code === `fab_profile_adjusted`);
+    if (tooFine.fab?.profile?.minClearanceMm !== 0.2) fail(`unmanufacturable clearance not clamped (got ${tooFine.fab?.profile?.minClearanceMm})`);
+    else if (!raised) fail(`clamped silently — the adjustment was not disclosed`);
+    else ok(`unmanufacturable value clamped AND disclosed — ${raised.message}`);
+} catch (e) {
+    fail(`partial fab profile: ${String(e).slice(0, 300)}`);
+}
+
 // ----------------------------------------------------------------
 
 console.log(failures === 0 ? '\n✅ layout-check PASSED' : `\n❌ layout-check FAILED (${failures} failure(s))`);

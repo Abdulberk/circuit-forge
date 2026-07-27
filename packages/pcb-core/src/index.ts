@@ -15,8 +15,10 @@ import {
     reportViaCompliance,
     injectZone,
     kicadProjectJson,
-    JLC_FAB_PROFILE,
+    resolveFabProfile,
     type FabProfile,
+    type FabProfileInput,
+    type FabTierName,
 } from './fab-profile';
 import { ipc2221WidthMm } from './ipc2221';
 import { classifyCircuit, type LayoutabilityResult, type LayoutDiagnostic } from './layoutability';
@@ -36,7 +38,9 @@ import {
 
 export interface LayoutOptions {
     ui?: UiJson;
-    fabProfile?: FabProfile;
+    /** Caller overrides on top of a named fab tier. Partial and untrusted — resolveFabProfile completes it
+     *  against the tier's published limits, so an override can never leave the board half-specified. */
+    fabProfile?: FabProfileInput;
     /** Accept a PARTIAL board when load-bearing sim-primitives are excluded (default: fail honest). */
     allowPartial?: boolean;
     /** 'fast' = tscircuit local router (deterministic, network-free). 'quality' = freerouting, applied
@@ -95,6 +99,10 @@ export interface LayoutResult {
         pnpCsv: string;
     } | null;
     stats: LayoutStats;
+    /** The fab rules the board was ACTUALLY built and judged against, after the caller's overrides were
+     *  completed and clamped. Recorded because "which rules produced these gerbers" is the first question
+     *  asked when a fab rejects a panel, and reconstructing it from the request is guesswork. */
+    fab: { tier: FabTierName; profile: FabProfile };
     /** OUR componentId -> emitted (sanitized) name; and netId -> emitted net name. The LayoutJob
      *  contract shaper (shapeLayoutResult) needs these to cross-probe geometry back to the design. */
     namesById: Record<string, string>;
@@ -103,14 +111,22 @@ export interface LayoutResult {
 
 export async function layoutCircuit(circuit: CircuitJson, opts: LayoutOptions = {}): Promise<LayoutResult> {
     const started = Date.now();
-    const profile = opts.fabProfile ?? JLC_FAB_PROFILE;
-    const diagnostics: LayoutDiagnostic[] = [];
+    // Complete the caller's overrides against a real fab tier BEFORE anything reads them. A raw partial
+    // object here leaves via geometry undefined, which propagates as NaN into the KiCad design rules the
+    // DRC notary judges against — the board would be checked by a rulebook that is not a rulebook.
+    const { profile, tier, adjustments } = resolveFabProfile(opts.fabProfile);
+    const fab = { tier, profile };
+    const diagnostics: LayoutDiagnostic[] = adjustments.map((message) => ({
+        code: 'fab_profile_adjusted',
+        severity: 'warning' as const,
+        message,
+    }));
 
     // 1) honest pre-flight
     const layout = classifyCircuit(circuit, { allowPartial: opts.allowPartial });
     diagnostics.push(...layout.diagnostics);
     if (!layout.layoutable) {
-        return failed(layout, diagnostics, started);
+        return failed(layout, diagnostics, started, fab);
     }
 
     // 2) adapter -> tscircuit code (fab profile upstream)
@@ -166,6 +182,7 @@ export async function layoutCircuit(circuit: CircuitJson, opts: LayoutOptions = 
             parity,
             outputs: null, // never emit a "manufacturable package" for a board that failed parity/route
             stats: stats(evaluated, routeErrors.length, started),
+            fab,
             namesById: adapted.namesById,
             netNameById: adapted.netNameById,
         };
@@ -274,6 +291,7 @@ export async function layoutCircuit(circuit: CircuitJson, opts: LayoutOptions = 
             pnpCsv: buildPnpCsv(routedBoard),
         },
         stats: stats(routedBoard, routeErrors.length, started),
+        fab,
         namesById: adapted.namesById,
         netNameById: adapted.netNameById,
     };
@@ -653,7 +671,12 @@ function stats(evaluated: TscElement[], errors: number, started: number): Layout
     };
 }
 
-function failed(layout: LayoutabilityResult, diagnostics: LayoutDiagnostic[], started: number): LayoutResult {
+function failed(
+    layout: LayoutabilityResult,
+    diagnostics: LayoutDiagnostic[],
+    started: number,
+    fab: { tier: FabTierName; profile: FabProfile },
+): LayoutResult {
     return {
         ok: false,
         completeness: layout.completeness,
@@ -663,6 +686,7 @@ function failed(layout: LayoutabilityResult, diagnostics: LayoutDiagnostic[], st
         parity: { ok: false, diagnostics: [], checkedPins: 0, expectedPins: 0 },
         outputs: null,
         stats: { traces: 0, vias: 0, errors: 0, durationMs: Date.now() - started },
+        fab,
         namesById: {},
         netNameById: {},
     };
@@ -684,8 +708,9 @@ export {
     kicadProjectJson,
     injectZone,
     reportViaCompliance,
+    resolveFabProfile,
 } from './fab-profile';
-export type { FabProfile, ZoneInjectionResult } from './fab-profile';
+export type { FabProfile, FabProfileInput, FabTierName, ResolvedFabProfile, ZoneInjectionResult } from './fab-profile';
 export { generateGerbers, generateKicadPcb, buildBomCsv, buildPnpCsv } from './outputs';
 export type { GerberOutputs } from './outputs';
 export { evaluateTscircuit } from './evaluate';

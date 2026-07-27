@@ -86,6 +86,147 @@ export const FAB_TIERS: Record<'economy' | 'standard' | 'advanced', FabProfile> 
 /** JLC-compatible conservative default = the economy tier (backward-compatible). */
 export const JLC_FAB_PROFILE: FabProfile = FAB_TIERS.economy;
 
+export type FabTierName = keyof typeof FAB_TIERS;
+
+/**
+ * What a CALLER may send. Every field is optional and independently overridable, and `tier` picks which
+ * fab's published limits the overrides are judged against.
+ *
+ * Deliberately NOT `Partial<FabProfile>` at the boundary: this arrives as untyped JSON off an HTTP request
+ * and out of a database column, so the resolver below re-checks each value at runtime rather than trusting
+ * the declared type.
+ */
+export interface FabProfileInput {
+    tier?: FabTierName;
+    minTraceWidthMm?: unknown;
+    minClearanceMm?: unknown;
+    viaDrillMm?: unknown;
+    viaAnnularMm?: unknown;
+    viaClearanceMm?: unknown;
+    viaClearanceGuardMm?: unknown;
+    copperOz?: unknown;
+    deltaTC?: unknown;
+    perNetMinWidthMm?: unknown;
+    gndPour?: unknown;
+    placementGridMm?: unknown;
+    placementMarginMm?: unknown;
+}
+
+export interface ResolvedFabProfile {
+    profile: FabProfile;
+    tier: FabTierName;
+    /** Human-readable record of every value the resolver refused or clamped, for honest disclosure. */
+    adjustments: string[];
+}
+
+/** The four fields a fab physically cannot go below. A caller may raise them (more conservative, always
+ *  manufacturable); lowering them past the tier's published limit produces a board the fab will reject. */
+const FLOOR_FIELDS = ['minTraceWidthMm', 'minClearanceMm', 'viaDrillMm', 'viaAnnularMm'] as const;
+
+/** Fields with their own semantics that carry through unclamped — but still have to be real numbers. */
+const PASSTHROUGH_FIELDS = [
+    'viaClearanceMm',
+    'viaClearanceGuardMm',
+    'copperOz',
+    'deltaTC',
+    'placementGridMm',
+    'placementMarginMm',
+] as const;
+
+const isPositiveFinite = (v: unknown): v is number => typeof v === 'number' && Number.isFinite(v) && v > 0;
+
+/**
+ * Turn whatever a caller sent into a COMPLETE, manufacturable profile.
+ *
+ * Three failures this exists to prevent, all of which were live:
+ *
+ *  1. A partial override replaced the ENTIRE default. Sending `{minTraceWidthMm: 0.15}` left the via
+ *     geometry undefined, and the KiCad design rules are computed arithmetically from it — so the board's
+ *     own rulebook shipped with `NaN` in it, and the DRC that is supposed to be the final authority was
+ *     judging against nonsense.
+ *  2. The same gap silently switched the ground pour OFF, because an absent `gndPour` is indistinguishable
+ *     from a deliberate `false`. A board loses its ground plane without anyone asking for that.
+ *  3. Nothing checked the numbers. A negative clearance, a string, or a value below the fab's published
+ *     limit went straight into the routing rules and the manufacturing outputs.
+ *
+ * The rule is one-directional on purpose: overrides may only make a board EASIER to manufacture than the
+ * chosen tier. Picking a finer process is done by naming a finer `tier`, which is a decision with a price
+ * attached, rather than by quietly typing a smaller number.
+ */
+export function resolveFabProfile(input?: FabProfileInput | null): ResolvedFabProfile {
+    const adjustments: string[] = [];
+    const raw = (input ?? {}) as Record<string, unknown>;
+
+    const requestedTier = raw.tier;
+    let tier: FabTierName = 'economy';
+    if (requestedTier !== undefined) {
+        if (typeof requestedTier === 'string' && Object.hasOwn(FAB_TIERS, requestedTier)) {
+            tier = requestedTier as FabTierName;
+        } else {
+            adjustments.push(`unknown fab tier ${JSON.stringify(requestedTier)} — using "economy"`);
+        }
+    }
+    const base = FAB_TIERS[tier];
+    const profile: FabProfile = { ...base };
+
+    for (const field of FLOOR_FIELDS) {
+        const supplied = raw[field];
+        if (supplied === undefined) continue;
+        if (!isPositiveFinite(supplied)) {
+            adjustments.push(`${field}: ignored ${JSON.stringify(supplied)} (not a positive number)`);
+            continue;
+        }
+        const floor = base[field];
+        if (supplied < floor) {
+            adjustments.push(`${field}: raised ${supplied} to the ${tier} fab limit ${floor} mm`);
+            continue; // keep the tier floor
+        }
+        profile[field] = supplied;
+    }
+
+    for (const field of PASSTHROUGH_FIELDS) {
+        const supplied = raw[field];
+        if (supplied === undefined) continue;
+        if (!isPositiveFinite(supplied)) {
+            adjustments.push(`${field}: ignored ${JSON.stringify(supplied)} (not a positive number)`);
+            continue;
+        }
+        profile[field] = supplied;
+    }
+
+    // Only an EXPLICIT boolean moves the pour — the whole point of the resolver is that "absent" and
+    // "deliberately off" stop meaning the same thing.
+    if (raw.gndPour !== undefined) {
+        if (typeof raw.gndPour === 'boolean') profile.gndPour = raw.gndPour;
+        else adjustments.push(`gndPour: ignored ${JSON.stringify(raw.gndPour)} (not a boolean)`);
+    }
+
+    if (raw.perNetMinWidthMm !== undefined) {
+        const widths = raw.perNetMinWidthMm;
+        if (typeof widths !== 'object' || widths === null || Array.isArray(widths)) {
+            adjustments.push(`perNetMinWidthMm: ignored (expected an object of net name → width)`);
+        } else {
+            const kept: Record<string, number> = {};
+            for (const [net, w] of Object.entries(widths as Record<string, unknown>)) {
+                if (!isPositiveFinite(w)) {
+                    adjustments.push(`perNetMinWidthMm.${net}: ignored ${JSON.stringify(w)} (not a positive number)`);
+                } else if (w < profile.minTraceWidthMm) {
+                    // A per-net width UNDER the board minimum is not a width, it is an unroutable rule.
+                    adjustments.push(
+                        `perNetMinWidthMm.${net}: raised ${w} to the board minimum ${profile.minTraceWidthMm} mm`,
+                    );
+                    kept[net] = profile.minTraceWidthMm;
+                } else {
+                    kept[net] = w;
+                }
+            }
+            if (Object.keys(kept).length > 0) profile.perNetMinWidthMm = kept;
+        }
+    }
+
+    return { profile, tier, adjustments };
+}
+
 /** Board-tag props enforcing the profile upstream (verified knobs only). */
 export function boardExtraProps(profile: FabProfile): string {
     return `autorouter={{ local: true }} minTraceWidth={${profile.minTraceWidthMm}}`;

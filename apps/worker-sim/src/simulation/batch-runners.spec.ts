@@ -106,6 +106,47 @@ describe('runMonteCarloBatch — per-batch wall-clock budget', () => {
     });
 });
 
+/**
+ * The hop that decides whether the robustness fix is real. `stopBars` tells the sampler which bar it is
+ * aiming at; without it the run reverts to the fixed ±3% rule, which tops out at a Wilson lower bound of
+ * 0.9408 — below every shipped `robustMin` — so a flawless design can only ever be graded "marginal".
+ *
+ * This was previously untested at ANY level: deleting the profile plumbing left typecheck, every unit suite
+ * and the real-ngspice harness green while the shipped verdict silently reverted. These assert on the exact
+ * options object handed to the orchestrator, which is the only place the intent is observable.
+ */
+describe('runMonteCarloBatch — the bars the sampler aims at', () => {
+    const optsOf = (): Record<string, unknown> => runMonteCarlo.mock.calls[0]![3] as Record<string, unknown>;
+
+    it('resolves bars even when NO profile is supplied — the default request must not be bar-less', async () => {
+        await runMonteCarloBatch({ ...input } as never);
+        // consumer is the documented default on BOTH halves; classifyRobustness already assumed it.
+        expect(optsOf().stopBars).toEqual({ robustMin: 0.99, marginalMin: 0.9 });
+    });
+
+    it('honours an explicitly chosen profile', async () => {
+        await runMonteCarloBatch({ ...input, profile: 'automotive' } as never);
+        expect(optsOf().stopBars).toEqual({ robustMin: 0.999, marginalMin: 0.99 });
+    });
+
+    it('falls back to the default bars on an unknown profile instead of dropping them', async () => {
+        await runMonteCarloBatch({ ...input, profile: 'nope' } as never);
+        expect(optsOf().stopBars).toEqual({ robustMin: 0.99, marginalMin: 0.9 });
+    });
+
+    it('does not pin `n` when the caller asked for no specific count', async () => {
+        // A count chosen without reference to the bar is how the top tier became unreachable: MC_N_DEFAULT
+        // (300) is below the 381 the consumer bar needs, so using it as a fallback would re-cap the tier.
+        await runMonteCarloBatch({ ...input } as never);
+        expect(optsOf().n).toBeUndefined();
+    });
+
+    it('still lets an explicit caller `n` cap the run', async () => {
+        await runMonteCarloBatch({ ...input, n: 42 } as never);
+        expect(optsOf().n).toBe(42);
+    });
+});
+
 describe('runCornerBatch — passes the worst-case result through with a runtime', () => {
     it('returns passAllCorners + a measured runtimeMs', async () => {
         const r = await runCornerBatch({ ...input, corner: { components: ['R1', 'R2'] } } as never);

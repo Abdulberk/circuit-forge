@@ -170,6 +170,10 @@ async function processLayoutJob(job: Job<LayoutJobPayload>): Promise<void> {
             stats: q.stats as unknown as Prisma.InputJsonValue,
             parity: q.parity as unknown as Prisma.InputJsonValue,
             completeness: q.completeness,
+            // The rules these gerbers were BUILT and JUDGED by, after the request's overrides were completed
+            // and clamped. "Which design rules produced this board" is the first question when a fab rejects
+            // a panel, and re-deriving it from the request is guesswork once an override has been adjusted.
+            fab: q.fab as unknown as Prisma.InputJsonValue,
             // Scope disclosure for the layout verdict: what this endpoint checked (connectivity/DRC/
             // manufacturability) — decoupling/polarity are the electrical endpoint's concern, absent here.
             scope: buildLayoutScope({

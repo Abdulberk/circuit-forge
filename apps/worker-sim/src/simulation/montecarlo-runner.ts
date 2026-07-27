@@ -15,7 +15,7 @@
 import {
     runMonteCarlo,
     extraProbesForCriteria,
-    ROBUSTNESS_PROFILES,
+    barsForProfile,
     type CircuitJson,
     type AnalysisConfig,
     type AcceptanceCriterion,
@@ -72,17 +72,23 @@ export async function runMonteCarloBatch(
         extraProbes,
         input.modelFiles,
         async (runVariant) => {
-            // Bar-aware stopping when we know which profile will grade the result. `stopBars` makes the run
-            // stop on a DECIDED tier and lifts the ceiling to what that bar actually needs; the fixed
-            // MC_CI_HALFWIDTH_STOP is then ignored by the orchestrator (kept for profile-less callers).
-            // Note `n` and MC_N_DEFAULT are only applied when the caller asked for a specific count —
-            // otherwise eda-core derives the ceiling from the bar, because a count chosen without knowing
-            // the bar is exactly how the top tier became unreachable.
-            const bars = input.profile ? ROBUSTNESS_PROFILES[input.profile] : undefined;
+            // Bar-aware stopping: `stopBars` makes the run stop on a DECIDED tier and lifts the ceiling to
+            // what that bar actually needs.
+            // ALWAYS resolve bars — never `input.profile ? ... : undefined`. classifyRobustness defaults an
+            // absent profile to 'consumer', so leaving the sampler bar-less meant the default request (which
+            // is most of them) ran the old fixed-±3% rule and was then graded against consumer bars: the
+            // sampler aiming at one target while the verdict is scored against another. barsForProfile owns
+            // that default for both halves, so they cannot drift apart again.
+            const bars = barsForProfile(input.profile);
             const s = await runMonteCarlo(input.circuit, input.criteria, runVariant, {
-                ...(input.n ? { n: input.n } : bars ? {} : { n: config.MC_N_DEFAULT }),
-                ...(bars ? { stopBars: { robustMin: bars.robustMin, marginalMin: bars.marginalMin } } : {}),
+                // An explicit caller `n` still caps the run; otherwise eda-core derives the ceiling from the
+                // bar. MC_N_DEFAULT is deliberately NOT used as a fallback here: a count picked without
+                // reference to the bar is what made the top tier unreachable in the first place.
+                ...(input.n ? { n: input.n } : {}),
+                stopBars: { robustMin: bars.robustMin, marginalMin: bars.marginalMin },
                 seed: input.seed ?? 1,
+                // Ignored while stopBars is set (the orchestrator prefers the bar-aware rule); kept so the
+                // knob still means something for any future bar-less caller.
                 ciStopHalfWidth: config.MC_CI_HALFWIDTH_STOP,
                 shouldStop: () => {
                     if (Date.now() > deadline) {

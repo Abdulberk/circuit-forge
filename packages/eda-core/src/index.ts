@@ -154,6 +154,10 @@ export {
     // Exported so callers/tests can assert the relationship a bar and a run cap must satisfy, instead of
     // rediscovering it: a cap below requiredRunsForBar(robustMin) makes that tier unreachable at any setting.
     requiredRunsForBar,
+    // The ONE place an absent profile becomes a concrete set of bars. Both the sampler and the grader must
+    // go through it, or a default request is sampled against one target and scored against another.
+    barsForProfile,
+    DEFAULT_ROBUSTNESS_PROFILE,
     ROBUSTNESS_PROFILES,
     type TolDistribution,
     type YieldSummary,

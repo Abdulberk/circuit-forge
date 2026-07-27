@@ -101,7 +101,10 @@ export interface DesignRunSim {
         circuit: CircuitJson,
         analysisConfig: Record<string, unknown> | undefined,
         criteria: AcceptanceCriterion[],
-        opts: { n?: number; seed?: number },
+        /** `profile` selects the bars that drive BOTH the adaptive stop and the grade. Omitted means the
+         *  engine default; it must never mean "no bars", or the run optimises for a target the verdict is
+         *  not scored against. */
+        opts: { n?: number; seed?: number; profile?: string },
         userId: string,
     ): Promise<{ jobId: string }>;
 }
@@ -578,7 +581,10 @@ export async function runYieldAnalysis(
             circuit,
             analysis as unknown as Record<string, unknown>,
             criteria,
-            deps.mcRuns ? { n: deps.mcRuns } : {},
+            {
+                ...(deps.mcRuns ? { n: deps.mcRuns } : {}),
+                ...(deps.robustnessProfile ? { profile: deps.robustnessProfile } : {}),
+            },
             deps.userId,
         );
         const status = await pollJob(deps, jobId);
