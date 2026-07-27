@@ -235,11 +235,26 @@ if (dockerOk) {
                 fail(`${name}: kicad-cli execution failed (exit ${e.status ?? '?'}) — ${String(e.stderr ?? e).slice(0, 200)}`);
                 continue;
             }
-            const report = existsSync(join(dir, 'drc.json')) ? JSON.parse(readFileSync(join(dir, 'drc.json'), 'utf8')) : null;
-            const viols = report?.violations ?? [];
+            // Exit 5 means kicad-cli found violations AND/OR unconnected items. Distinguish the three cases
+            // rather than printing one line for all of them: "0 error(s)" used to be shown both for a board
+            // whose only findings were unconnected nets AND for a run whose report never reached the host —
+            // and the second is a broken notary, not a nearly-clean board. That ambiguity is what made a CI
+            // failure impossible to diagnose from the log. Same posture as the production runner: no report
+            // file is not evidence of anything.
+            if (!existsSync(join(dir, 'drc.json'))) {
+                fail(`${name}: kicad-cli exited 5 but wrote NO report to the mounted dir — the notary did not actually report (mount/permission problem, not a board problem)`);
+                continue;
+            }
+            const report = JSON.parse(readFileSync(join(dir, 'drc.json'), 'utf8'));
+            const viols = report.violations ?? [];
+            const unconn = report.unconnected_items ?? [];
             const byType = {};
             for (const v of viols) byType[v.type] = (byType[v.type] ?? 0) + 1;
-            console.log(`  ⚠ ${name}: stamp NOT clean — ${viols.length} error(s): ${Object.entries(byType).map(([t, n]) => `${t}×${n}`).join(', ')} (quality-router tier pending, Phase 2)`);
+            const detail = [
+                viols.length ? `${viols.length} violation(s): ${Object.entries(byType).map(([t, n]) => `${t}×${n}`).join(', ')}` : null,
+                unconn.length ? `${unconn.length} unconnected item(s)` : null,
+            ].filter(Boolean).join(' + ') || 'exit 5 with an empty report (unexpected)';
+            console.log(`  ⚠ ${name}: stamp NOT clean — ${detail} (quality-router tier pending, Phase 2)`);
         }
     }
 }
@@ -281,7 +296,19 @@ if (frOk) {
         }
         const applied = q.diagnostics.find((d) => d.code === 'PCB030' && d.message.includes('applied'));
         if (!applied) {
-            fail(`${name}: quality route did NOT apply (freerouting not engaged)`);
+            // Say WHY. pcb-core records the degradation as PCB035 (the route threw — usually the freerouting
+            // container itself) or PCB036 (no margin produced an accepted board). Reporting only "did not
+            // apply" makes a broken container and a genuinely unroutable board look identical, which is
+            // exactly the situation this gate exists to avoid — and it left a CI failure undiagnosable from
+            // its own log. Dump the full diagnostic set to disk too, so nothing is lost to truncation.
+            const why = q.diagnostics.filter((d) => d.code === 'PCB035' || d.code === 'PCB036');
+            writeFileSync(join(dir, 'quality-diagnostics.json'), JSON.stringify(q.diagnostics, null, 1));
+            fail(
+                `${name}: quality route did NOT apply (freerouting not engaged) — ` +
+                    (why.length
+                        ? why.map((d) => `${d.code}: ${d.message}`).join(' | ')
+                        : `no PCB035/PCB036 diagnostic either; full set: ${q.diagnostics.map((d) => d.code).join(',')}`),
+            );
             continue;
         }
         ok(`${name}: ${applied.message}`);
