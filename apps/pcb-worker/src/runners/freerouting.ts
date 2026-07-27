@@ -4,7 +4,7 @@
  * pcb-core's FreeroutingRunner type: (dsn) => Promise<ses>.
  */
 import { execFile } from 'node:child_process';
-import { writeFileSync, readFileSync, mkdtempSync, rmSync } from 'node:fs';
+import { writeFileSync, readFileSync, mkdtempSync, rmSync, existsSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { promisify } from 'node:util';
@@ -38,14 +38,29 @@ export function makeNativeFreeroutingRunner(opts: FreeroutingOpts = {}): (dsn: s
             writeFileSync(dsnPath, dsn);
             // Async execFile: the child runs off-thread so the event loop stays live (BullMQ lock renewal,
             // health, graceful shutdown) for the whole 10-300s route instead of freezing the single JS thread.
-            await execFileAsync(
-                java,
-                ['-jar', jar, '--gui.enabled=false', '-de', dsnPath, '-do', sesPath, '-mp', String(passes)],
-                {
-                    timeout: timeoutMs,
-                    maxBuffer: MAX_BUFFER,
-                },
-            );
+            try {
+                await execFileAsync(
+                    java,
+                    ['-jar', jar, '--gui.enabled=false', '-de', dsnPath, '-do', sesPath, '-mp', String(passes)],
+                    {
+                        timeout: timeoutMs,
+                        maxBuffer: MAX_BUFFER,
+                    },
+                );
+            } catch (e) {
+                // execFile's message is only "Command failed: <the whole java command>" — what the tool
+                // actually SAID lives on .stderr. pcb-core records this text as the PCB035 degradation
+                // diagnostic and truncates it, so without this the command line consumed the whole budget
+                // and the reason never reached the job row. A silent fallback to the fast router is already
+                // hard to notice; one that cannot say why is undiagnosable.
+                const err = e as { stderr?: string; stdout?: string; code?: number; message?: string };
+                const said = (err.stderr ?? '').trim() || (err.stdout ?? '').trim();
+                throw new Error(
+                    `freerouting failed (exit ${err.code ?? '?'})${said ? `: ${said.slice(-400)}` : ` with no output: ${err.message ?? ''}`}`,
+                );
+            }
+            if (!existsSync(sesPath))
+                throw new Error('freerouting exited 0 but wrote no SES file — refusing to treat that as a route');
             const ses = readFileSync(sesPath, 'utf8');
             if (!ses.includes('(session')) throw new Error('freerouting produced no SES session');
             return ses;

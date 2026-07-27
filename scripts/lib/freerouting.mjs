@@ -8,7 +8,7 @@
  * headless flags. Returns the Specctra SES text; throws if the container fails or emits no session.
  */
 import { execFileSync } from 'node:child_process';
-import { writeFileSync, readFileSync, mkdtempSync, rmSync } from 'node:fs';
+import { writeFileSync, readFileSync, mkdtempSync, rmSync, existsSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -29,15 +29,28 @@ export function makeFreeroutingRunner(opts = {}) {
         try {
             writeFileSync(join(dir, 'board.dsn'), dsn);
             const mount = `${dir.replaceAll('\\', '/')}:/work`;
-            execFileSync(
-                'docker',
-                [
-                    'run', '--rm', '-v', mount, '--entrypoint', 'java', image,
-                    '-jar', '/app/freerouting-executable.jar',
-                    '--gui.enabled=false', '-de', '/work/board.dsn', '-do', '/work/board.ses', '-mp', String(passes),
-                ],
-                { stdio: 'pipe', timeout: timeoutMs, env: { ...process.env, MSYS_NO_PATHCONV: '1' } },
-            );
+            try {
+                execFileSync(
+                    'docker',
+                    [
+                        'run', '--rm', '-v', mount, '--entrypoint', 'java', image,
+                        '-jar', '/app/freerouting-executable.jar',
+                        '--gui.enabled=false', '-de', '/work/board.dsn', '-do', '/work/board.ses', '-mp', String(passes),
+                    ],
+                    { stdio: 'pipe', timeout: timeoutMs, env: { ...process.env, MSYS_NO_PATHCONV: '1' } },
+                );
+            } catch (e) {
+                // execFileSync's message is only "Command failed: <the whole docker command>" — the tool's own
+                // words live in .stderr, which used to be dropped. Callers truncate the message, so the command
+                // line consumed the entire budget and the actual reason never reached the log. A tool failure
+                // must carry what the tool SAID; a CI run that cannot explain itself is a debugging dead end.
+                const said = String(e.stderr ?? '').trim() || String(e.stdout ?? '').trim();
+                throw new Error(
+                    `freerouting container failed (exit ${e.status ?? '?'})${said ? `: ${said.slice(-400)}` : ' with no output'}`,
+                );
+            }
+            if (!existsSync(join(dir, 'board.ses')))
+                throw new Error('freerouting exited 0 but wrote no SES file to the mounted dir (mount/permission problem)');
             const ses = readFileSync(join(dir, 'board.ses'), 'utf8');
             if (!ses.includes('(session')) throw new Error('freerouting produced no SES session');
             return ses;

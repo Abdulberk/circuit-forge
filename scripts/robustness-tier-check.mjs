@@ -13,7 +13,7 @@
 //
 // Run: NGSPICE_PATH=... node scripts/robustness-tier-check.mjs
 import { spawnSync } from 'node:child_process';
-import { mkdtempSync, writeFileSync, readFileSync, rmSync, existsSync } from 'node:fs';
+import { mkdtempSync, writeFileSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -114,11 +114,21 @@ const ok = (cond, msg) => {
 };
 
 async function main() {
-    if (!existsSync(NG)) {
-        // A silent green here would be worse than no harness at all — this one needs the real binary.
-        console.error(`FAIL: ngspice not found at ${NG} (set NGSPICE_PATH). This harness requires the real binary.`);
+    // Probe the binary by RUNNING it, not by looking for a file at that path. NGSPICE_PATH is legitimately
+    // either an absolute path (Windows: ...\ngspice_con.exe) or a bare command resolved through PATH — and
+    // CI passes the bare `ngspice` the apt package installs. An existsSync() check rejects the second form
+    // outright, which is how this harness failed in CI on a runner where ngspice was installed and working.
+    // Still fail-closed: a silent skip here would be worse than having no harness at all.
+    const probe = spawnSync(NG, ['--version'], { encoding: 'utf-8', timeout: 30000 });
+    if (probe.error || typeof probe.status !== 'number') {
+        console.error(
+            `FAIL: could not run ngspice as "${NG}" (set NGSPICE_PATH to an absolute path or a command on PATH).\n` +
+                `  ${probe.error ? String(probe.error) : 'the process did not report an exit status'}\n` +
+                `This harness requires the real binary.`,
+        );
         process.exit(1);
     }
+    console.log(`ngspice: ${(probe.stdout || probe.stderr || '').split('\n').find((l) => /ngspice/i.test(l))?.trim() ?? NG}`);
 
     const bars = ROBUSTNESS_PROFILES.consumer;
     const needed = requiredRunsForBar(bars.robustMin);
