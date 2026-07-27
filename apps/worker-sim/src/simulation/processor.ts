@@ -73,6 +73,9 @@ export interface SimulationJobPayload {
         criteria: AcceptanceCriterion[];
         n?: number;
         seed?: number;
+        /** Robustness profile whose bars will grade the verdict — carried so the RUN can stop on a decided
+         *  tier instead of an arbitrary precision (see runMonteCarlo stopBars). */
+        profile?: string;
     };
     corner?: {
         circuit: CircuitJson;
@@ -330,6 +333,7 @@ async function handleMonteCarlo(
                 criteria: mc.criteria,
                 n: mc.n,
                 seed: mc.seed,
+                profile: mc.profile,
                 modelFiles,
             },
             // Checkpoint progress so a mid-batch death surfaces how far it got (best-effort; ignore errors).

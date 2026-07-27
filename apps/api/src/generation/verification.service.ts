@@ -528,7 +528,16 @@ export class VerificationService {
                 circuit as CircuitJson,
                 analysis as unknown as Record<string, unknown>,
                 assertions as unknown as AcceptanceCriterion[],
-                { n: opts.n ?? 500, seed: opts.seed }, // default 500 — enough sample for the ~99% robust bar
+                // No hardcoded n. The old `?? 500` looked generous but silently pinned the ceiling: the
+                // consumer bar needs 381 clean runs and 500 covers it, yet automotive/medical need 3838 — so
+                // those tiers were unreachable by arithmetic, not by design quality. The profile now travels
+                // instead, and eda-core derives both the ceiling and the stopping rule from its bars. An
+                // explicit caller-supplied `n` still wins, and wall-clock remains bounded by the batch budget.
+                {
+                    ...(opts.n ? { n: opts.n } : {}),
+                    seed: opts.seed,
+                    ...(opts.profile ? { profile: opts.profile } : {}),
+                },
                 userId,
             );
             const { status, metrics } = await this.pollJob(jobId, userId);

@@ -111,8 +111,25 @@ export interface MonteCarloOptions {
     seed?: number;
     dist?: TolDistribution;
     /** Adaptive-N: once `minRuns` have run, stop early when the Wilson 95% half-width ≤ this (e.g. 0.03 = ±3%)
-     *  — a clearly-robust or clearly-bad design converges in far fewer than `n` runs. Set 0 to disable. */
+     *  — a clearly-robust or clearly-bad design converges in far fewer than `n` runs. Set 0 to disable.
+     *
+     *  ⚠️ A FIXED half-width cannot see the bar it will be graded against, so on its own it silently caps the
+     *  achievable tier: ±3% is satisfied at 61 clean runs, where the Wilson LOWER bound is only 0.9408 — below
+     *  every `robustMin` in ROBUSTNESS_PROFILES. Prefer `stopBars` (below), which stops when the TIER is
+     *  decided rather than at an arbitrary precision. Kept for callers that genuinely want a fixed precision. */
     ciStopHalfWidth?: number;
+    /** Bar-aware stopping — the correct default for anything that will be fed to `classifyRobustness`.
+     *
+     *  Pass the SAME bars the verdict will be graded with and the run stops as soon as the tier is no longer
+     *  in doubt: lower ≥ robustMin (robust), upper < marginalMin (at-risk), or the interval sits wholly inside
+     *  the marginal band. While the tier is still undecided it keeps sampling, because that is exactly when
+     *  another sample buys something. Takes precedence over `ciStopHalfWidth`.
+     *
+     *  Also raises the run cap to `requiredRunsForBar(robustMin)` when the caller did not ask for more, so the
+     *  top tier is actually reachable — a bar you cannot reach inside the cap is a promise the engine cannot
+     *  keep (robustMin 0.999 needs 3838 clean runs; the old fixed cap of 2000 made it unreachable by
+     *  construction, at any setting). Wall-clock is still bounded by `shouldStop`, which is the honest bound. */
+    stopBars?: { robustMin: number; marginalMin: number };
     /** Don't stop adaptively before this many evaluated runs (an early CI off 3 samples is meaningless). */
     minRuns?: number;
     /** Checked at the top of EACH iteration; returning true stops the batch (stoppedEarly=true). The worker
@@ -143,7 +160,13 @@ export async function runMonteCarlo(
     runVariant: VariantRunner,
     opts: MonteCarloOptions = {},
 ): Promise<MonteCarloYield> {
-    const n = Math.max(1, Math.min(opts.n ?? 300, 2000)); // cap raised for a tight "robust" bound / manual deep runs
+    const bars = opts.stopBars;
+    // With bars, the ceiling must at least allow the top tier to be earned (see requiredRunsForBar); an
+    // explicit larger `n` still wins. ABSOLUTE_MAX_RUNS is a runaway guard only — the real cost bound is the
+    // caller's wall-clock `shouldStop`.
+    const cap = bars ? Math.max(2000, requiredRunsForBar(bars.robustMin)) : 2000;
+    const defaultN = bars ? Math.min(requiredRunsForBar(bars.robustMin), cap) : 300;
+    const n = Math.max(1, Math.min(opts.n ?? defaultN, cap, ABSOLUTE_MAX_RUNS));
     const minRuns = Math.max(1, opts.minRuns ?? 24);
     const ciStop = opts.ciStopHalfWidth ?? 0.03;
     const dist = opts.dist ?? 'gaussian';
@@ -152,7 +175,20 @@ export async function runMonteCarlo(
     const outcomes: VariantOutcome[] = [];
     let stoppedEarly = false;
     let ran = 0;
-    for (let i = 0; i < n; i++) {
+    // Running tallies. Recomputing these by filtering `outcomes` each iteration was O(n²) — invisible at 61
+    // samples, ~29M operations at the 3838 a 0.999 bar needs.
+    let passed = 0;
+    let evaluated = 0;
+
+    // With bars, `n` is a target of USABLE samples, not of attempts: an errored variant is infra noise, and
+    // letting it consume the sample budget means a flaky box quietly costs the design its tier — the same
+    // class of bug this fix exists to remove. Attempts stay bounded so a runner that errors on everything
+    // still terminates. Without bars the ceiling keeps its original attempt semantics, untouched.
+    const attemptCap = bars ? Math.min(ABSOLUTE_MAX_RUNS, n * ERRORED_ATTEMPT_HEADROOM) : n;
+
+    for (let attempt = 0; attempt < attemptCap; attempt++) {
+        // Collected enough usable samples for the bar — a complete run, not an early stop.
+        if (bars && evaluated >= n) break;
         // Per-batch budget (wall-clock, supplied by the worker) — stop before drawing another variant.
         if (opts.shouldStop?.()) {
             stoppedEarly = true;
@@ -162,39 +198,92 @@ export async function runMonteCarlo(
         ran++;
         let measurements: SimMeasurement[] | null;
         try {
-            measurements = await runVariant(variant, i);
+            measurements = await runVariant(variant, attempt);
         } catch {
             measurements = null; // a thrown runner = the variant could not be run → errored
         }
         if (!measurements) {
             outcomes.push('errored');
+            // Nothing is running at all. Once we have spent `minRuns` attempts without a single usable
+            // sample the runner is broken, not the design, and further attempts only burn spawns — stop and
+            // let the caller read `errored === ran` for what it is.
+            if (evaluated === 0 && outcomes.length >= minRuns) {
+                stoppedEarly = true;
+                break;
+            }
             continue;
         }
         const results = evaluateAssertions(measurements, criteria, true, circuit.nets);
-        outcomes.push(results.length > 0 && results.every((r) => r.pass) ? 'pass' : 'fail');
+        const ok = results.length > 0 && results.every((r) => r.pass);
+        outcomes.push(ok ? 'pass' : 'fail');
+        evaluated++;
+        if (ok) passed++;
         opts.onProgress?.(outcomes.length); // checkpoint hook (worker persists partial progress)
 
-        // Adaptive-N: stop once the interval is tight enough (but not before minRuns evaluated samples).
-        if (ciStop > 0) {
-            const evaluated = outcomes.filter((o) => o !== 'errored').length;
-            if (evaluated >= minRuns) {
-                const passed = outcomes.filter((o) => o === 'pass').length;
-                const ci = wilson95(passed, evaluated);
-                if ((ci.high - ci.low) / 2 <= ciStop) {
-                    stoppedEarly = true;
-                    break;
-                }
+        // Adaptive-N. Never before `minRuns` EVALUATED samples — an interval off three draws is noise.
+        if (evaluated >= minRuns && (bars || ciStop > 0)) {
+            const ci = wilson95(passed, evaluated);
+            // Bar-aware wins when supplied: stop on a DECIDED tier, not an arbitrary precision.
+            if (bars ? tierDecided(ci, bars) : (ci.high - ci.low) / 2 <= ciStop) {
+                stoppedEarly = true;
+                break;
             }
         }
     }
     return { ...computeYield(outcomes), stoppedEarly, ran };
 }
 
+/** 97.5th percentile of N(0,1) — the 95% two-sided z. Shared so the interval and the run-count math that
+ *  INVERTS it can never drift apart (that drift is precisely how the top tier became unreachable). */
+const Z95 = 1.959963984540054;
+const Z95_SQ = Z95 * Z95;
+
+/** Runaway guard for a pathological bar (robustMin → 1 diverges). The real cost bound is `shouldStop`. */
+const ABSOLUTE_MAX_RUNS = 50_000;
+
+/** How many ATTEMPTS a bar-aware run may spend to collect its target of usable samples. 3× tolerates a
+ *  two-thirds error rate — far past any healthy box — while still terminating on a runner that errors on
+ *  everything. Beyond this the report is honest: a large `errored` count and no tier awarded. */
+const ERRORED_ATTEMPT_HEADROOM = 3;
+
+/**
+ * Clean runs needed before the Wilson-95% LOWER bound can even REACH `robustMin`.
+ *
+ * At a perfect sample (p̂ = 1) the Wilson lower bound collapses to n / (n + z²), so reaching R needs
+ * n ≥ z²·R/(1−R). Concretely: R=0.99 → 381 runs, R=0.999 → 3838 runs.
+ *
+ * This is the number that makes a bar and a run cap NOT independent knobs. A cap below it does not make the
+ * top tier expensive, it makes it unreachable at every setting — which is a promise the engine cannot keep.
+ * Exported so a caller (or a test) can assert that relationship instead of rediscovering it.
+ */
+export function requiredRunsForBar(robustMin: number): number {
+    // NaN/±Inf and any bar outside (0,1) fall back to the guard: a bar of 1.0 needs infinite samples.
+    if (!Number.isFinite(robustMin) || robustMin <= 0 || robustMin >= 1) return ABSOLUTE_MAX_RUNS;
+    return Math.ceil((Z95_SQ * robustMin) / (1 - robustMin));
+}
+
+/**
+ * Is the tier already settled, whatever the remaining samples would say?
+ *
+ * The verdict grades the LOWER bound against two bars, so exactly three situations are decided:
+ *   lower ≥ robustMin                          → robust; further samples cannot revoke it
+ *   upper <  marginalMin                       → at-risk; the interval cannot climb into the marginal band
+ *   lower ≥ marginalMin AND upper < robustMin   → the whole interval lies inside the marginal band
+ * Anything else still straddles a bar — and straddling a bar is the one case where another sample buys
+ * something. Note a flawless run (p̂ = 1) keeps `upper` pinned at 1, so it correctly never short-circuits to
+ * "marginal": it must earn `lower ≥ robustMin` or run out of budget.
+ */
+function tierDecided(ci: { low: number; high: number }, bars: { robustMin: number; marginalMin: number }): boolean {
+    if (ci.low >= bars.robustMin) return true;
+    if (ci.high < bars.marginalMin) return true;
+    return ci.low >= bars.marginalMin && ci.high < bars.robustMin;
+}
+
 /** Wilson score 95% interval for a binomial proportion (better than normal-approx at small n / extreme p). */
 function wilson95(passed: number, n: number): { low: number; high: number } {
     if (n <= 0) return { low: 0, high: 1 };
-    const z = 1.959963984540054; // 97.5th percentile of N(0,1)
-    const z2 = z * z;
+    const z = Z95;
+    const z2 = Z95_SQ;
     const p = passed / n;
     const denom = 1 + z2 / n;
     const center = (p + z2 / (2 * n)) / denom;
@@ -285,23 +374,45 @@ export function classifyRobustness(
     const evaluated = typeof yieldReport?.evaluated === 'number' ? yieldReport.evaluated : null;
     const pct = (x: number) => `${(x * 100).toFixed(1)}%`;
 
-    if (lo === null) {
+    // A zero-sample run is NOT a graded run. computeYield reports wilson95(0, 0) = {low: 0, high: 1} for an
+    // empty denominator, and 0 is a perfectly valid number — so grading it produced "at-risk" for a batch in
+    // which every variant failed to SPAWN. That inverts the engine's own rule that an infrastructure fault
+    // must never read as a design fault, and it is the same mistake as the errored-variant exclusion, just at
+    // the aggregate level. No samples ⇒ no verdict.
+    const errored = typeof yieldReport?.errored === 'number' ? yieldReport.errored : null;
+    if (lo === null || evaluated === null || evaluated <= 0) {
+        const infraFailed = (errored ?? 0) > 0;
         return {
             tier: 'unknown',
             profile: profileName,
-            yield: yld,
+            yield: null,
             yieldLowerBound: null,
             evaluated,
-            note: 'Robustness not assessed (no toleranced parts or no Monte-Carlo) — verified at NOMINAL component values only.',
+            note: infraFailed
+                ? `Robustness not assessed — all ${errored} Monte-Carlo variants failed to run (an infrastructure fault, NOT a design signal). Verified at NOMINAL component values only; re-run to obtain a tier.`
+                : 'Robustness not assessed (no toleranced parts or no Monte-Carlo) — verified at NOMINAL component values only.',
         };
     }
     const tier: RobustnessTier = lo >= bars.robustMin ? 'robust' : lo >= bars.marginalMin ? 'marginal' : 'at-risk';
     const tail = `(component-tolerance Monte-Carlo, ${evaluated ?? '?'} runs; ~${pct(lo)} is the 95% lower bound; short-term, not long-term-drift-adjusted)`;
+
+    // A short run and a genuinely marginal design produce the SAME tier but need OPPOSITE actions, and the
+    // interval already separates them: while the UPPER bound still sits at/above the bar, the data has not
+    // ruled out `robust` — the missing ingredient is samples, not part quality. Telling that user to buy ±1%
+    // parts sends them to spend money on a statistics artefact. Only advise tightening once the upper bound
+    // has fallen below the bar, i.e. the design itself cannot reach it.
+    const hi = typeof ci?.high === 'number' ? ci.high : 1;
+    const sampleLimited = hi >= bars.robustMin;
+    const needed = requiredRunsForBar(bars.robustMin);
+    const marginalNote = sampleLimited
+        ? `Undecided — ~${pct(lo)} is only the 95% LOWER bound and the run was too short to reach the ${pct(bars.robustMin)} bar; the data has not ruled out "robust". Re-run with more variants (about ${needed} clean runs are needed for this bar) before changing the design ${tail}.`
+        : `Marginal — ~${pct(lo)} expected yield, below the ${pct(bars.robustMin)} production bar. Tighten component tolerances (e.g. ±1% parts) or re-center values ${tail}.`;
+
     const note =
         tier === 'robust'
             ? `Robust — at least ${pct(bars.robustMin)} of units expected to meet spec under component tolerances ${tail}.`
             : tier === 'marginal'
-              ? `Marginal — ~${pct(lo)} expected yield, below the ${pct(bars.robustMin)} production bar. Tighten component tolerances (e.g. ±1% parts) or re-center values ${tail}.`
+              ? marginalNote
               : `At risk — only ~${pct(lo)} expected yield; passes at nominal but is NOT production-robust ${tail}.`;
     return { tier, profile: profileName, yield: yld, yieldLowerBound: lo, evaluated, note };
 }

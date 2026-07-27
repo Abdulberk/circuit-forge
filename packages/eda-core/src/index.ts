@@ -151,6 +151,9 @@ export {
     computeYield,
     runMonteCarlo,
     classifyRobustness,
+    // Exported so callers/tests can assert the relationship a bar and a run cap must satisfy, instead of
+    // rediscovering it: a cap below requiredRunsForBar(robustMin) makes that tier unreachable at any setting.
+    requiredRunsForBar,
     ROBUSTNESS_PROFILES,
     type TolDistribution,
     type YieldSummary,

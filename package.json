@@ -18,6 +18,7 @@
         "test:e2e-dry-run": "node scripts/e2e-dry-run.mjs",
         "test:layout": "pnpm --filter @circuit-forge/pcb-core build && node scripts/layout-check.mjs",
         "test:robustness": "pnpm --filter @circuit-forge/eda-core build && node scripts/robustness-current-check.mjs",
+        "test:tier": "pnpm --filter @circuit-forge/eda-core build && node scripts/robustness-tier-check.mjs",
         "lint": "turbo run lint",
         "lint:fix": "turbo run lint:fix",
         "format": "prettier --write \"**/*.{ts,tsx,js,jsx,json}\"",

@@ -15,6 +15,7 @@
 import {
     runMonteCarlo,
     extraProbesForCriteria,
+    ROBUSTNESS_PROFILES,
     type CircuitJson,
     type AnalysisConfig,
     type AcceptanceCriterion,
@@ -34,6 +35,9 @@ export interface MonteCarloBatchInput {
     /** Max variants (default config.MC_N_DEFAULT, capped at 300 by the orchestrator). */
     n?: number;
     seed?: number;
+    /** Robustness profile name (ROBUSTNESS_PROFILES key). Its bars drive the adaptive stop AND the run
+     *  ceiling, so the tier the verdict will grade is actually reachable. */
+    profile?: string;
     modelFiles?: Array<{ name: string; content: Buffer }>;
 }
 
@@ -68,8 +72,16 @@ export async function runMonteCarloBatch(
         extraProbes,
         input.modelFiles,
         async (runVariant) => {
+            // Bar-aware stopping when we know which profile will grade the result. `stopBars` makes the run
+            // stop on a DECIDED tier and lifts the ceiling to what that bar actually needs; the fixed
+            // MC_CI_HALFWIDTH_STOP is then ignored by the orchestrator (kept for profile-less callers).
+            // Note `n` and MC_N_DEFAULT are only applied when the caller asked for a specific count —
+            // otherwise eda-core derives the ceiling from the bar, because a count chosen without knowing
+            // the bar is exactly how the top tier became unreachable.
+            const bars = input.profile ? ROBUSTNESS_PROFILES[input.profile] : undefined;
             const s = await runMonteCarlo(input.circuit, input.criteria, runVariant, {
-                n: input.n ?? config.MC_N_DEFAULT,
+                ...(input.n ? { n: input.n } : bars ? {} : { n: config.MC_N_DEFAULT }),
+                ...(bars ? { stopBars: { robustMin: bars.robustMin, marginalMin: bars.marginalMin } } : {}),
                 seed: input.seed ?? 1,
                 ciStopHalfWidth: config.MC_CI_HALFWIDTH_STOP,
                 shouldStop: () => {
