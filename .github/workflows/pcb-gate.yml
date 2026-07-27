@@ -13,9 +13,12 @@ name: PCB quality gate
 # NOTE on the filter: eda-core is listed because pcb-core imports it at BUILD AND RUNTIME — this
 # workflow compiles it explicitly below for that reason. Without it, an eda-core change could break the
 # layout pipeline and this gate would never run: the one dependency the gate needs but could not see.
+# docker/pcb-runtime/Dockerfile is listed because it is where the EDA image digests are pinned, and
+# scripts/lib/eda-images.mjs refuses to disagree with it. Bumping KiCad or freerouting there is precisely
+# the moment this gate must run: it is the only thing that proves the new binary still routes and DRCs
+# these boards clean. (The gate pulls those images; it still builds nothing from that directory.)
 # Deliberately NOT listed: apps/pcb-worker/** (its unit tests run in ci.yml, which has no path filter,
-# and layout-check.mjs exercises pcb-core rather than the worker) and docker/** (the gate pulls the two
-# PINNED public images, it does not build anything from that directory).
+# and layout-check.mjs exercises pcb-core rather than the worker).
 on:
   pull_request:
     paths:
@@ -23,6 +26,7 @@ on:
       - 'packages/eda-core/**'
       - 'scripts/layout-check.mjs'
       - 'scripts/lib/**'
+      - 'docker/pcb-runtime/Dockerfile'
       - '.github/workflows/pcb-gate.yml'
   push:
     branches: [main]
@@ -31,6 +35,7 @@ on:
       - 'packages/eda-core/**'
       - 'scripts/layout-check.mjs'
       - 'scripts/lib/**'
+      - 'docker/pcb-runtime/Dockerfile'
       - '.github/workflows/pcb-gate.yml'
 
 concurrency:
@@ -42,9 +47,6 @@ jobs:
     name: freerouting + KiCad-10 DRC (real Docker)
     runs-on: ubuntu-latest
     timeout-minutes: 30
-    env:
-      KICAD_IMAGE: kicad/kicad:10.0-full
-      FR_IMAGE: ghcr.io/freerouting/freerouting:2.2.4
     steps:
       - uses: actions/checkout@v4
 
@@ -66,10 +68,24 @@ jobs:
       - name: Build eda-core (pcb-core dependency)
         run: pnpm --filter @circuit-forge/eda-core build
 
-      # Pull the PINNED images up front so a registry hiccup fails here with a clear message rather
-      # than mid-harness. Both are public (Docker Hub / GHCR) — no login needed.
-      - name: Pull pinned EDA images
+      # Pull the images BY DIGEST, taken from the same module the harness uses, which in turn refuses to
+      # disagree with docker/pcb-runtime/Dockerfile. This job used to pull the bare `kicad/kicad:10.0-full`
+      # tag — a ROLLING tag upstream republishes for every 10.0.x patch — while production pinned a digest.
+      # Once the tag moved, the gate was judging boards with a KiCad the product does not run, so a red (or
+      # green) result here said nothing about the shipped board. Verified drifted 27 Tem 2026.
+      # Pulling up front also means a registry hiccup fails here with a clear message, not mid-harness.
+      - name: Pull the EDA images production runs (digest-pinned)
         run: |
+          # Explicit rather than relying on the runner's default shell flags: this guard's whole job is to
+          # stop a silent green, so it must not depend on an implicit `-e`.
+          set -euo pipefail
+          # assertImagesMatchProduction() throws if the pins have drifted from the Dockerfile, so a
+          # half-done version bump fails HERE with a clear message instead of silently testing the
+          # wrong binary. `set -e` (the default for a run block) turns that throw into a failed step.
+          KICAD_IMAGE=$(node --input-type=module -e 'import { KICAD_IMAGE, assertImagesMatchProduction } from "./scripts/lib/eda-images.mjs"; assertImagesMatchProduction(); process.stdout.write(KICAD_IMAGE);')
+          FR_IMAGE=$(node --input-type=module -e 'import { FR_IMAGE } from "./scripts/lib/eda-images.mjs"; process.stdout.write(FR_IMAGE);')
+          echo "kicad:       $KICAD_IMAGE"
+          echo "freerouting: $FR_IMAGE"
           docker pull "$KICAD_IMAGE"
           docker pull "$FR_IMAGE"
 

@@ -16,6 +16,11 @@ import { fileURLToPath } from 'node:url';
 import { execFileSync } from 'node:child_process';
 import { makeFreeroutingRunner } from './lib/freerouting.mjs';
 import { makeKicadDrcRunner } from './lib/kicad-drc.mjs';
+import { KICAD_IMAGE, FR_IMAGE, assertImagesMatchProduction } from './lib/eda-images.mjs';
+
+// Before anything runs: the images this harness judges boards with MUST be the ones production runs.
+// A gate testing a different KiCad than the product is not a gate.
+assertImagesMatchProduction();
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const pkgRoot = join(__dirname, '..', 'packages', 'pcb-core');
@@ -197,7 +202,6 @@ for (const [name, circuit] of cases) {
 
 // ---------------------------------------------------------------- notary (Docker kicad-cli 10)
 
-const KICAD_IMAGE = 'kicad/kicad:10.0-full';
 let dockerOk = false;
 try {
     execFileSync('docker', ['image', 'inspect', KICAD_IMAGE], { stdio: 'ignore', timeout: 30000 });
@@ -242,7 +246,6 @@ if (dockerOk) {
 
 // ---------------------------------------------------------------- quality route (the DRC-CLEAN stamp)
 
-const FR_IMAGE = 'ghcr.io/freerouting/freerouting:2.2.4';
 let frOk = false;
 if (dockerOk) {
     try {
@@ -342,14 +345,29 @@ if (frOk) {
                 );
                 return statSync(join(dir, out)).size;
             };
+            // kicad-cli's GLB exporter occasionally dies inside its own allocator under memory pressure
+            // ("malloc(): unaligned tcache chunk detected", observed 27 Tem 2026 — the same board exported
+            // fine on the next run). That is the TOOL crashing, not the bodies failing to resolve, and the
+            // two must not share a verdict: a crash is infrastructure and gets one retry, while an export
+            // that SUCCEEDS but produces no body geometry is a real product regression and still fails.
+            // Production takes the same view for a different reason — it delivers the fab bundle before the
+            // 3D render precisely so a cosmetic export fault can never cost a manufacturable board.
+            const exportGlbResilient = (src, out) => {
+                try {
+                    return exportGlb(src, out);
+                } catch (e) {
+                    console.log(`  … glb export crashed (${String(e.stderr ?? e).slice(0, 80).trim()}) — retrying once`);
+                    return exportGlb(src, out);
+                }
+            };
             try {
-                const bareBytes = exportGlb('board_quality.kicad_pcb', 'board_quality.glb'); // same flags, no (model ...) refs
-                const bodiedBytes = exportGlb('board_quality_bodies.kicad_pcb', 'board_quality_bodies.glb');
+                const bareBytes = exportGlbResilient('board_quality.kicad_pcb', 'board_quality.glb'); // same flags, no (model ...) refs
+                const bodiedBytes = exportGlbResilient('board_quality_bodies.kicad_pcb', 'board_quality_bodies.glb');
                 const ratio = bodiedBytes / Math.max(bareBytes, 1);
                 if (ratio >= 1.3) ok(`${name}: GLB bodies resolved — bodied ${Math.round(bodiedBytes / 1024)} KB vs bare ${Math.round(bareBytes / 1024)} KB (${ratio.toFixed(1)}×)`);
                 else fail(`${name}: --subst-models did NOT add body geometry — bodied ${Math.round(bodiedBytes / 1024)} KB vs bare ${Math.round(bareBytes / 1024)} KB (${ratio.toFixed(2)}×, expected ≥1.3×)`);
             } catch (e) {
-                fail(`${name}: glb export failed — ${String(e.stderr ?? e).slice(0, 200)}`);
+                fail(`${name}: glb export failed TWICE — ${String(e.stderr ?? e).slice(0, 200)}`);
             }
         }
     }
