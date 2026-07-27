@@ -16,7 +16,7 @@ import { fileURLToPath } from 'node:url';
 import { execFileSync } from 'node:child_process';
 import { makeFreeroutingRunner } from './lib/freerouting.mjs';
 import { makeKicadDrcRunner } from './lib/kicad-drc.mjs';
-import { KICAD_IMAGE, FR_IMAGE, assertImagesMatchProduction } from './lib/eda-images.mjs';
+import { KICAD_IMAGE, FR_IMAGE, assertImagesMatchProduction, dockerUserArgs } from './lib/eda-images.mjs';
 
 // Before anything runs: the images this harness judges boards with MUST be the ones production runs.
 // A gate testing a different KiCad than the product is not a gate.
@@ -223,7 +223,7 @@ if (dockerOk) {
         try {
             execFileSync(
                 'docker',
-                ['run', '--rm', '-v', `${toDocker(dir)}:/work`, KICAD_IMAGE, 'kicad-cli', 'pcb', 'drc',
+                ['run', '--rm', ...dockerUserArgs(), '-v', `${toDocker(dir)}:/work`, KICAD_IMAGE, 'kicad-cli', 'pcb', 'drc',
                     '--refill-zones', '--exit-code-violations', '--severity-error', '--format', 'json',
                     '--output', '/work/drc.json', '/work/board.kicad_pcb'],
                 { stdio: 'pipe', timeout: 300000, env: { ...process.env, MSYS_NO_PATHCONV: '1' } },
@@ -333,7 +333,7 @@ if (frOk) {
         try {
             execFileSync(
                 'docker',
-                ['run', '--rm', '-v', `${toDocker(dir)}:/work`, KICAD_IMAGE, 'kicad-cli', 'pcb', 'drc',
+                ['run', '--rm', ...dockerUserArgs(), '-v', `${toDocker(dir)}:/work`, KICAD_IMAGE, 'kicad-cli', 'pcb', 'drc',
                     '--refill-zones', '--exit-code-violations', '--severity-error', '--format', 'json',
                     '--output', '/work/drc_quality.json', '/work/board_quality.kicad_pcb'],
                 { stdio: 'pipe', timeout: 300000, env: { ...process.env, MSYS_NO_PATHCONV: '1' } },
@@ -365,7 +365,7 @@ if (frOk) {
                 rmSync(join(dir, out), { force: true });
                 execFileSync(
                     'docker',
-                    ['run', '--rm', '-v', `${toDocker(dir)}:/work`, KICAD_IMAGE, 'kicad-cli', 'pcb', 'export', 'glb',
+                    ['run', '--rm', ...dockerUserArgs(), '-v', `${toDocker(dir)}:/work`, KICAD_IMAGE, 'kicad-cli', 'pcb', 'export', 'glb',
                         '--include-tracks', '--include-pads', '--include-zones', '--include-silkscreen', '--include-soldermask',
                         '--subst-models', '--output', `/work/${out}`, `/work/${src}`],
                     { stdio: 'pipe', timeout: 300000, env: { ...process.env, MSYS_NO_PATHCONV: '1' } },
