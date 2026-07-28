@@ -22,11 +22,14 @@ BullMQ queue; a separate worker process consumes those jobs and shells out to th
 |-----------|------|------|
 | **API** | [apps/api](../apps/api) (NestJS) | REST API, auth/RBAC, CRUD, enqueues simulation jobs, reads results |
 | **worker-sim** | [apps/worker-sim](../apps/worker-sim) | BullMQ consumer that runs `ngspice` and writes results back |
+| **pcb-worker** | [apps/pcb-worker](../apps/pcb-worker) | BullMQ consumer for the `pcb-layout` queue: placement → freerouting → KiCad DRC → Gerber/BOM/PnP + 3D GLB. Runs in its own image because it needs KiCad and a JRE (~3 GB) |
 | **PostgreSQL** | via Prisma ([schema.prisma](../apps/api/prisma/schema.prisma)) | Primary datastore (users, orgs, projects, versions, jobs, assets) |
-| **Redis** | BullMQ queues `simulations` + `design` | Job queues between API (producer) and worker (consumer) — `simulations` for deterministic sim runs (§1), `design` for the durable AI design loop (§2) |
+| **Redis** | BullMQ queues `simulations` + `design` + `pcb-layout` | Job queues between API (producer) and the workers (consumers) — `simulations` for deterministic sim runs (§1), `design` for the durable AI design loop (§2), `pcb-layout` for the PCB pipeline (§1b) |
 | **MinIO / S3** | AWS SDK v3 (`@aws-sdk/client-s3`) | Object storage for asset files and large simulation results |
-| **eda-core** | [packages/eda-core](../packages/eda-core) | Pure-TS library: CircuitJson types, netlist generation, output parsing, ERC, Monte-Carlo tolerance/yield analysis |
-| **llm-core** | [packages/llm-core](../packages/llm-core) | LLM circuit generation via the real Anthropic SDK (`@anthropic-ai/sdk`): `generateCircuit` / `editCircuit` / `fixCircuit` / `explainCircuit`, with JSON validation + a single repair retry; also `runDesignLoop` — the framework-free generate→simulate→AI-fix→re-simulate agentic loop shared by the API and worker-sim |
+| **eda-core** | [packages/eda-core](../packages/eda-core) | Pure-TS library: CircuitJson types, netlist generation, output parsing, ERC, Monte-Carlo tolerance/yield analysis, corner/temperature/supply sweeps, verdict + scope manifest |
+| **pcb-core** | [packages/pcb-core](../packages/pcb-core) | Pure-TS PCB library: fab profiles, placement, DSN/SES bridge, DRC parsing, Gerber/BOM/PnP writers. Never touches Docker or child processes — the runners are injected |
+| **pcb-placement-rs** | [crates/pcb-placement-rs](../crates/pcb-placement-rs) | Out-of-process Rust placement engine (`cf-pcb-place`), selected via `placer: 'rust'` |
+| **llm-core** | [packages/llm-core](../packages/llm-core) | LLM circuit generation over a **protocol-switchable transport** (`LLM_PROTOCOL` = `anthropic` \| `openai`, so an OpenAI-compatible gateway works without code changes): `generateCircuit` / `editCircuit` / `fixCircuit` / `explainCircuit`, with JSON validation + a single repair retry; also `runDesignLoop` — the framework-free generate→simulate→AI-fix→re-simulate agentic loop shared by the API and worker-sim |
 
 ### Diagram
 
@@ -117,6 +120,40 @@ Key wiring evidence:
   ("Executes ngspice simulations in isolated job directories").
 - S3 access on the API side (asset upload / presign):
   [assets.service.ts](../apps/api/src/assets/assets.service.ts).
+
+---
+
+## 1b. PCB Layout Pipeline
+
+A second, independent job path with the same LRO shape as simulation: the API inserts a `QUEUED`
+`LayoutJob` and enqueues onto **`pcb-layout`**; [apps/pcb-worker](../apps/pcb-worker) consumes it and
+writes the outcome back onto the row. The client polls `GET /layouts/:id`.
+
+It is a separate service for one reason: it needs **KiCad and a JRE**, ~3 GB of image the API and worker-sim
+have no use for. `docker/pcb-runtime/Dockerfile` bakes kicad-cli 10 and the freerouting jar — both
+**digest-pinned**, with `scripts/lib/eda-images.mjs` refusing to disagree with those pins — and
+`docker/pcb-worker/Dockerfile` builds `FROM pcb-runtime:local`. Compose cannot infer that order, so a clean
+machine builds `pcb-runtime` first.
+
+Inside a job: classify → tscircuit adapter → placement (grid, TypeScript `auto`, or the out-of-process Rust
+`cf-pcb-place`) → **connectivity parity** against our own netlist → freerouting quality route with a margin
+ladder → **KiCad DRC as the manufacturability authority** → Gerber/BOM/PnP plus a 3D GLB, both uploaded to
+S3 with only their keys kept on the row.
+
+Two invariants worth stating, because each was a bug once:
+
+- **A board KiCad rejected never yields a downloadable bundle.** The job still ends `SUCCEEDED` — the
+  analysis completed — carrying `manufacturable: false`, a reason, and no `gerbersKey`.
+- **The delivered gerbers are re-exported from the board the notary actually DRC'd**, not from the routed
+  soup pcb-core plots. The soup has no zone element, so shipping it would deliver a board silently missing
+  the ground plane we advertise. Checked and delivered must be the same artifact.
+
+pcb-core itself stays pure — no Docker, no `child_process`. The freerouting and kicad-cli runners are
+**injected** by whoever owns a process: the worker in production, the harness in CI. That seam is what lets
+the same pipeline run under `pnpm test:layout` against the real tools.
+
+Admission: PCB layout is the one quota that **binds by default** (2 in flight per org), and `pcb-layout` is
+in the admin kill switch alongside `simulations` and `design`.
 
 ---
 
@@ -408,7 +445,7 @@ These are the underlying scripts Turbo invokes:
 
 ### docker-compose services ([docker-compose.yml](../docker-compose.yml))
 
-Compose file version `3.8`. Six services and three named volumes
+Compose file version `3.8`. Seven services and three named volumes
 (`postgres-data`, `redis-data`, `minio-data`).
 
 | Service | Image | Ports | Healthcheck | depends_on |
@@ -419,6 +456,8 @@ Compose file version `3.8`. Six services and three named volumes
 | **create-bucket** | `minio/mc` | — | — | `minio` (service_healthy) |
 | **api** | build `infra/docker/api.Dockerfile` | `3000:3000` | — | postgres, redis, minio (all service_healthy) |
 | **worker-sim** | build `infra/docker/worker-sim.Dockerfile` | — | — | postgres, redis, minio (all service_healthy) |
+| **pcb-worker** | build `docker/pcb-worker/Dockerfile` (`FROM pcb-runtime:local`) | — | — | postgres, redis, minio (all service_healthy) |
+| **pcb-runtime** | build `docker/pcb-runtime/Dockerfile` | — | — | build stage only — profile `build-only`, never runs |
 
 Per-service detail:
 
