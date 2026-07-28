@@ -50,6 +50,12 @@ The schema was not created by a single migration. [apps/api/prisma/migrations/](
 | `20260612064352_refresh_rotation_audit` | `RefreshToken` model (refresh-token rotation with reuse detection) + makes `AuditLog.orgId` nullable (user-scoped events) + a `[userId, createdAt]` audit index. |
 | `20260612070536_audit_user_cascade` | Changes `AuditLog.userId`'s FK to `ON DELETE CASCADE` (was `RESTRICT`). |
 | `20260616123329_design_jobs` | `DesignJob` model + `DesignJobStatus` enum (async AI design loop). |
+| `20260702091745_platform_admin` | `User.platformRole` + `PlatformRole` enum + `OrgQuotaOverride` model (the cross-tenant operator surface). |
+| `20260707120000_layout_jobs` | `LayoutJob` model + `LayoutJobStatus` enum (the PCB layout LRO). |
+| `20260710120000_audit_org_setnull` | Changes `AuditLog.orgId`'s FK to `ON DELETE SET NULL` — an audit record must OUTLIVE the org it describes, so deleting a tenant cannot erase the history of what was done to it. |
+| `20260715103814_layout_version_linkage` | `LayoutJob.projectId` / `versionId` (both `SetNull`), so a layout survives a page reload and can be listed per project/version. |
+| `20260715114407_project_working_copy` | `ProjectWorkingCopy` model (editor autosave drafts). |
+| `20260715192402_org_invitations` | `OrgInvitation` model + `OrgInvitationStatus` enum (self-serve membership). |
 
 ---
 
@@ -106,6 +112,24 @@ Lifecycle state of an async AI design job (`DesignJob`). Default for a new job i
 | `CANCELED` | Canceled via `abortRequested` |
 
 ---
+
+### `LayoutJobStatus`
+
+`QUEUED` → `RUNNING` → `SUCCEEDED` | `FAILED` | `CANCELED`. Same lifecycle as the simulation and design
+queues. Note that **`SUCCEEDED` does not mean the board is manufacturable** — it means the analysis
+completed. A board KiCad rejected also lands `SUCCEEDED`, with the verdict inside `result` and no
+`gerbersKey`.
+
+### `OrgInvitationStatus`
+
+`PENDING` | `ACCEPTED` | `REVOKED` | `EXPIRED`.
+
+### `PlatformRole`
+
+`NONE` < `SUPPORT` < `OPERATOR` < `ADMIN` — the **second, independent** role axis on `User`. Tenant roles
+(`OrgRole`) say what you may do inside an org; this says what you may do ACROSS orgs, and it is what gates
+every `/admin/*` route. Read live from the database on each request, so revoking it takes effect
+immediately rather than when a JWT expires.
 
 ## Models
 
@@ -380,7 +404,17 @@ Append-only record of significant actions, attributed to a user. `orgId` is null
 
 Relations:
 - `org Organization? @relation(fields: [orgId], references: [id], onDelete: Cascade)` — optional relation; `orgId` nullable means an event can be user-scoped with no org.
-- `user User @relation(fields: [userId], references: [id], onDelete: Cascade)` — **DELIBERATE**: user-cascade means erasing an account also erases its audit rows. These rows hold the user's PII (`ip`/`userAgent`), so cascade is the GDPR-erasure-aligned default and keeps account deletion unblocked. Tradeoff: security-evidence events (`refresh_reuse_detected`, `account_locked`) die with the account — if/when a compliance regime requires audit to outlive the subject, switch `userId` to optional + `onDelete: SetNull` (anonymize the actor, keep the row).
+- `user User? @relation("AuditSubject", fields: [userId], references: [id], onDelete: SetNull)` and
+  `org Organization? @relation(fields: [orgId], references: [id], onDelete: SetNull)` — **the audit record
+  OUTLIVES its subject.** Deleting a user anonymizes the actor (`userId` → null) and deleting an org
+  anonymizes the org reference (`orgId` → null); the row itself survives.
+
+  This is a reversal of the original design, which cascaded on `userId` so that erasing an account also
+  erased its PII (`ip`/`userAgent`). Access transparency won the argument: security-evidence events
+  (`refresh_reuse_detected`, `account_locked`, every admin mutation) must not be destroyable by deleting
+  the account they are evidence about — otherwise the deletion itself erases the record of what was done.
+  Erasure is still satisfied, because what is erased is the LINK to the person, not the fact that something
+  happened. Landed in `20260710120000_audit_org_setnull`.
 
 Constraints / indexes:
 - `@@index([orgId, createdAt])` → `audit_logs_orgId_createdAt_idx` (per-org audit timeline).
@@ -390,6 +424,78 @@ Constraints / indexes:
 - FK `audit_logs_userId_fkey` ON DELETE CASCADE.
 
 ---
+
+### `LayoutJob` → table `layout_jobs`
+
+The PCB layout LRO. Mirrors `SimulationJob`/`DesignJob`: the API inserts a `QUEUED` row and enqueues onto
+the `pcb-layout` queue; `apps/pcb-worker` runs freerouting + KiCad DRC and writes the outcome back.
+
+| Column | Type | Notes |
+|---|---|---|
+| `id` | uuid PK | |
+| `orgId` / `userId` | String | owner; `org` is `Cascade` |
+| `projectId` / `versionId` | String? | optional linkage to a saved circuit, both **`SetNull`** — deleting a project or version never loses the org's layout history, and an ad-hoc layout has neither |
+| `status` | `LayoutJobStatus` | default `QUEUED` |
+| `circuit` | Json | input: OUR CircuitJson |
+| `options` | Json? | `placer` / `fabProfile` / `netCurrentsA` |
+| `result` | Json? | bounded metadata — geometry, DRC checks, airwires, stats, `fab`, `delivery`, `diagnostics`. Null until finished |
+| `glbKey` / `gerbersKey` | String? | **S3 keys, not payloads.** The API presigns them on read |
+| `errorMessage` | String? | |
+| `abortRequested` | Boolean | cooperative cancel, parity with `DesignJob` |
+| `createdAt` / `startedAt` / `finishedAt` | DateTime | |
+
+Indexes: `[orgId, createdAt]`, `[status]`, `[versionId]`, `[projectId]`.
+
+`gerbersKey` doubles as the manufacturability verdict — the worker writes it **only** on the manufacturable
+branch — which is how the list endpoint reports `manufacturable` without a second column.
+
+### `ProjectWorkingCopy` → table `project_working_copies`
+
+The editor's **draft**, distinct from a committed `ProjectVersion`. Autosaved continuously; a version is
+created only when the user deliberately saves.
+
+| Column | Type | Notes |
+|---|---|---|
+| `projectId` | String **PK** | 1:1 — the primary key IS the project id, so a project has at most one draft |
+| `circuitJson` / `uiJson` | Json | the draft state |
+| `baseVersionId` | String? | which saved version this draft descends from (for "N unsaved changes since v3"); **`SetNull`**, so deleting that version does not drop an in-progress draft |
+| `updatedByUserId` | String | |
+| `createdAt` / `updatedAt` | DateTime | |
+
+`project` is `Cascade`: deleting the project takes its draft with it.
+
+### `OrgInvitation` → table `org_invitations`
+
+Self-serve membership. The emailed token is **never stored** — only its sha256 (`tokenHash`), so a database
+read cannot be replayed as an invitation.
+
+| Column | Type | Notes |
+|---|---|---|
+| `id` | uuid PK | |
+| `orgId` | String | `Cascade` |
+| `email` | String | normalized (trimmed + lowercased) |
+| `role` | `OrgRole` | default `MEMBER` |
+| `tokenHash` | String | sha256 of the emailed token |
+| `status` | `OrgInvitationStatus` | default `PENDING` |
+| `invitedByUserId` | String | |
+| `expiresAt` / `acceptedAt` / `acceptedByUserId` | | `acceptedBy` is `SetNull` |
+
+`@@unique([orgId, email])` — one invite per address per org; re-inviting **upserts** with a fresh token and
+expiry rather than piling up rows. Indexed on `tokenHash` for the accept path.
+
+### `OrgQuotaOverride` → table `org_quota_overrides`
+
+Per-org quota overrides, written by platform admins. `orgId` is the primary key (1:1 with the org,
+`Cascade`). Every column is nullable and **null means "fall back to the global env limit"**, so an override
+row can raise one metric without pinning the rest.
+
+`simConcurrent`, `simJobsPerMonth`, `simRuntimeMsPerMonth`, `designConcurrent`, `designJobsPerMonth`,
+`storageBytes` (**BigInt** — a 5 GB cap exceeds Int32), `partsCallsPerMonth`, plus `updatedByAdminId` and
+`updatedAt`.
+
+> **There is no layout column here.** PCB layout admission is configured globally via `QUOTA_LAYOUT_*` and
+> applies identically to every org — and unlike the others it **binds by default** (2 concurrent). Adding a
+> per-org layout override would be an additive migration plus an admin-DTO change.
 
 ## Relations & Cardinality
 
@@ -436,7 +542,9 @@ Circuit Forge is **org-scoped multi-tenancy** with a shared schema (single set o
 
 2. **Membership & roles.** A `User` is not directly attached to an org. Instead, the `OrgMembership` join table links a user to an org and assigns an `OrgRole` (`OWNER` / `ADMIN` / `MEMBER`, default `MEMBER`). The `@@unique([orgId, userId])` constraint guarantees a single membership per user per org. A user can be a member of multiple orgs, and an org can have many users — the many-to-many relationship described above.
 
-3. **Cascade isolation.** Deleting an `Organization` cascades to all of its memberships, projects (and their versions), templates, assets, simulation jobs, design jobs, and org-scoped audit logs (`ON DELETE CASCADE` on every `orgId` FK). This makes tenant data removal atomic at the org level.
+3. **Cascade isolation.** Deleting an `Organization` cascades to all of its memberships, projects (and their versions), templates, assets, simulation jobs, design jobs, layout jobs, invitations and quota override — `ON DELETE CASCADE` on those `orgId` FKs makes tenant data removal atomic at the org level.
+
+   **The one deliberate exception is `AuditLog`**, whose `orgId` is `SetNull`: deleting a tenant anonymizes its audit rows rather than destroying them, so the record of what was done to that tenant survives the tenant.
 
 4. **Referential safety for attribution.** `ProjectVersion.createdByUserId` uses `ON DELETE RESTRICT`, so a user that authored a version cannot be hard-deleted out from under it, preserving authorship integrity. `AuditLog.userId` and `RefreshToken.userId`, by contrast, use `ON DELETE CASCADE`: this is deliberate — erasing an account also erases its audit rows and sessions, which is the GDPR-erasure-aligned default (audit rows hold PII like `ip`/`userAgent`) and keeps account deletion unblocked. Tradeoff: security-evidence audit rows (`refresh_reuse_detected`, `account_locked`) die with the account.
 
