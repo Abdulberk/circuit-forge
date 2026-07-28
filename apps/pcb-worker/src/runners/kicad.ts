@@ -1,8 +1,13 @@
 /**
- * Native kicad-cli runner (TS port of scripts/lib/kicad-native.mjs — proven in M2/M3a). Provides the
- * four things the LayoutJob needs: notaryDrc (bool accept-oracle for the margin-retry), drcReport
- * (parsed, for airwires + categorized checks), exportGlb (3D bodies via --subst-models) and exportGerbers
- * (the DELIVERED fab gerbers, exported from the DRC-verified board with the GND pour refilled in).
+ * Native kicad-cli runner — the ONLY implementation. Provides the four things the LayoutJob needs:
+ * notaryDrc (bool accept-oracle for the margin-retry), drcReport (parsed, for airwires + categorized
+ * checks), exportGlb (3D bodies via --subst-models) and exportGerbers (the DELIVERED fab gerbers,
+ * exported from the DRC-verified board with the GND pour refilled in).
+ *
+ * It began as a port of a scripts/lib/ harness copy that has since been deleted: two implementations of
+ * the manufacturability verdict's I/O is one too many, and the copy had drifted fail-OPEN where this one
+ * is fail-closed — so "revert to the reference implementation" was a copy-paste away from shipping a
+ * board KiCad never checked. The behaviour is pinned by kicad.spec.ts instead.
  */
 import { execFile } from 'node:child_process';
 import { writeFileSync, readFileSync, readdirSync, existsSync, mkdirSync, mkdtempSync, rmSync } from 'node:fs';

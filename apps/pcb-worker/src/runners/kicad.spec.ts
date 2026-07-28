@@ -8,9 +8,9 @@
  * processor ships the fab bundle on clean. So every way this function can hand back something that is not
  * a real report is a way to ship a board KiCad never actually checked.
  *
- * The repo also still carries an older fail-OPEN copy of this logic (scripts/lib/kicad-native.mjs), which
- * this file is documented as a port of, so "revert to the reference implementation" is a plausible edit.
- * These tests exist to make that edit red.
+ * The repo used to carry an older fail-OPEN copy of this logic that the runner was documented as a port
+ * of, which made "revert to the reference implementation" a plausible and catastrophic edit. That copy is
+ * gone; these tests are what now stands in its place — they exist to make any such edit red.
  *
  * child_process is mocked (the same idiom as rust-placement.spec.ts): the point is the runner's decisions,
  * not kicad-cli itself — the real binary is exercised by the Docker gate.

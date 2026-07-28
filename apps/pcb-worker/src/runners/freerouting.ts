@@ -1,5 +1,7 @@
 /**
- * Native freerouting runner (TS port of scripts/lib/freerouting-native.mjs — proven in-image in M2/M3a).
+ * Native freerouting runner — the ONLY implementation (the scripts/lib/ harness copy it was ported from
+ * has been deleted; the Docker-backed scripts/lib/freerouting.mjs remains, but that one exists to drive
+ * an IMAGE from outside and is not a second copy of this).
  * `java -jar $FREEROUTING_JAR` headless; no docker-in-docker (the worker IS the container). Matches
  * pcb-core's FreeroutingRunner type: (dsn) => Promise<ses>.
  */

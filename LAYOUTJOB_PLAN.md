@@ -150,6 +150,16 @@ her iki Dockerfile `packages/`'ı kopyalıyor; pcb-worker'ın Node-22 base'i + k
 
 **M2 durum (7 Tem 2026):** `scripts/lib/{freerouting,kicad}-native.mjs` (Docker `run` sarmalayıcısı yok, binary doğrudan; mevcut Docker-runner'larla birebir argüman-paritesi) + `docker/pcb-runtime/Dockerfile` (kicad:10.0-full **digest-pinli** + Temurin-25 JRE **+ jar ikisi de pinlenmiş freerouting imajından `COPY --from`** → jar↔JRE versiyon-eşleşme garantisi; Node 22 nodesource) + `scripts/verify-native-pipeline.mjs`. Gerçek imajda doğrulandı: freerouting native → 54 wire/20 net (golden ile birebir), notaryDrc temiz→true / kirli→false (exit-5 reject dalı), drcReport temiz 0/0 / kirli 11-ihlal, exportGlb geçerli GLB gövde-çözümü 1.5×. 3-lens adversarial review (17 bulgu→doğrulananlar) → verify harness sertleştirildi (gerçek-bakır floor, zorunlu+fatal anti-rubber-stamp differential, reject-path). **Tam native `layoutCircuit(quality)` uçtan uca kanıtı M3'e ait** (worker imajı pcb-core+deps bake edince; Windows-pnpm-symlink Linux'ta çözülmüyor).
 
+**Native-runner harness’ları KALDIRILDI (27 Tem 2026).** Yukarıdaki M2/M3a kanıtları tarihsel kayıttır; onları üreten `scripts/verify-native-{pipeline,composition}.mjs` ve `scripts/lib/{kicad,freerouting}-native.mjs` artık repoda YOK.
+
+İki sebep:
+
+1. **Çift uygulama.** Üretim koşucularıyla (`apps/pcb-worker/src/runners/{kicad,freerouting}.ts`) aynı işi yapan ikinci bir kopyaydılar ve `kicad-native.mjs`, üretimdeki fail-CLOSED davranıştan fail-OPEN yönde ayrışmıştı. Üretim dosyası kendini "bunun TS portu" diye tanımladığı için "referans uygulamaya dön" hamlesi, DRC’nin hiç denetlemediği bir kartı üretilebilir damgalatabilirdi.
+2. **Zaten koşturulamıyorlardı.** Hiçbir workflow, `package.json` script’i veya Dockerfile onları çağırmıyordu; `verify-native-composition.mjs`’in belgelenen çalıştırma yolu (`docker run pcb-worker:local node /app/runners/...`) imajın hiç oluşturmadığı bir dizini gösteriyor.
+
+Yerlerini birim testleri aldı: `apps/pcb-worker/src/runners/kicad.spec.ts` (DRC oracle, rapor şeması, notary memo, gerber teslimi — mutasyonla doğrulandı) ve `apps/pcb-worker/src/layout/processor.spec.ts` (teslimat geçidi: DRC’nin reddettiği kart indirilebilir paket üretemez). Bunlar `ci.yml`’de her PR’da koşar — harness’lar hiç koşmuyordu.
+
+**Dürüst kalan boşluk:** pcb-worker İMAJINI uçtan uca doğrulayan otomatik bir kontrol yok. İmaj derlemesi (~3GB, kicad-full tabanlı) PR başına yapılmayacak kadar pahalı olduğu için bilinçli olarak kabul edildi; imaj seviyesinde bir kırılma dağıtım anında görülür, merge anında değil.
 ---
 
 ## 5. Dürüst riskler
