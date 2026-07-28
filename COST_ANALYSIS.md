@@ -15,7 +15,7 @@
 | Input | Source | Confidence |
 |---|---|---|
 | LLM price: **$250/mo flat = 3,571 req/day (107,142/mo), Opus 4.8**; a "request" = one *successful completion* (tool-use does **not** add requests) | Founder-provided | **Exact** |
-| ngspice CPU per sim + per Monte-Carlo batch | **Measured** on the real worker code (`scripts/cost-measure.mjs`) | High (dev box; see §10) |
+| ngspice CPU per sim + per Monte-Carlo batch | **Measured in-session** on the real worker code. ⚠️ The measuring script was never committed, so these numbers **cannot be reproduced from this repository** | Was High (dev box, see §10); now UNVERIFIABLE — and the Monte-Carlo figure is additionally stale, see §3 |
 | Requests per design | **Derived** from the loop (`runDesignLoop`) + the vetted multi-candidate plan | Exact (deterministic) |
 | AWS EC2 / RDS / S3 prices | Live research, us-east-1 on-demand (×730 h/mo) | Exact us-east-1; eu-central-1 ≈ +14% compute / +11% RDS / +20% m-family |
 | TME parts API | Verified: free with an API key (Token+Secret), sandbox, no published per-call fee | High |
