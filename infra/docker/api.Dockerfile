@@ -58,6 +58,12 @@ RUN pnpm run build --filter=api
 
 # Production stage
 FROM node:20-alpine AS production
+
+# openssl for the Prisma query engine (musl libssl) — the SAME reason the base stage installs it, and this
+# stage does NOT inherit from base. Without it Prisma cannot load its engine and the app dies at $connect,
+# which is a runtime crash rather than a build failure, so nothing catches it until deploy.
+RUN apk add --no-cache openssl
+
 RUN npm install -g pnpm@8.14.1
 
 WORKDIR /app
@@ -72,11 +78,15 @@ COPY --from=builder /app/apps/api/prisma ./apps/api/prisma
 
 RUN pnpm install --frozen-lockfile --prod
 
+# The --prod install omits the prisma CLI (a devDependency) and so CANNOT regenerate the client — the
+# previous `pnpm exec prisma generate` here failed the build outright with `Command "prisma" not found`.
+# Bring the client generated in the builder stage instead (same locked versions → identical pnpm
+# virtual-store path). This carries the linux-musl query engine; the `openssl` installed above lets it load
+# libssl at runtime. Identical to worker-sim.Dockerfile, which hit and solved this first.
+COPY --from=builder /app/node_modules/.pnpm/@prisma+client@5.22.0_prisma@5.22.0/node_modules/.prisma /app/node_modules/.pnpm/@prisma+client@5.22.0_prisma@5.22.0/node_modules/.prisma
+
 ENV NODE_ENV=production
 WORKDIR /app/apps/api
-
-# Generate Prisma client
-RUN pnpm exec prisma generate
 
 EXPOSE 3000
 CMD ["node", "dist/main.js"]
