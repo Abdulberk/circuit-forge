@@ -39,6 +39,12 @@ import { PlatformAdminGuard } from './guards/platform-admin.guard';
                 useFactory: (config: ConfigService) => ({ connection: { url: config.get<string>('REDIS_URL') } }),
                 inject: [ConfigService],
             },
+            {
+                imports: [ConfigModule],
+                name: 'pcb-layout',
+                useFactory: (config: ConfigService) => ({ connection: { url: config.get<string>('REDIS_URL') } }),
+                inject: [ConfigService],
+            },
         ),
     ],
     controllers: [AdminController],

@@ -241,19 +241,23 @@ describe('UsageService', () => {
     it('layout quota: enforces the monthly job ceiling and passes under it', async () => {
         const svc = new UsageService(
             prismaStub({ layoutJob: { count: jest.fn().mockResolvedValue(5) } }),
-            cfg({ QUOTA_LAYOUT_JOBS_PER_MONTH: '5' }),
+            // '0' opts the default concurrent cap out, so this test isolates the MONTHLY ceiling (the same
+            // stubbed count answers both queries).
+            cfg({ QUOTA_LAYOUT_JOBS_PER_MONTH: '5', QUOTA_LAYOUT_CONCURRENT_PER_ORG: '0' }),
         );
         await expect(svc.assertLayoutQuota('org1')).rejects.toMatchObject({ response: { metric: 'layout_jobs' } });
         const svc2 = new UsageService(
             prismaStub({ layoutJob: { count: jest.fn().mockResolvedValue(2) } }),
-            cfg({ QUOTA_LAYOUT_JOBS_PER_MONTH: '10' }),
+            cfg({ QUOTA_LAYOUT_JOBS_PER_MONTH: '10', QUOTA_LAYOUT_CONCURRENT_PER_ORG: '0' }),
         );
         await expect(svc2.assertLayoutQuota('org1')).resolves.toBeUndefined();
     });
 
-    it('createLayoutGuarded: zero overhead when no quota; advisory-locked re-check (domain "layout") when set', async () => {
+    it('createLayoutGuarded: zero overhead only when EXPLICITLY opted out; advisory-locked re-check otherwise', async () => {
+        // '0' is the documented unlimited sentinel — the deliberate opt-out, and the only way to get the
+        // lock-free path now that the concurrent cap binds by default.
         const noQuota = prismaStub();
-        const svc = new UsageService(noQuota, cfg({}));
+        const svc = new UsageService(noQuota, cfg({ QUOTA_LAYOUT_CONCURRENT_PER_ORG: '0' }));
         await expect(svc.createLayoutGuarded('org1', async () => ({ id: 'l1' }))).resolves.toEqual({ id: 'l1' });
         expect(rec(noQuota).$transaction).not.toHaveBeenCalled();
 
@@ -264,6 +268,54 @@ describe('UsageService', () => {
         expect((rec(quota).$executeRaw.mock.calls[0][0] as TemplateStringsArray).join('?')).toMatch(
             /pg_advisory_xact_lock/,
         );
+    });
+
+    /**
+     * Layout is the ONE quota that binds by default. A PCB layout is minutes of freerouting and KiCad DRC
+     * and the worker drains one at a time, so an unbounded per-org queue lets a single tenant occupy that
+     * slot for hours while every other org waits — with no product-level remedy.
+     */
+    it('layout concurrency is capped by DEFAULT, with no configuration at all', async () => {
+        const svc = new UsageService(prismaStub({ layoutJob: { count: jest.fn().mockResolvedValue(2) } }), cfg({}));
+        await expect(svc.assertLayoutQuota('org1')).rejects.toMatchObject({
+            response: { metric: 'layout_concurrent', limit: 2 },
+        });
+    });
+
+    it('the default admits work below the cap', async () => {
+        const svc = new UsageService(prismaStub({ layoutJob: { count: jest.fn().mockResolvedValue(1) } }), cfg({}));
+        await expect(svc.assertLayoutQuota('org1')).resolves.toBeUndefined();
+    });
+
+    it('an explicit limit overrides the default in both directions', async () => {
+        const tight = new UsageService(
+            prismaStub({ layoutJob: { count: jest.fn().mockResolvedValue(1) } }),
+            cfg({ QUOTA_LAYOUT_CONCURRENT_PER_ORG: '1' }),
+        );
+        await expect(tight.assertLayoutQuota('org1')).rejects.toMatchObject({ response: { limit: 1 } });
+        const loose = new UsageService(
+            prismaStub({ layoutJob: { count: jest.fn().mockResolvedValue(5) } }),
+            cfg({ QUOTA_LAYOUT_CONCURRENT_PER_ORG: '10' }),
+        );
+        await expect(loose.assertLayoutQuota('org1')).resolves.toBeUndefined();
+    });
+
+    it('"0" is still the deliberate unlimited opt-out', async () => {
+        const svc = new UsageService(
+            prismaStub({ layoutJob: { count: jest.fn().mockResolvedValue(99) } }),
+            cfg({ QUOTA_LAYOUT_CONCURRENT_PER_ORG: '0' }),
+        );
+        await expect(svc.assertLayoutQuota('org1')).resolves.toBeUndefined();
+    });
+
+    it('an UNPARSEABLE value falls back to the default, never to unlimited', async () => {
+        // limit() fails open by design, which is right for a quota that is off unless configured and wrong
+        // for one that is on unless configured: a typo must not silently remove the guard being adjusted.
+        const svc = new UsageService(
+            prismaStub({ layoutJob: { count: jest.fn().mockResolvedValue(2) } }),
+            cfg({ QUOTA_LAYOUT_CONCURRENT_PER_ORG: '1O' }),
+        );
+        await expect(svc.assertLayoutQuota('org1')).rejects.toMatchObject({ response: { limit: 2 } });
     });
 
     it('createLayoutGuarded: rejects ORG_SUSPENDED before running the create (the /layouts write-gate that was bypassed)', async () => {
