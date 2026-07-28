@@ -25,7 +25,8 @@ jest.mock('../config', () => ({
         RUST_PLACER_TIMEOUT_MS: 30_000,
     },
 }));
-jest.mock('../logger', () => ({ logger: { info: jest.fn(), warn: jest.fn(), error: jest.fn() } }));
+const logger = { info: jest.fn(), warn: jest.fn(), error: jest.fn() };
+jest.mock('../logger', () => ({ logger }));
 
 const layoutJob = { updateMany: jest.fn(), findUnique: jest.fn(), update: jest.fn() };
 jest.mock('../prisma/client', () => ({ prisma: { layoutJob } }));
@@ -96,11 +97,12 @@ const UNCONNECTED = {
     ],
 };
 
-const lastUpdate = () => layoutJob.update.mock.calls.at(-1)![0].data as Record<string, unknown>;
+/** The terminal write is a CONDITIONAL updateMany (see finish()); the claim is the FIRST updateMany call. */
+const lastUpdate = () => layoutJob.updateMany.mock.calls.at(-1)![0].data as Record<string, unknown>;
 
 beforeEach(() => {
     jest.clearAllMocks();
-    layoutJob.updateMany.mockResolvedValue({ count: 1 }); // the QUEUED→RUNNING claim succeeds
+    layoutJob.updateMany.mockResolvedValue({ count: 1 }); // both the QUEUED→RUNNING claim and the terminal write
     layoutJob.findUnique.mockResolvedValue({ circuit: { components: [], nets: [] }, options: {} });
     layoutJob.update.mockResolvedValue({});
     layoutCircuit.mockResolvedValue(okLayout());
@@ -214,6 +216,41 @@ describe('a delivered board carries what the pipeline had to say about it', () =
     });
 });
 
+/**
+ * The reaper terminalizes a job it believes is hung, but it cannot stop this handler or its child
+ * processes. When the handler eventually finishes it must NOT resurrect the row — a long-running-operation
+ * contract that reaches a terminal state and then changes its mind cannot be polled correctly, and a
+ * frontend is about to poll it.
+ */
+describe('first terminal state wins — a late finish cannot resurrect a reaped job', () => {
+    const claimThenReaped = () =>
+        layoutJob.updateMany
+            .mockResolvedValueOnce({ count: 1 }) // the QUEUED→RUNNING claim
+            .mockResolvedValue({ count: 0 }); // the terminal write: the row is no longer RUNNING
+
+    beforeEach(() => drcReport.mockResolvedValue({ violations: [], unconnected_items: [] }));
+
+    it('does not overwrite a row that is already terminal, and says so', async () => {
+        claimThenReaped();
+        await processLayoutJob(job);
+        const terminal = layoutJob.updateMany.mock.calls.at(-1)![0];
+        // The write is ATTEMPTED but predicated on RUNNING, so the database refuses it rather than the
+        // worker having to know the row was reaped.
+        expect(terminal.where).toEqual({ id: JOB_ID, status: 'RUNNING' });
+        expect(logger.warn).toHaveBeenCalledWith(
+            expect.objectContaining({ jobId: JOB_ID }),
+            expect.stringMatching(/already finalized/i),
+        );
+    });
+
+    it('a normal success CLEARS errorMessage so no reaper text can survive on it', async () => {
+        await processLayoutJob(job);
+        const row = lastUpdate();
+        expect(row.status).toBe('SUCCEEDED');
+        expect(row.errorMessage).toBeNull();
+    });
+});
+
 describe('the gate cannot be bypassed by an upstream failure', () => {
     it('a layout pcb-core rejected never reaches the delivery path', async () => {
         layoutCircuit.mockResolvedValue({
@@ -240,6 +277,6 @@ describe('the gate cannot be bypassed by an upstream failure', () => {
         layoutJob.updateMany.mockResolvedValue({ count: 0 });
         await processLayoutJob(job);
         expect(layoutCircuit).not.toHaveBeenCalled();
-        expect(layoutJob.update).not.toHaveBeenCalled();
+        expect(layoutJob.updateMany).toHaveBeenCalledTimes(1); // the failed claim, and nothing after it
     });
 });

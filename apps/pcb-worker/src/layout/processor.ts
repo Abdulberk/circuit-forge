@@ -57,7 +57,19 @@ export function createLayoutWorker(): Worker<LayoutJobPayload> {
     return worker;
 }
 
-/** Write the terminal LayoutJob row. Best-effort: a failed DB write is logged, not thrown. */
+/**
+ * Write the terminal LayoutJob row. Best-effort: a failed DB write is logged, not thrown.
+ *
+ * CONDITIONAL on the row still being RUNNING, mirroring the reaper's own guard. The reaper terminalizes a
+ * job it believes is hung (past PCB_REAP_RUNNING_DEADLINE_MS) but cannot stop this handler or its child
+ * processes — so a late finish used to overwrite that FAILED row with SUCCEEDED, complete with a
+ * downloadable gerbersKey. Worse, `errorMessage` was written only when truthy, so the row landed SUCCEEDED
+ * still carrying "reaped: exceeded the maximum runtime", and the API hands that to the client verbatim.
+ *
+ * A long-running-operation contract that reaches a terminal state and then changes its mind is one a
+ * frontend cannot poll correctly — and it is about to be polled. First terminal state wins; a late writer
+ * says so in the log and leaves the row alone.
+ */
 async function finish(
     jobId: string,
     data: {
@@ -69,17 +81,30 @@ async function finish(
     },
 ): Promise<void> {
     try {
-        await prisma.layoutJob.update({
-            where: { id: jobId },
+        const res = await prisma.layoutJob.updateMany({
+            // Every finish() call happens after the atomic QUEUED→RUNNING claim, so RUNNING is the only
+            // state this handler may legitimately overwrite.
+            where: { id: jobId, status: 'RUNNING' },
             data: {
                 status: data.status,
                 finishedAt: new Date(),
                 ...(data.result !== undefined ? { result: data.result } : {}),
                 ...(data.glbKey ? { glbKey: data.glbKey } : {}),
                 ...(data.gerbersKey ? { gerbersKey: data.gerbersKey } : {}),
-                ...(data.errorMessage ? { errorMessage: data.errorMessage } : {}),
+                // Explicitly CLEAR on a non-failure outcome. Writing it only when truthy is what let a
+                // reaper's message survive onto a SUCCEEDED row.
+                errorMessage: data.errorMessage ?? null,
             },
         });
+        if (res.count === 0) {
+            // The row was already finalized — reaped, or the job row disappeared. Any S3 objects this run
+            // uploaded are now unreferenced; the admin orphan sweep owns them, which is why this is a warn
+            // and not a delete-on-the-way-out (deleting here would race a concurrent legitimate writer).
+            logger.warn(
+                { jobId, attempted: data.status },
+                'Terminal write skipped — the layout job row was already finalized (reaped or removed)',
+            );
+        }
     } catch (e) {
         logger.error(
             { jobId, error: e instanceof Error ? e.message : String(e) },
