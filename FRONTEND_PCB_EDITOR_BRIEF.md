@@ -129,9 +129,15 @@ Two important framing points:
 ## 4. Backend contract — `/layouts` (exact)
 
 No global route prefix (routes are root-relative). Both endpoints require `Authorization: Bearer
-<accessToken>` (see `FRONTEND_BRIEF.md` §4.2 for the token strategy). The job is scoped to the user's
-**first org** (`orgs.findAllForUser(userId)[0]`) — the FE must have discovered an org (via `GET /orgs`) for
-the user to have one; a user with no org gets `404 'No organization found for user'`.
+<accessToken>` (see `FRONTEND_BRIEF.md` §4.2 for the token strategy). The job's org is resolved in three
+ordered ways: (1) from `versionId`'s project when you send one — authoritative, membership checked, and a
+conflicting `orgId` alongside it is a **400**; (2) from an explicit `orgId`, membership checked; (3) failing
+both, the user's **first membership**, which is their personal workspace — a guess.
+
+Because (3) is a guess, **the resolved org is echoed back in the 202** and present on every layout response.
+Send `versionId` or `orgId` whenever the board belongs to a team: a layout filed into the wrong org is
+invisible to the org that wanted it, charged to the wrong quota, and downloadable by whoever shares that
+personal workspace. A user with no org at all gets `404 'No organization found for user'`.
 
 ### 4.1 `POST /layouts` — start a layout job
 
@@ -142,10 +148,25 @@ the user to have one; a user with no org gets `404 'No organization found for us
 {
   circuit: CircuitJson,                    // REQUIRED. OUR CircuitJson (components + nets). @IsObject only —
                                            //   NOT deep-validated at the DTO; validate client-side first (§4.3).
-  placer?: 'grid' | 'auto',                // placement engine. 'grid' = deterministic grid (default).
-                                           //   'auto' = connectivity-aware force-directed (beats grid or falls back).
-  fabProfile?: Record<string, unknown>,    // clearance / trace-width / via-tier overrides (§12)
-  netCurrentsA?: Record<string, number>,   // RMS amps per EMITTED net name → IPC-2221 per-net trace width (§12)
+  versionId?: string,                      // uuid. Tags the layout to a saved version: sets the job's
+                                           //   org + project, and is what makes GET /layouts?versionId= work
+                                           //   after a page reload.
+  orgId?: string,                          // uuid. Ad-hoc layouts only (no versionId). Membership is
+                                           //   verified; sending BOTH with different orgs is a 400.
+  placer?: 'grid' | 'auto' | 'rust',       // 'grid' = deterministic (default), 'auto' = connectivity-aware,
+                                           //   'rust' = out-of-process engine (~100x on dense boards).
+  fabProfile?: FabProfileDto,              // CLOSED shape — see below. An unknown key is a 400.
+  netCurrentsA?: Record<string, number>,   // RMS amps per EMITTED net name → IPC-2221 width (§12).
+                                           //   EVERY value must be a positive finite number: "2A" or -1 is
+                                           //   a 400 naming the offending net.
+}
+
+// fabProfile is no longer free-form:
+{
+  tier?: 'economy' | 'standard' | 'advanced',   // the fab's published limits to judge overrides against
+  minTraceWidthMm?, minClearanceMm?, viaDrillMm?, viaAnnularMm?,   // positive numbers
+  copperOz?, deltaTC?, placementGridMm?, placementMarginMm?,      // positive numbers
+  gndPour?: boolean,
 }
 ```
 
@@ -185,7 +206,11 @@ the user to have one; a user with no org gets `404 'No organization found for us
     host**. Fetch the GLB and manufacturing JSON directly from that host.
   - They **expire in 3600 s** and are **re-presigned on every GET** — if a link is stale, just re-poll
     `GET /layouts/:id` for fresh URLs.
-  - They are **absent** (`undefined`) until the job produced the artifact (i.e. before SUCCEEDED).
+  - They are **absent** (`undefined`) until the job produced the artifact — **and they stay absent on a
+`SUCCEEDED` job whose board is not manufacturable.** `SUCCEEDED` means the analysis completed, not that the
+board passed: when the final KiCad DRC is not clean the worker deliberately withholds the fab bundle and
+skips the 3D render, so there is nothing manufacturable to download. Badge on `result.manufacturable`, never
+on `status`.
   - Do **not** use `result.render.glbKey` / `result.manufacturing.gerbersKey` (raw S3 keys) directly —
     always download via the presigned `glbUrl` / `gerbersUrl`.
 
@@ -197,16 +222,36 @@ On `SUCCEEDED`, `result` is (assembled in `apps/pcb-worker/src/layout/processor.
 
 ```ts
 type LayoutResultBlob = {
+  // ---- the verdict. Badge on THIS, not on drcClean or on status ----------------------------------
+  manufacturable: boolean,
+  notManufacturableReason: string | null,   // null exactly when manufacturable is true
+  drcClean: boolean,                        // true = 0 violations AND 0 unconnected
+
+  // ---- what to draw ------------------------------------------------------------------------------
   layout: LayoutGeometry,
   checks: DrcCheck[],            // DRC VIOLATIONS only (unconnected → airwires, not here)
   airwires: Airwire[],           // ratsnest lines
-  drcClean: boolean,             // true = 0 violations AND 0 unconnected
+  diagnostics: LayoutDiagnostic[],  // everything the pipeline had to SAY (see below)
+
+  // ---- how the board was made --------------------------------------------------------------------
+  fab: {
+    tier: 'economy' | 'standard' | 'advanced',
+    profile: { minTraceWidthMm, minClearanceMm, viaDrillMm, viaAnnularMm, gndPour, ... },
+  },
+  delivery: {
+    routing:   { tier: 'quality' | 'local', drcCertified: boolean, marginMm?: number, degradedReason?: string },
+    placement: { engine: 'grid'|'auto'|'rust', requested: 'grid'|'auto'|'rust', degradedReason?: string },
+  },
+
   stats: { traces: number, vias: number, errors: number, durationMs: number },
   parity: { ok: boolean, checkedPins: number, expectedPins: number, diagnostics: LayoutDiagnostic[] },
   completeness: 'full' | 'partial',
-  bodies: { injected: number, unmatched: string[] },  // unmatched = footprint ids with no curated 3D body
-  render: { glbKey: string },                          // raw S3 key — use presigned glbUrl instead
-  manufacturing: { gerbersKey: string },               // raw S3 key — use presigned gerbersUrl instead
+  scope: ScopeManifest,          // which checks ran — and which did NOT
+
+  // ---- artifacts. NULL on a board that was not certified -----------------------------------------
+  bodies: { injected: number, unmatched: string[] } | null,
+  render: { glbKey: string } | null,          // raw S3 key — use the presigned glbUrl instead
+  manufacturing: { gerbersKey: string, gndPlane: boolean } | null,
 }
 ```
 
@@ -437,14 +482,19 @@ the new one runs.
 2. **No pours/zones in `LayoutGeometry`.** The GND pour is injected into the `.kicad_pcb` and only appears in
    the exported GLB — it is **not** in the 2D geometry contract (no `LayoutPour` type). So 2D won't show
    copper fills; 3D (GLB) will. Don't promise a 2D pour editor.
-3. **No list endpoint** (`GET /layouts` collection doesn't exist) — the FE must track its own `jobId`s
+3. ~~No list endpoint~~ — **`GET /layouts` SHIPS.** It lists the caller's layout jobs across their orgs,
+   newest first, filterable by `?versionId=` or `?projectId=`, in the standard pagination envelope. This is
+   the intended re-hydration path after a page reload: hold the durable `versionId`, not the browser-memory
+   `jobId`. Each row carries `manufacturable` (`true`/`false`/`null` while undecided) and `orgId`, so a grid
+   can badge outcomes without one detail request per row. What the FE no longer needs to track its own
    (store the latest layout jobId on the project version in your own client state / a future column).
 4. **No cancel / retry** endpoint (`abortRequested` exists on the model but isn't exposed). A running job
    runs to completion.
 5. **No push channel** — polling only.
 6. **AI generation (`/design-circuit`, `/design-jobs`, `/verify-design`)** is documented in
-   `FRONTEND_BRIEF.md` §7, but the AI provider is **currently OUT of balance** — those endpoints will fail
-   until the founder restores it. Build the UI; expect the calls to error for now and surface it cleanly.
+   `FRONTEND_BRIEF.md` §7. (A note here once said the AI provider was out of balance — that was a
+   point-in-time operational state, not a property of the API, and it no longer holds. Build against the
+   endpoints normally.)
 
 ---
 
