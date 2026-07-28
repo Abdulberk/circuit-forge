@@ -99,3 +99,88 @@ describe('findAllForUser — the row must state the verdict, not just that the j
         expect(findMany).not.toHaveBeenCalled();
     });
 });
+
+/**
+ * WHICH ORG a layout belongs to.
+ *
+ * The ad-hoc path guesses: the user's first membership, which by construction is their personal workspace.
+ * The client could neither choose it nor observe it, so a layout meant for a team landed somewhere the team
+ * cannot see — invisible in their list, its quota charged elsewhere, and its presigned fab bundle
+ * downloadable by whoever the caller shares that personal workspace with. The guess stays (it is the right
+ * default for a one-off board), but it is now stateable and always reported back.
+ */
+describe('create — the org is stated or verified, never silently assumed without saying so', () => {
+    const prismaStub = (): Record<string, unknown> => ({
+        projectVersion: { findUnique: jest.fn() },
+        layoutJob: { create: jest.fn().mockResolvedValue({ id: 'job-9', status: 'QUEUED' }), updateMany: jest.fn() },
+    });
+
+    const build = (over: { orgs?: Record<string, unknown>; prisma?: Record<string, unknown> } = {}) => {
+        const prisma = over.prisma ?? prismaStub();
+        const orgs = over.orgs ?? {
+            findAllForUser: jest.fn().mockResolvedValue([{ id: 'org-personal' }, { id: 'org-team' }]),
+            checkMembership: jest.fn().mockResolvedValue(undefined),
+        };
+        const queue = { add: jest.fn().mockResolvedValue(undefined) };
+        const usage = { createLayoutGuarded: jest.fn((_org: string, fn: (tx: unknown) => unknown) => fn(prisma)) };
+        return { svc: new LayoutService(prisma as never, orgs as never, usage as never, queue as never), orgs, usage };
+    };
+
+    const dto = { circuit: {} } as never;
+
+    it('an EXPLICIT orgId is used, after membership is verified exactly as on the versioned path', async () => {
+        const { svc, orgs, usage } = build();
+        const res = await svc.create('user-1', { ...(dto as object), orgId: 'org-team' } as never);
+        expect(orgs.checkMembership).toHaveBeenCalledWith('org-team', 'user-1');
+        expect(usage.createLayoutGuarded).toHaveBeenCalledWith('org-team', expect.any(Function));
+        expect(res.orgId).toBe('org-team');
+    });
+
+    it('an org the caller does not belong to is refused, not silently redirected', async () => {
+        const orgs = {
+            findAllForUser: jest.fn(),
+            checkMembership: jest.fn().mockRejectedValue(new Error('Not a member of this organization')),
+        };
+        const { svc } = build({ orgs });
+        await expect(svc.create('user-1', { ...(dto as object), orgId: 'org-other' } as never)).rejects.toThrow(
+            /not a member/i,
+        );
+    });
+
+    it('with no orgId it still guesses the first membership — but REPORTS which one it chose', async () => {
+        const { svc, usage } = build();
+        const res = await svc.create('user-1', dto);
+        expect(usage.createLayoutGuarded).toHaveBeenCalledWith('org-personal', expect.any(Function));
+        expect(res.orgId).toBe('org-personal'); // the caller can now notice the guess
+    });
+
+    it("a versioned layout takes the VERSION's org, and an orgId that disagrees is rejected", async () => {
+        // Resolving the conflict silently in either direction would discard one of the caller's two stated
+        // intentions without a word.
+        const prisma = prismaStub();
+        (prisma.projectVersion as { findUnique: jest.Mock }).findUnique.mockResolvedValue({
+            id: 'v1',
+            projectId: 'p1',
+            project: { orgId: 'org-team' },
+        });
+        const { svc, usage } = build({ prisma });
+        const ok = await svc.create('user-1', { ...(dto as object), versionId: 'v1' } as never);
+        expect(ok.orgId).toBe('org-team');
+        expect(usage.createLayoutGuarded).toHaveBeenCalledWith('org-team', expect.any(Function));
+
+        const conflicting = build({
+            prisma: (() => {
+                const p = prismaStub();
+                (p.projectVersion as { findUnique: jest.Mock }).findUnique.mockResolvedValue({
+                    id: 'v1',
+                    projectId: 'p1',
+                    project: { orgId: 'org-team' },
+                });
+                return p;
+            })(),
+        });
+        await expect(
+            conflicting.svc.create('user-1', { ...(dto as object), versionId: 'v1', orgId: 'org-personal' } as never),
+        ).rejects.toThrow(/conflicts with the version/i);
+    });
+});
