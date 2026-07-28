@@ -5,7 +5,7 @@ How Circuit Forge is tested, and the results of the **real-services validation c
 
 Testing is layered: fast deterministic **unit/regression** suites (CI-friendly, no external deps) +
 **real-ngspice** suites (gated on `NGSPICE_PATH`) + **live** suites that hit real ngspice / the real TME parts
-catalog / the real Anthropic API (gated behind explicit env flags so they never run by accident in CI).
+catalog / the real LLM provider (`LLM_PROTOCOL` selects Anthropic or an OpenAI-compatible gateway) (gated behind explicit env flags so they never run by accident in CI).
 
 | Layer | Needs | Runs in CI |
 |-------|-------|------------|

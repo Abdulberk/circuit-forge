@@ -249,7 +249,7 @@ its DC current — the same mapping module, one frame.
 - Animation runs against a **saved version's** `tran` result (stable, shareable). The working copy (the
   live draft, see `FRONTEND_BRIEF.md`) is what the user edits; to animate, they save/run a version (or run
   an ad-hoc sim of the current draft) — the animation consumes whatever simulation result it's given.
-- Because a layout/sim is now linkable to a version (`GET /simulations` by version, and the new
+- Because a layout/sim is now linkable to a version (`GET /layouts?versionId=` for layouts — note there is **no** `GET /simulations` collection and no by-version simulation listing; the simulation API is per-job only (`GET /simulations/:jobId[/result]`), so a client must hold its own job ids, and the new
   `GET /layouts?versionId=`), the animate view can find "the latest tran result for this version" and reuse
   it instead of re-running.
 

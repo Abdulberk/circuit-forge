@@ -257,7 +257,7 @@ model AuditLog {
 ```
 
 ### Seed Data
-- Demo user: `demo@circuitforge.io` / `demo123`
+- Demo user: `demo@circuitforge.io` / `demo123456`
 - Demo organization: "Demo Org"
 - 5 starter templates:
   1. RC Low-Pass Filter

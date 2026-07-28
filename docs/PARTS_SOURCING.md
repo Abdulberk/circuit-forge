@@ -90,14 +90,23 @@ interface CategoryNode {            // facet tree, with counts
 // GET /parts/:symbol/component — a real part mapped toward a CircuitJson component
 interface MappedComponent {
   simulatable: boolean;       // true => `component` is set and can be simulated
-  reason?: string;            // why NOT simulatable (ICs/transistors/connectors)
+  reason?: string;            // why NOT simulatable (connectors, mechanical parts, …)
   component?: PartialComponent;
+  modelDef?: ModelDef;        // REQUIRED for active devices. The .model/.subckt BODY the component
+                              //   references — you MUST push it into circuit.models, or the netlist
+                              //   names a model that does not exist and the simulation fails.
   catalog: CatalogPart;       // always present (the full part detail)
 }
 
+> **Transistors DO map.** An earlier note said only passives and diodes are simulatable and that
+> transistors/op-amps are not. CircuitJson has `bjt` / `mosfet` / `jfet` / `zener` types, and the mapper
+> returns `simulatable: true` for them with a resolved generic model — which is exactly why `modelDef`
+> exists. What genuinely does not map is a part with no SPICE behaviour to give it: connectors, mechanical
+> hardware, and ICs with no generic equivalent.
+
 // PARTIAL — no id / designator / pins (the schematic layer assigns those)
 interface PartialComponent {
-  type: 'resistor' | 'capacitor' | 'inductor' | 'diode'; // the simulatable types we map today
+  type: ComponentType;                      // eda-core's FULL union — transistors map too (see below)day
   value?: string;             // SPICE value, e.g. "10K", "100n" (passives only)
   footprint?: string;
   mpn?: string;

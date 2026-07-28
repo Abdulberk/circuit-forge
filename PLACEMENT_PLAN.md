@@ -1,7 +1,13 @@
 # Lever 2 — Akıllı Yerleşim (Placement) Planı
 
 **Tarih:** 5 Temmuz 2026 · **Sürüm:** v2 (3 bağımsız adversarial denetimden geçti: kod-tutarlılık,
-algoritma-şüpheci, anlaşılırlık — 22 bulgu işlendi) · **Durum:** ONAY BEKLİYOR
+algoritma-şüpheci, anlaşılırlık — 22 bulgu işlendi) · **Durum:** ✅ **UYGULANDI** (Lever 2 sevk edildi)
+
+> **Bu bir tarihsel plandır.** `packages/pcb-core/src/placement.ts` planın §4 boru hattını birebir
+> uyguluyor, `placementGridMm` / `placementMarginMm` artık `FabProfile` alanları, ve `placer` seçeneği
+> **üç** değer alıyor: `'grid' | 'auto' | 'rust'` — üçüncüsü, planda olmayan, süreç-dışı Rust motoru
+> (`crates/pcb-placement-rs`). §6'daki dosya haritasında `← YENİ` diye işaretlenen
+> `scripts/layout-sweep.mjs` ve ATmega fixture'ı **yapılmadı**; yield kapıları o yüzden bugün koşmuyor.
 **Kapsam:** `packages/pcb-core` (+ ileride worker servisi) · **Önkoşul bilgi:** hiçbir şey.
 
 ---
