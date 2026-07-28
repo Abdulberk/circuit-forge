@@ -103,11 +103,59 @@ export interface LayoutResult {
      *  completed and clamped. Recorded because "which rules produced these gerbers" is the first question
      *  asked when a fab rejects a panel, and reconstructing it from the request is guesswork. */
     fab: { tier: FabTierName; profile: FabProfile };
+    /**
+     * What the pipeline actually DID, after every fallback — as data, not as prose buried in diagnostics.
+     *
+     * Both stages degrade gracefully on purpose: an unavailable quality router still yields a
+     * fully-connected local route, and a failed placement engine still yields the proven grid. That is the
+     * right behaviour, but silent it is a lie by omission: a board routed by the local fast router carries
+     * undersized vias and looser clearances, and until now its result was byte-indistinguishable from a
+     * freerouting board that the DRC notary certified. A caller could not tell which one it was holding,
+     * so nobody could notice the quality tier being dead — exactly how it went unnoticed in CI.
+     *
+     * Typed rather than derived: reconstructing this by string-matching diagnostic MESSAGES would make
+     * every consumer depend on wording that is meant to be human-readable and changeable.
+     */
+    delivery: {
+        routing: {
+            /** 'quality' = freerouting's copper was accepted; 'local' = the fast in-process router's. */
+            tier: 'quality' | 'local';
+            /** True only when a real DRC oracle certified the accepted board (0 violations, 0 unconnected). */
+            drcCertified: boolean;
+            /** Routing headroom the accepted margin attempt used. Absent when the tier is 'local'. */
+            marginMm?: number;
+            /** Why the quality tier was not used. Absent exactly when tier === 'quality'. */
+            degradedReason?: string;
+        };
+        placement: {
+            /** The engine whose positions the delivered board actually uses. */
+            engine: 'grid' | 'auto' | 'rust';
+            /** What the caller asked for — differs from `engine` whenever a fallback happened. */
+            requested: 'grid' | 'auto' | 'rust';
+            /** Why the requested engine was not used. Absent exactly when engine === requested. */
+            degradedReason?: string;
+        };
+    };
     /** OUR componentId -> emitted (sanitized) name; and netId -> emitted net name. The LayoutJob
      *  contract shaper (shapeLayoutResult) needs these to cross-probe geometry back to the design. */
     namesById: Record<string, string>;
     netNameById: Record<string, string>;
 }
+
+/** The delivery record for a board that never reached the router — honest rather than absent. Consumers
+ *  read `delivery` unconditionally, so leaving it undefined on a failure path would push a null-check
+ *  into every one of them and invite the field to be treated as optional. */
+const undelivered = (opts: LayoutOptions, why: string): LayoutResult['delivery'] => {
+    const requested = opts.placer ?? 'grid';
+    return {
+        routing: { tier: 'local', drcCertified: false, degradedReason: why },
+        placement: {
+            engine: 'grid',
+            requested,
+            ...(requested !== 'grid' ? { degradedReason: why } : {}),
+        },
+    };
+};
 
 export async function layoutCircuit(circuit: CircuitJson, opts: LayoutOptions = {}): Promise<LayoutResult> {
     const started = Date.now();
@@ -126,7 +174,7 @@ export async function layoutCircuit(circuit: CircuitJson, opts: LayoutOptions = 
     const layout = classifyCircuit(circuit, { allowPartial: opts.allowPartial });
     diagnostics.push(...layout.diagnostics);
     if (!layout.layoutable) {
-        return failed(layout, diagnostics, started, fab);
+        return failed(layout, diagnostics, started, fab, opts);
     }
 
     // 2) adapter -> tscircuit code (fab profile upstream)
@@ -183,6 +231,7 @@ export async function layoutCircuit(circuit: CircuitJson, opts: LayoutOptions = 
             outputs: null, // never emit a "manufacturable package" for a board that failed parity/route
             stats: stats(evaluated, routeErrors.length, started),
             fab,
+            delivery: undelivered(opts, 'the board failed connectivity parity or evaluation before routing'),
             namesById: adapted.namesById,
             netNameById: adapted.netNameById,
         };
@@ -195,12 +244,21 @@ export async function layoutCircuit(circuit: CircuitJson, opts: LayoutOptions = 
     const gridEvaluated = evaluated;
     const advancedPlacement = opts.placer === 'auto' || opts.placer === 'rust';
     const placementRunnerReady = opts.placer !== 'rust' || !!opts.rustPlace;
+    // What the delivered board will report: the engine actually used, and why the requested one was
+    // not, when that happens. Tracked as the code runs rather than reconstructed afterwards — a board
+    // that quietly fell back to the grid must not be indistinguishable from one the engine placed.
+    const placementRequested: 'grid' | 'auto' | 'rust' = opts.placer ?? 'grid';
+    let placementAdopted = !advancedPlacement; // a grid request is trivially "as requested"
+    let placementReason: string | undefined;
+    if (advancedPlacement && !placementRunnerReady) placementReason = 'the rust placement runner is not configured';
     const canLadder =
         advancedPlacement && placementRunnerReady && opts.router === 'quality' && !!opts.freeroute && !!opts.notaryDrc;
     if (advancedPlacement && !canLadder) {
         // no routing oracle (fast router / no notary): single attempt, HPWL-gated adoption
         const auto = await attemptAutoPlacement(circuit, opts, layout, adapted, evaluated, profile, undefined);
         diagnostics.push(...auto.diagnostics);
+        placementAdopted = auto.adopted;
+        placementReason = auto.reason ?? placementReason;
         if (auto.adopted && auto.code && auto.evaluated && auto.parity) {
             codeActive = auto.code;
             evaluated = auto.evaluated;
@@ -224,13 +282,18 @@ export async function layoutCircuit(circuit: CircuitJson, opts: LayoutOptions = 
         for (const spacingMm of [undefined, 3.6] as Array<number | undefined>) {
             const auto = await attemptAutoPlacement(circuit, opts, layout, adapted, gridEvaluated, profile, spacingMm);
             diagnostics.push(...auto.diagnostics);
-            if (!auto.adopted || !auto.code || !auto.evaluated || !auto.parity) break; // wider channels can't fix an HPWL/overlap rejection
+            if (!auto.adopted || !auto.code || !auto.evaluated || !auto.parity) {
+                placementReason = auto.reason ?? placementReason;
+                break; // wider channels can't fix an HPWL/overlap rejection
+            }
             const attempt = await applyQualityRoute(auto.evaluated, opts, profile, perNetWidthMm, diagnostics);
             if (attempt.clean) {
                 codeActive = auto.code;
                 evaluated = auto.evaluated;
                 parity = auto.parity;
                 route = attempt;
+                placementAdopted = true;
+                placementReason = undefined;
                 break;
             }
             diagnostics.push({
@@ -238,10 +301,27 @@ export async function layoutCircuit(circuit: CircuitJson, opts: LayoutOptions = 
                 severity: spacingMm === undefined ? 'info' : 'warning',
                 message: `auto-placement (channel ${spacingMm ?? 2.4}mm) did not route DRC-clean — ${spacingMm === undefined ? 'retrying with wider channels' : 'reverting to the grid placement (floor guarantee)'}.`,
             });
+            placementReason = 'the placed board did not route DRC-clean at any channel width';
         }
     }
     if (!route) route = await applyQualityRoute(evaluated, opts, profile, perNetWidthMm, diagnostics);
     const { routedBoard, qualityApplied } = route;
+
+    // The delivered board’s own account of how it was made. Assembled from tracked outcomes, never
+    // from diagnostic text, so consumers depend on data rather than on wording.
+    const delivery: LayoutResult['delivery'] = {
+        routing: {
+            tier: qualityApplied ? 'quality' : 'local',
+            drcCertified: route.clean,
+            ...(route.marginMm !== undefined ? { marginMm: route.marginMm } : {}),
+            ...(route.reason ? { degradedReason: route.reason } : {}),
+        },
+        placement: {
+            engine: placementAdopted ? placementRequested : 'grid',
+            requested: placementRequested,
+            ...(!placementAdopted && placementReason ? { degradedReason: placementReason } : {}),
+        },
+    };
 
     // Confirm the widened nets actually routed at their IPC width (freerouting honoured the per-net class).
     if (qualityApplied) verifyPerNetWidths(routedBoard, perNetWidthMm, diagnostics);
@@ -292,6 +372,7 @@ export async function layoutCircuit(circuit: CircuitJson, opts: LayoutOptions = 
         },
         stats: stats(routedBoard, routeErrors.length, started),
         fab,
+        delivery,
         namesById: adapted.namesById,
         netNameById: adapted.netNameById,
     };
@@ -332,6 +413,9 @@ function passThroughError(err: { type: string; [k: string]: unknown }, tool: str
 interface AutoPlacementAttempt {
     adopted: boolean;
     diagnostics: LayoutDiagnostic[];
+    /** Why the advanced placement was NOT adopted. Present exactly when adopted === false, and it is
+     *  what LayoutResult.delivery.placement.degradedReason reports. */
+    reason?: string;
     code?: string;
     evaluated?: TscElement[];
     parity?: ParityResult;
@@ -362,7 +446,7 @@ async function attemptAutoPlacement(
             severity,
             message: `${placementLabel} not adopted — ${why} (grid placement kept; floor guarantee).`,
         });
-        return { adopted: false, diagnostics: diags };
+        return { adopted: false, diagnostics: diags, reason: why };
     };
 
     const { parts, missing } = extractPlacementParts(gridEvaluated, adapted.namesById, layout);
@@ -548,21 +632,37 @@ function verifyPerNetWidths(
 }
 
 /** Reroute a placed board through the injected freerouting runner and splice the copper back. */
+/** applyQualityRoute's outcome. `reason` is present exactly when the quality tier was NOT used, and it
+ *  is what LayoutResult.delivery.routing.degradedReason reports — so a fallback can never be silent. */
+interface QualityRouteOutcome {
+    routedBoard: TscElement[];
+    qualityApplied: boolean;
+    clean: boolean;
+    marginMm?: number;
+    reason?: string;
+}
+
 async function applyQualityRoute(
     evaluated: TscElement[],
     opts: LayoutOptions,
     profile: FabProfile,
     perNetWidthMm: Record<string, number>,
     diagnostics: LayoutDiagnostic[],
-): Promise<{ routedBoard: TscElement[]; qualityApplied: boolean; clean: boolean }> {
-    if (opts.router !== 'quality') return { routedBoard: evaluated, qualityApplied: false, clean: false };
+): Promise<QualityRouteOutcome> {
+    if (opts.router !== 'quality')
+        return { routedBoard: evaluated, qualityApplied: false, clean: false, reason: "router:'fast' was requested" };
     if (!opts.freeroute) {
         diagnostics.push({
             code: 'PCB030',
             severity: 'info',
             message: "router:'quality' requested but no freeroute runner was injected — using the local fast route.",
         });
-        return { routedBoard: evaluated, qualityApplied: false, clean: false };
+        return {
+            routedBoard: evaluated,
+            qualityApplied: false,
+            clean: false,
+            reason: 'no freerouting runner was injected',
+        };
     }
     try {
         // Margin-retry: freerouting completion is non-monotonic in the routing margin, so try a spread and
@@ -577,7 +677,12 @@ async function applyQualityRoute(
                 severity: 'warning',
                 message: `no ${best.mode === 'drc' ? 'DRC-clean' : 'fully-routed'} quality route across ${best.tried} margin attempt(s) — using the fully-connected local route instead (the notary flags its via geometry, never an open net).`,
             });
-            return { routedBoard: evaluated, qualityApplied: false, clean: false };
+            return {
+                routedBoard: evaluated,
+                qualityApplied: false,
+                clean: false,
+                reason: `no ${best.mode === 'drc' ? 'DRC-clean' : 'fully-routed'} quality route across ${best.tried} margin attempt(s)`,
+            };
         }
         const traces = best.routedBoard!.filter((e) => e.type === 'pcb_trace').length;
         const vias = best.routedBoard!.filter((e) => e.type === 'pcb_via').length;
@@ -590,14 +695,24 @@ async function applyQualityRoute(
                     ? ' — DRC-clean confirmed by the notary oracle.'
                     : '; the notary confirms full connectivity.'),
         });
-        return { routedBoard: best.routedBoard!, qualityApplied: true, clean: best.mode === 'drc' };
+        return {
+            routedBoard: best.routedBoard!,
+            qualityApplied: true,
+            clean: best.mode === 'drc',
+            marginMm: best.marginMm,
+        };
     } catch (e) {
         diagnostics.push({
             code: 'PCB035',
             severity: 'warning',
             message: `quality route failed (${String(e).slice(0, 160)}) — falling back to the local fast route.`,
         });
-        return { routedBoard: evaluated, qualityApplied: false, clean: false };
+        return {
+            routedBoard: evaluated,
+            qualityApplied: false,
+            clean: false,
+            reason: `quality route failed: ${String(e).slice(0, 200)}`,
+        };
     }
 }
 
@@ -676,6 +791,7 @@ function failed(
     diagnostics: LayoutDiagnostic[],
     started: number,
     fab: { tier: FabTierName; profile: FabProfile },
+    opts: LayoutOptions,
 ): LayoutResult {
     return {
         ok: false,
@@ -687,6 +803,7 @@ function failed(
         outputs: null,
         stats: { traces: 0, vias: 0, errors: 0, durationMs: Date.now() - started },
         fab,
+        delivery: undelivered(opts, 'the circuit was not layoutable — nothing was placed or routed'),
         namesById: {},
         netNameById: {},
     };

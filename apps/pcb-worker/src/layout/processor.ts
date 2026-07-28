@@ -176,6 +176,12 @@ export async function processLayoutJob(job: Job<LayoutJobPayload>): Promise<void
             // and clamped. "Which design rules produced this board" is the first question when a fab rejects
             // a panel, and re-deriving it from the request is guesswork once an override has been adjusted.
             fab: q.fab as unknown as Prisma.InputJsonValue,
+            // WHICH router and WHICH placement engine actually produced this board, and why the requested
+            // one was not used when that happened. Both stages fall back on purpose, but until now a board
+            // routed by the local fast router — undersized vias, looser clearances, no DRC certification —
+            // was indistinguishable from a freerouting board the notary certified. A caller could not tell
+            // the two apart, which is precisely how a dead quality tier stays unnoticed.
+            delivery: q.delivery as unknown as Prisma.InputJsonValue,
             // Scope disclosure for the layout verdict: what this endpoint checked (connectivity/DRC/
             // manufacturability) — decoupling/polarity are the electrical endpoint's concern, absent here.
             scope: buildLayoutScope({

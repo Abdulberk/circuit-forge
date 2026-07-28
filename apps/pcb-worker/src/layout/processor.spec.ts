@@ -71,6 +71,10 @@ const okLayout = (diagnostics: unknown[] = []) => ({
     },
     stats: { traces: 7, vias: 1, errors: 0, durationMs: 10 },
     fab: { tier: 'economy', profile: {} },
+    delivery: {
+        routing: { tier: 'quality', drcCertified: true, marginMm: 6 },
+        placement: { engine: 'grid', requested: 'grid' },
+    },
     namesById: {},
     netNameById: {},
 });

@@ -152,6 +152,16 @@ for (const [name, circuit] of cases) {
     }
     ok(`layout ok in ${Date.now() - t0}ms — traces=${result.stats.traces} vias=${result.stats.vias} completeness=${result.completeness}`);
 
+    // The board must SAY it was routed by the local router. This run injects no freerouting runner, so a
+    // `tier: 'quality'` here would mean the field is decorative — and a decorative honesty field is worse
+    // than none, because it is believed.
+    const d = result.delivery;
+    if (d?.routing?.tier !== 'local' || d.routing.drcCertified !== false || !d.routing.degradedReason) {
+        fail(`${name}: fast path must report the LOCAL routing tier with a reason — got ${JSON.stringify(d?.routing)}`);
+    } else {
+        ok(`delivery is honest about the fast path — tier=local, reason="${d.routing.degradedReason}"`);
+    }
+
     if (result.parity.checkedPins !== result.parity.expectedPins) {
         fail(`${name}: parity checked ${result.parity.checkedPins}/${result.parity.expectedPins} pins`);
     } else {
@@ -312,6 +322,17 @@ if (frOk) {
             continue;
         }
         ok(`${name}: ${applied.message}`);
+
+        // Cross-check the typed field against the human message: they are produced by different code paths,
+        // so agreement is evidence, and the margin must be the one actually accepted rather than a default.
+        const qd = q.delivery?.routing;
+        if (qd?.tier !== 'quality' || qd.drcCertified !== true || qd.degradedReason) {
+            fail(`${name}: delivery must report a certified QUALITY route — got ${JSON.stringify(qd)}`);
+        } else if (!applied.message.includes(`margin ${qd.marginMm}mm`)) {
+            fail(`${name}: delivery.marginMm=${qd.marginMm} disagrees with the accepted route (${applied.message})`);
+        } else {
+            ok(`${name}: delivery agrees with the route — tier=quality, DRC-certified, margin ${qd.marginMm}mm`);
+        }
 
         // real 3D bodies for every footprint
         const injectResult = injectModels(q.outputs.kicadPcb);
