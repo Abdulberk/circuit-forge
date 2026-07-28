@@ -85,7 +85,7 @@ Measured on the real worker (`runSimulation` / `runMonteCarloBatch`):
 | `tran` sim (RC, 512 points) | ~45 ms |
 | `ac` sim (101 points) | ~42 ms |
 | Monte-Carlo **per variant** | ~36 ms |
-| **Monte-Carlo batch (clean, high-yield design)** | **stops at ~61 variants ≈ 2.2 s** (adaptive-N + Wilson CI converges early — does *not* run all 300) |
+| **Monte-Carlo batch (clean, high-yield design)** | **~381 variants** at the consumer bar. The old ~61-variant figure came from a fixed ±3% half-width stop that has been removed: it capped the Wilson lower bound at 0.9408, below every shipped `robustMin`, so a flawless design could never reach the top tier. Sizing now targets the bar (`requiredRunsForBar`), which is ~6× the CPU per batch — the numbers below predate that and understate it |
 | Monte-Carlo batch (cap 300, op-class) | ~11 s |
 | Monte-Carlo batch (slow/long-tran variants) | up to the **60 s** per-batch budget cap |
 
