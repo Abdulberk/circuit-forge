@@ -296,6 +296,15 @@ export async function layoutCircuit(circuit: CircuitJson, opts: LayoutOptions = 
                 placementReason = undefined;
                 break;
             }
+            if (attempt.toolFailed) {
+                // The router or the notary FAILED rather than judging the board. The next rung widens the
+                // channels, which makes a LARGER board — strictly more work for the tool that just timed
+                // out or crashed — so it cannot help and would only spend the timeout again. On a queue
+                // that drains one job at a time, each wasted rung is dead wall-clock for every tenant.
+                // Stop laddering; the single grid attempt below is genuinely different work and still runs.
+                placementReason = `the quality router failed before it could judge the placement (${attempt.reason ?? 'tool failure'})`;
+                break;
+            }
             diagnostics.push({
                 code: 'PCB051',
                 severity: spacingMm === undefined ? 'info' : 'warning',
@@ -654,6 +663,10 @@ interface QualityRouteOutcome {
     clean: boolean;
     marginMm?: number;
     reason?: string;
+    /** The router or the DRC oracle THREW — an infrastructure fault, not a verdict about this board.
+     *  A dirty board and a broken tool must not drive the same retry policy: retrying a broken tool on a
+     *  bigger board only spends the timeout again. */
+    toolFailed?: boolean;
 }
 
 async function applyQualityRoute(
@@ -726,6 +739,7 @@ async function applyQualityRoute(
             qualityApplied: false,
             clean: false,
             reason: `quality route failed: ${String(e).slice(0, 200)}`,
+            toolFailed: true,
         };
     }
 }

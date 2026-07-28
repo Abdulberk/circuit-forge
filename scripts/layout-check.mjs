@@ -471,6 +471,57 @@ try {
     fail(`freerouting bridge: ${String(e).slice(0, 300)}`);
 }
 
+// ---------------------------------------------------------------- tool failure ≠ DRC verdict
+//
+// The placement ladder retries a board with wider channels when it does not route DRC-clean. That is
+// right for a VERDICT and wrong for a FAULT: if the router itself threw — a crashed container, a 300 s
+// timeout — the next rung is a LARGER board, strictly more work for the tool that just failed, so it
+// cannot help and only spends the timeout again. On a queue that drains one job at a time, every wasted
+// rung is dead wall clock for every other tenant.
+//
+// Docker-free on purpose: the injected runner throws immediately, so this measures the CONTROL FLOW
+// (how many times a broken tool is invoked), not the tools.
+console.log(`\n── a failing router is not retried as if the board were dirty`);
+try {
+    let freerouteCalls = 0;
+    const brokenFreeroute = async () => {
+        freerouteCalls++;
+        throw new Error('freerouting container failed (exit 137): killed');
+    };
+    const q = await layoutCircuit(dividerLed, {
+        router: 'quality',
+        freeroute: brokenFreeroute,
+        notaryDrc: async () => true, // never reached — the router throws first
+        placer: 'auto', // engages the channel ladder
+    });
+
+    // 1 ladder rung (short-circuited) + 1 genuinely different attempt on the grid board. Before the fix
+    // this was 3: both rungs plus the grid attempt, each paying the tool failure in full.
+    if (freerouteCalls !== 2) {
+        fail(`a broken router was invoked ${freerouteCalls}× — expected 2 (one rung, then the grid attempt)`);
+    } else {
+        ok(`a broken router is invoked twice, not three times — the wider-channel rung is skipped`);
+    }
+
+    // The board must still be DELIVERED, by the local route, and must SAY the quality tier was not used.
+    if (!q.ok) fail(`a router failure must not fail the board — it must fall back to the local route`);
+    else if (q.delivery?.routing?.tier !== 'local' || !q.delivery.routing.degradedReason) {
+        fail(`delivery must report the local tier with a reason — got ${JSON.stringify(q.delivery?.routing)}`);
+    } else {
+        ok(`the board is still delivered, honestly — tier=local, reason="${q.delivery.routing.degradedReason.slice(0, 70)}"`);
+    }
+
+    // And the placement must report that it fell back BECAUSE the router failed, not because the layout
+    // was rejected on its own merits — those are different problems with different fixes.
+    if (q.delivery?.placement?.engine !== 'grid' || !/router failed/i.test(q.delivery.placement.degradedReason ?? '')) {
+        fail(`placement should report a grid fallback caused by the router — got ${JSON.stringify(q.delivery?.placement)}`);
+    } else {
+        ok(`placement blames the right thing — grid fallback, reason names the router failure`);
+    }
+} catch (e) {
+    fail(`tool-failure ladder check: ${String(e).slice(0, 300)}`);
+}
+
 // ---------------------------------------------------------------- partial fab profile (real pipeline)
 //
 // A caller who overrides ONE manufacturing field used to replace the whole profile, leaving via geometry
