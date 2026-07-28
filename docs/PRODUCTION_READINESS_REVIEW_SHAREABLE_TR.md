@@ -1,5 +1,22 @@
 # Circuit Forge — Production Readiness İncelemesi
 
+> ## ⚠️ TARİHLİ DEĞERLENDİRME (27 Tem 2026) — bulguların bir kısmı KAPANDI
+>
+> Bu belge belirli bir andaki fotoğraftır ve o hâliyle korunuyor. Ancak aşağıdaki NO-GO hükmünün
+> dayandığı **iki blocker o tarihten sonra kapatıldı** — belgeyi bugünkü durum sanmayın:
+>
+> - **Blocker 1 — "boş kabul kriteriyle pass":** kapandı. Temiz simüle olan ama **hiç iddia içermeyen**
+>   bir koşu artık `pass` değil `inconclusive` döner: doğrulanacak bir şey beyan edilmemişse ortada
+>   sertifikalanacak bir şey de yoktur. ERC de AI tasarım döngüsünde her turda simülasyondan ÖNCE koşuyor
+>   ve hata-şiddetli bir bulguda turu kısa devre ediyor.
+> - **Blocker 2 — "denetlenen kart ile teslim edilen kart farklı":** kapandı. Teslim edilen Gerber ve
+>   delik dosyaları, noterin **gerçekten DRC'den geçirdiği** aynı `.kicad_pcb`'den `kicad-cli` ile
+>   yeniden üretiliyor (`--check-zones` toprak dökümünü bakıra dolduruyor). Ayrıca DRC'nin reddettiği
+>   bir kart **hiç indirilebilir paket üretmiyor**.
+>
+> Geri kalan bulgular için hâlâ geçerli bir okuma sunuyor. Bugünkü durum için
+> [docs/API.md](API.md) ve [docs/ARCHITECTURE.md](ARCHITECTURE.md) yetkilidir.
+
 ## Amaç ve kapsam
 
 Bu belge, ürün sahibinin yetkilendirdiği kendi yazılımına ait savunma, ürün kalitesi ve üretim hazırlığı incelemesidir. Güvenlik risklerine ilişkin hassas teknik ayrıntılar, yeniden üretim adımları, örnek girdiler, kimlik bilgisi bilgileri ve saldırı senaryoları özellikle çıkarılmıştır. Değerlendirme yalnızca risklerin önceliklendirilmesi ve iyileştirme planı için kullanılmalıdır; yeni saldırı yöntemi, çalıştırılabilir örnek veya güvenlik kontrolünü aşma talep edilmemektedir.

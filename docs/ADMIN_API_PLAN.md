@@ -1,15 +1,27 @@
-# Platform Admin API — Plan (not yet implemented)
+# Platform Admin API — Plan (BUILT)
 
-> **Status: PLAN.** Grounded in a comprehensive 5-subsystem audit of the current code + Prisma schema
-> (2026-07-01). Nothing here is built yet. This document is the blueprint for the admin backend that powers a
-> future operator **dashboard**.
+> ## ⚠️ HISTORICAL PLAN (2026-07-01) — the work described here SHIPPED
+>
+> Phases 0, 1 and 2, plus Phase 3's queue kill-switch/purge and the storage sweep, are all implemented and
+> merged. This document records the reasoning and the audit it came from; it is **not** a description of
+> work still to do, and the route shapes below were not all built as proposed.
+>
+> **For the surface as it actually exists, [docs/API.md](API.md) §3.19 is authoritative.** In particular the
+> kill switch shipped as `POST /admin/queues/:name/{pause,resume,purge}` (`:name` ∈ `simulations`,
+> `design`, `pcb-layout`), not as the per-worker routes proposed below.
+>
+> Still not built: curating the public template catalog, and changing the LLM model at runtime.
 
-## The gap
+## The gap (as it stood on 2026-07-01)
 
-circuit-forge has **no platform-admin surface at all.** Every endpoint is tenant-scoped: a user acts only
+circuit-forge had **no platform-admin surface at all.** Every endpoint was tenant-scoped: a user acted only
 within their own organizations. `OrgRole` (`OWNER`/`ADMIN`/`MEMBER` on `OrgMembership`) is a **tenant** role —
-the owner of *an org*, not a platform operator. There is no `isAdmin`, no `@Roles`/`RolesGuard`, no `/admin/*`
-route, and no admin flag on `User`.
+the owner of *an org*, not a platform operator. There was no `isAdmin`, no `@Roles`/`RolesGuard`, no
+`/admin/*` route, and no admin flag on `User`.
+
+**All of that is now built**: `User.platformRole` (`NONE`/`SUPPORT`/`OPERATOR`/`ADMIN`), the
+`@PlatformRoles` decorator, `PlatformAdminGuard` (role read live from the database, fails closed), and 31
+routes under `/admin`.
 
 So today a platform operator **cannot**: see all users/orgs, adjust one org's quota, inspect or cancel a job
 in another tenant, suspend an abusive account, curate the public template catalog, drain a worker, change the
