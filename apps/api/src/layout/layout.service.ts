@@ -203,12 +203,29 @@ export class LayoutService {
                     createdAt: true,
                     startedAt: true,
                     finishedAt: true,
+                    // Not returned — mapped to the `manufacturable` verdict below.
+                    gerbersKey: true,
                 },
                 skip: page.offset,
                 take: page.limit,
             }),
             this.prisma.layoutJob.count({ where }),
         ]);
-        return paginated(items, total, page.limit, page.offset);
+        // A board KiCad rejected and a board it certified BOTH finish as SUCCEEDED with no errorMessage —
+        // the analysis completed in each case, and only the verdict differs. Without a field for it, a list
+        // view could not render a truthful badge without one detail request per row, and each of those
+        // returns the whole result blob (tens of KB of geometry and DRC checks) purely to read one boolean.
+        //
+        // `gerbersKey` IS the verdict: the worker writes it only on the manufacturable branch and never on
+        // the withhold branch, so no new column or migration is needed. The key itself stays internal — a
+        // storage path is not part of the client contract, and the detail endpoint presigns it anyway.
+        const rows = items.map(({ gerbersKey, ...job }) => ({
+            ...job,
+            // null, not false, while the question does not yet have an answer: a queued, running or failed
+            // job has no manufacturability verdict, and reporting `false` would read as "we checked it and
+            // it failed" — the exact over-claim this codebase keeps having to remove.
+            manufacturable: job.status === 'SUCCEEDED' ? gerbersKey !== null : null,
+        }));
+        return paginated(rows, total, page.limit, page.offset);
     }
 }
