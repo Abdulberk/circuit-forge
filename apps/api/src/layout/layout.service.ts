@@ -7,7 +7,13 @@
 import { S3Client, GetObjectCommand } from '@aws-sdk/client-s3';
 import { getSignedUrl } from '@aws-sdk/s3-request-presigner';
 import { InjectQueue } from '@nestjs/bullmq';
-import { Injectable, NotFoundException, ServiceUnavailableException, Logger } from '@nestjs/common';
+import {
+    Injectable,
+    NotFoundException,
+    ServiceUnavailableException,
+    BadRequestException,
+    Logger,
+} from '@nestjs/common';
 import { propagation, context as otelContext } from '@opentelemetry/api';
 import { type LayoutJobStatus } from '@prisma/client';
 import { Queue } from 'bullmq';
@@ -50,11 +56,16 @@ export class LayoutService {
     }
 
     /**
-     * Create a QUEUED layout job under the user's (first) org and enqueue it. The insert and the BullMQ
+     * Create a QUEUED layout job and enqueue it. The org comes from the tagged version, else an explicit
+     * orgId, else — as a guess — the user's first membership; the resolved value is returned either way.
+     * The insert and the BullMQ
      * add are two stores; if the add fails we conditionally flip the row to FAILED (gated on status:QUEUED
      * so we never clobber a worker that already dequeued+advanced it — see DesignJobService for the rationale).
      */
-    async create(userId: string, dto: CreateLayoutDto): Promise<{ id: string; status: LayoutJobStatus }> {
+    async create(
+        userId: string,
+        dto: CreateLayoutDto,
+    ): Promise<{ id: string; status: LayoutJobStatus; orgId: string }> {
         // Resolve the org this layout belongs to. When the client tags a saved version, the layout is
         // authoritatively scoped to THAT version's org (and we derive its project) after verifying the
         // caller is a member — the client can't spoof a project/version it can't access. Only the ad-hoc
@@ -69,10 +80,25 @@ export class LayoutService {
             });
             if (!version) throw new NotFoundException('Version not found');
             await this.orgs.checkMembership(version.project.orgId, userId);
+            // Two different answers to the same question is a client bug, not something to resolve silently
+            // in either direction — one of the caller's two intentions would be discarded without a word.
+            if (dto.orgId && dto.orgId !== version.project.orgId)
+                throw new BadRequestException(
+                    `orgId conflicts with the version's organization — a versioned layout belongs to ${version.project.orgId}. Omit orgId, or omit versionId.`,
+                );
             orgId = version.project.orgId;
             projectId = version.projectId;
             versionId = version.id;
+        } else if (dto.orgId) {
+            // Explicit and verified: membership is checked exactly as on the versioned path.
+            await this.orgs.checkMembership(dto.orgId, userId);
+            orgId = dto.orgId;
         } else {
+            // Fallback for a caller that states nothing. It is a GUESS — the user's first membership, which
+            // by construction is their personal workspace — so the resolved org is echoed back in every
+            // response rather than left for the client to infer. Getting this wrong is not cosmetic: the
+            // layout becomes invisible to the org that wanted it, its quota is charged to the wrong org, and
+            // its presigned fab bundle is downloadable by whoever the caller shares that workspace with.
             const orgList = await this.orgs.findAllForUser(userId);
             const first = orgList[0]?.id;
             if (!first) throw new NotFoundException('No organization found for user');
@@ -123,7 +149,9 @@ export class LayoutService {
             throw new ServiceUnavailableException('Could not start the layout job; please retry.');
         }
 
-        return job;
+        // Echo the RESOLVED org. On the fallback path it was a guess, and a caller who cannot see which org
+        // its layout landed in cannot notice that the guess was wrong.
+        return { ...job, orgId };
     }
 
     /** Status + (when finished) the shaped result + presigned URLs for the GLB / manufacturing bundle. */
@@ -155,6 +183,7 @@ export class LayoutService {
 
         return {
             id: job.id,
+            orgId: job.orgId,
             projectId: job.projectId,
             versionId: job.versionId,
             status: job.status,
@@ -196,6 +225,7 @@ export class LayoutService {
                 orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
                 select: {
                     id: true,
+                    orgId: true,
                     projectId: true,
                     versionId: true,
                     status: true,

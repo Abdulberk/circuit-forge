@@ -27,7 +27,8 @@ export class LayoutController {
     @ApiOperation({ summary: 'Start an async PCB layout job. Returns 202 + a job id to poll.' })
     async start(@Body() dto: CreateLayoutDto, @CurrentUser() user: { id: string }) {
         const job = await this.layouts.create(user.id, dto);
-        return { jobId: job.id, status: job.status };
+        // orgId is echoed because the service may have GUESSED it (no versionId, no orgId supplied).
+        return { jobId: job.id, status: job.status, orgId: job.orgId };
     }
 
     @Get()

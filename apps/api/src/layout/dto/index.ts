@@ -149,6 +149,17 @@ export class CreateLayoutDto {
 
     @ApiPropertyOptional({
         description:
+            'Organization this layout belongs to. Only for ad-hoc layouts (no versionId) — with a versionId ' +
+            "the org comes authoritatively from that version's project, and supplying a conflicting one is " +
+            'rejected. Omit to use your first organization, which is echoed back in the response.',
+        format: 'uuid',
+    })
+    @IsOptional()
+    @IsUUID()
+    orgId?: string;
+
+    @ApiPropertyOptional({
+        description:
             "Placement engine: 'grid' (default), 'auto' (TypeScript connectivity-aware), or 'rust' (out-of-process optimized engine)",
         enum: ['grid', 'auto', 'rust'],
     })
