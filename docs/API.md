@@ -31,7 +31,7 @@ Config is loaded by `ConfigModule.forRoot` in [app.module.ts](../apps/api/src/ap
 
 ### Swagger / OpenAPI
 
-Interactive docs are served at **`/docs`** (e.g. `http://localhost:3001/docs`). Configured in [main.ts](../apps/api/src/main.ts) via `DocumentBuilder`:
+Interactive docs are served at **`/docs`** — but only outside production unless `ENABLE_SWAGGER=true` is set, so a deployed instance does not publish its own surface by default. Locally it is always on. It is reached at (e.g. `http://localhost:3001/docs`). Configured in [main.ts](../apps/api/src/main.ts) via `DocumentBuilder`:
 
 - Title: `Circuit Forge API`
 - Description: `AI Circuit Generator & Simulator API`
@@ -391,6 +391,7 @@ Controller prefix: `templates`. Guards are applied **per route** (mixed): list a
 | `name` | string | `@IsString()` |
 | `tags` | string[]? | `@IsOptional()` `@IsArray()` `@IsString({ each: true })` |
 | `circuitJson` | object (`Record<string, any>`) | `@IsObject()` |
+| `analysisConfig` | object? | `@IsOptional()` — `{ analysis, probes? }`, validated on write (malformed → 400) and persisted, so a template can carry the analysis it is meant to be run with |
 
 `ListTemplatesQueryDto`
 | Field | Type | Validation |
@@ -460,7 +461,7 @@ No controller prefix; full paths per route. Entire controller is `@UseGuards(Jwt
 | POST | `/versions/:versionId/simulations` | Yes (`JwtAuthGuard`) | membership (via version→project→org) | `CreateSimulationDto` | `201` `{ jobId }` — **throttled 30/60s** |
 | POST | `/simulations/quick` | Yes (`JwtAuthGuard`) | membership (uses caller's first org) | `QuickSimulationDto` | `201` `{ jobId }` — **throttled 10/60s** |
 | GET | `/simulations/:jobId` | Yes (`JwtAuthGuard`) | membership (of job's org) | none | `200` status object |
-| GET | `/simulations/:jobId/result` | Yes (`JwtAuthGuard`) | membership (of job's org) | none | `200` result object |
+| GET | `/simulations/:jobId/result` | Yes (`JwtAuthGuard`) | membership (of job's org) | `?maxPoints=N` (10-100000) | `200` result object |
 
 `POST /versions/:versionId/simulations` carries `@Throttle({ default: { limit: 30, ttl: 60000 } })`; `POST /simulations/quick` carries `@Throttle({ default: { limit: 10, ttl: 60000 } })`. Both ride on top of the global `default`/`burst` tiers described in §1.4.
 
@@ -471,12 +472,14 @@ No controller prefix; full paths per route. Entire controller is `@UseGuards(Jwt
 |-------|------|------------|
 | `analysisConfig` | object (`Record<string, unknown>`) | `@IsObject()` |
 | `probes` | string[]? | `@IsArray()` `@IsString({ each: true })` `@IsOptional()` (e.g. `["v(out)", "v(in)"]`) |
+| `modelAssetIds` | string[]? | `@ArrayMaxSize(32)` `@IsOptional()` — uploaded `SPICE_MODEL` assets to `.include` in the run |
 
 `QuickSimulationDto`
 | Field | Type | Validation |
 |-------|------|------------|
 | `netlist` | string | `@IsString()` (raw SPICE netlist) |
 | `analysisConfig` | object? | `@IsObject()` `@IsOptional()` |
+| `modelAssetIds` | string[]? | `@ArrayMaxSize(32)` `@IsOptional()` — same meaning as above |
 
 **Behavior / responses** (from [simulation.service.ts](../apps/api/src/simulation/simulation.service.ts)):
 
@@ -517,7 +520,9 @@ No controller prefix; full paths per route. Entire controller is `@UseGuards(Jwt
 
 Deterministic, simulation-backed verification: ERC + ngspice (delegated to the worker queue, server-side-polled so the HTTP response stays synchronous) + spec assertions, returning a pass/fail/inconclusive evidence pack (verdict + measurements + ERC + per-assertion results). A malformed circuit/analysis config is a `400`; a valid circuit that fails verification is a `200` with `verdict: "fail"`. A current-probe assertion on a diode/transistor/subckt terminal (no branch-current vector in ngspice) is rejected with a `400` steering the caller to probe a series sense resistor instead.
 
-**`VerifyDesignDto`** ([generation/dto/index.ts](../apps/api/src/generation/dto/index.ts)): `circuit` (CircuitJson object) + optional `analysisConfig` (defaults to an operating-point analysis) + optional `assertions` (`AssertionDto[]`, max 50).
+**`VerifyDesignDto`** ([generation/dto/index.ts](../apps/api/src/generation/dto/index.ts)): `circuit` (CircuitJson object) + optional `analysisConfig` (defaults to an operating-point analysis) + optional `assertions` (`AssertionDto[]`, max 50) + optional **`robustness`** (`RobustnessDto`).
+
+`robustness` layers tolerance-aware checks on top of the nominal verdict: `corner` / `maxCorners` (1-12, default 8), `montecarlo` with `n` / `seed` / `profile` (`consumer` | `automotive` | `medical`), plus ambient `temperature` and supply-rail sweeps. All of it is **informational and runs only when the nominal verdict is already `pass`** — with the single exception noted in the gating box below.
 
 **`AssertionDto`** fields: `probe` (string, 1–64 chars), `metric` (enum `min | max | final | pp | avg | rms | cutoff | thd | gain`), `op` (enum `lt | lte | gt | gte | approx`), `value` (number, SI base units; Hz for `cutoff`), optional `tol` (default 5% of `|value|` for `op: "approx"`), optional `label`. `avg`/`rms` are time-weighted (trapezoidal over the adaptive timesteps); `cutoff` is the −3 dB corner of an AC magnitude response (requires an `ac` analysis); `thd` is Total Harmonic Distortion in percent (requires a `tran` analysis with a `fourier` request on the probe); `gain` is small-signal DC gain Vout/Vin (requires an `op` analysis with a `tf` request to the probe).
 
