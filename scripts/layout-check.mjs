@@ -10,7 +10,7 @@
  * Convention: like test:matrix / test:edge, this is a node harness (the tscircuit deps are ESM-only,
  * which keeps real-eval integration out of jest); exits non-zero on any failure.
  */
-import { mkdirSync, writeFileSync, readFileSync, existsSync, rmSync, statSync } from 'node:fs';
+import { mkdirSync, writeFileSync, readFileSync, readdirSync, existsSync, rmSync, statSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { execFileSync } from 'node:child_process';
@@ -378,6 +378,36 @@ if (frOk) {
             fail(`${name}: quality DRC NOT clean — ${parts.join(' + ')}`);
         }
 
+        // The DELIVERED fab bundle — the one artifact nothing downstream inspects. The manufacturability
+        // verdict is computed from DRC violation/unconnected counts alone, so it is blind to what was
+        // PLOTTED: a board exported without soldermask yields a byte-identical DRC verdict and ships
+        // stamped manufacturable. The worker asserts this too (runners/kicad.ts), but pcb-gate.yml
+        // deliberately does not trigger on apps/pcb-worker/**, so only this check runs against a BUMPED
+        // KiCad image — which is the event the gate exists for. Until now its only layer assertion
+        // inspected pcb-core's soup gerbers, the artifact the worker explicitly does not deliver.
+        try {
+            const gbrDir = join(dir, 'delivered-gbr');
+            rmSync(gbrDir, { recursive: true, force: true });
+            mkdirSync(gbrDir, { recursive: true });
+            execFileSync('docker',
+                ['run', '--rm', ...dockerUserArgs(), '-v', `${toDocker(dir)}:/work`, KICAD_IMAGE, 'kicad-cli', 'pcb', 'export',
+                    'gerbers', '--check-zones', '--output', '/work/delivered-gbr', '/work/board_quality.kicad_pcb'],
+                { stdio: 'pipe', timeout: 300000, env: { ...process.env, MSYS_NO_PATHCONV: '1' } });
+            const delivered = {};
+            for (const f of readdirSync(gbrDir)) {
+                if (f.endsWith('.gbrjob') || f.endsWith('.drl')) continue;
+                delivered[f.replace(/^board_quality-/, '').replace(/\.[^.]+$/, '')] = readFileSync(join(gbrDir, f), 'utf8');
+            }
+            const required = ['F_Cu', 'B_Cu', 'Edge_Cuts', 'F_Mask', 'B_Mask'];
+            const missing = required.filter((l) => delivered[l] === undefined);
+            // A Gerber with no D01/D02/D03 plots nothing: headers, then M02*. Existence is not content.
+            const blank = required.filter((l) => delivered[l] !== undefined && !/D0[123]\*/.test(delivered[l]));
+            if (missing.length) fail(`${name}: delivered bundle is missing ${missing.join(', ')} — a board no fab can build`);
+            else if (blank.length) fail(`${name}: delivered ${blank.join(', ')} plotted NO geometry — well-formed and empty`);
+            else ok(`${name}: delivered fab bundle complete — ${Object.keys(delivered).length} layers, all of ${required.join('/')} carry geometry`);
+        } catch (e) {
+            fail(`${name}: delivered-gerber export failed — ${String(e.stderr ?? e).slice(-300)}`);
+        }
         // Prove the injected bodies actually RESOLVE (not just that a GLB exists — board geometry alone can
         // be large). DIFFERENTIAL check: export the bare board and the bodied board with identical flags;
         // the bodied GLB must be materially larger, which only happens if --subst-models embedded the models.

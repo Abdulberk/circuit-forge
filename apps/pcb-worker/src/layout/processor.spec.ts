@@ -185,6 +185,35 @@ describe('a board KiCad ACCEPTED is delivered', () => {
     });
 });
 
+/**
+ * Warnings do not affect `ok`, so a DELIVERED board can still carry things its owner must know: a net
+ * routed narrower than its IPC-2221 target, a refused current, a clamped fab override. None of them are
+ * visible anywhere else — the DRC checks are rule violations, and KiCad cannot flag an under-width net
+ * because the board carries one global minimum width the trace meets. Persisting them only on the FAILED
+ * path meant the successful case, which is the one the customer actually receives, said nothing.
+ */
+describe('a delivered board carries what the pipeline had to say about it', () => {
+    const WARN = { code: 'PCB041', severity: 'warning', message: 'net VBUS: ignored current "2A"' };
+
+    it('persists diagnostics on a MANUFACTURABLE board', async () => {
+        layoutCircuit.mockResolvedValue(okLayout([WARN]));
+        drcReport.mockResolvedValue({ violations: [], unconnected_items: [] });
+        await processLayoutJob(job);
+        const result = lastUpdate().result as Record<string, unknown>;
+        expect(result.manufacturable).toBe(true);
+        expect(result.diagnostics).toEqual([WARN]);
+    });
+
+    it('persists them on a WITHHELD board too — same key, so the shape is uniform', async () => {
+        layoutCircuit.mockResolvedValue(okLayout([WARN]));
+        drcReport.mockResolvedValue({ violations: [VIOLATION], unconnected_items: [] });
+        await processLayoutJob(job);
+        const result = lastUpdate().result as Record<string, unknown>;
+        expect(result.manufacturable).toBe(false);
+        expect(result.diagnostics).toEqual([WARN]);
+    });
+});
+
 describe('the gate cannot be bypassed by an upstream failure', () => {
     it('a layout pcb-core rejected never reaches the delivery path', async () => {
         layoutCircuit.mockResolvedValue({

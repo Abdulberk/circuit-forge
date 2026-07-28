@@ -54,3 +54,49 @@ describe('CreateLayoutDto.fabProfile — rejects what cannot be manufactured or 
         await expect(run({ fabProfile: 'economy' })).rejects.toThrow();
     });
 });
+
+/**
+ * netCurrentsA drives IPC-2221 per-net trace width. A value that is not a positive number does not fail
+ * loudly downstream — it produces NaN, the envelope clamp cannot fire on NaN, no diagnostic is raised, and
+ * the net simply routes at the board's signal-floor width. A rail declared at 2A would ship as a 0.2mm
+ * trace, and DRC cannot object because the board carries one global minimum width that the trace meets.
+ * So the only place this can be caught cheaply is here, at the edge, before it is ever persisted.
+ */
+describe('CreateLayoutDto.netCurrentsA — a current must be a current', () => {
+    it('accepts a well-formed map', async () => {
+        const dto = await run({ netCurrentsA: { GND: 2, VBUS: 1.5 } });
+        expect(dto.netCurrentsA).toEqual({ GND: 2, VBUS: 1.5 });
+    });
+
+    it('is optional — most requests state no currents at all', async () => {
+        await expect(run({})).resolves.toMatchObject({});
+    });
+
+    it.each([
+        ['a unit-suffixed string', { VBUS: '2A' }],
+        ['a numeric string', { VBUS: '2' }],
+        ['a negative current', { VBUS: -1 }],
+        ['zero', { VBUS: 0 }],
+        ['null', { VBUS: null }],
+        ['a nested object', { VBUS: {} }],
+        ['a boolean', { VBUS: true }],
+        ['an array value', { VBUS: [2] }],
+        ['one bad entry among good ones', { GND: 2, VBUS: 'lots' }],
+    ])('rejects %s', async (_label, netCurrentsA) => {
+        await expect(run({ netCurrentsA })).rejects.toThrow();
+    });
+
+    it('rejects an array where the map belongs', async () => {
+        await expect(run({ netCurrentsA: [2, 3] })).rejects.toThrow();
+    });
+
+    it('names the offending net in the error, so the caller can fix it', async () => {
+        // The 400's detail lives on the exception's response payload, not its message — a caller staring at
+        // "netCurrentsA is invalid" would have to guess which of twenty nets was wrong.
+        const err = await run({ netCurrentsA: { GND: 2, VBUS: '2A' } }).then(
+            () => null,
+            (e: { response?: { message?: string[] } }) => e,
+        );
+        expect(JSON.stringify(err?.response?.message)).toMatch(/VBUS/);
+    });
+});

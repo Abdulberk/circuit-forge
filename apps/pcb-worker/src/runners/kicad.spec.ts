@@ -157,23 +157,77 @@ describe('the notary memo — a second identical DRC is skipped, but only when i
 });
 
 describe('exportGerbers — what ships is exported from the board that was checked', () => {
-    it('refills the pour into copper and skips the CAM metadata file', async () => {
-        // Without --check-zones the delivered B.Cu gerber carries zero filled regions: the advertised
-        // ground plane silently absent from delivery. The .gbrjob is JSON metadata, not a layer.
+    /** A plotted layer with real geometry: a Gerber carrying no D01/D02 draws nothing. */
+    const PLOTTED = 'G04 plotted*\nX0Y0D02*\nX100Y0D01*\nM02*';
+    /** Well-formed and completely empty — headers then end-of-file. This is what a dropped layer looks like. */
+    const BLANK = 'G04 empty*\nM02*';
+    /** The set kicad-cli produces for a real two-layer board (trimmed to what the assertion cares about). */
+    const FULL: Record<string, string> = {
+        F_Cu: PLOTTED,
+        B_Cu: PLOTTED,
+        Edge_Cuts: PLOTTED,
+        F_Mask: PLOTTED,
+        B_Mask: PLOTTED,
+        F_Silkscreen: PLOTTED,
+        B_Paste: PLOTTED,
+    };
+
+    /** Drive the mocked kicad-cli to plot exactly `set`, plus the drill and the CAM metadata file. */
+    const plots = (set: Record<string, string>) =>
         execFileMock.mockImplementation((_bin: string, args: string[], _opts: unknown, cb: Cb) => {
             const out = args[args.indexOf('--output') + 1]!;
             if (args.includes('gerbers')) {
-                writeFileSync(join(out, 'b-F_Cu.gbr'), 'G04 front*');
-                writeFileSync(join(out, 'b-B_Cu.gbr'), 'G36*');
+                for (const [layer, content] of Object.entries(set)) writeFileSync(join(out, `b-${layer}.gbr`), content);
                 writeFileSync(join(out, 'b-job.gbrjob'), '{"meta":true}');
             } else {
                 writeFileSync(join(out, 'b.drl'), 'M48');
             }
             cb(null);
         });
+
+    it('refills the pour into copper and skips the CAM metadata file', async () => {
+        // Without --check-zones the delivered B.Cu gerber carries zero filled regions: the advertised
+        // ground plane silently absent from delivery. The .gbrjob is JSON metadata, not a layer.
+        plots(FULL);
         const r = await kicad().exportGerbers('(board)');
-        expect(Object.keys(r.layers).sort()).toEqual(['B_Cu', 'F_Cu']);
+        expect(Object.keys(r.layers).sort()).toEqual(Object.keys(FULL).sort());
         expect(r.drill).toBe('M48');
         expect(execFileMock.mock.calls[0]![1] as string[]).toContain('--check-zones');
+    });
+
+    /**
+     * The delivered bundle is the ONLY artifact nothing downstream inspects: the manufacturability verdict
+     * is computed from DRC violation/unconnected counts alone, so it cannot see what was plotted. Measured
+     * against the pinned image, a reduced layer stack exports exit-0 with six layers instead of twenty and
+     * yields a byte-identical DRC verdict — a bundle no fab can build, stamped manufacturable.
+     */
+    it.each(['F_Cu', 'B_Cu', 'Edge_Cuts', 'F_Mask', 'B_Mask'])(
+        'REFUSES to deliver a bundle missing %s',
+        async (layer) => {
+            const { [layer]: _dropped, ...rest } = FULL;
+            plots(rest);
+            await expect(kicad().exportGerbers('(board)')).rejects.toThrow(
+                new RegExp(`incomplete fab bundle.*${layer}`, 's'),
+            );
+        },
+    );
+
+    it('REFUSES an Edge_Cuts layer that exists but plots nothing — the fab would have no outline', async () => {
+        // Existence is not content. Every other layer still looks perfectly well-formed.
+        plots({ ...FULL, Edge_Cuts: BLANK });
+        await expect(kicad().exportGerbers('(board)')).rejects.toThrow(/no geometry|no outline/i);
+    });
+
+    it('REFUSES an empty export outright rather than uploading nothing as a bundle', async () => {
+        plots({});
+        await expect(kicad().exportGerbers('(board)')).rejects.toThrow(/incomplete fab bundle/i);
+    });
+
+    it('does NOT require the optional layers — silkscreen and paste are not manufacturability gates', async () => {
+        // Deliberately narrow: a board without silkscreen is ugly, a board without soldermask is unusable.
+        // Over-requiring here would fail good boards on a cosmetic difference between KiCad versions.
+        const { F_Silkscreen: _s, B_Paste: _p, ...required } = FULL;
+        plots(required);
+        await expect(kicad().exportGerbers('(board)')).resolves.toMatchObject({ drill: 'M48' });
     });
 });
