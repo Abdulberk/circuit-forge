@@ -20,7 +20,7 @@ export interface QueueHealth {
 }
 
 /** The two admin-controllable queues. */
-export const ADMIN_QUEUE_NAMES = ['simulations', 'design'] as const;
+export const ADMIN_QUEUE_NAMES = ['simulations', 'design', 'pcb-layout'] as const;
 export type AdminQueueName = (typeof ADMIN_QUEUE_NAMES)[number];
 
 /** Job states an admin may purge — terminal/history cruft only. NEVER 'active' (a running job) or
@@ -33,15 +33,17 @@ export class AdminQueueService {
     constructor(
         @InjectQueue('simulations') private readonly simQueue: Queue,
         @InjectQueue('design') private readonly designQueue: Queue,
+        @InjectQueue('pcb-layout') private readonly layoutQueue: Queue,
     ) {}
 
-    /** Depth + paused-state for both queues (waiting/active/failed/... straight from Redis). */
-    async health(): Promise<{ simulations: QueueHealth; design: QueueHealth }> {
-        const [simulations, design] = await Promise.all([
+    /** Depth + paused-state for every operator-controllable queue (straight from Redis). */
+    async health(): Promise<{ simulations: QueueHealth; design: QueueHealth; 'pcb-layout': QueueHealth }> {
+        const [simulations, design, layout] = await Promise.all([
             this.countsFor(this.simQueue),
             this.countsFor(this.designQueue),
+            this.countsFor(this.layoutQueue),
         ]);
-        return { simulations, design };
+        return { simulations, design, 'pcb-layout': layout };
     }
 
     private async countsFor(queue: Queue): Promise<QueueHealth> {
@@ -91,6 +93,9 @@ export class AdminQueueService {
     private byName(name: string): Queue {
         if (name === 'simulations') return this.simQueue;
         if (name === 'design') return this.designQueue;
+        // PCB layout is the most expensive queue and the one that drains slowest, so it is the one an
+        // operator is most likely to need to stop — it was the only job type with no lever at all.
+        if (name === 'pcb-layout') return this.layoutQueue;
         throw new BadRequestException(`Unknown queue "${name}" (allowed: ${ADMIN_QUEUE_NAMES.join(', ')}).`);
     }
 

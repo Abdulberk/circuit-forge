@@ -62,6 +62,10 @@ export interface OrgUsage {
  *  against the concurrency gate forever. Worker timeouts are seconds; 24h is generous. */
 const CONCURRENT_STALENESS_MS = 24 * 60 * 60 * 1000;
 
+/** In-flight PCB layouts per org when QUOTA_LAYOUT_CONCURRENT_PER_ORG is unset. Two lets a user queue a
+ *  second board while the first routes, without letting one tenant monopolise a single-slot worker. */
+const DEFAULT_LAYOUT_CONCURRENT_PER_ORG = 2;
+
 /** JSON-safe view of a per-org quota override (storageBytes BigInt -> number so res.json can serialize). */
 export interface QuotaOverrideView {
     simConcurrent: number | null;
@@ -311,10 +315,29 @@ export class UsageService {
      * layout yet (that would be an additive migration + admin-DTO change; a clean follow-up), so a layout
      * limit is configured globally via QUOTA_LAYOUT_* and enforced identically for every org.
      */
+    /**
+     * In-flight layout cap, which BINDS BY DEFAULT — the only quota in this service that does.
+     *
+     * A PCB layout is minutes of freerouting and KiCad DRC, and the worker drains one at a time. Left
+     * unbounded, a single authenticated tenant enqueueing in a loop occupies that slot for hours and every
+     * other org's boards simply never start. There is no product-level remedy for that today, so the safe
+     * default is a small cap rather than none: the deployment that wants more says so.
+     *
+     * `0` remains the documented "unlimited" sentinel, so an operator can still opt out deliberately. An
+     * UNPARSEABLE value falls back to the default instead of to unlimited: `limit()` fails open by design,
+     * which is right for a quota that is off unless configured and wrong for one that is on unless
+     * configured — a typo must not silently remove the guard the operator was trying to adjust.
+     */
+    private layoutConcurrentLimit(): number | null {
+        const raw = this.config.get<string>('QUOTA_LAYOUT_CONCURRENT_PER_ORG');
+        if (raw === undefined || raw === '') return DEFAULT_LAYOUT_CONCURRENT_PER_ORG;
+        if (raw.trim() === '0') return null; // explicit, deliberate opt-out
+        // limit() has already warned if this is unparseable.
+        return this.limit('QUOTA_LAYOUT_CONCURRENT_PER_ORG') ?? DEFAULT_LAYOUT_CONCURRENT_PER_ORG;
+    }
+
     hasLayoutQuota(): boolean {
-        return (
-            this.limit('QUOTA_LAYOUT_CONCURRENT_PER_ORG') !== null || this.limit('QUOTA_LAYOUT_JOBS_PER_MONTH') !== null
-        );
+        return this.layoutConcurrentLimit() !== null || this.limit('QUOTA_LAYOUT_JOBS_PER_MONTH') !== null;
     }
 
     /** Layout jobs the org created this month — drift-free COUNT from the source table (no counter row). */
@@ -343,7 +366,7 @@ export class UsageService {
      * Pass a tx client to run inside the advisory-locked tx (see createLayoutGuarded).
      */
     async assertLayoutQuota(orgId: string, db: Db = this.prisma): Promise<void> {
-        const concurrentLimit = this.limit('QUOTA_LAYOUT_CONCURRENT_PER_ORG');
+        const concurrentLimit = this.layoutConcurrentLimit();
         const jobsLimit = this.limit('QUOTA_LAYOUT_JOBS_PER_MONTH');
         const [inFlight, monthly] = await Promise.all([
             concurrentLimit !== null ? this.layoutConcurrent(orgId, db) : null,
