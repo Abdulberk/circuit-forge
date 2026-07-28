@@ -77,13 +77,20 @@ From [auth.controller.ts](../apps/api/src/auth/auth.controller.ts) and [auth.ser
 |----------|-----------------|-----|----------|
 | `POST /auth/register` | `201` | `RegisterDto` | Rejects duplicate email with `409 ConflictException`; hashes password; creates `User` **and** a personal `Organization` with the user as `OWNER`; returns tokens + user. |
 | `POST /auth/login` | `200` (`@HttpCode(200)`) | `LoginDto` | Looks up user by email, `argon2.verify`, returns tokens. Failures → `401 Invalid credentials`. |
-| `POST /auth/refresh` | `200` | `RefreshDto` | `jwtService.verify(refreshToken, { secret: JWT_REFRESH_SECRET })`; loads the user by `payload.sub`; **issues a brand-new access AND refresh token** (`generateTokens(user)`). Any verify failure → `401 Invalid refresh token`. |
-| `POST /auth/logout` | `204` | none | **No-op on the server.** The handler body is empty; the comment states "Client should delete tokens." There is no server-side token blacklist / revocation store. |
+| `POST /auth/refresh` | `200` | `RefreshDto` | **Rotating and single-use.** Verifies the token, then atomically claims its server-side `RefreshToken` row by `jti` and issues a fresh pair. Bad signature / missing `jti` / no row / hash mismatch / expired / revoked → `401`. |
+| `POST /auth/logout` | `204` | `LogoutDto` | **Server-side revocation.** Verifies the refresh token (expired ones still accepted, so a stale session can be cleaned up) and revokes its family — or every session for the user when `allDevices` is set. |
 
 Consequences accurate to the code:
 
-- **Tokens are stateless and non-revocable.** There is no `tokenVersion` column, no `RefreshToken` table, and no jti/denylist. A leaked access token is valid until its 15-minute expiry; a leaked refresh token is valid for 7 days. Logout cannot invalidate either.
-- **Refresh is not rotating with reuse-detection** in the security sense — it does mint a new refresh token each call, but the old one remains valid until it expires (no server record exists to revoke it).
+- **Refresh tokens ARE revocable.** Each carries a `jti` keyed to a `RefreshToken` row (`jti`, `familyId`,
+  `tokenHash`, `usedAt`, `revokedAt`). Logout revokes; so does an admin's force-logout.
+- **Reuse is detected and punished.** Presenting an already-used refresh token is treated as theft: the
+  **entire family** is revoked and the event is audited (`refresh_reuse_detected`). The legitimate holder is
+  logged out too — deliberately, because at that point we cannot tell which party is the attacker, and
+  ending both sessions is the safe answer.
+- **Access tokens remain stateless.** A leaked access token is valid until its 15-minute expiry; there is no
+  per-request denylist, and adding one would put a datastore read in front of every authenticated call. The
+  15-minute window is the mitigation, and it is a deliberate trade.
 
 ### 1.4 Passport strategies and guards
 
@@ -118,6 +125,20 @@ enum OrgRole {
 A user's role is scoped to an organization through the `OrgMembership` model, which has a composite unique key `@@unique([orgId, userId])`. A user belongs to many orgs and may hold a different role in each. On registration (and on `OrgsService.create`) the creating user is made `OWNER` of the new org ([auth.service.ts](../apps/api/src/auth/auth.service.ts), [orgs.service.ts](../apps/api/src/orgs/orgs.service.ts)).
 
 ### 2.2 Enforcement — `OrgsService.checkMembership`
+
+> **There are two independent authorization axes, and this section describes only the first.**
+>
+> **Tenant** authorization (`OrgMembership.role`) governs access to an org's own data and is what the rest
+> of this section covers. **Platform** authorization (`User.platformRole`: `NONE` < `SUPPORT` < `OPERATOR` <
+> `ADMIN`) governs the cross-tenant operator surface at `/admin/*`, which deliberately **ignores org
+> membership** — that is its whole purpose.
+>
+> It is enforced declaratively by `@PlatformRoles(min)` + `PlatformAdminGuard`, with three properties that
+> matter for a security review: the role is resolved **live from the database on every request**, so
+> revoking it takes effect immediately rather than when a JWT expires; the guard **fails closed**; and every
+> mutation is written to `AuditLog` with the request id and a before/after snapshot. Those audit rows are
+> `SetNull` on both `userId` and `orgId`, so they **outlive** the user or org they describe — deleting the
+> subject cannot erase the evidence.
 
 All org-scoped authorization funnels through one method in [orgs.service.ts](../apps/api/src/orgs/orgs.service.ts):
 
@@ -166,7 +187,9 @@ Effective permission matrix (derived strictly from the checks above):
 | Delete template | ✓ | ✓ | ✗ |
 | Delete asset | ✓ | ✓ | ✗ |
 
-> There is currently **no distinct OWNER-only tier in code** (e.g., member management / org deletion / ownership transfer are not implemented as guarded endpoints in the services reviewed). OWNER and ADMIN have identical effective privileges over the resources above.
+> **OWNER and ADMIN are NOT equivalent.** Member management ships (`GET`/`PATCH`/`DELETE /orgs/:orgId/members/...`) and enforces two role-level rules beyond the controller gate: only an **OWNER** may grant or revoke the OWNER role — an ADMIN can shuffle MEMBER/ADMIN but can neither mint nor unseat an owner — and **an org may never lose its last OWNER**, so the final owner cannot be demoted or removed and orphan an organization. Both write a tenant audit row.
+>
+> Org deletion and ownership transfer are still not exposed as endpoints.
 
 > Asset deletion throws `BadRequestException` (HTTP 400) rather than `ForbiddenException` (403) for the role failure — a cosmetic inconsistency worth noting for API clients.
 
@@ -232,22 +255,40 @@ All DB access is via Prisma Client (parameterized queries / prepared statements)
 Configured in [app.module.ts](../apps/api/src/app.module.ts) with `@nestjs/throttler` using two named tiers:
 
 ```ts
-ThrottlerModule.forRoot([
-    { name: 'short',  ttl: 1000,  limit: 10  },   // 10 requests / 1 second
-    { name: 'medium', ttl: 60000, limit: 120 },   // 120 requests / 60 seconds
-]),
+ThrottlerModule.forRoot({
+    throttlers: [
+        { name: 'default', ttl: 60000, limit: 120 },  // sustained, route-overridable
+        { name: 'burst',   ttl: 1000,  limit: 30  },  // burst guard, NOT route-overridable
+    ],
+    skipIf: () => process.env.NODE_ENV === 'test',
+}),
 ```
 
 | Tier | Window (`ttl`) | Limit | Intent |
 |------|----------------|-------|--------|
-| `short` | 1 s | 10 req | burst protection |
-| `medium` | 60 s | 120 req | sustained-rate cap |
+| `default` | 60 s | 120 req | sustained per-route budget; a `@Throttle({ default: {…} })` decorator overrides it for that route |
+| `burst` | 1 s | 30 req | universal short-window guard; deliberately **not** route-overridable, so no endpoint can opt out of it |
 
-Both tiers apply simultaneously (a request must satisfy all named throttlers). On breach, throttler returns `429 Too Many Requests`.
+Both tiers apply simultaneously (a request must satisfy every named throttler). On breach the throttler
+returns `429 Too Many Requests` — with `code: 'TOO_MANY_REQUESTS'`, which is how a client tells it apart
+from a `QUOTA_EXCEEDED` 429 (an org limit, a different remedy).
 
-> Accurate gaps to note:
-> - `ThrottlerModule` is configured but **`ThrottlerGuard` is not registered as a global `APP_GUARD`** in `app.module.ts`, and no `@UseGuards(ThrottlerGuard)` was found. As written, the limits are defined but **not enforced** unless a guard is wired up. To activate, add `{ provide: APP_GUARD, useClass: ThrottlerGuard }`.
-> - The `RATE_LIMIT_TTL` / `RATE_LIMIT_LIMIT` env vars in [.env](../.env) are **not read** — the tiers above are hardcoded in milliseconds. There are no per-endpoint `@Throttle()` overrides on `/auth/login` etc.
+**Enforcement is global:** `{ provide: APP_GUARD, useClass: ThrottlerGuard }` in `app.module.ts` — without
+that registration every `@Throttle` decorator would be inert. Throttling is skipped under `NODE_ENV=test`
+so a suite firing bursts from one IP is not rate-limited by its own speed.
+
+**Sensitive routes carry their own overrides**, tightened well below the default:
+
+| Route | Limit |
+|---|---|
+| `POST /auth/login` | 10 / 60 s |
+| `POST /auth/register`, `/auth/verify-email` | 20 / hour |
+| `POST /auth/forgot-password`, `/auth/resend-verification` | 5 / hour |
+| `POST /auth/reset-password` | 10 / hour |
+| `POST /layouts` | 5 / 60 s |
+
+> Remaining gap: the `RATE_LIMIT_TTL` / `RATE_LIMIT_LIMIT` env vars are **not read** — the tiers are
+> hardcoded. Changing a limit is a code change, not a deploy-time one.
 
 ---
 
@@ -383,7 +424,7 @@ Code-accurate gaps to close before exposing this beyond local dev:
 - [ ] **Tune argon2 cost** explicitly (memory/time/parallelism) instead of relying on library defaults if your threat model requires it (Section 1.1).
 - [ ] **Sandbox the worker at the OS level.** Run worker-sim in a hardened container with CPU/memory/PID/disk limits, a non-root user, read-only root FS, and a writable-only temp dir — app-level timeout/output caps are not a substitute (Section 5.2).
 - [ ] **Lock down infrastructure.** S3/MinIO bucket non-public; Postgres and Redis not internet-exposed; TLS terminated in front of the API.
-- [ ] **Configure CORS explicitly.** [main.ts](../apps/api/src/main.ts) calls `app.enableCors()` with **no options**, which allows all origins. Restrict to known origins for production.
+- [x] **CORS is an explicit allowlist** — never a wildcard. `CORS_ORIGINS` (comma-separated) drives `origin`, falling back to `http://localhost:3000` / `http://localhost:5173` when unset, with `credentials: true` and only `Content-Type` / `Authorization` allowed. **Set `CORS_ORIGINS` in production**: the localhost fallback is a dev convenience, not a production policy.
 - [ ] **Add security headers.** No `helmet` is configured in `main.ts`; add it (or equivalent) at the edge/proxy.
 - [ ] **Reconcile `PORT` vs `API_PORT`.** Code reads `PORT`; `.env`/compose also carry `API_PORT`, which is ignored — standardize to avoid a port mismatch in deployment (Section 6.2).
 - [ ] **Confirm `argon2`/native deps build in the target image**, and keep dependencies patched (`pnpm audit`).
