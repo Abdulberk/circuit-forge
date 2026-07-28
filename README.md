@@ -11,7 +11,7 @@ Every verdict is backed by measured evidence — never by a model's say-so.
 [![npm](https://img.shields.io/npm/v/%40circuit-forge%2Feda-core?label=eda-core&logo=npm&color=CB3837)](https://www.npmjs.com/package/@circuit-forge/eda-core)
 
 [![ngspice](https://img.shields.io/badge/ngspice-real%20engine%2C%20in%20CI-0A7E8C)](#-tested-against-real-ngspice--in-ci)
-![Node](https://img.shields.io/badge/node-%E2%89%A5%2020-5FA04E?logo=node.js&logoColor=white)
+![Node](https://img.shields.io/badge/node-%E2%89%A5%2022-5FA04E?logo=node.js&logoColor=white)
 ![pnpm](https://img.shields.io/badge/pnpm-8-F69220?logo=pnpm&logoColor=white)
 ![TypeScript](https://img.shields.io/badge/TypeScript-strict-3178C6?logo=typescript&logoColor=white)
 
@@ -27,7 +27,7 @@ against *measured* values — voltages, branch currents, cutoff frequency, THD, 
 back is not "looks good": it is an evidence pack.
 
 ```jsonc
-// POST /generation/verify-design → DesignEvidence (truncated)
+// POST /verify-design → DesignEvidence (truncated)
 {
   "verdict": "pass",
   "summary": "Simulation OK — 3/3 checks passed",
@@ -71,9 +71,10 @@ back is not "looks good": it is an evidence pack.
 ## 🏗️ Architecture
 
 The heart of the system is a **closed feedback cycle**: design → simulate → measure → repair.
-Untrusted netlists never execute inside the API — simulation happens in a dedicated worker, in a
-**sandboxed subprocess** (non-root, resource-limited, no network, hard timeout), so a hostile or
-degenerate circuit can burn only its own cage.
+Every netlist runs in a **sandboxed subprocess** — non-root, resource-limited, no network, hard timeout —
+so a hostile or degenerate circuit can burn only its own cage. Batch work (queued simulations, Monte-Carlo,
+corner sweeps) runs in a dedicated worker; the synchronous AI verify loop and `/verify-design` spawn ngspice
+inside the API process under the same rlimit sandbox.
 
 ```mermaid
 flowchart LR
@@ -103,6 +104,8 @@ packages/
                 result parsing, assertions, Monte-Carlo/corner/sweep engines  (MIT)
   llm-core/     AI design loop — parts-grounded tool use, simulate-in-the-loop self-repair
   pcb-core/     PCB contracts — fab profiles, DRC oracle, Gerber/BOM/PnP writers
+crates/
+  pcb-placement-rs/  Rust placement engine (cf-pcb-place) — out-of-process, ~100× on dense boards
 ```
 
 Deep dive — services, queues, sandbox model, graceful shutdown, environment variables:
@@ -135,14 +138,18 @@ engine upgrade is an explicit, matrix-verified decision, never a silent change.
 > **[LOCAL_SETUP.md](LOCAL_SETUP.md)**.
 
 ```powershell
+cp .env.example .env                        # REQUIRED — .env is gitignored; the API refuses to boot
+                                            # without two distinct 32+ char JWT secrets
 pnpm install                                # never `npm install`
-docker compose up -d postgres redis minio   # Postgres 5432 / Redis 6379 / MinIO 9000
-pnpm db:migrate:dev                         # apply schema (first run creates it)
+docker compose up -d postgres redis minio create-bucket   # create-bucket is NOT optional: nothing else
+                                            # creates the S3 bucket, and /health/ready 503s without it
+pnpm db:migrate:dev                         # apply schema (needs DATABASE_URL visible to apps/api —
+                                            # see LOCAL_SETUP.md if it fails with Prisma P1012)
 pnpm db:seed                                # demo data (optional)
 pnpm dev                                    # start all apps in watch mode
 ```
 
-- **API:** http://localhost:3001 · **Swagger:** http://localhost:3001/docs
+- **API:** http://localhost:3000 · **Swagger:** http://localhost:3000/docs  (port from `PORT` in `.env`)
 - **MinIO console:** http://localhost:9001 (`minioadmin` / `minioadmin`)
 - **Demo login:** `demo@circuitforge.io` / `demo123456`
 
@@ -163,7 +170,8 @@ choco install ngspice -y
 | `pnpm test` / `test:cov` / `test:e2e` | Unit + integration suites |
 | `pnpm test:matrix` / `test:edge` / `test:sweep` / `test:fuzz` | Real-ngspice regression battery |
 | `pnpm test:robustness` | Monte-Carlo/corner current-criteria proof (real ngspice) |
-| `pnpm test:layout` | PCB layout + DRC eval harness |
+| `pnpm test:layout` | PCB layout + DRC eval harness (real freerouting + kicad-cli) |
+| `pnpm test:tier` | Robustness-tier reachability proof (real ngspice) |
 | `pnpm typecheck` / `lint` / `format` | Static checks |
 | `pnpm db:migrate` / `db:generate` / `db:seed` / `db:studio` | Database workflows |
 

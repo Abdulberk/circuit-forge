@@ -52,7 +52,7 @@ const circuit = {
 // 2 · Validate + electrical-rule-check
 const parsed = safeValidateCircuitJson(circuit);
 if (!parsed.success) throw new Error('invalid circuit');
-runErc(parsed.data);                       // → [] (no NO_GROUND / MISSING_VALUE / … findings)
+runErc(parsed.data);                       // → { passed, issues, summary } — an OBJECT, not an array (no NO_GROUND / MISSING_VALUE / … findings)
 
 // 3 · Generate a sanitized SPICE deck
 const netlist = generateNetlist(parsed.data, { type: 'op' });
@@ -131,7 +131,7 @@ evaluateAssertions(measurements, [{ probe: 'v(out)', metric: 'thd', op: 'lt', va
 
 ## 📎 Good to know
 
-- `designator` must match `^[A-Z][A-Z0-9]*[0-9]+$` (ends in a digit: `R1`, `GND1`).
+- `designator` must match `^[A-Z][A-Z0-9]*[0-9]+[A-Z]?$` (a digit, then an OPTIONAL section letter: `R1`, `GND1`, `U1A`).
 - Connectivity lives only in `Component.pins[].netId` → `Net.id` — there is no flat node list.
 - SPICE numbers: `M`/`m` = **milli**, `MEG` = mega. `parseSpiceValue('1M')` → `0.001`.
 - Diodes may omit `model` — a built-in default is supplied during generation.

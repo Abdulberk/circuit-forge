@@ -12,10 +12,11 @@
 
 ## 1. Current-state assessment — you already have a real distributed system
 
-This is not aspirational. The repo *already* ships a two-service, queue-decoupled architecture:
+This is not aspirational. The repo *already* ships a **three**-service, queue-decoupled architecture:
 
-- **`apps/api`** — NestJS HTTP service. The BullMQ **producer**. Owns all 11 Prisma models (via `apps/api/src/prisma` — `PrismaModule`/`PrismaService`), S3 presigning, LLM orchestration, the TME catalog client, and quota enforcement.
-- **`apps/worker-sim`** — a **standalone Node process (not NestJS, and with no HTTP server)**, the BullMQ **consumer** on the `'simulations'` queue (concurrency 2), runs ngspice in a bubblewrap/rlimit sandbox. It uses its **own** Prisma client (`apps/worker-sim/src/prisma/client.ts`), **not** the Nest `PrismaService`, and its own S3 client (`apps/worker-sim/src/storage/s3-client.ts`).
+- **`apps/api`** — NestJS HTTP service. The BullMQ **producer**. Owns all 16 Prisma models (via `apps/api/src/prisma` — `PrismaModule`/`PrismaService`), S3 presigning, LLM orchestration, the TME catalog client, and quota enforcement.
+- **`apps/worker-sim`** — a **standalone Node process (not NestJS, and with no HTTP server)**, the BullMQ **consumer** on the `'simulations'` queue (concurrency 2), runs ngspice in a bubblewrap/rlimit sandbox. It uses its **own** Prisma client (`apps/worker-sim/src/prisma/client.ts`), **not** the Nest `PrismaService`, and its own S3 client (`apps/worker-sim/src/storage/s3-client.ts`). It also consumes the `'design'` queue and therefore depends on `@circuitforge/llm-core`, because it hosts the design loop.
+- **`apps/pcb-worker`** — a third standalone Node process on the `'pcb-layout'` queue, with the same shape (own Prisma client, own S3 client, no HTTP). It is separate from worker-sim for a concrete reason rather than a stylistic one: it needs KiCad and a JRE, ~3 GB of image that nothing else in the system uses.
 
 The coupling between them is **already async and well-disciplined**, which is the part most candidates get wrong:
 
@@ -39,9 +40,17 @@ That sentence is true *today* (note it claims the API's readiness gating, not th
 
 The codebase clusters into clean domains. **Two corrections to the original table** (both verified by reading the source):
 
-1. **There is no `audit` module.** There is no `apps/api/src/audit` directory. `AuditLog` is written from **exactly one place**: the private `audit()` helper inside `apps/api/src/auth/auth.service.ts` (a `void this.prisma.auditLog.create(...)` fire-and-forget). No other module writes it. So "audit" is not a cross-cutting domain with its own module — it is an **auth-internal write helper against a shared table**. This matters for §4/§5 and for Phase 3 (see the audit-gap note below).
+1. ~~**There is no `audit` module.**~~ **NO LONGER TRUE — and this was load-bearing for the recommendation.**
+   Audit is now a genuine cross-cutting domain with a dedicated `@Global` service at
+   `apps/api/src/common/audit/audit.service.ts`, and `AuditLog` is written from **at least four** places
+   (`admin`, `orgs`, `invitations`, `auth`), not one. The rows also carry a request id and a before/after
+   snapshot, and both their FKs are `SetNull` so a record outlives the user or org it describes.
+
+   Any split that assigned `AuditLog` to a single owning service on the strength of the old claim needs
+   re-deriving: it is shared state with multiple writers, which is exactly the case the original text said
+   did not exist.
 2. **`netlist` is not a dependency of simulation/generation.** `simulation.service.ts`, `design.service.ts`, `verification.service.ts`, and `circuit-simulator.service.ts` all import `generateNetlist` **directly from `@circuit-forge/eda-core`**, *not* from the `netlist` module. The `netlist` module (`NetlistController`: `/netlist/import` + `/netlist/export`) is a **standalone HTTP feature with zero internal consumers** — it is only registered in `app.module.ts`. Grouping it "under Simulation" wrongly implies generation/simulation depend on it. It is an independent public endpoint and must be reasoned about (routing/auth/throttling) on its own.
-3. **`prisma` is a real module that the original table omitted.** `apps/api/src/prisma` (`PrismaModule`/`PrismaService`) is the DB access layer every api module depends on. It belongs to **`api`** and nowhere else; `generation` (which owns no tables) gets **no `PrismaModule`** — correct and intentional. The worker keeps its **own** independent Prisma client.
+3. **`prisma` is a real module that the original table omitted.** `apps/api/src/prisma` (`PrismaModule`/`PrismaService`) is the DB access layer every api module depends on. It belongs to **`api`** and nowhere else. (The original text added that `generation` owns no tables and therefore gets no `PrismaModule` — that is no longer true: it owns `DesignJob`.) Each worker keeps its **own** independent Prisma client.
 
 | Domain | Modules | Prisma models |
 |---|---|---|
@@ -51,7 +60,7 @@ The codebase clusters into clean domains. **Two corrections to the original tabl
 | **Simulation (producer)** | `simulation` (producer side) | `SimulationJob` (writes `QUEUED`) |
 | **Simulation (consumer)** | `worker-sim` (separate process, own Prisma + S3 clients) | `SimulationJob` (writes terminal state) |
 | **Netlist (standalone)** | `netlist` (`/netlist/import`, `/netlist/export` — **no internal consumers**) | *(none — wraps `eda-core.generateNetlist`)* |
-| **AI/Generation** | `generation` (generate/edit/explain/design/verify) | *(none — pure orchestrator, declares no Prisma access)* |
+| **AI/Generation** | `generation` (generate/edit/explain/design/verify) | **`DesignJob`** — `design-job.service.ts` reads and writes it, and produces onto the `design` queue. It is no longer a pure orchestrator, which the original table relied on |
 | **Catalog** | `parts` | *(none — wraps TME)* |
 | **Metering** | `usage` | `UsageRecord` (+ aggregates `SimulationJob`/`Asset`) |
 | **Data-access (infra)** | `prisma` (`PrismaModule`/`PrismaService`) | — (the access layer for all of the above) |
@@ -112,7 +121,17 @@ Keep one Postgres database. Assign **logical** table ownership and enforce it by
 | `UsageRecord` | `api` (usage module) | — |
 | `AuditLog` | **`api` (auth module only — the private `audit()` helper; no other writer exists)** | — |
 
-The only **physically cross-process** table is `SimulationJob`, and that split is *already real and working* between `api` and `worker-sim`. Preserve it as-is.
+**THREE** tables are now physically cross-process, not one:
+
+| Table | API writes | Worker writes |
+|---|---|---|
+| `SimulationJob` | QUEUED | terminal state (worker-sim) |
+| `DesignJob` | QUEUED | terminal state (worker-sim's design processor) |
+| `LayoutJob` | QUEUED | terminal state (pcb-worker) |
+
+All three follow the same discipline that made the original split work — the API only ever inserts a
+`QUEUED` row, and the worker claims it with a conditional status predicate so neither can clobber the other.
+Preserve that pattern; it is the reason this arrangement is safe with a shared database.
 
 ### How to handle each flagged hard split (under Tier A, shared DB):
 

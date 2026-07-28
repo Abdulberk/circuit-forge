@@ -23,7 +23,7 @@
 
 |                   | Flux                    | Circuit Forge                                                                                                                         |
 | ----------------- | ----------------------- | ------------------------------------------------------------------------------------------------------------------------------------- |
-| Temel analiz      | tran / ac / op / dc     | tran / ac / op / dc (+ .four/THD, .meas, .tf, .noise)                                                                                 |
+| Temel analiz      | tran / ac / op / dc     | tran / ac / op / dc (+ .four/THD, .meas, .tf, .noise, .sens)                                                                                 |
 | Çok-varyantlı     | ✗ (tek-koşu/konuşmasal) | **Monte-Carlo yield → robustness-tier (Wilson-95 alt sınır), tolerans-corner, ambient sıcaklık-corner**                               |
 | Verdict semantiği | model-kaynağı açıklanır | **honest verified**: DRC-gate, spec-satisfaction, MC-gate (yalnız user-owned spread), scope-manifest (kontrol edilmeyeni de bildirir) |
 | Kapalı döngü      | konuşmasal iterasyon    | **otomatik tasarla→sim→düzelt→doğrula** (AI+sim loop)                                                                                 |

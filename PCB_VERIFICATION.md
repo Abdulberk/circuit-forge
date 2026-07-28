@@ -158,6 +158,10 @@ Fazlama/effort tablosu geçerli; Faz-0'ın "kanıt" yarısı bugün bitti (aşa�
 | **V4 router kıyası (yoğun kart: 2 IC + 12 pasif + 2 LED, 20 net)** | tscircuit: 20/20 route, **36 via**, 6.1s (eval dahil) · **freerouting 2.2.4 (Docker CLI): 20/20, 2.06s, 0 kopuk — ve 0 VİA** (54 tel). Kalite farkı ölçülü ve net: freerouting çok daha temiz layout üretti. Mimari teyit: tscircuit=hızlı varsayılan, freerouting=**kalite kademesi** (kalite-varsayılanı yapmak bile değerlendirilebilir). #508 regresyonu bu yoğunlukta ısırmadı. Docker çağrısı: `--entrypoint java ... -jar /app/freerouting-executable.jar --gui.enabled=false -de in.dsn -do out.ses` (imaj entrypoint'i çıplak arg kabul etmiyor — gotcha) |
 | dsn-converter | ✅ `convertCircuitJsonToDsnString` + SES-geri-okuma/merge API'leri tam; DSN 8.6KB yazıldı, freerouting sorunsuz yedi |
 
+> **Not (28 Tem 2026):** §5b "Kalan işler" listesindeki iki madde artık KAPALI — model-ref enjeksiyonu
+> `models3d.ts` (`injectModels`) olarak sevk edildi ve üretimde koşuyor. Bu belgenin geri kalanı, o
+> tarihteki ölçümlerin donmuş kaydıdır ve öyle kalmalıdır.
+
 ## 5b. Kalan işler (küçüldü)
 1. **Kendi gerçek devrelerimizle** (CE amp + regülatör + mixed) router kıyasının tekrarı + **v1.9 jar** karşılaştırması (V4'ün tam kapanışı — sentetik yoğun kart geçti, temsili ama bizim devreler nihai söz).
 2. Adaptörün **model-ref enjeksiyonu** (kılıf→KiCad 3D model yolu) — gövdesiz GLB/render'ı gövdeye kavuşturur (Faz-1 işi).

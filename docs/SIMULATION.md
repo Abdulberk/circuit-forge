@@ -500,7 +500,10 @@ pass?" instead of just "does the nominal value pass?".
   yield.
 - `runMonteCarlo(circuit, criteria, runVariant, opts)` is the orchestrator: draws a variant, calls the
   injected `runVariant` (real ngspice in production, a fake in tests), evaluates `criteria` against the
-  returned measurements via `evaluateAssertions`, and repeats up to `opts.n` (hard-capped at 300). It
+  returned measurements via `evaluateAssertions`, and repeats until the tier is DECIDED. 300 is only the
+  bar-less default: when `stopBars` is supplied — which the worker always does — the target becomes
+  `requiredRunsForBar(robustMin)`, i.e. 381 samples at the consumer bar and 3838 at automotive, because a
+  flawless run cannot clear a 0.99 Wilson lower bound with fewer. It
   supports **adaptive-N**: once `minRuns` (default 24) evaluated variants have run, it stops early once
   the Wilson CI half-width is ≤ `ciStopHalfWidth` (default 0.03 = ±3%) — a clearly-robust or clearly-bad
   design converges in far fewer than N runs. `opts.shouldStop` lets a caller impose a wall-clock budget;
@@ -519,7 +522,9 @@ supplies the `VariantRunner` that plugs into `runMonteCarlo`:
   when the analysis requests them, so THD/gain gate **per variant**, not just at nominal.
 - Enforces a per-batch wall-clock budget (`config.MC_BATCH_BUDGET_MS`, default 60 s) via `shouldStop`; on
   a hit it returns an honest partial (`budgetHit: true`, real counts — never a claimed N).
-- Config knobs (worker `config.ts`): `MC_N_DEFAULT` (default 300, the variant cap), `MC_CI_HALFWIDTH_STOP`
+- Config knobs (worker `config.ts`): ~~`MC_N_DEFAULT`~~ **is deliberately NOT read by the Monte-Carlo
+  path** — 300 is below the 381 the consumer bar needs, so using it as a cap would make the top tier
+  unreachable no matter how the run went. `MC_CI_HALFWIDTH_STOP`
   (default 0.03), `MC_BATCH_BUDGET_MS` (default 60000).
 - `apps/worker-sim/src/simulation/processor.ts` and `apps/worker-sim/src/design/local-sim.ts` both call
   `runMonteCarloBatch` — the former as an informational batch attached to a plain simulation job

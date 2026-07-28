@@ -778,10 +778,89 @@ package root.
 
 ---
 
+## 7b. Tolerance & Robustness — the "verified" layer
+
+Everything in §1-§7 evaluates a circuit at its **nominal** component values. Real parts are not nominal, so
+this layer answers the question a nominal pass cannot: *does this design still work when the parts are what
+you can actually buy?* It is what separates "simulated OK" from "verified".
+
+All of it is pure and injectable: each engine takes a `VariantRunner` (a function that simulates one
+perturbed circuit), so eda-core never spawns a process. The API, the worker and the harnesses supply their
+own runner.
+
+| Module | Entry points | What it answers |
+|---|---|---|
+| `montecarlo.ts` | `runMonteCarlo`, `monteCarloVariants`, `perturbCircuit`, `computeYield`, `classifyRobustness` | Sample the circuit N times with every toleranced part drawn inside its tolerance; grade the pass-rate |
+| `corner.ts` | `runWorstCase`, `cornerVariants` | The deterministic ±corners of the toleranced parts, not a random sample |
+| `tempcorner.ts` | `runTempCorner` | Ambient-temperature drift per node |
+| `supply-corner.ts` | `runSupplyCorner`, `validatePowerRails` | Perturb the rail's DRIVING SOURCE ±5% (an LDO regulates; the rail itself must not be forced) |
+| `sweep.ts` | `runParametricSweep`, `sweepVariants` | One parameter swept across a range |
+| `utils/eseries.ts` | `nearestESeries`, `snapCircuitToESeries` | Snap ideal values onto real E-series parts |
+
+### How the tier is decided
+
+`classifyRobustness` grades the **Wilson-95 lower bound** of the pass-rate, not the point estimate — a
+100% pass over 10 samples is not evidence of a 99% yield. Bars come from `ROBUSTNESS_PROFILES`
+(`consumer` 0.99/0.90, `automotive` and `medical` stricter), resolved through `barsForProfile` with
+`DEFAULT_ROBUSTNESS_PROFILE = 'consumer'`.
+
+Two rules exist because their absence was a real defect:
+
+- **The sampler must know the bar it will be graded against.** `requiredRunsForBar(R)` = the samples needed
+  for a flawless run to clear `R`; at the consumer bar that is 381. Stopping earlier on a fixed
+  precision rule caps the Wilson lower bound at 0.9408 — below every shipped `robustMin` — so a flawless
+  design could only ever be graded `marginal`, and the note blamed the parts for a sample-count artefact.
+- **`at-risk` must be EARNED.** It requires the WHOLE confidence interval to sit below the marginal bar.
+  A run with zero observed failures but a wide interval is `unknown` — undecided, not faulty. This matters
+  because `/verify-design` flips its verdict to fail on `at-risk`: a short, noisy run must not fail a
+  sound circuit.
+
+Errored variants are excluded from the yield denominator: an infrastructure blip is not a spec failure.
+
+---
+
+## 7c. Verdict scope & design review
+
+| Module | Entry points | Purpose |
+|---|---|---|
+| `verification/manifest.ts` | `buildManifest`, `buildElectricalScope`, `buildLayoutScope`, `CHECK_IDS` | The **scope manifest**: which checks ran, which passed, and — crucially — which did NOT run |
+| `verification/design-review.ts` | `checkOrientationConsistency`, `validatePowerRails` | Deterministic design review (polarity, rails) that needs no simulation |
+| `analysis/assertions.ts` | `evaluateAssertions`, `criterionDimension`, `uncoveredRequiredDimensions` | Turn stated intent into measured pass/fail, and report which dimensions of the intent nothing covered |
+
+The manifest exists so a verdict can state its own limits. "Verified" means *these named checks passed*,
+never *everything is fine* — and a check that did not run is reported as not-run rather than silently
+omitted, which is the difference between a scope and a claim.
+
+---
+
+## 7d. Extended analyses
+
+Beyond `tran`/`ac`/`dc`/`op`, these parse ngspice's own extended output into result fields:
+
+`analysis/fourier.ts` (`parseFourierLog`, `attachFourierThd` — THD), `analysis/measure.ts`
+(`parseMeasurements` — `.meas`), `analysis/tf.ts` (`parseTransferFunction`, `attachTransferFunction` —
+small-signal gain), `analysis/noise.ts` (`parseNoise`), `analysis/sens.ts` (`parseSensitivity`),
+`analysis/ac-measurements.ts` (`cutoffFrequency`), and `analysis/transient-completeness.ts`
+(`assessTransientCompleteness` — did the transient actually reach its stop time, or was it truncated?).
+
+THD and gain become **acceptance metrics a caller can assert on** — they are folded onto the matching
+measurement so they flow through the same `evaluateAssertions` path as every other metric. They do not
+gate anything unless asserted.
+
+Also here: `netlist/convergence.ts` (`diagnoseConvergence`, `convergenceRemedyLadder` — turn an ngspice
+non-convergence into an ordered set of remedies), `netlist/solver-options.ts` (`applySolverOptions`), and
+`models/library.ts` (`resolveModelForPart`, `genericModelByName`).
+
+---
+
 ## 8. Public API — `@circuit-forge/eda-core`
 
-The complete export surface of [index.ts](../packages/eda-core/src/index.ts). "Kind" notes
-whether each is a type-only export (`type`), value/function, class, const, or enum.
+A curated tour of the main surface. **[index.ts](../packages/eda-core/src/index.ts) is the authoritative
+list** — it exports around 195 names and this table does not enumerate all of them, because a hand-kept
+copy of an export list is a promise that cannot be met (this section claimed completeness once and drifted
+125 entries behind). Use it to learn the shape; use the source to check what exists.
+
+"Kind" notes whether each is a type-only export (`type`), value/function, class, const, or enum.
 
 ### Types
 
@@ -899,7 +978,7 @@ whether each is a type-only export (`type`), value/function, class, const, or en
 
 ---
 
-## 9. `@circuitforge/llm-core` — AI circuit generation (real Anthropic SDK)
+## 9. `@circuitforge/llm-core` — AI circuit generation (protocol-switchable transport)
 
 Source: [packages/llm-core/src/index.ts](../packages/llm-core/src/index.ts).
 

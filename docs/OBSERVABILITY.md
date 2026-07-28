@@ -128,8 +128,15 @@ queue-depth alerts are early-warning / capacity signals.
   after it has drained the in-flight job (`worker.close()`) and disconnected Prisma, the API after
   `app.close()`. This is deliberate: a telemetry-owned `process.exit()` would otherwise race the worker's
   drain and abandon a running simulation.
-- **No secrets in telemetry.** We don't attach request bodies, credentials, or per-tenant identifiers to
-  spans/metrics. Auth headers for the collector itself go via the standard `OTEL_EXPORTER_OTLP_HEADERS`.
+- **No secrets in telemetry — with one deliberate exception.** No request bodies and no credentials go to
+  spans or metrics, and **metrics carry no tenant identifier at all**. But the worker's `sim.process` span
+  does carry `sim.org_id`, and the design worker's `design.process` span is equivalent: a trace has to be
+  attributable to a tenant to be useful in an incident, which a metric does not. Treat span attributes as
+  tenant-identifying and scope collector access accordingly. Auth headers for the collector itself go via
+  the standard `OTEL_EXPORTER_OTLP_HEADERS`.
+- **`apps/pcb-worker` has NO telemetry bootstrap.** The PCB layout pipeline — the longest-running and most
+  expensive job in the system — emits no spans and no metrics today. An honest gap, not an oversight in
+  this document.
 
 ---
 

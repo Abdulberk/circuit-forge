@@ -1,7 +1,7 @@
 # LayoutJob Planı — PCB'yi worker'a bağlama (motoru ürün özelliğine çevirmek)
 
 **Tarih:** 7 Temmuz 2026 · **Sürüm:** v2 (3-denetçili adversarial review'den geçti: kontrat / infra /
-kod-tutarlılık — gerçek 3 yanlış varsayım yakalandı, hepsi işlendi) · **Durum:** ONAY BEKLİYOR
+kod-tutarlılık — gerçek 3 yanlış varsayım yakalandı, hepsi işlendi) · **Durum:** ✅ **UYGULANDI VE SEVK EDİLDİ**
 **Referans:** Flux.ai PCB editör ekranı (founder paylaştı) — hedef deneyim; kontrat ona göre kilitli.
 **Önkoşul bilgi:** yok.
 
@@ -16,7 +16,19 @@ kod-tutarlılık — gerçek 3 yanlış varsayım yakalandı, hepsi işlendi) ·
 **Ne DEĞİL:** Frontend'i yapmak. Bu plan, frontend geldiğinde **sıfır backend reworkü** ile takılabilmesi
 için **veri sözleşmesini** kilitler ve motoru worker'da koşturur.
 
-**Bugünkü durum:** LayoutJob için **sıfır kod** (doğrulandı). Motor + CI kapısı hazır; worker/API yok.
+> ## ⚠️ BU BİR TARİHSEL PLAN BELGESİDİR (7 Tem 2026)
+>
+> **Plandaki her şey yapıldı ve sevk edildi.** Aşağıdaki metin, işin *başlamadan önceki* niyetini kaydeder;
+> bugünkü durumu değil. Özellikle şu ikisi artık geçerli değil:
+>
+> - **"LayoutJob için sıfır kod"** — `/layouts` controller'ı (POST 202 + liste + detay), `LayoutService`,
+>   `pcb-layout` kuyruğu, `apps/pcb-worker` servisi ve `LayoutJob` Prisma modeli hepsi çalışıyor.
+> - **§2'de kilitlenen ÇIKTI sözleşmesi** uygulanırken değişti (durum enum'u, katman adları, sonuç blob'unun
+>   alanları). Sevk edilen sözleşme için **[FRONTEND_PCB_EDITOR_BRIEF.md](FRONTEND_PCB_EDITOR_BRIEF.md)** ve
+>   **[docs/API.md](docs/API.md) §3.16** yetkilidir — burada okuduğun şekiller değil.
+>
+> Belgeyi silmiyoruz: hangi kararların neden alındığını ve review'in hangi iyimser varsayımları düzelttiğini
+> kaydediyor. Ama **bir şeyin nasıl çağrılacağını buradan öğrenme.**
 
 > **Review'in düzelttiği 3 iyimser varsayım (dürüstlük):**
 > 1. **Airwires "soup'u şekillendir" DEĞİL.** Quality/freerouting yolunda (sevk edilen yol) bakır izler,
@@ -165,7 +177,7 @@ Yerlerini birim testleri aldı: `apps/pcb-worker/src/runners/kicad.spec.ts` (DRC
 ## 5. Dürüst riskler
 - **Airwires seam değişikliği** (M1b): `notaryDrc` imzası değişiyor → mevcut çağıranlar (layout-check, gen-gallery, index.ts margin-retry) uyarlanmalı. Sınırlı ama gerçek dokunuş.
 - **pcb-worker imajı ~3GB** (kicad-full tabanlı) → build/registry maliyeti + deploy süresi; ayrı servis izole eder.
-- **Java 21 + AWT font lib'leri** freerouting headless için şart (yoksa font hatası); base imaja eklenir.
+- ~~**Java 21**~~ → **UYGULAMADA DEĞİŞTİ:** Java 21 çalışmıyor. Üretim imajı, JRE'yi VE jar'ı **pinlenmiş freerouting imajından `COPY --from`** ile alıyor (Temurin) — böylece jar↔JRE sürüm uyumu garanti; ayrı bir JRE kurup sürüm eşleştirmeye çalışmak kırılgan çıktı. AWT font kütüphaneleri hâlâ şart.
 - **KiCad 3D model yolu sabit** (`/usr/share/kicad/3dmodels`) — kicad-full base'de var, başka base'de GLB çuvallar.
 - **S3 depolama şart** (GLB/Gerber büyük) — inline-JSON deseni yetmez; presigned-URL akışı kurulur.
 - **PCB işi yavaş** (10–120sn) → kuyruk eşzamanlılığı + timeout + kaynak sınırı (sim'deki semafor deseni).

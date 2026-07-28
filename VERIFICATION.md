@@ -45,8 +45,18 @@ That fraction is the **yield**. Then we label the design honestly:
 - **at-risk** — passes on paper but many boards would fail → not production-robust.
 - **unknown** — no tolerances were specified, so we only checked exact values (and we say exactly that).
 
-Crucially: **the robustness tier never overturns a correct design into a "fail."** It is a *label on top of*
-"verified," not a stricter gate. A correct-but-marginal design is informed, not rejected.
+Crucially: **in the AI design loop the robustness tier never overturns a correct design into a "fail."** It
+is a *label on top of* "verified," not a stricter gate. A correct-but-marginal design is informed, not
+rejected.
+
+> **One deliberate exception, on `POST /verify-design`.** There the Monte-Carlo tier DOES gate — but only in
+> the narrowest case: a COMPLETE run (not cut short by the time budget) that lands `at-risk` on tolerances
+> the caller specified themselves. The reasoning: if you told us the spread and the whole confidence
+> interval still sits below the bar, calling that "verified" would be the claim we most need not to make.
+> A catalog-sourced or mixed tolerance basis, or a budget-truncated run, stays informational — we will not
+> fail a design on a spread it did not choose or a sample we cut short.
+>
+> Corner, temperature and supply-rail sweeps never gate, in either path.
 
 ### Scenario 3 — being honest about the numbers
 If we shake only 200 virtual boards and all pass, we **cannot** claim "100%" — the 201st might have failed.
@@ -91,8 +101,13 @@ per-domain bars:
 |---|---|---|
 | **robust** | yield-lower-bound ≥ 99% | ≥ 99.9% |
 | **marginal** | 90–99% | 99–99.9% |
-| **at-risk** | < 90% | < 99% |
-| **unknown** | no toleranced parts / no MC → "verified at nominal only" | — |
+| **at-risk** | the WHOLE 95% interval below 90% | the whole interval below 99% |
+| **unknown** | no toleranced parts / no MC → "verified at nominal only", **or an interval too wide to decide** | — |
+
+> **`at-risk` is earned, not inferred.** A low Wilson LOWER bound alone is not enough — the whole interval
+> must sit below the marginal bar. A run with zero observed failures but a wide interval (a short or noisy
+> sample) is `unknown`: undecided, not faulty. This matters because on `/verify-design` the tier can flip
+> the verdict to fail, and a thin sample must never fail a sound circuit.
 
 The result carries `robustness: { tier, profile, yield, yieldLowerBound, evaluated, note }`. The yield models
 **component-value spread only (short-term)** — it is *not* a long-term-drift-adjusted production figure, and

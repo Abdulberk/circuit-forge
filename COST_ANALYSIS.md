@@ -15,7 +15,7 @@
 | Input | Source | Confidence |
 |---|---|---|
 | LLM price: **$250/mo flat = 3,571 req/day (107,142/mo), Opus 4.8**; a "request" = one *successful completion* (tool-use does **not** add requests) | Founder-provided | **Exact** |
-| ngspice CPU per sim + per Monte-Carlo batch | **Measured** on the real worker code (`scripts/cost-measure.mjs`) | High (dev box; see §10) |
+| ngspice CPU per sim + per Monte-Carlo batch | **Measured in-session** on the real worker code. ⚠️ The measuring script was never committed, so these numbers **cannot be reproduced from this repository** | Was High (dev box, see §10); now UNVERIFIABLE — and the Monte-Carlo figure is additionally stale, see §3 |
 | Requests per design | **Derived** from the loop (`runDesignLoop`) + the vetted multi-candidate plan | Exact (deterministic) |
 | AWS EC2 / RDS / S3 prices | Live research, us-east-1 on-demand (×730 h/mo) | Exact us-east-1; eu-central-1 ≈ +14% compute / +11% RDS / +20% m-family |
 | TME parts API | Verified: free with an API key (Token+Secret), sandbox, no published per-call fee | High |
@@ -85,7 +85,7 @@ Measured on the real worker (`runSimulation` / `runMonteCarloBatch`):
 | `tran` sim (RC, 512 points) | ~45 ms |
 | `ac` sim (101 points) | ~42 ms |
 | Monte-Carlo **per variant** | ~36 ms |
-| **Monte-Carlo batch (clean, high-yield design)** | **stops at ~61 variants ≈ 2.2 s** (adaptive-N + Wilson CI converges early — does *not* run all 300) |
+| **Monte-Carlo batch (clean, high-yield design)** | **~381 variants** at the consumer bar. The old ~61-variant figure came from a fixed ±3% half-width stop that has been removed: it capped the Wilson lower bound at 0.9408, below every shipped `robustMin`, so a flawless design could never reach the top tier. Sizing now targets the bar (`requiredRunsForBar`), which is ~6× the CPU per batch — the numbers below predate that and understate it |
 | Monte-Carlo batch (cap 300, op-class) | ~11 s |
 | Monte-Carlo batch (slow/long-tran variants) | up to the **60 s** per-batch budget cap |
 

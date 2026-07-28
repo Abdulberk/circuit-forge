@@ -3,7 +3,7 @@
 Complete, source-derived reference for the Circuit Forge backend API (NestJS). Every statement here is grounded in the code under [apps/api/src](../apps/api/src); file links are provided throughout. Where the running code diverges from older docs or from environment configuration, the discrepancy is called out explicitly.
 
 - **Source of truth:** [apps/api/src](../apps/api/src)
-- **Verified live:** 2026-07-01
+- **Verified live:** 2026-07-28 (re-derived from the controllers)
 
 ---
 
@@ -13,8 +13,8 @@ Complete, source-derived reference for the Circuit Forge backend API (NestJS). E
 
 | Environment | Base URL |
 |-------------|----------|
-| Local (this repo) | `http://localhost:3001` |
-| Default if `PORT` unset | `http://localhost:3000` |
+| Default (`.env.example` ships `PORT=3000`) | `http://localhost:3000` |
+| If you set `PORT=3001` (see LOCAL_SETUP) | `http://localhost:3001` |
 
 The server binds to `process.env.PORT` (falling back to `3000`) in [main.ts](../apps/api/src/main.ts):
 
@@ -23,7 +23,7 @@ const port = process.env.PORT || 3000;
 await app.listen(port);
 ```
 
-Locally the repo sets `PORT=3001` in the monorepo root `.env` (port 3000 was taken by another project), so the API listens on **`http://localhost:3001`**.
+The shipped `.env.example` sets `PORT=3000`. Some machines move it to 3001 because another local project holds 3000 — that is a per-machine choice, not a repo default, so substitute your own port in the URLs below.
 
 > **Latent config mismatch:** the `API_PORT` variable present in `.env`/compose is **not read anywhere** in the code — only `PORT` is consulted. Setting `API_PORT` alone has no effect.
 
@@ -31,7 +31,7 @@ Config is loaded by `ConfigModule.forRoot` in [app.module.ts](../apps/api/src/ap
 
 ### Swagger / OpenAPI
 
-Interactive docs are served at **`/docs`** (e.g. `http://localhost:3001/docs`). Configured in [main.ts](../apps/api/src/main.ts) via `DocumentBuilder`:
+Interactive docs are served at **`/docs`** — but only outside production unless `ENABLE_SWAGGER=true` is set, so a deployed instance does not publish its own surface by default. Locally it is always on. It is reached at (e.g. `http://localhost:3001/docs`). Configured in [main.ts](../apps/api/src/main.ts) via `DocumentBuilder`:
 
 - Title: `Circuit Forge API`
 - Description: `AI Circuit Generator & Simulator API`
@@ -89,11 +89,33 @@ Every `@Throttle({ default: { limit, ttl } })` decorator on a specific route ove
 
 ### Error envelope
 
-Errors use the standard NestJS `HttpException` shape, e.g.:
+A global `AllExceptionsFilter` normalizes **every** error response — the framework shape is not what reaches the client. `error` is stripped; `code` is always present:
 
 ```json
-{ "statusCode": 400, "message": ["email must be an email"], "error": "Bad Request" }
+{
+  "statusCode": 400,
+  "code": "BAD_REQUEST",
+  "message": ["email must be an email"],
+  "timestamp": "2026-07-28T09:12:44.101Z",
+  "path": "/auth/register"
+}
 ```
+
+Structured fields thrown by a service are preserved alongside those keys, which is how a quota rejection
+carries its detail:
+
+```json
+{
+  "statusCode": 429, "code": "QUOTA_EXCEEDED",
+  "metric": "layout_concurrent", "used": 2, "limit": 2, "period": "2026-07",
+  "message": "Quota exceeded for layout_concurrent: 2 of 2 used this period."
+}
+```
+
+**Branch on `code`, not on `error`** (which no longer exists) and not on the message text. A 429 is either
+`QUOTA_EXCEEDED` (an org limit) or `TOO_MANY_REQUESTS` (the IP throttle) — different remedies, so clients
+must distinguish them. On an unexpected 500 the real error is logged server-side only and `message` stays
+`"Internal server error"`.
 
 Exceptions thrown by services map to these status codes:
 
@@ -124,7 +146,8 @@ JWT payload (`JwtPayload` in [auth.service.ts](../apps/api/src/auth/auth.service
 { sub: string /* user id */, email: string }
 ```
 
-Both access and refresh tokens carry the **same** payload `{ sub, email }`; they differ only by secret and expiry.
+Access tokens carry `{ sub, email }`. **Refresh tokens additionally carry a `jti`** that keys a server-side
+`RefreshToken` row — refresh is stateful, not just a second signature.
 
 ### Password hashing
 
@@ -134,8 +157,23 @@ Passwords are hashed with **argon2** (`argon2.hash`) on register and verified wi
 
 1. **Register** (`POST /auth/register`): creates the `User` (with argon2 hash), then creates a **personal organization** named `"<name>'s Workspace"` with an `OrgMembership` of role `OWNER` for the new user, then returns access + refresh tokens. Duplicate email → `409 Conflict`.
 2. **Login** (`POST /auth/login`): looks up user by email, verifies password with argon2, returns tokens. Any failure → `401` with generic `"Invalid credentials"`.
-3. **Refresh** (`POST /auth/refresh`): verifies the supplied `refreshToken` against `JWT_REFRESH_SECRET`, reloads the user, and issues a **fresh access + refresh token pair**. Invalid/expired refresh token → `401`.
-4. **Logout** (`POST /auth/logout`): **stateless / client-side only.** The handler body is empty and returns `204 No Content`. Tokens are **not** revoked server-side (no token blocklist exists); the client is expected to discard them.
+3. **Refresh** (`POST /auth/refresh`): **rotating and single-use.** Every refresh JWT has a server-side row
+   keyed by its `jti`. The row is claimed atomically and a fresh access + refresh pair is issued; the old
+   refresh token is dead the moment it is used.
+
+   > **Clients must store the NEW refresh token and never replay the old one.** Presenting an
+   > already-used token is treated as theft: the **entire token family is revoked** and the event is
+   > audited, logging that session out everywhere. A client that keeps re-sending its original refresh
+   > token destroys its own session on the second call.
+
+   Bad signature, missing `jti`, no row, hash mismatch, expired, or already revoked → `401`.
+4. **Logout** (`POST /auth/logout`): **server-side and stateful.** Takes a body — `LogoutDto
+   { refreshToken?, allDevices? }` — verifies the token (expired ones are still accepted, so a stale
+   session can be cleaned up) and revokes its family, or every session for the user when `allDevices` is
+   true. Returns `204 No Content`. Sending no body is a no-op.
+5. **Account lifecycle**: `POST /auth/verify-email`, `/auth/resend-verification`, `/auth/forgot-password`,
+   `/auth/reset-password` — each `204 No Content` with its own throttle. The forgot/resend routes answer the
+   same 204 whether or not the address exists, so they cannot be used to enumerate accounts.
 
 ### Using the Bearer token
 
@@ -172,7 +210,13 @@ Roles live on `OrgMembership.role` (`OrgRole` enum in [schema.prisma](../apps/ap
 | `ADMIN` | Elevated org role. |
 | `MEMBER` | Default role (`@default(MEMBER)` in schema). |
 
-There is **no dedicated `@Roles` decorator or RolesGuard**. Authorization is enforced imperatively inside services through `OrgsService.checkMembership(orgId, userId, requiredRoles?)` (alias `requireMembership`) in [orgs.service.ts](../apps/api/src/orgs/orgs.service.ts):
+There are **two independent role axes**. Tenant roles (`OrgMembership.role`) govern who may touch an org's
+data; **platform roles** (`User.platformRole`: `NONE` < `SUPPORT` < `OPERATOR` < `ADMIN`) govern the
+cross-tenant operator surface under `/admin/*` and are enforced **declaratively** by `@PlatformRoles(min)` +
+`PlatformAdminGuard`, which reads the role live from the database on every request — so revoking access does
+not wait for a JWT to expire. See §3.19.
+
+For **tenant** roles there is no `@Roles` decorator or RolesGuard — authorization is enforced imperatively inside services through `OrgsService.checkMembership(orgId, userId, requiredRoles?)` (alias `requireMembership`) in [orgs.service.ts](../apps/api/src/orgs/orgs.service.ts):
 
 - If the user has no membership in the org → `403 Forbidden` (`"Not a member of this organization"`).
 - If `requiredRoles` is passed and the membership role is not in it → `403` (`"Insufficient permissions"`).
@@ -264,7 +308,7 @@ Controller prefix: `orgs`. Entire controller is `@UseGuards(JwtAuthGuard)` + `@A
 - `POST /orgs` → `create`: creates the org with the caller as an `OWNER` membership and returns the raw `Organization` record: `{ id, name, createdAt, updatedAt }` (the membership is created but **not** included in the response).
 - `GET /orgs/:orgId` → `findOne`: requires the caller to have a membership; returns the org spread with `role`: `{ id, name, createdAt, updatedAt, role }`. If no membership exists → `404` (`"Organization not found or access denied"`).
 
-> Older docs showed `members` arrays / nested `membership` objects in these responses — the current service does **not** return member lists; it returns the org fields plus a single `role` string (for `findAll`/`findOne`).
+> Older docs showed `members` arrays / nested `membership` objects in these responses — those two responses return the org fields plus a single `role` string. Members are NOT absent from the API, though — `GET /orgs/:orgId/members` lists them, and `PATCH`/`DELETE /orgs/:orgId/members/:userId` change and remove them (OWNER/ADMIN).
 
 ### 3.3 Projects — `[projects.controller.ts](../apps/api/src/projects/projects.controller.ts)`
 
@@ -294,7 +338,8 @@ Controller has **no path prefix** (`@Controller()`); full paths are declared per
 
 **Responses** (from [projects.service.ts](../apps/api/src/projects/projects.service.ts)):
 
-- `findAllForOrg`: checks membership, returns `Project[]` for the org ordered by `updatedAt desc`. Each `Project` = `{ id, orgId, name, description, createdAt, updatedAt }`.
+- `findAllForOrg`: checks membership, returns the org's projects ordered by `updatedAt desc`. Each `Project` = `{ id, orgId, name, description, createdAt, updatedAt }`.
+  **Paginated** — the response is `{ items, total, limit, offset, hasMore }`, not a bare array, and accepts `?limit` (default 50, max 100) and `?offset`. Calling `.map()` on it directly will crash.
 - `findOne`: loads the project **including its `org`** (`{ ...project, org: { id, name, createdAt, updatedAt } }`), then checks the caller's membership of `project.orgId`. Missing project → `404`.
 - `create`: checks membership, creates and returns the `Project`.
 - `update`: re-resolves via `findOne` (membership-checked), conditionally updates `name` and/or `description` (only applies `name` if truthy; applies `description` if `!== undefined`), returns the updated `Project`.
@@ -321,6 +366,8 @@ No controller prefix; full paths per route. Entire controller is `@UseGuards(Jwt
 **Responses** (from [versions.service.ts](../apps/api/src/versions/versions.service.ts)):
 
 - `findAllForProject`: authorizes via `ProjectsService.findOne` (membership), returns versions ordered by `versionNumber desc`, **selecting only** `{ id, versionNumber, createdAt, createdByUserId }` (no circuit/UI JSON in the list).
+  **Paginated** — `{ items, total, limit, offset, hasMore }` with `?limit`/`?offset`, not a bare array.
+- `GET /versions/:versionId/bom` — the aggregated bill of materials for a version. JSON by default, or a CSV attachment when the client asks for it.
 - `create`: authorizes via project, computes the next `versionNumber` (`lastVersion.versionNumber + 1`, starting at 1), persists `circuitJson` + `uiJson` with `createdByUserId = caller`, returns the full `ProjectVersion` row: `{ id, projectId, versionNumber, createdByUserId, circuitJson, uiJson, createdAt }`.
 - `findOne`: loads the version **including `project`**, authorizes via the project's org membership, returns the full version with the nested `project`. Missing version → `404`.
 
@@ -344,6 +391,7 @@ Controller prefix: `templates`. Guards are applied **per route** (mixed): list a
 | `name` | string | `@IsString()` |
 | `tags` | string[]? | `@IsOptional()` `@IsArray()` `@IsString({ each: true })` |
 | `circuitJson` | object (`Record<string, any>`) | `@IsObject()` |
+| `analysisConfig` | object? | `@IsOptional()` — `{ analysis, probes? }`, validated on write (malformed → 400) and persisted, so a template can carry the analysis it is meant to be run with |
 
 `ListTemplatesQueryDto`
 | Field | Type | Validation |
@@ -398,7 +446,8 @@ No controller prefix; full paths per route. Entire controller is `@UseGuards(Jwt
 
 - `presignUpload`: requires membership; generates an S3 key `orgs/<orgId>/models/<uuid>/<name>` and a **presigned PUT URL** (`PutObjectCommand`, 1-hour expiry, with `ContentType`/`ContentLength`). Returns `{ uploadUrl, s3Key }`. The client PUTs the file to `uploadUrl` directly.
 - `commitAsset`: requires membership; issues a `HeadObjectCommand` to confirm the object exists (`400 "Asset not found in storage..."` if not); enforces the `s3Key` begins with `orgs/<orgId>/` (`400` otherwise); creates an `Asset` row with `type = 'SPICE_MODEL'`. Returns the created `Asset` = `{ id, orgId, type, name, description, contentType, sizeBytes, s3Key, sha256, createdAt }`.
-- `listAssets`: requires membership; optional `type` query filters `Asset.type`; returns `Asset[]` ordered `createdAt desc`.
+- `listAssets`: requires membership; optional `type` query filters `Asset.type`; returns assets ordered `createdAt desc`.
+  **Paginated** — `{ items, total, limit, offset, hasMore }` with `?limit`/`?offset`, not a bare array.
 - `getAsset`: loads by id (`404` if missing), then requires membership of the asset's org; returns the `Asset`.
 - `getDownloadUrl`: resolves the asset (membership-checked) and returns `{ downloadUrl }` — a **presigned GET URL** (`GetObjectCommand`, 1-hour expiry).
 - `deleteAsset`: resolves the asset, requires `OWNER`/`ADMIN` (else `400 "Only admins can delete assets"`), deletes the **DB row only** (the S3 object is intentionally left in place to avoid accidental data loss). Returns `{ deleted: true }`.
@@ -412,7 +461,7 @@ No controller prefix; full paths per route. Entire controller is `@UseGuards(Jwt
 | POST | `/versions/:versionId/simulations` | Yes (`JwtAuthGuard`) | membership (via version→project→org) | `CreateSimulationDto` | `201` `{ jobId }` — **throttled 30/60s** |
 | POST | `/simulations/quick` | Yes (`JwtAuthGuard`) | membership (uses caller's first org) | `QuickSimulationDto` | `201` `{ jobId }` — **throttled 10/60s** |
 | GET | `/simulations/:jobId` | Yes (`JwtAuthGuard`) | membership (of job's org) | none | `200` status object |
-| GET | `/simulations/:jobId/result` | Yes (`JwtAuthGuard`) | membership (of job's org) | none | `200` result object |
+| GET | `/simulations/:jobId/result` | Yes (`JwtAuthGuard`) | membership (of job's org) | `?maxPoints=N` (10-100000) | `200` result object |
 
 `POST /versions/:versionId/simulations` carries `@Throttle({ default: { limit: 30, ttl: 60000 } })`; `POST /simulations/quick` carries `@Throttle({ default: { limit: 10, ttl: 60000 } })`. Both ride on top of the global `default`/`burst` tiers described in §1.4.
 
@@ -423,12 +472,14 @@ No controller prefix; full paths per route. Entire controller is `@UseGuards(Jwt
 |-------|------|------------|
 | `analysisConfig` | object (`Record<string, unknown>`) | `@IsObject()` |
 | `probes` | string[]? | `@IsArray()` `@IsString({ each: true })` `@IsOptional()` (e.g. `["v(out)", "v(in)"]`) |
+| `modelAssetIds` | string[]? | `@ArrayMaxSize(32)` `@IsOptional()` — uploaded `SPICE_MODEL` assets to `.include` in the run |
 
 `QuickSimulationDto`
 | Field | Type | Validation |
 |-------|------|------------|
 | `netlist` | string | `@IsString()` (raw SPICE netlist) |
 | `analysisConfig` | object? | `@IsObject()` `@IsOptional()` |
+| `modelAssetIds` | string[]? | `@ArrayMaxSize(32)` `@IsOptional()` — same meaning as above |
 
 **Behavior / responses** (from [simulation.service.ts](../apps/api/src/simulation/simulation.service.ts)):
 
@@ -469,11 +520,23 @@ No controller prefix; full paths per route. Entire controller is `@UseGuards(Jwt
 
 Deterministic, simulation-backed verification: ERC + ngspice (delegated to the worker queue, server-side-polled so the HTTP response stays synchronous) + spec assertions, returning a pass/fail/inconclusive evidence pack (verdict + measurements + ERC + per-assertion results). A malformed circuit/analysis config is a `400`; a valid circuit that fails verification is a `200` with `verdict: "fail"`. A current-probe assertion on a diode/transistor/subckt terminal (no branch-current vector in ngspice) is rejected with a `400` steering the caller to probe a series sense resistor instead.
 
-**`VerifyDesignDto`** ([generation/dto/index.ts](../apps/api/src/generation/dto/index.ts)): `circuit` (CircuitJson object) + optional `analysisConfig` (defaults to an operating-point analysis) + optional `assertions` (`AssertionDto[]`, max 50).
+**`VerifyDesignDto`** ([generation/dto/index.ts](../apps/api/src/generation/dto/index.ts)): `circuit` (CircuitJson object) + optional `analysisConfig` (defaults to an operating-point analysis) + optional `assertions` (`AssertionDto[]`, max 50) + optional **`robustness`** (`RobustnessDto`).
+
+`robustness` layers tolerance-aware checks on top of the nominal verdict: `corner` / `maxCorners` (1-12, default 8), `montecarlo` with `n` / `seed` / `profile` (`consumer` | `automotive` | `medical`), plus ambient `temperature` and supply-rail sweeps. All of it is **informational and runs only when the nominal verdict is already `pass`** — with the single exception noted in the gating box below.
 
 **`AssertionDto`** fields: `probe` (string, 1–64 chars), `metric` (enum `min | max | final | pp | avg | rms | cutoff | thd | gain`), `op` (enum `lt | lte | gt | gte | approx`), `value` (number, SI base units; Hz for `cutoff`), optional `tol` (default 5% of `|value|` for `op: "approx"`), optional `label`. `avg`/`rms` are time-weighted (trapezoidal over the adaptive timesteps); `cutoff` is the −3 dB corner of an AC magnitude response (requires an `ac` analysis); `thd` is Total Harmonic Distortion in percent (requires a `tran` analysis with a `fourier` request on the probe); `gain` is small-signal DC gain Vout/Vin (requires an `op` analysis with a `tf` request to the probe).
 
-> **Verdict gating:** `"verified"` gates not just on the listed assertions but also on THD and small-signal GAIN when the design's own analysis produces them (`thd` from `tran`+`fourier`, `gain` from `op`+`tf`), evaluated both at nominal values and across tolerance variants via Monte-Carlo (surfaced as "robust-THD"/"robust-GAIN").
+> **Verdict gating:** the verdict comes from ERC errors, the simulation's own status, and **the assertions
+> the caller listed** — there is no implicit THD or small-signal-GAIN gate. THD and gain are *measured* and
+> reported when the analysis produces them, but they only affect the verdict if the caller asserted on them.
+>
+> Two cases deliberately answer `inconclusive` rather than `pass`: a run that simulated cleanly but produced
+> no measurements, and a run with **no assertions at all** — a spec-less run has nothing to certify, so
+> calling it "verified" would be the emptiest possible claim.
+>
+> The one thing that can flip a passing verdict to `fail` afterwards is the **Monte-Carlo robustness gate**,
+> and only on a complete at-risk run whose tolerance spread the caller fully specified. Corner, temperature
+> and supply-rail sweeps are informational and never gate.
 
 ### 3.10 Design (synchronous) — `[design.controller.ts](../apps/api/src/generation/design.controller.ts)`
 
@@ -541,6 +604,118 @@ No controller prefix; full path declared on the route. Entire controller is `@Us
 
 Current-month usage snapshot for the frontend's usage page: sim jobs/runtime-ms/in-flight count, agentic design jobs/in-flight count, asset+result storage bytes, and parts-catalog calls (the requesting user's calls this period) — each paired with its configured limit (`null` = unlimited). Sim runtime, sim/design in-flight counts, and storage are aggregated on-demand from their source tables (never drift-prone counters); parts calls use a `UsageRecord` counter row (no natural source table). Periods are UTC calendar months (`'YYYY-MM'`). Quota violations elsewhere in the API throw `429` with a structured body: `{ code: 'QUOTA_EXCEEDED', metric, used, limit, period }`.
 
+### 3.16 PCB layout — `[layout.controller.ts](../apps/api/src/layout/layout.controller.ts)`
+
+Controller prefix: `layouts`. JWT required. A long-running operation: `POST` returns immediately and the
+client polls `GET /layouts/:id`. The pipeline (freerouting + KiCad DRC) runs in `apps/pcb-worker` off the
+`pcb-layout` queue; this controller owns only the row lifecycle and presigning the artifacts.
+
+| Method | Path | Auth | Request | Response |
+|---|---|---|---|---|
+| POST | `/layouts` | JWT, 5/60s | `CreateLayoutDto` | **202** `{ jobId, status, orgId }` |
+| GET | `/layouts` | JWT | `?versionId&projectId&limit&offset` | 200 pagination envelope |
+| GET | `/layouts/:id` | JWT + org membership | — | 200 job + presigned URLs |
+
+`CreateLayoutDto` is **closed** — an unknown key is a 400, not a silent ignore:
+
+| Field | Type | Notes |
+|---|---|---|
+| `circuit` | object | required — OUR CircuitJson |
+| `versionId` | uuid? | tags the layout to a saved version; its project's org becomes the owner |
+| `orgId` | uuid? | ad-hoc layouts only; membership is verified. Conflicting with `versionId` → 400 |
+| `placer` | `grid` \| `auto` \| `rust` | placement engine |
+| `fabProfile` | `FabProfileDto`? | `tier` (`economy`\|`standard`\|`advanced`) + bounded numeric overrides |
+| `netCurrentsA` | `Record<string, number>`? | RMS current per emitted net → IPC-2221 width. **Every value must be a positive finite number**; `"2A"` or `-1` is a 400 naming the net |
+
+Overrides in `fabProfile` may only make a board **easier** to manufacture than the tier it names: a value
+below the tier limit is raised to it and the adjustment is reported in the result. A finer process is
+reached by naming a finer `tier`.
+
+**When `orgId` and `versionId` are both omitted the org is a GUESS** — the caller's first membership,
+which is their personal workspace. That is why the resolved org is echoed in the 202 and present on every
+response: a caller can see where the layout actually landed.
+
+List rows carry `manufacturable` (`true` \| `false` \| `null`): `null` while the job has no verdict yet
+(queued, running, failed), so a grid can badge outcomes without fetching each detail blob. A rejected
+board and a certified one **both** finish as `SUCCEEDED` with no `errorMessage` — only this field tells
+them apart.
+
+`GET /layouts/:id` returns `{ id, orgId, projectId, versionId, status, result, errorMessage, glbUrl,
+gerbersUrl, createdAt, startedAt, finishedAt }`. The two URLs are presigned (1 h) and **absent unless the
+board was certified manufacturable** — a DRC-rejected board never yields a downloadable bundle.
+
+Notable `result` fields (see [FRONTEND_PCB_EDITOR_BRIEF.md](../FRONTEND_PCB_EDITOR_BRIEF.md) for the full
+shape): `manufacturable`, `notManufacturableReason`, `drcClean`, `layout` (2D geometry), `checks`,
+`airwires`, `fab` (the resolved tier + profile the board was actually built and judged by), `delivery`
+(which router and placement engine produced it, and why the requested one was not used), `diagnostics`,
+and `scope`.
+
+Admission control: PCB layout is the one quota that **binds by default** — 2 in-flight jobs per org
+(`QUOTA_LAYOUT_CONCURRENT_PER_ORG`, `0` = unlimited). A layout is minutes of CPU and the worker drains one
+at a time, so an unbounded queue would let one tenant starve every other org.
+
+---
+
+### 3.17 Invitations — `[invitations.controller.ts](../apps/api/src/invitations/invitations.controller.ts)`
+
+No controller prefix — routes are absolute. This is the self-serve path for adding members.
+
+| Method | Path | Auth | Request | Response |
+|---|---|---|---|---|
+| POST | `/orgs/:orgId/invitations` | JWT + OWNER/ADMIN | `CreateInvitationDto { email, role? }` | 201 invitation (sends the email) |
+| GET | `/orgs/:orgId/invitations` | JWT + OWNER/ADMIN | `?limit&offset` | 200 pagination envelope |
+| DELETE | `/orgs/:orgId/invitations/:invitationId` | JWT + OWNER/ADMIN | — | **204** (revoke) |
+| POST | `/invitations/accept` | JWT | `{ token }` | **200** — joins the caller to the org |
+
+---
+
+### 3.18 Working copy (autosave) — `[working-copy.controller.ts](../apps/api/src/working-copy/working-copy.controller.ts)`
+
+No controller prefix. The editor's **draft** state, separate from committed versions: an editor autosaves
+here continuously and creates a `ProjectVersion` only when the user deliberately saves.
+
+| Method | Path | Auth | Request | Response |
+|---|---|---|---|---|
+| PUT | `/projects/:projectId/working-copy` | JWT + org membership | `SaveWorkingCopyDto { circuitJson, uiJson, baseVersionId? }` | 200 — idempotent upsert |
+| GET | `/projects/:projectId/working-copy` | JWT + org membership | — | 200 draft, or `null` when none |
+| DELETE | `/projects/:projectId/working-copy` | JWT + org membership | — | **200** (discard the draft) |
+
+`baseVersionId` records which version the draft was branched from, so a client can detect that the
+underlying version moved on while the draft was open.
+
+---
+
+### 3.19 Platform admin — `[admin.controller.ts](../apps/api/src/admin/admin.controller.ts)`
+
+Controller prefix: `admin`. **A cross-tenant operator surface — these routes deliberately ignore org
+membership**, so they are gated on a second, independent role axis: `User.platformRole`
+(`NONE` < `SUPPORT` < `OPERATOR` < `ADMIN`), enforced declaratively by `@PlatformRoles(min)` +
+`PlatformAdminGuard`. The guard reads the role **live from the database** on every request, so revoking
+someone's access does not wait for their JWT to expire. The class default is `SUPPORT`; mutations raise it.
+
+Every mutation is written to `AuditLog` through a central service with the request id and a before/after
+snapshot. Audit rows **outlive their subject** (`userId` is `SetNull`), so deleting a user cannot erase
+the record of what was done to their account.
+
+31 routes. By capability:
+
+| Capability | Routes | Min role |
+|---|---|---|
+| Read: self, users, orgs, org usage | `GET /admin/me`, `/admin/users[/:id]`, `/admin/orgs[/:id]`, `/admin/orgs/usage` | SUPPORT |
+| Read: jobs, queues, audit, dashboard | `GET /admin/jobs/simulation[/:id]`, `/admin/jobs/design[/:id]`, `/admin/queues/health`, `/admin/audit-logs`, `/admin/health/dashboard` | SUPPORT |
+| User account control | `PATCH /admin/users/:id/lock`, `POST /admin/users/:id/logout-all`, `PATCH /admin/users/:id/email-verified` | OPERATOR |
+| Org control | `PATCH /admin/orgs/:id`, `PATCH /admin/orgs/:id/suspend`, member add/change/remove, `PATCH`/`DELETE /admin/orgs/:id/quota` | OPERATOR |
+| Job intervention | `POST /admin/jobs/simulation/:id/{cancel,retry}`, `POST /admin/jobs/design/:id/cancel` | OPERATOR |
+| Storage | `POST /admin/storage/sweep-orphan-models` | OPERATOR |
+| Queue kill switch | `POST /admin/queues/:name/{pause,resume,purge}` | ADMIN |
+| Role change | `PATCH /admin/users/:id/role` | ADMIN |
+
+`:name` is one of `simulations`, `design`, `pcb-layout`. Purge only removes **terminal** history
+(`completed`, `failed`) — never `active` (a running job) or `wait`/`delayed` (pending work a purge would
+silently cancel).
+
+---
+
 ### 3.15 Health — `[health.controller.ts](../apps/api/src/health/health.controller.ts)`
 
 Controller prefix: `health`. No guards — all routes are public. No request body or params.
@@ -548,10 +723,11 @@ Controller prefix: `health`. No guards — all routes are public. No request bod
 | Method | Path | Auth | Response |
 |--------|------|------|----------|
 | GET | `/health` | No | `200` `{ status: "ok", timestamp, service: "circuit-forge-api" }` |
-| GET | `/health/ready` | No | `200` readiness object (overall `status` + `checks`) |
+| GET | `/health/ready` | No | **`200` or `503`** — readiness object (overall `status` + `checks`) |
 | GET | `/health/live` | No | `200` `{ status: "ok", timestamp }` |
 
-`GET /health/ready` (`readiness`) runs `SELECT 1` against Postgres via Prisma and reports per-dependency status and latency:
+`GET /health/ready` probes **three** dependencies concurrently — Postgres, Redis and S3 — so the check costs
+the slowest of them rather than their sum, and reports per-dependency status and latency:
 
 ```json
 {
@@ -559,12 +735,17 @@ Controller prefix: `health`. No guards — all routes are public. No request bod
   "timestamp": "2026-05-29T00:00:00.000Z",
   "service": "circuit-forge-api",
   "checks": {
-    "database": { "status": "ok", "latencyMs": 5 }
+    "database": { "status": "ok", "latencyMs": 5 },
+    "redis": { "status": "ok", "latencyMs": 1 },
+    "s3": { "status": "ok", "latencyMs": 12 }
   }
 }
 ```
 
-If the DB check fails, `checks.database.status` is `"error"` (with an `error` message and `latencyMs`), and the overall `status` becomes `"degraded"`. (Note: the handler always returns HTTP `200`; the `status` field reflects health.)
+**When ANY check fails the handler returns HTTP `503`** (same payload shape, with that check's `status` set
+to `"error"` plus an `error` message). That is what makes it usable as a Kubernetes readiness probe — an
+orchestrator reads the status code, not the body. Use `/health/live` for liveness: it answers `200` as long
+as the process is up, and must NOT be pointed at dependencies, or a database blip would restart healthy pods.
 
 ---
 

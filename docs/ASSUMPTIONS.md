@@ -76,7 +76,10 @@ This document captures design decisions made during the implementation of the AI
 ## Component Library
 
 ### A15: MVP Component Set
-- **Decision**: Support only: R, C, L, V (DC/SIN), I (DC), D (Diode), GND
+- **AS BUILT**: 32 component types — passives, sources, active devices (bjt/mosfet/jfet/zener/subckt) and
+  a digital/XSPICE set (gates, flip-flops, latches, tristate). `COMPONENT_TYPES` in eda-core is the single
+  source of truth.
+- **Original decision**: Support only: R, C, L, V (DC/SIN), I (DC), D (Diode), GND
 - **Rationale**: Minimum viable set for educational circuits; expand later
 
 ### A16: Default Diode Model
@@ -98,10 +101,19 @@ This document captures design decisions made during the implementation of the AI
 ### A19: Error Response Format
 - **Decision**: `{ "code": "ERR_XXX", "message": "...", "details": {...} }`
 - **Rationale**: Consistent, machine-readable, follows REST best practices
+- **AS BUILT**: `{ statusCode, code, message, timestamp, path, ...structuredFields }`. `code` survived the
+  intent (`BAD_REQUEST`, `QUOTA_EXCEEDED`, …) but there is no nested `details` — structured fields are
+  spread at the top level, so a quota 429 carries `metric`/`used`/`limit`/`period` directly. See
+  [API.md](API.md) §1.
 
 ### A20: Pagination
 - **Decision**: Use cursor-based pagination for list endpoints (default 20 items)
 - **Rationale**: Better for real-time data; offset pagination can miss items
+- **AS BUILT — REVERSED**: pagination is **offset-based**. A shared `PaginationQueryDto { limit, offset }`
+  (limit default 50, max 100) returns `{ items, total, limit, offset, hasMore }`. Every list orders by a
+  timestamp **plus an id tiebreaker**, which is what closes the skip/duplicate hole the original rationale
+  worried about: without a total order two rows sharing a timestamp can shuffle between pages. `total` is
+  what cursors cannot give cheaply, and the client needs it.
 
 ### A21: Rate Limiting
 - **Decision**: 120 requests per 60 seconds (`default` limiter; plus a `burst` 30/1s)
@@ -119,6 +131,11 @@ This document captures design decisions made during the implementation of the AI
 ### A23: S3 Path Structure
 - **Decision**: `{orgId}/assets/{assetType}/{assetId}/{filename}` and `{orgId}/results/{jobId}/result.json`
 - **Rationale**: Organized by org; easy cleanup on org deletion
+- **AS BUILT — different, and the difference matters**: model assets are `orgs/{orgId}/models/{uuid}/{name}`
+  (note the `orgs/` prefix, which the upload path validates against so a client cannot write outside its
+  own org's tree). PCB artifacts, however, are **job-scoped, not org-scoped**: `layouts/{jobId}/board.glb`
+  and `layouts/{jobId}/manufacturing.json`. So the "easy cleanup on org deletion" rationale does **not**
+  hold for layout artifacts — they are reached through the row, and an orphan sweep is what reclaims them.
 
 ### A24: Redis Persistence
 - **Decision**: Redis configured with RDB snapshots (default Docker config)

@@ -88,7 +88,7 @@ scripts/layout-check.mjs   # 3 fixture devre uçtan uca + (Docker varsa) kicad-c
   Router kıyası bulgusu gereği: kalite modu (freerouting) Faz-2'de birinci sınıf seçenek olacak.
 - **`outputs.ts`:** gerbers+drill, kicad_pcb (fab-rules+zone enjekteli), **BOM CSV** (designator/value/
   footprint/mpn/manufacturer — veriler şemada zaten var), **PnP CSV** (pcb_component x/y/rotation/layer).
-- **`index.ts`:** `layoutCircuit(circuit, ui?, opts?) → { tscircuitJson, outputs, diagnostics, stats{traces,vias,unrouted,durationMs} }`
+- **`index.ts`:** `layoutCircuit(circuit, opts?)` ← SEVK EDİLEN İMZA (iki argüman; `ui` artık `opts.ui`). Plandaki hâli: `layoutCircuit(circuit, ui?, opts?) → { tscircuitJson, outputs, diagnostics, stats{traces,vias,unrouted,durationMs} }`
 
 ## 4. Test stratejisi (mock'suz felsefe)
 

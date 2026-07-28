@@ -99,7 +99,7 @@ kicad-cli (Docker, **kicad/kicad:10.0-full**)  ─►  DRC (`--refill-zones`, ex
 çıktılar: .kicad_pcb + gerber.zip + PnP CSV + BOM + DRC raporu + board.glb + render.png
 ```
 
-**API/worker entegrasyonu:** endpoint-cookbook **Reçete B (async LRO)** birebir — `POST /versions/:versionId/layout` → `LayoutJob` (Prisma; `RouteJob`'ın genellemesi, cookbook G2/G3'ü kapsar) → BullMQ 'layout' queue → worker consumer → poll `GET /layout-jobs/:id`. Worker'a iki yeni Docker imajı: freerouting-jre (opsiyonel), kicad-cli.
+**API/worker entegrasyonu:** endpoint-cookbook **Reçete B (async LRO)** birebir — `POST /layouts` ← SEVK EDİLEN (versionId opsiyonel gövde alanı; kuyruk `'pcb-layout'`). Önerilen hâli: `POST /versions/:versionId/layout` → `LayoutJob` (Prisma; `RouteJob`'ın genellemesi, cookbook G2/G3'ü kapsar) → BullMQ 'layout' queue → worker consumer → poll `GET /layout-jobs/:id`. Worker'a iki yeni Docker imajı: freerouting-jre (opsiyonel), kicad-cli.
 
 **Footprint verisi v1:** dış API gerekmez — paletteki ~20 komponent tipi için elle küratörlü eşleme (R/C → 0402/0603/0805/1206, diyot → SOD-123, BJT → SOT-23/TO-92, op-amp → SOIC-8/DIP-8, ...) + footprinter string'leri. Sonra SnapMagic (cookbook C1) ile genişler. Kullanıcı `component.properties.footprint` ile override edebilir.
 
