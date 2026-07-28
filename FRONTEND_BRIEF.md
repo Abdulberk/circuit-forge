@@ -94,7 +94,7 @@ interface CircuitJson {
 interface Component {
   id: string;
   type: ComponentType;                        // the full COMPONENT_TYPES set (28 incl. transistors + digital), NOT just 7 — see §6.2
-  designator: string;                         // R1, C1, V1, GND1 — regex /^[A-Z][A-Z0-9]*[0-9]+$/i (MUST end in a digit)
+  designator: string;                         // R1, C1, V1, GND1 — regex /^[A-Z][A-Z0-9]*[0-9]+[A-Z]?$/i (MUST end in a digit)
   value?: string;                             // SPICE value strings: "10k", "100n", "DC 5", "SIN(0 1 1k)"
   model?: string;                             // model NAME for model-based devices (diode→omit for DDEFAULT, or an LED color model "LEDRED"/"LEDYEL"/"LEDGRN"/"LEDBLU"; transistors → e.g. "QGENNPN"); the body goes in CircuitJson.models
   pins: { pinId: string; netId: string }[];   // connectivity is via pins → nets
@@ -598,7 +598,7 @@ Response `DesignEvidence` (always `200` for a valid circuit — a failed verific
 | `POST /auth/logout` | Client-side logout (204) |
 
 **Caveats:**
-- There are **no member-management endpoints** (no invite, role-change, or member-list API) — do not build a member-admin UI in v1.
+- A full self-serve team surface **ships**: `GET /orgs/:orgId/members`, `PATCH`/`DELETE /orgs/:orgId/members/:userId` (OWNER/ADMIN), the four invitation routes, and `GET /orgs/:orgId/audit-logs`. Build the member-admin UI.
 - There is no `GET /me` — derive the current user from the cached `user` object returned by login/register/refresh.
 
 ---
@@ -871,12 +871,19 @@ export const env = Env.parse({
 
 #### 4.1.2 CORS
 
-`main.ts` calls `app.enableCors()` with **no options** → it reflects the request origin (effectively all origins), allows the default methods, and **does not enable `credentials`**.
+CORS is an **explicit allowlist**, never a wildcard: `CORS_ORIGINS` (comma-separated) drives it, and when
+unset it falls back to exactly `http://localhost:3000` and `http://localhost:5173`. `credentials: true`,
+methods `GET, POST, PUT, PATCH, DELETE, OPTIONS`, and the only allowed request headers are `Content-Type`
+and `Authorization`.
 
 **Frontend consequences:**
-- Cross-origin `fetch` works without preflight surprises for simple JSON requests.
-- **Do not rely on cookies for auth.** Because `credentials` is not enabled server-side, a cookie-based session would not be sent cross-origin anyway. Auth is therefore **Bearer-token in the `Authorization` header** (§4.2). This aligns with the recommended in-memory access-token strategy.
-- A production deployment will lock CORS to an explicit origin allowlist; nothing in the client needs to change when it does.
+- **Your dev origin must be on the list.** Vite's default is 5173 and it works out of the box — but if the
+  port is taken and Vite falls back to **5174**, every request is blocked with no useful error. Add your
+  origin to `CORS_ORIGINS` rather than guessing at the failure.
+- **Only `Content-Type` and `Authorization` may be sent.** A custom header (`X-Request-Id`, a tracing
+  header) fails preflight until it is added server-side.
+- Auth is **Bearer-token in the `Authorization` header** (§4.2). `credentials` is enabled, so cookies are
+  not blocked by CORS — but the token strategy is still the one to build against.
 
 #### 4.1.3 Global ValidationPipe (request-body contract)
 
@@ -1014,7 +1021,7 @@ Roles live on `OrgMembership.role`: `OWNER`, `ADMIN`, `MEMBER`. There is **no `@
 | `DELETE /templates/:templateId` | `OWNER` or `ADMIN` (org templates only; public templates cannot be deleted at all) | `403` |
 | `DELETE /assets/:assetId` | `OWNER` or `ADMIN` | **`400` "Only admins can delete assets"** (QUIRK — **not** 403; a backend inconsistency) |
 
-Today `OWNER` and `ADMIN` have identical effective privileges; there are no OWNER-only routes and **no member-management endpoints** (see §4.4). The caller's role for each org is returned on `GET /orgs` and `GET /orgs/:orgId` as a `role` field. **Use that `role` to gate destructive UI** (hide/disable Delete buttons for `MEMBER`), but still handle the `403`/`400` defensively — the server is the only real authority.
+`OWNER` and `ADMIN` are **not** equivalent: only an OWNER may grant or revoke the OWNER role, and an org can never lose its last OWNER (both enforced server-side, both audited). Member management ships — see §4.4. The caller's role for each org is returned on `GET /orgs` and `GET /orgs/:orgId` as a `role` field. **Use that `role` to gate destructive UI** (hide/disable Delete buttons for `MEMBER`), but still handle the `403`/`400` defensively — the server is the only real authority.
 
 #### 4.2.4 Bearer header
 
@@ -1077,7 +1084,7 @@ Use `/health/ready` for a non-blocking "backend up?" indicator. Do not gate the 
 
 `Project` = `{ id, orgId, name, description, createdAt, updatedAt }`.
 
-> **QUIRK:** `update` applies `name` only when truthy and `description` only when `!== undefined`. To clear a description send `description: ""` (empty string), not omitted/null. Note `:orgId`/`:projectId` here are **not** run through `ParseUUIDPipe` (no UUID validation on this controller), so a bad id reaches the service and returns `404`/`403`, not `400`.
+> **QUIRK:** `update` applies `name` only when truthy and `description` only when `!== undefined`. To clear a description send `description: ""` (empty string), not omitted/null. Every path param on this controller now runs `ParseUUIDPipe`, so a malformed id fails with **400** before the handler — it never reaches the service. **This is why the seeded demo org cannot be used**: its id is the literal string `demo-org-id`, not a UUID, so `GET /orgs/demo-org-id/projects` is a 400. Register a fresh account for development rather than relying on the seed.
 
 #### 4.4.5 Versions — `versions.controller.ts` (entire controller `JwtAuthGuard`, no controller prefix)
 
@@ -1336,11 +1343,23 @@ A **built, verified** real-component catalog behind a supplier-agnostic provider
 
 ### 4.5 Error envelope & how the client surfaces errors
 
-Errors use the standard NestJS `HttpException` shape. `message` is **either a string or an array of strings** (validation errors are arrays):
+A global `AllExceptionsFilter` normalizes **every** error. The framework's `error` key is **stripped**;
+`code` is always present, and `message` is still either a string or an array of strings (validation errors
+are arrays):
 ```jsonc
-{ "statusCode": 400, "message": ["email must be an email", "password must be longer than or equal to 8 characters"], "error": "Bad Request" }
-{ "statusCode": 401, "message": "Invalid credentials", "error": "Unauthorized" }
+{ "statusCode": 400, "code": "BAD_REQUEST", "message": ["email must be an email"], "timestamp": "…", "path": "/auth/register" }
+{ "statusCode": 401, "code": "UNAUTHORIZED", "message": "Invalid credentials", "timestamp": "…", "path": "/auth/login" }
 ```
+
+Structured fields thrown by a service survive alongside those keys — which is how a quota rejection carries
+its detail:
+```jsonc
+{ "statusCode": 429, "code": "QUOTA_EXCEEDED", "metric": "layout_concurrent", "used": 2, "limit": 2, "period": "2026-07", "message": "…" }
+```
+
+**Branch on `code`.** `error` no longer exists, and message text is not a contract. This matters most on
+429, which means two different things: `QUOTA_EXCEEDED` (an org limit — show usage, do not retry) versus
+`TOO_MANY_REQUESTS` (the IP throttle — back off and retry).
 
 | Status | Cause | Client handling |
 |---|---|---|
@@ -1379,7 +1398,7 @@ The AI services map provider/validation failures to distinct codes (`generation.
 
 - **Versions are immutable, append-only.** Editing creates a new version via `POST …/versions`; `versionNumber` auto-increments. There is no PATCH-a-version route. After save, refetch the versions list (it omits the heavy JSON — cheap).
 - **Single source of truth for server state.** Use one data-fetching layer (React Query/SWR) keyed by resource id; do not also mirror it in ad-hoc `useState`/duplicate store slices. Editor document state (the live `circuitJson` + `uiJson`) is client-owned and continuously **autosaved to the server working copy** (`PUT …/working-copy`); explicit "Save version" snapshots it to an immutable version. Server data (orgs/projects/versions list/working copy/sim status) is cache-owned.
-- **No member-management endpoints exist** — do not build UI for inviting/removing members or transferring ownership; there are no routes for it.
+- **Member management ships.** `GET /orgs/:orgId/members` lists them; `PATCH`/`DELETE /orgs/:orgId/members/:userId` change and remove them (OWNER/ADMIN, with the OWNER-only and last-owner rules enforced server-side). Invitations are `POST`/`GET`/`DELETE /orgs/:orgId/invitations` plus `POST /invitations/accept`. **Ownership transfer and org deletion are still not exposed** — those two really are missing.
 
 ---
 
@@ -1855,9 +1874,12 @@ interface CircuitJson {
 
 interface Component {
   id: string;               // 1..100 chars; unique within the circuit (editor-owned id)
-  type: ComponentType;      // the full COMPONENT_TYPES enum (28 values incl. active + digital, see §6.2) — NOT just 7
-  designator: string;       // /^[A-Z][A-Z0-9]*[0-9]+$/i — letter, then alnum, MUST END IN A DIGIT
-                            //   valid: R1, V12, GND1   invalid: "R", "1R", "R1A"
+  type: ComponentType;      // the full COMPONENT_TYPES enum (32 values incl. active + digital — the four
+                            //   flip-flop/latch/tristate types were added later; see §6.2) — NOT just 7
+  designator: string;       // /^[A-Z][A-Z0-9]*[0-9]+[A-Z]?$/i — a letter, then alphanumerics, a digit, and
+                            //   an OPTIONAL trailing section letter.
+                            //   valid: R1, V12, GND1, R1A, U1A (op-amp / logic sections)
+                            //   invalid: "R", "1R"
   value?: string;           // max 100 chars; "10k", "100n", "DC 5", "SIN(0 1 1k)"
   model?: string;           // max 100 chars; model NAME for model-based devices (diode→omit→DDEFAULT, LED→"LEDRED"/"LEDYEL"/"LEDGRN"/"LEDBLU"; bjt→"QGENNPN"/"QGENPNP", mosfet→"MGENNMOS"/…, subckt→"OPAMPGEN"); the BODY lives in CircuitJson.models (generic bodies auto-attach server-side). Digital gates/dff set NO model.
   pins: PinConnection[];    // 1..64 entries — ORDER IS SIGNIFICANT for fixed-arity model devices (see §6.2)
@@ -1867,6 +1889,14 @@ interface Component {
   manufacturer?: string;    // max 120 — e.g. "TEXAS INSTRUMENTS"
   footprint?: string;       // max 50 — package/case, e.g. "0603", "SOIC-8"
   sourcing?: ComponentSourcing; // { supplier, supplierId, unitCost?, currency?, stock?, datasheetUrl? }
+
+  // Tolerance — the INPUT to the entire robustness/"verified" tier. An editor that round-trips only the
+  // fields above silently deletes these, and the design quietly loses its tolerance-aware verdict.
+  tolerance?: number;          // 0..1 fractional, e.g. 0.05 = ±5%
+  toleranceSource?: 'user' | 'catalog';  // 'catalog' = a datasheet FACT from the sourced real part
+                                         //   (GET /parts/:symbol/component returns it), 'user' = stated by
+                                         //   the designer. The verdict discloses which basis it used, so
+                                         //   preserve this rather than re-deriving it.
 }
 
 interface PinConnection {
@@ -1878,6 +1908,9 @@ interface Net {
   id: string;               // 1..100 chars; the stable identity referenced by pins
   name: string;             // 1..100 chars; REQUIRED (display label, e.g. "VOUT")
   isGround?: boolean;       // true → this net becomes SPICE node '0'
+  isPower?: boolean;        // marks a supply rail. Opt-in, and consumed by the supply-voltage corner
+                            //   check: it perturbs the rail's DRIVING SOURCE ±5%, never the rail itself
+                            //   (an LDO regulates — forcing the rail would measure nothing).
 }
 
 interface CircuitMetadata {
