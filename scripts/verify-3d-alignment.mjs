@@ -24,8 +24,10 @@ function closeOf(text, open) {
     let depth = 0;
     for (let i = open; i < text.length; i++) {
         const ch = text[i];
-        if (ch === '"') { i++; while (i < text.length && text[i] !== '"') i += text[i] === '\\' ? 2 : 1; }
-        else if (ch === '(') depth++;
+        if (ch === '"') {
+            i++;
+            while (i < text.length && text[i] !== '"') i += text[i] === '\\' ? 2 : 1;
+        } else if (ch === '(') depth++;
         else if (ch === ')' && --depth === 0) return i + 1;
     }
     return text.length;
@@ -42,7 +44,10 @@ function expectedBodies(kicadPcb) {
         const model = /\(model\s+"([^"]+)"\s*\n?\s*\(offset \(xyz (-?[\d.]+) (-?[\d.]+) (-?[\d.]+)\)\)/.exec(body);
         if (!at || !model) continue;
         const fpRot = Number(at[3] ?? 0);
-        if (fpRot !== 0) { out.push({ id: m[1], skip: `footprint rotation ${fpRot}° (mapping unverified)` }); continue; }
+        if (fpRot !== 0) {
+            out.push({ id: m[1], skip: `footprint rotation ${fpRot}° (mapping unverified)` });
+            continue;
+        }
         // model offset is 3D-frame (y-up): board-frame offset = (ox, -oy)
         const bx = Number(at[1]) + Number(model[2]);
         const by = Number(at[2]) - Number(model[3]);
@@ -65,10 +70,11 @@ function parseGlbJson(buf) {
     throw new Error('no JSON chunk');
 }
 
-const mul = (a, b) => { // column-major 4x4
+const mul = (a, b) => {
+    // column-major 4x4
     const o = new Array(16).fill(0);
-    for (let c = 0; c < 4; c++) for (let r = 0; r < 4; r++)
-        for (let k = 0; k < 4; k++) o[c * 4 + r] += a[k * 4 + r] * b[c * 4 + k];
+    for (let c = 0; c < 4; c++)
+        for (let r = 0; r < 4; r++) for (let k = 0; k < 4; k++) o[c * 4 + r] += a[k * 4 + r] * b[c * 4 + k];
     return o;
 };
 const IDENT = [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1];
@@ -79,10 +85,22 @@ function localMatrix(n) {
     const [qx, qy, qz, qw] = n.rotation ?? [0, 0, 0, 1];
     const [sx, sy, sz] = n.scale ?? [1, 1, 1];
     const R = [
-        1 - 2 * (qy * qy + qz * qz), 2 * (qx * qy + qz * qw), 2 * (qx * qz - qy * qw), 0,
-        2 * (qx * qy - qz * qw), 1 - 2 * (qx * qx + qz * qz), 2 * (qy * qz + qx * qw), 0,
-        2 * (qx * qz + qy * qw), 2 * (qy * qz - qx * qw), 1 - 2 * (qx * qx + qy * qy), 0,
-        0, 0, 0, 1,
+        1 - 2 * (qy * qy + qz * qz),
+        2 * (qx * qy + qz * qw),
+        2 * (qx * qz - qy * qw),
+        0,
+        2 * (qx * qy - qz * qw),
+        1 - 2 * (qx * qx + qz * qz),
+        2 * (qy * qz + qx * qw),
+        0,
+        2 * (qx * qz + qy * qw),
+        2 * (qy * qz - qx * qw),
+        1 - 2 * (qx * qx + qy * qy),
+        0,
+        0,
+        0,
+        0,
+        1,
     ];
     const S = [sx, 0, 0, 0, 0, sy, 0, 0, 0, 0, sz, 0, 0, 0, 0, 1];
     const T = [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, tx, ty, tz, 1];
@@ -114,9 +132,15 @@ function bodyNodes(gltf) {
 function candidates() {
     const maps = [];
     for (const scale of [0.001, 1]) // metres vs mm
-        for (const [ax, ay] of [['x', 'z'], ['z', 'x'], ['x', 'y'], ['y', 'x'], ['y', 'z'], ['z', 'y']])
-            for (const sx of [1, -1]) for (const sy of [1, -1])
-                maps.push({ scale, ax, ay, sx, sy });
+        for (const [ax, ay] of [
+            ['x', 'z'],
+            ['z', 'x'],
+            ['x', 'y'],
+            ['y', 'x'],
+            ['y', 'z'],
+            ['z', 'y'],
+        ])
+            for (const sx of [1, -1]) for (const sy of [1, -1]) maps.push({ scale, ax, ay, sx, sy });
     return maps;
 }
 
@@ -124,8 +148,10 @@ function fit(expected, nodes) {
     let best = null;
     for (const c of candidates()) {
         const pts = nodes.map((n) => ({ u: (c.sx * n[c.ax]) / c.scale, v: (c.sy * n[c.ay]) / c.scale, n }));
-        const cu = pts.reduce((s, p) => s + p.u, 0) / pts.length - expected.reduce((s, e) => s + e.x, 0) / expected.length;
-        const cv = pts.reduce((s, p) => s + p.v, 0) / pts.length - expected.reduce((s, e) => s + e.y, 0) / expected.length;
+        const cu =
+            pts.reduce((s, p) => s + p.u, 0) / pts.length - expected.reduce((s, e) => s + e.x, 0) / expected.length;
+        const cv =
+            pts.reduce((s, p) => s + p.v, 0) / pts.length - expected.reduce((s, e) => s + e.y, 0) / expected.length;
         // greedy nearest-neighbor matching
         const free = [...pts];
         let worst = 0;
@@ -136,9 +162,15 @@ function fit(expected, nodes) {
             let bd = Infinity;
             for (let i = 0; i < free.length; i++) {
                 const d = Math.hypot(free[i].u - cu - e.x, free[i].v - cv - e.y);
-                if (d < bd) { bd = d; bi = i; }
+                if (d < bd) {
+                    bd = d;
+                    bi = i;
+                }
             }
-            if (bi === -1) { worst = Infinity; break; }
+            if (bi === -1) {
+                worst = Infinity;
+                break;
+            }
             pairs.push({ e, node: free[bi].n, d: bd });
             free.splice(bi, 1);
             worst = Math.max(worst, bd);
@@ -152,7 +184,9 @@ function fit(expected, nodes) {
 // ---------------------------------------------------------------- run
 
 let failures = 0;
-const boards = readdirSync(galleryRoot, { withFileTypes: true }).filter((d) => d.isDirectory()).map((d) => d.name);
+const boards = readdirSync(galleryRoot, { withFileTypes: true })
+    .filter((d) => d.isDirectory())
+    .map((d) => d.name);
 for (const name of boards) {
     const dir = join(galleryRoot, name);
     const pcbPath = join(dir, 'board.kicad_pcb');
@@ -164,7 +198,11 @@ for (const name of boards) {
     const expected = expectedAll.filter((e) => !e.skip);
     const nodes = bodyNodes(parseGlbJson(readFileSync(glbPath)));
 
-    if (expected.length === 0) { console.log(`── ${name}: no expectations (no models?)`); failures++; continue; }
+    if (expected.length === 0) {
+        console.log(`── ${name}: no expectations (no models?)`);
+        failures++;
+        continue;
+    }
     if (nodes.length !== expected.length) {
         console.log(`── ${name}: body-count mismatch — kicad_pcb expects ${expected.length}, GLB has ${nodes.length}`);
     }
@@ -172,12 +210,18 @@ for (const name of boards) {
     const r = fit(expected, nodes);
     const status = r.worst <= TOL_MM ? '✓' : '✗';
     if (r.worst > TOL_MM) failures++;
-    console.log(`${status} ${name}: ${expected.length} bodies, worst offset ${r.worst.toFixed(3)}mm (tol ${TOL_MM}) — map ${r.ax}${r.sx > 0 ? '+' : '-'}/${r.ay}${r.sy > 0 ? '+' : '-'} ×${r.scale}${skipped.length ? ` · ${skipped.length} skipped (rotated fp)` : ''}`);
+    console.log(
+        `${status} ${name}: ${expected.length} bodies, worst offset ${r.worst.toFixed(3)}mm (tol ${TOL_MM}) — map ${r.ax}${r.sx > 0 ? '+' : '-'}/${r.ay}${r.sy > 0 ? '+' : '-'} ×${r.scale}${skipped.length ? ` · ${skipped.length} skipped (rotated fp)` : ''}`,
+    );
     if (r.worst > TOL_MM) {
         for (const p of r.pairs.filter((p) => p.d > TOL_MM).slice(0, 6))
             console.log(`    ✗ ${p.e.id} (${p.e.model}) off by ${p.d.toFixed(2)}mm — node "${p.node.name}"`);
     }
 }
 
-console.log(failures === 0 ? '\n✅ 3D body alignment VERIFIED on all boards' : `\n❌ ${failures} board(s) FAILED body alignment`);
+console.log(
+    failures === 0
+        ? '\n✅ 3D body alignment VERIFIED on all boards'
+        : `\n❌ ${failures} board(s) FAILED body alignment`,
+);
 process.exit(failures === 0 ? 0 : 1);

@@ -2,9 +2,8 @@
 import { Component, Suspense, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import * as THREE from 'three';
 import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
-import { EXRLoader } from 'three/examples/jsm/loaders/EXRLoader.js';
-import { Canvas, useThree, useLoader } from '@react-three/fiber';
-import { ContactShadows, OrbitControls, Environment, useGLTF, Html } from '@react-three/drei';
+import { Canvas, useThree } from '@react-three/fiber';
+import { ContactShadows, OrbitControls, useGLTF, Html } from '@react-three/drei';
 import { EffectComposer, Bloom, N8AO, SMAA, ToneMapping } from '@react-three/postprocessing';
 import { ToneMappingMode, SMAAPreset } from 'postprocessing';
 
@@ -608,7 +607,7 @@ function Board({
         const fitted = new THREE.Box3().setFromObject(g);
         const sphere = fitted.getBoundingSphere(new THREE.Sphere());
         const fov = (camera as THREE.PerspectiveCamera).fov ?? 34;
-        const dist = (sphere.radius / Math.sin(((fov * 0.5) * Math.PI) / 180)) * 1.06;
+        const dist = (sphere.radius / Math.sin((fov * 0.5 * Math.PI) / 180)) * 1.06;
         const dir = camera.position.clone().sub(sphere.center).normalize();
         camera.position.copy(sphere.center).addScaledVector(dir, dist);
         camera.lookAt(sphere.center);
@@ -667,8 +666,8 @@ class CanvasBoundary extends Component<{ children: ReactNode }, { failed: boolea
             >
                 <div>
                     <div style={{ fontSize: 15, color: '#cfe0d6', marginBottom: 8 }}>3B görünüm açılamadı</div>
-                    Bu tarayıcıda WebGL 2 kullanılamıyor. Donanım hızlandırmayı açmayı veya güncel bir
-                    masaüstü tarayıcı kullanmayı deneyin.
+                    Bu tarayıcıda WebGL 2 kullanılamıyor. Donanım hızlandırmayı açmayı veya güncel bir masaüstü tarayıcı
+                    kullanmayı deneyin.
                 </div>
             </div>
         );
@@ -773,45 +772,6 @@ export type EnvState = { brightness: number; contrast: number; color: string; st
 const DEFAULT_ENV: EnvState = { brightness: 1, contrast: 1, color: '#ffffff', strength: 0.9 };
 
 /**
- * Load the EXR once as float data, then apply photographic brightness / contrast (pivot at
- * scene-linear 18% gray) / color-tint per pixel into a fresh DataTexture. `strength` maps to the
- * native environmentIntensity (IBL contribution). Reprocess only when a photo control changes.
- */
-function AdjustableEnvironment({ url, env }: Readonly<{ url: string; env: EnvState }>) {
-    const tex = useLoader(EXRLoader, url, (l) => (l as EXRLoader).setDataType(THREE.FloatType));
-    const processed = useMemo(() => {
-        const img = tex.image as unknown as { data: Float32Array; width: number; height: number };
-        const src = img.data;
-        const out = new Float32Array(src.length);
-        const c = new THREE.Color(env.color);
-        const B = env.brightness,
-            K = env.contrast,
-            P = 0.18;
-        for (let i = 0; i < src.length; i += 4) {
-            let r = src[i] * c.r,
-                g = src[i + 1] * c.g,
-                b = src[i + 2] * c.b;
-            r = (r - P) * K + P;
-            g = (g - P) * K + P;
-            b = (b - P) * K + P;
-            r *= B;
-            g *= B;
-            b *= B;
-            out[i] = r > 0 ? r : 0;
-            out[i + 1] = g > 0 ? g : 0;
-            out[i + 2] = b > 0 ? b : 0;
-            out[i + 3] = src[i + 3];
-        }
-        const dt = new THREE.DataTexture(out, img.width, img.height, THREE.RGBAFormat, THREE.FloatType);
-        dt.mapping = THREE.EquirectangularReflectionMapping;
-        dt.needsUpdate = true;
-        return dt;
-    }, [tex, env.brightness, env.contrast, env.color]);
-    useEffect(() => () => processed.dispose(), [processed]);
-    return <Environment map={processed} environmentIntensity={env.strength} />;
-}
-
-/**
  * Hand the environment map to each layer material explicitly.
  *
  * three r169 only honours a material's own `envMapIntensity` when that material has its OWN envMap. If it
@@ -834,7 +794,7 @@ function BindEnvMap({ mats, url }: Readonly<{ mats: LayerMats; url: string }>) {
         const bind = (m: THREE.Material | THREE.Material[] | null) => {
             for (const one of Array.isArray(m) ? m : [m]) {
                 const std = one as THREE.MeshStandardMaterial | null;
-                if (!std || !("envMapIntensity" in std) || std.envMap === e) continue;
+                if (!std || !('envMapIntensity' in std) || std.envMap === e) continue;
                 std.envMap = e;
                 std.needsUpdate = true;
             }
@@ -863,7 +823,10 @@ function makeStudioEnvironment(state: EnvState): THREE.Scene {
     const env = new THREE.Scene();
     const surround = new THREE.Mesh(
         new THREE.SphereGeometry(80, 24, 16),
-        new THREE.MeshBasicMaterial({ side: THREE.BackSide, color: new THREE.Color(0x1b2128).multiplyScalar(state.brightness) }),
+        new THREE.MeshBasicMaterial({
+            side: THREE.BackSide,
+            color: new THREE.Color(0x1b2128).multiplyScalar(state.brightness),
+        }),
     );
     env.add(surround);
     // The ENIG pads are metalness 1 and face straight up, so whatever sits overhead IS their colour.
@@ -916,10 +879,7 @@ function useContextEpoch(): number {
 
 /** React StrictMode double-invokes the material and texture factories in development, so a discarded
  *  set is created on every mount. Nothing was releasing them. */
-function DisposeOnUnmount({
-    peel,
-    mats,
-}: Readonly<{ peel: THREE.CanvasTexture | null; mats: LayerMats }>) {
+function DisposeOnUnmount({ peel, mats }: Readonly<{ peel: THREE.CanvasTexture | null; mats: LayerMats }>) {
     useEffect(
         () => () => {
             peel?.dispose();
@@ -1354,78 +1314,78 @@ export default function Viewer() {
     return (
         <div style={{ position: 'fixed', inset: 0, background: '#080d10' }}>
             <CanvasBoundary>
-            <Canvas
-                shadows="variance"
-                // r3f clamps dpr to the display's own devicePixelRatio, so on a 1× monitor this is
-                // exactly 1 and SMAA is the only anti-aliasing in play; on HiDPI it renders native. It is
-                // not supersampling and cannot be — the ceiling only prevents paying for more than 1.75×.
-                dpr={[1, 1.75]}
-                gl={{ antialias: false, stencil: false, powerPreference: 'high-performance' }}
-                // A 0.5 … 400 frustum instead of 0.1 … 3000 buys back depth precision, which matters
-                // when layers are tens of microns apart.
-                camera={{ fov: 34, position: [24, 30, 46], near: 0.5, far: 400 }}
-                // NOTE: tone mapping is deliberately NOT set here. @react-three/postprocessing forces
-                // gl.toneMapping to NoToneMapping whenever an EffectComposer is mounted, so anything set
-                // on the renderer is silently discarded — which is what left this scene rendering with no
-                // tone curve at all. The chain owns it, via <ToneMapping> below.
-                onCreated={({ scene }) => {
-                    // Per-material envMapIntensity is overwritten from this every frame, so it has to be
-                    // set explicitly rather than left at its default.
-                    scene.environmentIntensity = 0.9;
-                }}
-            >
-                <color attach="background" args={['#151a1d']} />
-                {/* The 600-unit floor used to end in a hard horizon line across the frame at any low
-                    camera angle. Fog dissolves its far edge into the background instead. */}
-                <fogExp2 attach="fog" args={['#151a1d', 0.0034]} />
-                {process.env.NODE_ENV !== 'production' && <DevInspect />}
-                <Rig light={light} shadow={shadow} />
-
-                <Suspense
-                    fallback={
-                        <Html center style={{ color: '#cfe0d6', font: '14px ui-monospace, monospace' }}>
-                            3D…
-                        </Html>
-                    }
+                <Canvas
+                    shadows="variance"
+                    // r3f clamps dpr to the display's own devicePixelRatio, so on a 1× monitor this is
+                    // exactly 1 and SMAA is the only anti-aliasing in play; on HiDPI it renders native. It is
+                    // not supersampling and cannot be — the ceiling only prevents paying for more than 1.75×.
+                    dpr={[1, 1.75]}
+                    gl={{ antialias: false, stencil: false, powerPreference: 'high-performance' }}
+                    // A 0.5 … 400 frustum instead of 0.1 … 3000 buys back depth precision, which matters
+                    // when layers are tens of microns apart.
+                    camera={{ fov: 34, position: [24, 30, 46], near: 0.5, far: 400 }}
+                    // NOTE: tone mapping is deliberately NOT set here. @react-three/postprocessing forces
+                    // gl.toneMapping to NoToneMapping whenever an EffectComposer is mounted, so anything set
+                    // on the renderer is silently discarded — which is what left this scene rendering with no
+                    // tone curve at all. The chain owns it, via <ToneMapping> below.
+                    onCreated={({ scene }) => {
+                        // Per-material envMapIntensity is overwritten from this every frame, so it has to be
+                        // set explicitly rather than left at its default.
+                        scene.environmentIntensity = 0.9;
+                    }}
                 >
-                    <Board key={url} url={boardUrl(url)} layerMats={layerMats} onMaterials={setMaterials} />
-                    <DisposeOnUnmount peel={peel} mats={layerMats} />
-                <StudioEnvironment env={env} />
-                    <BindEnvMap mats={layerMats} url={url} />
-                </Suspense>
-                <Floor />
-                {/* A single 58° key casts almost nothing under a flat slab, so the board read as floating
+                    <color attach="background" args={['#151a1d']} />
+                    {/* The 600-unit floor used to end in a hard horizon line across the frame at any low
+                    camera angle. Fog dissolves its far edge into the background instead. */}
+                    <fogExp2 attach="fog" args={['#151a1d', 0.0034]} />
+                    {process.env.NODE_ENV !== 'production' && <DevInspect />}
+                    <Rig light={light} shadow={shadow} />
+
+                    <Suspense
+                        fallback={
+                            <Html center style={{ color: '#cfe0d6', font: '14px ui-monospace, monospace' }}>
+                                3D…
+                            </Html>
+                        }
+                    >
+                        <Board key={url} url={boardUrl(url)} layerMats={layerMats} onMaterials={setMaterials} />
+                        <DisposeOnUnmount peel={peel} mats={layerMats} />
+                        <StudioEnvironment env={env} />
+                        <BindEnvMap mats={layerMats} url={url} />
+                    </Suspense>
+                    <Floor />
+                    {/* A single 58° key casts almost nothing under a flat slab, so the board read as floating
                     no matter how the floor was lit. This is the contact cue, rendered once and frozen. */}
-                <ContactShadows
-                    position={[0, 0.01, 0]}
-                    scale={70}
-                    far={9}
-                    blur={2.4}
-                    opacity={0.72}
-                    resolution={1024}
-                    frames={1}
-                    color="#04070a"
-                />
+                    <ContactShadows
+                        position={[0, 0.01, 0]}
+                        scale={70}
+                        far={9}
+                        blur={2.4}
+                        opacity={0.72}
+                        resolution={1024}
+                        frames={1}
+                        color="#04070a"
+                    />
 
-                <OrbitControls
-                    makeDefault
-                    autoRotate={spin}
-                    autoRotateSpeed={0.6}
-                    enableDamping
-                    dampingFactor={0.12}
-                    rotateSpeed={0.5}
-                    zoomSpeed={0.6}
-                    panSpeed={0.5}
-                    enablePan
-                    target={[0, 2.5, 0]}
-                    minDistance={12}
-                    maxDistance={220}
-                    maxPolarAngle={Math.PI * 0.5}
-                />
+                    <OrbitControls
+                        makeDefault
+                        autoRotate={spin}
+                        autoRotateSpeed={0.6}
+                        enableDamping
+                        dampingFactor={0.12}
+                        rotateSpeed={0.5}
+                        zoomSpeed={0.6}
+                        panSpeed={0.5}
+                        enablePan
+                        target={[0, 2.5, 0]}
+                        minDistance={12}
+                        maxDistance={220}
+                        maxPolarAngle={Math.PI * 0.5}
+                    />
 
-                {/* multisampling 0: the composer defaults to 8x MSAA, which on top of SMAA meant the
+                    {/* multisampling 0: the composer defaults to 8x MSAA, which on top of SMAA meant the
                     frame was anti-aliased twice and paid for once more in the full-resolution AO pass. */}
-                {/*
+                    {/*
                     KNOWN UPSTREAM ISSUE, bisected here: any chain with a SECOND render-target pass makes
                     ANGLE log `GL_INVALID_OPERATION: glBlitFramebuffer: Read and write depth stencil
                     attachments cannot be the same image` once per frame. Measured warning counts over a
@@ -1437,24 +1397,24 @@ export default function Viewer() {
                     No visual defect results and Chrome tolerates it; giving up SMAA or AO to silence a log
                     line would cost more than it buys. Revisit on the next postprocessing release.
                 */}
-                <EffectComposer multisampling={0} stencilBuffer={false}>
-                    {/* Contact darkness where a package meets the laminate — the cue that stops components
+                    <EffectComposer multisampling={0} stencilBuffer={false}>
+                        {/* Contact darkness where a package meets the laminate — the cue that stops components
                         reading as decals printed on a green plane. */}
-                    {/* A world radius, not a screen-space one. Contact occlusion is a fixed physical
+                        {/* A world radius, not a screen-space one. Contact occlusion is a fixed physical
                         distance — the gap under a 0603 body — and a screen-space radius grows with zoom,
                         so parts lost their contact darkening exactly when you leaned in to look at it.
                         Every board is fit to the same 40-unit target, so one world radius covers all. */}
-                    <N8AO aoRadius={1.1} quality="medium" intensity={2.2} distanceFalloff={0.8} />
-                    {/* The buffer here is linear HDR, not display-referred, so a threshold below 1 catches
+                        <N8AO aoRadius={1.1} quality="medium" intensity={2.2} distanceFalloff={0.8} />
+                        {/* The buffer here is linear HDR, not display-referred, so a threshold below 1 catches
                         ordinary lit surfaces. Above 1 it catches only genuine emitters — the LED domes. */}
-                    <Bloom luminanceThreshold={0.82} intensity={0.3} mipmapBlur />
-                    {/* Khronos PBR Neutral, not ACES or AgX: both of those desaturate a saturated green
+                        <Bloom luminanceThreshold={0.82} intensity={0.3} mipmapBlur />
+                        {/* Khronos PBR Neutral, not ACES or AgX: both of those desaturate a saturated green
                         subject hard and pull the small gold details toward grey. Neutral keeps the board
                         green and the ENIG gold while still rolling off the specular highlights. */}
-                    <ToneMapping mode={ToneMappingMode.NEUTRAL} />
-                    <SMAA preset={SMAAPreset.ULTRA} />
-                </EffectComposer>
-            </Canvas>
+                        <ToneMapping mode={ToneMappingMode.NEUTRAL} />
+                        <SMAA preset={SMAAPreset.ULTRA} />
+                    </EffectComposer>
+                </Canvas>
             </CanvasBoundary>
 
             {/* Nine chips wrap to seven rows on a narrow window and cover the board they select. */}
@@ -1486,37 +1446,37 @@ export default function Viewer() {
                     </button>
                 </div>
             ) : (
-            <div
-                style={{
-                    position: 'absolute',
-                    left: 16,
-                    top: 16,
-                    display: 'flex',
-                    gap: 8,
-                    flexWrap: 'wrap',
-                    maxWidth: 'calc(100% - 340px)',
-                }}
-            >
-                {BOARDS.map((b) => (
-                    <button key={b.id} onClick={() => setUrl(b.id)} style={chip(url === b.id)}>
-                        <span
-                            style={{
-                                opacity: 0.5,
-                                marginRight: 6,
-                                fontSize: 10,
-                                textTransform: 'uppercase',
-                                letterSpacing: 0.4,
-                            }}
-                        >
-                            {b.cat}
-                        </span>
-                        {b.title}
+                <div
+                    style={{
+                        position: 'absolute',
+                        left: 16,
+                        top: 16,
+                        display: 'flex',
+                        gap: 8,
+                        flexWrap: 'wrap',
+                        maxWidth: 'calc(100% - 340px)',
+                    }}
+                >
+                    {BOARDS.map((b) => (
+                        <button key={b.id} onClick={() => setUrl(b.id)} style={chip(url === b.id)}>
+                            <span
+                                style={{
+                                    opacity: 0.5,
+                                    marginRight: 6,
+                                    fontSize: 10,
+                                    textTransform: 'uppercase',
+                                    letterSpacing: 0.4,
+                                }}
+                            >
+                                {b.cat}
+                            </span>
+                            {b.title}
+                        </button>
+                    ))}
+                    <button onClick={() => setSpin((s) => !s)} style={chip(spin)}>
+                        {spin ? '⏸ döndürmeyi durdur' : '▶ otomatik döndür'}
                     </button>
-                ))}
-                <button onClick={() => setSpin((s) => !s)} style={chip(spin)}>
-                    {spin ? '⏸ döndürmeyi durdur' : '▶ otomatik döndür'}
-                </button>
-            </div>
+                </div>
             )}
 
             <Panel

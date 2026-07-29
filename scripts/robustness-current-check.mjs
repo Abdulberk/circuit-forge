@@ -33,11 +33,44 @@ const ANALYSIS = { type: 'op' };
 const CIRCUIT = {
     version: '1.0',
     components: [
-        { id: 'v1', type: 'voltage_source', designator: 'V1', value: 'DC 5', pins: [{ pinId: '+', netId: 'in' }, { pinId: '-', netId: '0' }] },
-        { id: 'r1', type: 'resistor', designator: 'R1', value: '1k', tolerance: 0.05, pins: [{ pinId: '1', netId: 'in' }, { pinId: '2', netId: 'out' }] },
-        { id: 'r2', type: 'resistor', designator: 'R2', value: '1k', tolerance: 0.05, pins: [{ pinId: '1', netId: 'out' }, { pinId: '2', netId: '0' }] },
+        {
+            id: 'v1',
+            type: 'voltage_source',
+            designator: 'V1',
+            value: 'DC 5',
+            pins: [
+                { pinId: '+', netId: 'in' },
+                { pinId: '-', netId: '0' },
+            ],
+        },
+        {
+            id: 'r1',
+            type: 'resistor',
+            designator: 'R1',
+            value: '1k',
+            tolerance: 0.05,
+            pins: [
+                { pinId: '1', netId: 'in' },
+                { pinId: '2', netId: 'out' },
+            ],
+        },
+        {
+            id: 'r2',
+            type: 'resistor',
+            designator: 'R2',
+            value: '1k',
+            tolerance: 0.05,
+            pins: [
+                { pinId: '1', netId: 'out' },
+                { pinId: '2', netId: '0' },
+            ],
+        },
     ],
-    nets: [{ id: 'in', name: 'in' }, { id: 'out', name: 'out' }, { id: '0', name: '0', isGround: true }],
+    nets: [
+        { id: 'in', name: 'in' },
+        { id: 'out', name: 'out' },
+        { id: '0', name: '0', isGround: true },
+    ],
 };
 // Peak-magnitude current criterion: 2.38–2.63 mA is comfortably > 2 mA at every corner (a sound design).
 const CRITERIA = [{ probe: 'i(R1)', metric: 'max', op: 'gt', value: 0.002, label: 'I(R1) > 2 mA' }];
@@ -57,7 +90,11 @@ const makeRealRunner = (extraProbes) => async (variant) => {
         const r = spawnSync(NG, ['-b', '-o', 'log.txt', 'c.cir'], { cwd: dir, encoding: 'utf-8', timeout: 30000 });
         if (r.status !== 0) return null;
         let csv = '';
-        try { csv = readFileSync(join(dir, 'output.csv'), 'utf-8'); } catch { return null; }
+        try {
+            csv = readFileSync(join(dir, 'output.csv'), 'utf-8');
+        } catch {
+            return null;
+        }
         if (!csv.trim()) return null;
         const res = parseSimulationOutput(csv, extractProbes(netlist), ANALYSIS.type);
         return res.series.map((s) => summarizeSeries(s, ANALYSIS.type));
@@ -74,12 +111,19 @@ async function main() {
 
     // Preflight: the divider must actually simulate at nominal (else the whole comparison is meaningless).
     const nominal = await makeRealRunner(extraProbesForCriteria(CRITERIA))(CIRCUIT);
-    const iMeas = nominal?.find((m) => /r1/i.test(m.node) && /\[i\]|i\(/i.test(m.node)) ?? nominal?.find((m) => m.node.includes('r1'));
+    const iMeas =
+        nominal?.find((m) => /r1/i.test(m.node) && /\[i\]|i\(/i.test(m.node)) ??
+        nominal?.find((m) => m.node.includes('r1'));
     if (!nominal || !iMeas) {
-        console.error('PREFLIGHT FAILED: could not measure I(R1) at nominal even WITH the fix — ngspice/build issue.', nominal);
+        console.error(
+            'PREFLIGHT FAILED: could not measure I(R1) at nominal even WITH the fix — ngspice/build issue.',
+            nominal,
+        );
         process.exit(2);
     }
-    console.log(`preflight: nominal I(R1) ≈ ${(Math.abs(iMeas.raw?.final ?? iMeas.final) * 1000).toFixed(3)} mA (expect ~2.5)`);
+    console.log(
+        `preflight: nominal I(R1) ≈ ${(Math.abs(iMeas.raw?.final ?? iMeas.final) * 1000).toFixed(3)} mA (expect ~2.5)`,
+    );
 
     const N = 40;
     // BEFORE — the bug: batch runners derived NO extra probes → the current is never saved.
@@ -95,18 +139,40 @@ async function main() {
     console.log('\n  ┌─────────────────────────────┬───────────────┬───────────────┐');
     console.log('  │                             │  BEFORE (bug) │  AFTER (fix)  │');
     console.log('  ├─────────────────────────────┼───────────────┼───────────────┤');
-    console.log(`  │ Monte-Carlo yield           │ ${pct(mcBefore.yield).padEnd(13)} │ ${pct(mcAfter.yield).padEnd(13)} │`);
-    console.log(`  │   evaluated / passed        │ ${`${mcBefore.evaluated} / ${mcBefore.passed}`.padEnd(13)} │ ${`${mcAfter.evaluated} / ${mcAfter.passed}`.padEnd(13)} │`);
-    console.log(`  │ Corner passAllCorners       │ ${String(cornerBefore.passAllCorners).padEnd(13)} │ ${String(cornerAfter.passAllCorners).padEnd(13)} │`);
-    console.log(`  │   corners passed / eval     │ ${`${cornerBefore.passed} / ${cornerBefore.evaluated}`.padEnd(13)} │ ${`${cornerAfter.passed} / ${cornerAfter.evaluated}`.padEnd(13)} │`);
+    console.log(
+        `  │ Monte-Carlo yield           │ ${pct(mcBefore.yield).padEnd(13)} │ ${pct(mcAfter.yield).padEnd(13)} │`,
+    );
+    console.log(
+        `  │   evaluated / passed        │ ${`${mcBefore.evaluated} / ${mcBefore.passed}`.padEnd(13)} │ ${`${mcAfter.evaluated} / ${mcAfter.passed}`.padEnd(13)} │`,
+    );
+    console.log(
+        `  │ Corner passAllCorners       │ ${String(cornerBefore.passAllCorners).padEnd(13)} │ ${String(cornerAfter.passAllCorners).padEnd(13)} │`,
+    );
+    console.log(
+        `  │   corners passed / eval     │ ${`${cornerBefore.passed} / ${cornerBefore.evaluated}`.padEnd(13)} │ ${`${cornerAfter.passed} / ${cornerAfter.evaluated}`.padEnd(13)} │`,
+    );
     console.log('  └─────────────────────────────┴───────────────┴───────────────┘');
 
     // The fix makes a DIFFERENCE only if: bug path is broken (yield ~0 / corners fail) AND fix path is sound.
     const checks = [
-        ['BEFORE: MC yield collapses to 0 (probe not found → every variant fails)', mcBefore.yield === 0 && mcBefore.evaluated === N],
-        ['BEFORE: corners all fail (passAllCorners false, 0 passed)', cornerBefore.passAllCorners === false && cornerBefore.passed === 0],
-        ['AFTER: MC yield is 100% (current measured → every variant passes)', mcAfter.yield === 1 && mcAfter.passed === N],
-        ['AFTER: passAllCorners true (all corners measure > 2 mA)', cornerAfter.passAllCorners === true && cornerAfter.passed === cornerAfter.evaluated && cornerAfter.evaluated > 0],
+        [
+            'BEFORE: MC yield collapses to 0 (probe not found → every variant fails)',
+            mcBefore.yield === 0 && mcBefore.evaluated === N,
+        ],
+        [
+            'BEFORE: corners all fail (passAllCorners false, 0 passed)',
+            cornerBefore.passAllCorners === false && cornerBefore.passed === 0,
+        ],
+        [
+            'AFTER: MC yield is 100% (current measured → every variant passes)',
+            mcAfter.yield === 1 && mcAfter.passed === N,
+        ],
+        [
+            'AFTER: passAllCorners true (all corners measure > 2 mA)',
+            cornerAfter.passAllCorners === true &&
+                cornerAfter.passed === cornerAfter.evaluated &&
+                cornerAfter.evaluated > 0,
+        ],
     ];
     let ok = true;
     console.log('');
@@ -114,8 +180,15 @@ async function main() {
         console.log(`  ${pass ? '✅' : '❌'} ${label}`);
         if (!pass) ok = false;
     }
-    console.log(ok ? '\nPASS — the fix flips a sound current-spec design from ~0% robust to 100%.\n' : '\nFAIL — the before/after difference was not demonstrated.\n');
+    console.log(
+        ok
+            ? '\nPASS — the fix flips a sound current-spec design from ~0% robust to 100%.\n'
+            : '\nFAIL — the before/after difference was not demonstrated.\n',
+    );
     process.exit(ok ? 0 : 1);
 }
 
-main().catch((e) => { console.error(e); process.exit(2); });
+main().catch((e) => {
+    console.error(e);
+    process.exit(2);
+});

@@ -36,13 +36,36 @@ async function freeroute(dsn) {
     try {
         writeFileSync(join(dir, 'board.dsn'), dsn);
         const mount = `${dir.replaceAll('\\', '/')}:/work`;
-        await execFileAsync('docker', ['run', '--rm', '-v', mount, '--entrypoint', 'java', FR_IMAGE,
-            '-jar', '/app/freerouting-executable.jar', '--gui.enabled=false', '-de', '/work/board.dsn', '-do', '/work/board.ses', '-mp', '30'],
-            { timeout: 300_000, maxBuffer: MAXBUF, env: { ...process.env, MSYS_NO_PATHCONV: '1' } });
+        await execFileAsync(
+            'docker',
+            [
+                'run',
+                '--rm',
+                '-v',
+                mount,
+                '--entrypoint',
+                'java',
+                FR_IMAGE,
+                '-jar',
+                '/app/freerouting-executable.jar',
+                '--gui.enabled=false',
+                '-de',
+                '/work/board.dsn',
+                '-do',
+                '/work/board.ses',
+                '-mp',
+                '30',
+            ],
+            { timeout: 300_000, maxBuffer: MAXBUF, env: { ...process.env, MSYS_NO_PATHCONV: '1' } },
+        );
         const ses = readFileSync(join(dir, 'board.ses'), 'utf8');
         if (!ses.includes('(session')) throw new Error('no SES session');
         return ses;
-    } finally { meter.fr.n++; meter.fr.ms += performance.now() - t; rmSync(dir, { recursive: true, force: true }); }
+    } finally {
+        meter.fr.n++;
+        meter.fr.ms += performance.now() - t;
+        rmSync(dir, { recursive: true, force: true });
+    }
 }
 async function notaryDrc(kicadPcb, kicadPro) {
     const dir = mkdtempSync(join(outRoot, 'drc-'));
@@ -52,15 +75,38 @@ async function notaryDrc(kicadPcb, kicadPro) {
         writeFileSync(join(dir, 'b.kicad_pro'), kicadPro);
         const mount = `${dir.replaceAll('\\', '/')}:/work`;
         try {
-            await execFileAsync('docker', ['run', '--rm', '-v', mount, KI_IMAGE, 'kicad-cli', 'pcb', 'drc',
-                '--refill-zones', '--exit-code-violations', '--severity-error', '--format', 'json', '--output', '/work/d.json', '/work/b.kicad_pcb'],
-                { timeout: 300_000, maxBuffer: MAXBUF, env: { ...process.env, MSYS_NO_PATHCONV: '1' } });
+            await execFileAsync(
+                'docker',
+                [
+                    'run',
+                    '--rm',
+                    '-v',
+                    mount,
+                    KI_IMAGE,
+                    'kicad-cli',
+                    'pcb',
+                    'drc',
+                    '--refill-zones',
+                    '--exit-code-violations',
+                    '--severity-error',
+                    '--format',
+                    'json',
+                    '--output',
+                    '/work/d.json',
+                    '/work/b.kicad_pcb',
+                ],
+                { timeout: 300_000, maxBuffer: MAXBUF, env: { ...process.env, MSYS_NO_PATHCONV: '1' } },
+            );
             return true;
         } catch (e) {
             if (e.code === 5) return false;
             throw e;
         }
-    } finally { meter.drc.n++; meter.drc.ms += performance.now() - t; rmSync(dir, { recursive: true, force: true }); }
+    } finally {
+        meter.drc.n++;
+        meter.drc.ms += performance.now() - t;
+        rmSync(dir, { recursive: true, force: true });
+    }
 }
 
 const caseName = process.argv[2] ?? 'shift-register';
@@ -70,16 +116,30 @@ const [, circuit] = galleryCases.find(([n]) => n === caseName);
 function summary(r) {
     const board = r.evaluated.find((e) => e.type === 'pcb_board');
     const drcMsg = r.diagnostics.filter((d) => d.code === 'PCB030').pop()?.message ?? '';
-    return { ok: r.ok, vias: r.stats.vias, traces: r.stats.traces,
-        board: board ? `${board.width}x${board.height}` : '?', drcClean: /DRC-clean confirmed/i.test(drcMsg) };
+    return {
+        ok: r.ok,
+        vias: r.stats.vias,
+        traces: r.stats.traces,
+        board: board ? `${board.width}x${board.height}` : '?',
+        drcClean: /DRC-clean confirmed/i.test(drcMsg),
+    };
 }
 async function run(label, routeConcurrency) {
-    meter.fr = { n: 0, ms: 0 }; meter.drc = { n: 0, ms: 0 };
+    meter.fr = { n: 0, ms: 0 };
+    meter.drc = { n: 0, ms: 0 };
     const t = performance.now();
-    const r = await layoutCircuit(circuit, { router: 'quality', freeroute, notaryDrc, placer: 'auto', routeConcurrency });
+    const r = await layoutCircuit(circuit, {
+        router: 'quality',
+        freeroute,
+        notaryDrc,
+        placer: 'auto',
+        routeConcurrency,
+    });
     const s = (performance.now() - t) / 1000;
     const sum = summary(r);
-    console.log(`${label.padEnd(18)} total=${s.toFixed(0)}s  freeroute=${meter.fr.n}×(${(meter.fr.ms / 1000).toFixed(0)}s)  drc=${meter.drc.n}×(${(meter.drc.ms / 1000).toFixed(0)}s)  ok=${sum.ok} DRC=${sum.drcClean ? '✔' : '✗'} board=${sum.board} vias=${sum.vias} traces=${sum.traces}`);
+    console.log(
+        `${label.padEnd(18)} total=${s.toFixed(0)}s  freeroute=${meter.fr.n}×(${(meter.fr.ms / 1000).toFixed(0)}s)  drc=${meter.drc.n}×(${(meter.drc.ms / 1000).toFixed(0)}s)  ok=${sum.ok} DRC=${sum.drcClean ? '✔' : '✗'} board=${sum.board} vias=${sum.vias} traces=${sum.traces}`,
+    );
     return { s, sum };
 }
 
@@ -91,6 +151,10 @@ const par = await run(`parallel K=${K}`, K);
 
 const sameBoard = JSON.stringify(seq.sum) === JSON.stringify(par.sum);
 console.log(`\n── result ──`);
-console.log(`  wall-time: ${seq.s.toFixed(0)}s → ${par.s.toFixed(0)}s   (${(seq.s / par.s).toFixed(2)}× faster, ${(100 * (1 - par.s / seq.s)).toFixed(0)}% shorter)`);
-console.log(`  identical board (determinism/quality preserved): ${sameBoard ? 'YES ✔' : 'NO ✗ — ' + JSON.stringify({ seq: seq.sum, par: par.sum })}`);
+console.log(
+    `  wall-time: ${seq.s.toFixed(0)}s → ${par.s.toFixed(0)}s   (${(seq.s / par.s).toFixed(2)}× faster, ${(100 * (1 - par.s / seq.s)).toFixed(0)}% shorter)`,
+);
+console.log(
+    `  identical board (determinism/quality preserved): ${sameBoard ? 'YES ✔' : 'NO ✗ — ' + JSON.stringify({ seq: seq.sum, par: par.sum })}`,
+);
 process.exit(sameBoard ? 0 : 1);

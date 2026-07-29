@@ -128,7 +128,14 @@ async function main() {
         );
         process.exit(1);
     }
-    console.log(`ngspice: ${(probe.stdout || probe.stderr || '').split('\n').find((l) => /ngspice/i.test(l))?.trim() ?? NG}`);
+    console.log(
+        `ngspice: ${
+            (probe.stdout || probe.stderr || '')
+                .split('\n')
+                .find((l) => /ngspice/i.test(l))
+                ?.trim() ?? NG
+        }`,
+    );
 
     const bars = ROBUSTNESS_PROFILES.consumer;
     const needed = requiredRunsForBar(bars.robustMin);

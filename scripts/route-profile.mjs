@@ -22,14 +22,18 @@ mkdirSync(outRoot, { recursive: true });
 
 const caseName = process.argv[2] ?? 'shift-register';
 const entry = galleryCases.find(([n]) => n === caseName);
-if (!entry) { console.error(`no case ${caseName}; have: ${galleryCases.map(([n]) => n).join(', ')}`); process.exit(2); }
+if (!entry) {
+    console.error(`no case ${caseName}; have: ${galleryCases.map(([n]) => n).join(', ')}`);
+    process.exit(2);
+}
 const [, circuit] = entry;
 
 const rawFree = makeFreeroutingRunner({ workDir: outRoot });
 const rawDrc = makeKicadDrcRunner({ workDir: outRoot });
 
 const events = [];
-let frSeq = 0, drcSeq = 0;
+let frSeq = 0,
+    drcSeq = 0;
 const freeroute = async (dsn) => {
     const seq = ++frSeq;
     const t = performance.now();
@@ -55,13 +59,23 @@ const t0 = performance.now();
 const r = await layoutCircuit(circuit, { router: 'quality', freeroute, notaryDrc, placer: 'auto' });
 const totalS = (performance.now() - t0) / 1000;
 
-let frTotal = 0, drcTotal = 0;
+let frTotal = 0,
+    drcTotal = 0;
 for (const e of events) {
-    if (e.kind === 'freeroute') frTotal += e.ms; else drcTotal += e.ms;
-    console.log(`  ${e.kind.padEnd(9)} #${e.seq}  ${(e.ms / 1000).toFixed(1)}s  ${e.kind === 'freeroute' ? (e.ok ? 'ok' : 'FAIL ' + e.err) : e.clean ? 'DRC ✔' : 'DRC ✗'}`);
+    if (e.kind === 'freeroute') frTotal += e.ms;
+    else drcTotal += e.ms;
+    console.log(
+        `  ${e.kind.padEnd(9)} #${e.seq}  ${(e.ms / 1000).toFixed(1)}s  ${e.kind === 'freeroute' ? (e.ok ? 'ok' : 'FAIL ' + e.err) : e.clean ? 'DRC ✔' : 'DRC ✗'}`,
+    );
 }
 console.log(`\n── totals ──`);
-console.log(`  freeroute calls: ${frSeq}  (${(frTotal / 1000).toFixed(1)}s, ${(100 * frTotal / (totalS * 1000)).toFixed(0)}% of total)`);
-console.log(`  drc calls:       ${drcSeq}  (${(drcTotal / 1000).toFixed(1)}s, ${(100 * drcTotal / (totalS * 1000)).toFixed(0)}% of total)`);
+console.log(
+    `  freeroute calls: ${frSeq}  (${(frTotal / 1000).toFixed(1)}s, ${((100 * frTotal) / (totalS * 1000)).toFixed(0)}% of total)`,
+);
+console.log(
+    `  drc calls:       ${drcSeq}  (${(drcTotal / 1000).toFixed(1)}s, ${((100 * drcTotal) / (totalS * 1000)).toFixed(0)}% of total)`,
+);
 console.log(`  layoutCircuit total: ${totalS.toFixed(1)}s   ok=${r.ok}`);
-console.log(`  DIAGNOSIS: ${frSeq > 2 ? `${frSeq} sequential routing attempts → PARALLELIZABLE (wall-time could drop to ~1-2 runs)` : `only ${frSeq} routing attempt(s) → NOT a parallelism problem; slow single run points at freerouting version/quality`}`);
+console.log(
+    `  DIAGNOSIS: ${frSeq > 2 ? `${frSeq} sequential routing attempts → PARALLELIZABLE (wall-time could drop to ~1-2 runs)` : `only ${frSeq} routing attempt(s) → NOT a parallelism problem; slow single run points at freerouting version/quality`}`,
+);

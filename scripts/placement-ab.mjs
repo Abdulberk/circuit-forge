@@ -17,9 +17,7 @@ import { galleryCases } from './lib/gallery-circuits.mjs';
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const pkgRoot = join(__dirname, '..', 'packages', 'pcb-core');
 const outRoot = join(pkgRoot, '.placement-ab');
-const { layoutCircuit } = await import(
-    new URL(`file://${join(pkgRoot, 'dist', 'index.js').replace(/\\/g, '/')}`).href
-);
+const { layoutCircuit } = await import(new URL(`file://${join(pkgRoot, 'dist', 'index.js').replace(/\\/g, '/')}`).href);
 
 mkdirSync(outRoot, { recursive: true });
 const freeroute = makeFreeroutingRunner({ workDir: outRoot });
@@ -70,9 +68,13 @@ const rows = [];
 for (const [name, circuit] of galleryCases) {
     console.log(`\n────────── ${name}`);
     const grid = await runOne(name, circuit, 'grid');
-    console.log(`  grid: ok=${grid.ok} vias=${grid.vias} traces=${grid.traces} len=${grid.lenMm.toFixed(0)}mm board=${grid.area?.w}×${grid.area?.h} DRC=${grid.drcClean ? '✔' : '✗'} (${grid.secs.toFixed(0)}s)`);
+    console.log(
+        `  grid: ok=${grid.ok} vias=${grid.vias} traces=${grid.traces} len=${grid.lenMm.toFixed(0)}mm board=${grid.area?.w}×${grid.area?.h} DRC=${grid.drcClean ? '✔' : '✗'} (${grid.secs.toFixed(0)}s)`,
+    );
     const auto = await runOne(name, circuit, 'auto');
-    console.log(`  auto: ok=${auto.ok} vias=${auto.vias} traces=${auto.traces} len=${auto.lenMm.toFixed(0)}mm board=${auto.area?.w}×${auto.area?.h} DRC=${auto.drcClean ? '✔' : '✗'} (${auto.secs.toFixed(0)}s)`);
+    console.log(
+        `  auto: ok=${auto.ok} vias=${auto.vias} traces=${auto.traces} len=${auto.lenMm.toFixed(0)}mm board=${auto.area?.w}×${auto.area?.h} DRC=${auto.drcClean ? '✔' : '✗'} (${auto.secs.toFixed(0)}s)`,
+    );
     if (auto.adopted) console.log(`  · ${auto.adopted}`);
     if (auto.rejected) console.log(`  · ${auto.rejected}`);
     rows.push({ name, grid, auto });
@@ -81,20 +83,32 @@ for (const [name, circuit] of galleryCases) {
 // ---------------------------------------------------------------- aggregate verdict
 
 console.log('\n════════════════ A/B TABLE (grid → auto) ════════════════');
-let gVias = 0, aVias = 0, gLen = 0, aLen = 0, gArea = 0, aArea = 0, gClean = 0, aClean = 0, adoptedCount = 0;
+let gVias = 0,
+    aVias = 0,
+    gLen = 0,
+    aLen = 0,
+    gArea = 0,
+    aArea = 0,
+    gClean = 0,
+    aClean = 0,
+    adoptedCount = 0;
 for (const { name, grid, auto } of rows) {
-    gVias += grid.vias; aVias += auto.vias;
-    gLen += grid.lenMm; aLen += auto.lenMm;
-    gArea += grid.area?.mm2 ?? 0; aArea += auto.area?.mm2 ?? 0;
-    gClean += grid.drcClean ? 1 : 0; aClean += auto.drcClean ? 1 : 0;
+    gVias += grid.vias;
+    aVias += auto.vias;
+    gLen += grid.lenMm;
+    aLen += auto.lenMm;
+    gArea += grid.area?.mm2 ?? 0;
+    aArea += auto.area?.mm2 ?? 0;
+    gClean += grid.drcClean ? 1 : 0;
+    aClean += auto.drcClean ? 1 : 0;
     adoptedCount += auto.adopted ? 1 : 0;
     const dv = grid.vias ? (100 * (auto.vias - grid.vias)) / grid.vias : 0;
     const dl = grid.lenMm ? (100 * (auto.lenMm - grid.lenMm)) / grid.lenMm : 0;
     console.log(
         `  ${name.padEnd(17)} vias ${String(grid.vias).padStart(2)}→${String(auto.vias).padEnd(3)} (${dv >= 0 ? '+' : ''}${dv.toFixed(0)}%)` +
-        ` len ${grid.lenMm.toFixed(0).padStart(4)}→${auto.lenMm.toFixed(0).padEnd(4)}mm (${dl >= 0 ? '+' : ''}${dl.toFixed(0)}%)` +
-        ` board ${grid.area?.mm2 ?? '?'}→${auto.area?.mm2 ?? '?'}mm² DRC ${grid.drcClean ? '✔' : '✗'}→${auto.drcClean ? '✔' : '✗'}` +
-        ` ${auto.adopted ? 'AUTO' : 'grid-kept'}`,
+            ` len ${grid.lenMm.toFixed(0).padStart(4)}→${auto.lenMm.toFixed(0).padEnd(4)}mm (${dl >= 0 ? '+' : ''}${dl.toFixed(0)}%)` +
+            ` board ${grid.area?.mm2 ?? '?'}→${auto.area?.mm2 ?? '?'}mm² DRC ${grid.drcClean ? '✔' : '✗'}→${auto.drcClean ? '✔' : '✗'}` +
+            ` ${auto.adopted ? 'AUTO' : 'grid-kept'}`,
     );
 }
 const pct = (a, b) => (b ? ((100 * (a - b)) / b).toFixed(1) : '0');

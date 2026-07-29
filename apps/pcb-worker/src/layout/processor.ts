@@ -145,10 +145,7 @@ export async function processLayoutJob(job: Job<LayoutJobPayload>): Promise<void
         // The API validated this JSON against LayoutOptionsDto before it was stored, so it is described
         // rather than re-parsed here — but described as the SUBSET this worker reads. `any` let a typo in
         // a field name compile into a silently-ignored option.
-        const options = (row.options ?? {}) as Pick<
-            LayoutOptions,
-            'placer' | 'fabProfile' | 'netCurrentsA'
-        >;
+        const options = (row.options ?? {}) as Pick<LayoutOptions, 'placer' | 'fabProfile' | 'netCurrentsA'>;
 
         const freeroute = makeNativeFreeroutingRunner();
         const kicad = makeNativeKicad({ log: logger });
