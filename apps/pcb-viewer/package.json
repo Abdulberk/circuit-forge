@@ -2,6 +2,7 @@
     "name": "pcb-viewer",
     "version": "0.1.0",
     "private": true,
+    "packageManager": "pnpm@8.14.1",
     "scripts": {
         "dev": "node clean-stale-next.mjs && next dev -p 3100",
         "build": "next build",
