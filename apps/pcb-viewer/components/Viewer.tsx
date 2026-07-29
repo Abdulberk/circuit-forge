@@ -351,7 +351,7 @@ function makeLedResolver() {
                 // A lit indicator LED is not a uniformly glowing solid: the epoxy dome still carries a sharp specular
                 // highlight from the room. Flooding the surface with emission erases it and the part reads as
                 // moulded plastic. Kept just above the bloom threshold so the glow survives, no higher.
-                emissiveIntensity: 0.95,
+                emissiveIntensity: 1.25,
                 // No transmission. It routes the material through three's transmission pass, where the
                 // dome loses the sharp environment specular that makes it read as moulded epoxy rather
                 // than as painted plastic. A lit LED does not need refraction to be convincing; it needs
@@ -717,7 +717,8 @@ function Exposure({ value }: Readonly<{ value: number }>) {
  * be wrong about something (a material that was never assigned, a post-processing chain whose shader
  * does not compile). A headless Chrome driving this page can now ask what is actually there.
  *
- * Stripped from production builds: the whole component returns null when NODE_ENV is 'production'.
+ * Mounted only outside production (gated at the call site), so a production bundle neither exposes the
+ * handle nor pays for the subscription.
  */
 function DevInspect() {
     const { scene, gl, camera } = useThree();
@@ -826,6 +827,7 @@ function AdjustableEnvironment({ url, env }: Readonly<{ url: string; env: EnvSta
 function BindEnvMap({ mats, url }: Readonly<{ mats: LayerMats; url: string }>) {
     const scene = useThree((st) => st.scene);
     const env = useThree((st) => st.scene.environment);
+    const epoch = useContextEpoch();
     useEffect(() => {
         const e = scene.environment;
         if (!e) return;
@@ -845,7 +847,7 @@ function BindEnvMap({ mats, url }: Readonly<{ mats: LayerMats; url: string }>) {
             const mesh = o as THREE.Mesh;
             if (mesh.isMesh) bind(mesh.material);
         });
-    }, [scene, env, mats, url]);
+    }, [scene, env, mats, url, epoch]);
     return null;
 }
 
@@ -857,25 +859,32 @@ function BindEnvMap({ mats, url }: Readonly<{ mats: LayerMats; url: string }>) {
  * gives them a broad, shapeless wash; what reads as a product photograph is a dark surround with a few
  * large, clean rectangular sources. Procedural means it is exactly controllable and costs no asset.
  */
-function makeStudioEnvironment(): THREE.Scene {
+function makeStudioEnvironment(state: EnvState): THREE.Scene {
     const env = new THREE.Scene();
     const surround = new THREE.Mesh(
         new THREE.SphereGeometry(80, 24, 16),
-        new THREE.MeshBasicMaterial({ side: THREE.BackSide, color: 0x11151a }),
+        new THREE.MeshBasicMaterial({ side: THREE.BackSide, color: new THREE.Color(0x1b2128).multiplyScalar(state.brightness) }),
     );
     env.add(surround);
-    // key overhead, fill from the left, a cool rim behind, and a low bounce card
+    // The ENIG pads are metalness 1 and face straight up, so whatever sits overhead IS their colour.
+    // With a small key and a near-black surround they reflected the void and read as dull olive; the
+    // overhead source is now wide enough to cover the angles a flat pad actually samples.
     const panels: Array<[number, number, number, number, number, number, number, number]> = [
-        //  w,  h,   x,   y,   z, rotX, rotY, intensity
-        [46, 30, 0, 42, 6, -Math.PI / 2, 0, 3.2],
-        [30, 26, -46, 20, 10, 0, Math.PI / 2, 1.5],
-        [34, 20, 6, 24, -46, 0, 0, 1.1],
-        [50, 26, 0, -14, 18, Math.PI / 2, 0, 0.35],
+        //  w,   h,   x,   y,   z, rotX, rotY, intensity
+        [95, 70, 0, 40, 4, -Math.PI / 2, 0, 2.6],
+        [34, 30, -48, 22, 12, 0, Math.PI / 2, 1.5],
+        [36, 22, 6, 26, -48, 0, 0, 1.1],
+        [70, 40, 0, -16, 16, Math.PI / 2, 0, 0.5],
     ];
+    // The panel intensities carry the tab controls: brightness scales them all, contrast spreads them
+    // apart around the key, and the tint colours them. Before this the three sliders were inert — they
+    // still drove the EXR pipeline that the procedural studio replaced.
+    const tint = new THREE.Color(state.color);
     for (const [w, h, x, y, z, rx, ry, i] of panels) {
+        const lit = Math.max(0, (i - 1) * state.contrast + 1) * state.brightness;
         const panel = new THREE.Mesh(
             new THREE.PlaneGeometry(w, h),
-            new THREE.MeshBasicMaterial({ color: new THREE.Color(i, i, i) }),
+            new THREE.MeshBasicMaterial({ color: tint.clone().multiplyScalar(lit) }),
         );
         panel.position.set(x, y, z);
         panel.rotation.set(rx, ry, 0);
@@ -884,11 +893,49 @@ function makeStudioEnvironment(): THREE.Scene {
     return env;
 }
 
-function StudioEnvironment({ strength }: Readonly<{ strength: number }>) {
+/**
+ * A lost-and-restored WebGL context takes the environment with it, permanently and silently.
+ *
+ * `scene.environment` is a render-target texture with no CPU-side image, so three has nothing to
+ * re-upload after a restore — measured, the frame comes back bit-identical to having no environment at
+ * all. Neither the PMREM effect nor the envMap binding can notice on their own: their deps are objects
+ * that do not change, and a direct mutation of `scene.environment` is invisible to an r3f selector.
+ * This counter is the signal both of them subscribe to.
+ */
+function useContextEpoch(): number {
+    const gl = useThree((st) => st.gl);
+    const [epoch, setEpoch] = useState(0);
+    useEffect(() => {
+        const el = gl.domElement;
+        const onRestore = () => setEpoch((n) => n + 1);
+        el.addEventListener('webglcontextrestored', onRestore);
+        return () => el.removeEventListener('webglcontextrestored', onRestore);
+    }, [gl]);
+    return epoch;
+}
+
+/** React StrictMode double-invokes the material and texture factories in development, so a discarded
+ *  set is created on every mount. Nothing was releasing them. */
+function DisposeOnUnmount({
+    peel,
+    mats,
+}: Readonly<{ peel: THREE.CanvasTexture | null; mats: LayerMats }>) {
+    useEffect(
+        () => () => {
+            peel?.dispose();
+            for (const m of Object.values(mats) as THREE.Material[]) m.dispose();
+        },
+        [peel, mats],
+    );
+    return null;
+}
+
+function StudioEnvironment({ env }: Readonly<{ env: EnvState }>) {
     const { gl, scene } = useThree();
+    const epoch = useContextEpoch();
     useEffect(() => {
         const pmrem = new THREE.PMREMGenerator(gl);
-        const src = makeStudioEnvironment();
+        const src = makeStudioEnvironment(env);
         const rt = pmrem.fromScene(src, 0.04);
         scene.environment = rt.texture;
         pmrem.dispose();
@@ -903,10 +950,10 @@ function StudioEnvironment({ strength }: Readonly<{ strength: number }>) {
             rt.dispose();
             scene.environment = null;
         };
-    }, [gl, scene]);
+    }, [gl, scene, epoch, env.brightness, env.contrast, env.color]);
     useEffect(() => {
-        scene.environmentIntensity = strength;
-    }, [scene, strength]);
+        scene.environmentIntensity = env.strength;
+    }, [scene, env.strength]);
     return null;
 }
 
@@ -1247,9 +1294,25 @@ function Panel({
             () => setToast('konsola yazıldı'),
         );
     };
+    const narrow = useNarrow();
+    const [open, setOpen] = useState(false);
+    if (narrow && !open)
+        return (
+            <button
+                onClick={() => setOpen(true)}
+                style={{ ...panelStyle, width: 'auto', padding: '9px 14px', cursor: 'pointer' }}
+            >
+                ayarlar
+            </button>
+        );
     return (
-        <div style={panelStyle}>
+        <div style={narrow ? { ...panelStyle, left: 14, right: 14, width: 'auto' } : panelStyle}>
             <div style={{ display: 'flex', gap: 5, marginBottom: 10 }}>
+                {narrow && (
+                    <button onClick={() => setOpen(false)} style={tabBtn(false)}>
+                        ✕
+                    </button>
+                )}
                 <button onClick={() => setTab('mat')} style={tabBtn(tab === 'mat')}>
                     Malzeme
                 </button>
@@ -1276,6 +1339,7 @@ function Panel({
 
 export default function Viewer() {
     const [url, setUrl] = useState(BOARDS[0].id);
+    const narrowUi = useNarrow();
     const [spin, setSpin] = useState(false);
     const [materials, setMaterials] = useState<MatEntry[]>([]);
     const [light, setLightState] = useState<LightState>(DEFAULT_LIGHT);
@@ -1292,11 +1356,11 @@ export default function Viewer() {
             <CanvasBoundary>
             <Canvas
                 shadows="variance"
-                // dpr clamps to the display's own devicePixelRatio, so this is not supersampling — it
-                // just stops the canvas rendering below native. The actual edge quality comes from SMAA
-                // in the chain; MSAA is disabled on the composer for the same reason.
+                // r3f clamps dpr to the display's own devicePixelRatio, so on a 1× monitor this is
+                // exactly 1 and SMAA is the only anti-aliasing in play; on HiDPI it renders native. It is
+                // not supersampling and cannot be — the ceiling only prevents paying for more than 1.75×.
                 dpr={[1, 1.75]}
-                gl={{ antialias: false, powerPreference: 'high-performance' }}
+                gl={{ antialias: false, stencil: false, powerPreference: 'high-performance' }}
                 // A 0.5 … 400 frustum instead of 0.1 … 3000 buys back depth precision, which matters
                 // when layers are tens of microns apart.
                 camera={{ fov: 34, position: [24, 30, 46], near: 0.5, far: 400 }}
@@ -1310,8 +1374,11 @@ export default function Viewer() {
                     scene.environmentIntensity = 0.9;
                 }}
             >
-                <color attach="background" args={['#0b1013']} />
-                <DevInspect />
+                <color attach="background" args={['#151a1d']} />
+                {/* The 600-unit floor used to end in a hard horizon line across the frame at any low
+                    camera angle. Fog dissolves its far edge into the background instead. */}
+                <fogExp2 attach="fog" args={['#151a1d', 0.0034]} />
+                {process.env.NODE_ENV !== 'production' && <DevInspect />}
                 <Rig light={light} shadow={shadow} />
 
                 <Suspense
@@ -1322,7 +1389,8 @@ export default function Viewer() {
                     }
                 >
                     <Board key={url} url={boardUrl(url)} layerMats={layerMats} onMaterials={setMaterials} />
-                    <StudioEnvironment strength={env.strength} />
+                    <DisposeOnUnmount peel={peel} mats={layerMats} />
+                <StudioEnvironment env={env} />
                     <BindEnvMap mats={layerMats} url={url} />
                 </Suspense>
                 <Floor />
@@ -1357,7 +1425,19 @@ export default function Viewer() {
 
                 {/* multisampling 0: the composer defaults to 8x MSAA, which on top of SMAA meant the
                     frame was anti-aliased twice and paid for once more in the full-resolution AO pass. */}
-                <EffectComposer multisampling={0}>
+                {/*
+                    KNOWN UPSTREAM ISSUE, bisected here: any chain with a SECOND render-target pass makes
+                    ANGLE log `GL_INVALID_OPERATION: glBlitFramebuffer: Read and write depth stencil
+                    attachments cannot be the same image` once per frame. Measured warning counts over a
+                    ten-second run: ToneMapping alone 0 · +Bloom 0 · +SMAA 12 · +MSAA-instead-of-SMAA 11 ·
+                    composer removed entirely 0. It survives multisampling 0, stencilBuffer false,
+                    stencil:false on the renderer, N8AO removed, VSM swapped for PCF, and SMAA switched to
+                    colour edge detection — so it is postprocessing 6.x sharing a depth attachment across
+                    its ping-pong buffers on three r169, not something this file can configure away.
+                    No visual defect results and Chrome tolerates it; giving up SMAA or AO to silence a log
+                    line would cost more than it buys. Revisit on the next postprocessing release.
+                */}
+                <EffectComposer multisampling={0} stencilBuffer={false}>
                     {/* Contact darkness where a package meets the laminate — the cue that stops components
                         reading as decals printed on a green plane. */}
                     {/* A world radius, not a screen-space one. Contact occlusion is a fixed physical
@@ -1367,7 +1447,7 @@ export default function Viewer() {
                     <N8AO aoRadius={1.1} quality="medium" intensity={2.2} distanceFalloff={0.8} />
                     {/* The buffer here is linear HDR, not display-referred, so a threshold below 1 catches
                         ordinary lit surfaces. Above 1 it catches only genuine emitters — the LED domes. */}
-                    <Bloom luminanceThreshold={1.15} intensity={0.28} mipmapBlur />
+                    <Bloom luminanceThreshold={0.82} intensity={0.3} mipmapBlur />
                     {/* Khronos PBR Neutral, not ACES or AgX: both of those desaturate a saturated green
                         subject hard and pull the small gold details toward grey. Neutral keeps the board
                         green and the ENIG gold while still rolling off the specular highlights. */}
@@ -1377,6 +1457,35 @@ export default function Viewer() {
             </Canvas>
             </CanvasBoundary>
 
+            {/* Nine chips wrap to seven rows on a narrow window and cover the board they select. */}
+            {narrowUi ? (
+                <div
+                    style={{
+                        position: 'absolute',
+                        left: 16,
+                        top: 16,
+                        display: 'flex',
+                        gap: 8,
+                        alignItems: 'center',
+                    }}
+                >
+                    <select
+                        value={url}
+                        onChange={(e) => setUrl(e.target.value)}
+                        aria-label="devre"
+                        style={{ ...chip(true), padding: 9, maxWidth: 230 }}
+                    >
+                        {BOARDS.map((b) => (
+                            <option key={b.id} value={b.id}>
+                                {b.title}
+                            </option>
+                        ))}
+                    </select>
+                    <button onClick={() => setSpin((sp) => !sp)} style={chip(spin)}>
+                        {spin ? '⏸' : '▶'}
+                    </button>
+                </div>
+            ) : (
             <div
                 style={{
                     position: 'absolute',
@@ -1408,6 +1517,7 @@ export default function Viewer() {
                     {spin ? '⏸ döndürmeyi durdur' : '▶ otomatik döndür'}
                 </button>
             </div>
+            )}
 
             <Panel
                 materials={materials}
@@ -1433,6 +1543,22 @@ export default function Viewer() {
             </div>
         </div>
     );
+}
+
+/** Below this width a fixed 320 px inspector is 40% of the window and at 480 px it overflows it, so
+ *  it collapses to a toggle instead of covering the board it exists to inspect. */
+const PANEL_BREAKPOINT = 900;
+
+function useNarrow(): boolean {
+    const [narrow, setNarrow] = useState(false);
+    useEffect(() => {
+        const mq = window.matchMedia(`(max-width: ${PANEL_BREAKPOINT - 1}px)`);
+        const sync = () => setNarrow(mq.matches);
+        sync();
+        mq.addEventListener('change', sync);
+        return () => mq.removeEventListener('change', sync);
+    }, []);
+    return narrow;
 }
 
 const panelStyle: React.CSSProperties = {
