@@ -138,16 +138,51 @@ function buildLayerMaterials(peel: THREE.CanvasTexture | null) {
 }
 type LayerMats = ReturnType<typeof buildLayerMaterials>;
 
-function layerOf(name: string): 'copper' | 'via' | 'pad' | 'soldermask' | 'silkscreen' | 'pcb' | 'part' {
-    const n = name.toLowerCase();
-    if (n.includes('copper')) return 'copper';
-    if (n.includes('via')) return 'via';
-    if (n.includes('pad')) return 'pad';
-    if (n.includes('soldermask')) return 'soldermask';
-    if (n.includes('silkscreen')) return 'silkscreen';
-    if (n.includes('pcb')) return 'pcb';
-    return 'part';
+type Layer = 'copper' | 'via' | 'pad' | 'soldermask' | 'silkscreen' | 'pcb' | 'part';
+
+/**
+ * KiCad names the board's own layer meshes `board_copper`, `board_pad`, `board_via`, `board_silkscreen`,
+ * `board_soldermask` and `board_PCB`. Everything else is a component body.
+ *
+ * The prefix is required, not merely matched. Substring matching over the whole name reads a real KiCad
+ * footprint like `TestPoint_Pad_D1.0mm` or `SolderWirePad_1x01` as the board's pad layer and paints the
+ * whole part ENIG gold — a component silently rendered as bare copper.
+ */
+function layerOf(name: string): Layer {
+    const m = /^board_(copper|pad|via|silkscreen|soldermask|pcb)$/i.exec(name.trim());
+    return m ? (m[1]!.toLowerCase() as Layer) : 'part';
 }
+
+/**
+ * Recover the mesh name the glTF actually carries.
+ *
+ * three.js's GLTFLoader OVERWRITES `Object3D.name` with the glTF NODE name whenever the node has one
+ * (GLTFLoader `loadNode`: `node.name = nodeName`). KiCad names its board-layer nodes `=>[0:1:1:16]` —
+ * internal path tokens — while the descriptive name (`board_soldermask`) lives on the MESH. So reading
+ * `mesh.name` gets the path token, every board layer classifies as 'part', and not one of them ever
+ * receives its material: the soldermask renders through the component-body resolver, which keeps glTF's
+ * default `metalness: 1`, so the board ships as a slab of green metal. That single line is most of why
+ * these renders do not look like circuit boards.
+ *
+ * `parser.associations` is the loader's sanctioned Object3D → glTF-index map; it is how the mesh name is
+ * recovered without depending on any loader internal. Falls back to the object's own name so the viewer
+ * still works if a future loader version stops populating it.
+ */
+function meshNames(scene: THREE.Object3D, parser?: GltfParser): Map<THREE.Object3D, string> {
+    const names = new Map<THREE.Object3D, string>();
+    scene.traverse((o) => {
+        const idx = parser?.associations?.get(o)?.meshes;
+        const fromGltf = idx === undefined ? undefined : parser?.json?.meshes?.[idx]?.name;
+        names.set(o, fromGltf ?? o.name);
+    });
+    return names;
+}
+
+/** The slice of three.js's GLTFParser this file relies on (drei types `gltf.parser` loosely). */
+type GltfParser = {
+    associations?: Map<THREE.Object3D, { meshes?: number }>;
+    json?: { meshes?: Array<{ name?: string }> };
+};
 
 /** Component-body materials, decided by color DATA (not per-part rules); cached to keep sharing/merge intact. */
 function makePartResolver() {
@@ -180,6 +215,13 @@ function makePartResolver() {
             });
             out.name = 'Metal terminal';
         } else {
+            // Coloured bodies: epoxy, plastic housings, LED lenses, capacitor sleeves. None of them are
+            // metal — but KiCad's 3D models omit `metallicFactor`, and the glTF spec says an absent factor
+            // DEFAULTS TO 1, so the loader hands us fully-metallic plastic. A metal that is neither white
+            // nor mirror-smooth renders almost black under image-based lighting, which is why our red LEDs
+            // and brown electrolytics came out as dark blobs. Only this branch is corrected: the two above
+            // build their own materials and mean the metalness they set.
+            mat.metalness = 0;
             if (mat.roughness != null) mat.roughness = Math.min(mat.roughness, 0.6);
             mat.envMapIntensity = Math.max(mat.envMapIntensity ?? 1, 1);
             mat.name = `Parça (#${mat.color.getHexString()})`;
@@ -247,10 +289,10 @@ function makeLedResolver() {
     };
 }
 
-function assignMaterials(meshes: THREE.Mesh[], layerMats: LayerMats) {
+function assignMaterials(meshes: THREE.Mesh[], layerMats: LayerMats, nameOf: (m: THREE.Object3D) => string) {
     const resolvePart = makePartResolver();
     const resolveLed = makeLedResolver();
-    const byLayer: Partial<Record<ReturnType<typeof layerOf>, THREE.Material>> = {
+    const byLayer: Partial<Record<Layer, THREE.Material>> = {
         soldermask: layerMats.mask,
         copper: layerMats.copper,
         via: layerMats.via,
@@ -261,11 +303,15 @@ function assignMaterials(meshes: THREE.Mesh[], layerMats: LayerMats) {
     for (const m of meshes) {
         m.castShadow = true;
         m.receiveShadow = true;
-        if (m.name.toLowerCase().includes('led')) {
+        const name = nameOf(m);
+        // KiCad footprint names are underscore-delimited (`LED_D5.0mm`, `LED_0603_1608Metric`), so LED is
+        // matched as a token. A bare substring test would also claim anything that merely contains the
+        // letters and hand it a glowing emissive dome.
+        if (/(^|[_\-])led([_\-]|$)/i.test(name)) {
             m.material = resolveLed(m);
             continue;
         } // real KiCad dome, tinted
-        const lm = byLayer[layerOf(m.name)];
+        const lm = byLayer[layerOf(name)];
         if (lm) m.material = lm;
         else if (Array.isArray(m.material))
             m.material = m.material.map((mt) => resolvePart(mt as THREE.MeshStandardMaterial));
@@ -273,7 +319,7 @@ function assignMaterials(meshes: THREE.Mesh[], layerMats: LayerMats) {
     }
 }
 
-function mergeDrawCalls(scene: THREE.Group, meshes: THREE.Mesh[]) {
+function mergeDrawCalls(scene: THREE.Group, meshes: THREE.Mesh[], nameOf: (m: THREE.Object3D) => string) {
     try {
         const buckets = new Map<
             string,
@@ -283,7 +329,7 @@ function mergeDrawCalls(scene: THREE.Group, meshes: THREE.Mesh[]) {
             if (Array.isArray(m.material)) continue;
             const geo = m.geometry.clone();
             geo.applyMatrix4(m.matrixWorld);
-            const layer = layerOf(m.name);
+            const layer = layerOf(nameOf(m));
             if (layer === 'soldermask' || layer === 'pcb') ensurePlanarUV(geo);
             const key = `${m.material.uuid}|${attrSig(geo)}`;
             let b = buckets.get(key);
@@ -330,17 +376,20 @@ function collectMaterials(scene: THREE.Group): MatEntry[] {
     return [...seen.values()].sort((a, b) => a.label.localeCompare(b.label));
 }
 
-function processScene(scene: THREE.Group, layerMats: LayerMats): MatEntry[] {
+function processScene(scene: THREE.Group, layerMats: LayerMats, parser?: GltfParser): MatEntry[] {
     if (!scene.userData.__pcbProcessed) {
         scene.userData.__pcbProcessed = true;
         scene.updateWorldMatrix(true, true);
+        // Resolved once, before anything mutates the graph — mergeDrawCalls removes the source meshes.
+        const names = meshNames(scene, parser);
+        const nameOf = (o: THREE.Object3D) => names.get(o) ?? o.name;
         const meshes: THREE.Mesh[] = [];
         scene.traverse((o) => {
             const m = o as THREE.Mesh;
             if (m.isMesh && m.geometry) meshes.push(m);
         });
-        assignMaterials(meshes, layerMats);
-        mergeDrawCalls(scene, meshes);
+        assignMaterials(meshes, layerMats, nameOf);
+        mergeDrawCalls(scene, meshes, nameOf);
     }
     return collectMaterials(scene);
 }
@@ -350,13 +399,13 @@ function Board({
     layerMats,
     onMaterials,
 }: Readonly<{ url: string; layerMats: LayerMats; onMaterials: (m: MatEntry[]) => void }>) {
-    const { scene } = useGLTF(url);
+    const { scene, parser } = useGLTF(url);
     const group = useRef<THREE.Group>(null);
 
     useLayoutEffect(() => {
         const g = group.current;
         if (!g) return;
-        const mats = processScene(scene, layerMats);
+        const mats = processScene(scene, layerMats, parser as GltfParser | undefined);
         onMaterials(mats);
 
         g.rotation.set(0, 0, 0);
@@ -382,7 +431,7 @@ function Board({
         g.position.x -= center.x;
         g.position.z -= center.z;
         g.position.y -= box2.min.y;
-    }, [scene, layerMats, onMaterials]);
+    }, [scene, parser, layerMats, onMaterials]);
 
     return (
         <group ref={group}>

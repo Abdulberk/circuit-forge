@@ -213,6 +213,140 @@ export function enlargeBoard(board: TscElement[], marginMm: number): TscElement[
 }
 
 /**
+ * Shrink a routed board's rectangular outline down to what the board actually CONTAINS, plus a clearance.
+ *
+ * WHY. `enlargeBoard` adds routing headroom (6mm/side by default) because freerouting routes strictly
+ * inside the boundary and tscircuit's auto-size packs parts too tightly for a dense net to complete. That
+ * headroom does its job during routing and is then pure waste: it stays in the delivered outline, so every
+ * board ships with up to 12mm of empty laminate on each axis. The customer pays for it (board area is what
+ * fabs price on), it makes the 3D preview look like a hobby prototype, and it is invisible in the DRC
+ * report because empty laminate violates nothing.
+ *
+ * This is a SUGGESTION, not a mutation of the verdict: the caller re-runs the DRC notary on the shrunk
+ * board and keeps it only if it is still certified. Shrinking can genuinely fail — a trace freerouting ran
+ * out near the old boundary can land inside the new edge clearance — and a smaller board that fails DRC is
+ * strictly worse than a larger one that passes.
+ *
+ * Returns the board unchanged (same array identity) when there is nothing safe to do: a non-rectangular
+ * outline, no measurable content, or a proposed size that is not actually smaller.
+ */
+export function shrinkBoardToContent(board: TscElement[], clearanceMm: number): TscElement[] {
+    const boardEl = board.find((e) => e.type === 'pcb_board') as
+        | { width?: number; height?: number; center?: { x?: number; y?: number }; outline?: unknown }
+        | undefined;
+    // A custom outline is the designer's shape, not our headroom — never second-guess it.
+    if (!boardEl || boardEl.outline) return board;
+
+    const box = contentBounds(board);
+    if (!box) return board;
+
+    const old = { x: Number(boardEl.center?.x ?? 0), y: Number(boardEl.center?.y ?? 0) };
+    // Each axis is decided on its own. An axis is only touched when the content genuinely leaves slack
+    // there — and its centre moves only with it, so a board whose content already overflows one axis is
+    // left exactly as it was on that axis rather than being re-centred underneath the overflow.
+    const x = axis(box.minX, box.maxX, Number(boardEl.width ?? 0), clearanceMm);
+    const y = axis(box.minY, box.maxY, Number(boardEl.height ?? 0), clearanceMm);
+    if (!x && !y) return board;
+
+    return board.map((e) =>
+        e === (boardEl as unknown as TscElement)
+            ? {
+                  ...e,
+                  width: x?.size ?? Number(boardEl.width ?? 0),
+                  height: y?.size ?? Number(boardEl.height ?? 0),
+                  center: { x: x?.center ?? old.x, y: y?.center ?? old.y },
+              }
+            : e,
+    );
+}
+
+
+/**
+ * One axis of the shrink: the tighter size and the centre that goes with it, or null when there is no
+ * slack to give back.
+ *
+ * Only ever shrinks. Content that already needs more room than the outline gives it is a real condition
+ * for DRC to report; silently GROWING the board here would hide it. The centre moves to the content's
+ * midpoint because freerouting's copper is not symmetric — a shrink that kept the old centre would clip
+ * whichever side the routing leaned towards.
+ */
+function axis(
+    min: number,
+    max: number,
+    oldSize: number,
+    clearanceMm: number,
+): { size: number; center: number } | null {
+    const size = max - min + 2 * clearanceMm;
+    return size < oldSize ? { size, center: (min + max) / 2 } : null;
+}
+
+/**
+ * The bounding box of everything that must physically stay on the laminate: copper (pads, traces, vias)
+ * and component courtyards (the body's own keep-out, which is what actually decides whether a part hangs
+ * off the edge).
+ *
+ * Silkscreen is deliberately excluded. It carries no manufacturing constraint — a designator that would
+ * fall outside the outline is simply not printed — and including it would let a wide reference label veto
+ * the shrink on nearly every board, which is how a correction becomes a no-op nobody notices.
+ */
+function contentBounds(board: TscElement[]): { minX: number; maxX: number; minY: number; maxY: number } | null {
+    let minX = Infinity,
+        maxX = -Infinity,
+        minY = Infinity,
+        maxY = -Infinity;
+    const add = (x: unknown, y: unknown, halfW = 0, halfH = 0): void => {
+        const nx = Number(x),
+            ny = Number(y);
+        if (!Number.isFinite(nx) || !Number.isFinite(ny)) return;
+        minX = Math.min(minX, nx - halfW);
+        maxX = Math.max(maxX, nx + halfW);
+        minY = Math.min(minY, ny - halfH);
+        maxY = Math.max(maxY, ny + halfH);
+    };
+
+    for (const e of board) {
+        const r = e as Record<string, unknown>;
+        switch (e.type) {
+            case 'pcb_smtpad':
+                add(r.x, r.y, half(r.width, r.radius), half(r.height, r.radius));
+                break;
+            case 'pcb_plated_hole':
+            case 'pcb_hole': {
+                // THT pads are described either by an outer diameter or by a rectangular pad size.
+                const d = half(r.outer_diameter ?? r.hole_diameter, undefined) || 0;
+                add(r.x, r.y, half(r.outer_width, undefined) || d, half(r.outer_height, undefined) || d);
+                break;
+            }
+            case 'pcb_via':
+                add(r.x, r.y, half(r.outer_diameter, undefined), half(r.outer_diameter, undefined));
+                break;
+            case 'pcb_trace': {
+                const route = Array.isArray(r.route) ? (r.route as Record<string, unknown>[]) : [];
+                for (const pt of route) add(pt.x, pt.y, half(pt.width, undefined), half(pt.width, undefined));
+                break;
+            }
+            case 'pcb_courtyard_outline': {
+                const outline = Array.isArray(r.outline) ? (r.outline as Record<string, unknown>[]) : [];
+                for (const pt of outline) add(pt.x, pt.y);
+                break;
+            }
+            default:
+                break;
+        }
+    }
+    return Number.isFinite(minX) && Number.isFinite(minY) ? { minX, maxX, minY, maxY } : null;
+}
+
+/** Half of a diameter/size field, or of twice a radius. 0 for anything non-numeric — a missing size must
+ *  not poison the bounds with NaN. */
+function half(size: unknown, radius: unknown): number {
+    const s = Number(size);
+    if (Number.isFinite(s) && s > 0) return s / 2;
+    const r = Number(radius);
+    return Number.isFinite(r) && r > 0 ? r : 0;
+}
+
+/**
  * Splice a freerouting SES session's routing back onto the ORIGINAL placed board.
  *
  * WHY not just return `convertDsnSessionToCircuitJson` (the old behaviour, proven lossy 3 Tem 2026):
@@ -238,7 +372,46 @@ export async function mergeSes(original: TscElement[], dsn: string, ses: string)
         base as never,
     ) as TscElement[];
     const routing = reconstructed.filter((e) => e.type === 'pcb_trace' || e.type === 'pcb_via');
-    return [...base, ...routing];
+    return [...base, ...dropDuplicateViaWaypoints(routing)];
+}
+
+/**
+ * Describe each via ONCE.
+ *
+ * dsn-converter reconstructs every layer change twice: as a standalone `pcb_via` carrying the real padstack
+ * (0.6mm pad / 0.3mm drill, from our fab profile) and, redundantly, as a `route_type:'via'` waypoint inside
+ * the trace that passes through it. circuit-json-to-kicad faithfully emits a `(via …)` record for BOTH —
+ * and the waypoint carries no dimensions, so that second record lands at KiCad's built-in default of
+ * 0.8mm/0.4mm.
+ *
+ * The result reaches the customer. Measured on a delivered board: the drill file contains
+ * `T1 (0.300) X90.657Y-110.535` and `T2 (0.400) X90.657Y-110.535` — two hits, two tool diameters, one
+ * coordinate. The fab drills the hole twice; the wider one wins, so the finished annular ring is
+ * (0.6−0.4)/2 = 0.10mm against a 0.15mm rule, on a board stamped manufacturable.
+ *
+ * Nothing caught it. KiCad does report it — `holes_co_located` — but at WARNING severity, and the notary
+ * runs `--severity-error`, so the verdict never saw it. Every via on every board we have ever produced is
+ * affected; it predates the outline and pour work by months.
+ *
+ * The standalone element is the authoritative one, so the waypoint is dropped — but only where a real via
+ * sits at that exact point. A waypoint with no matching element is the ONLY record of that layer change and
+ * is left alone, because losing a via is a broken board and a duplicated one is merely a bad hole.
+ */
+export function dropDuplicateViaWaypoints(routing: TscElement[]): TscElement[] {
+    const key = (x: unknown, y: unknown): string => `${Number(x).toFixed(4)},${Number(y).toFixed(4)}`;
+    const at = (e: TscElement): { x?: unknown; y?: unknown } => e as unknown as { x?: unknown; y?: unknown };
+    const described = new Set(routing.filter((e) => e.type === 'pcb_via').map((e) => key(at(e).x, at(e).y)));
+    if (described.size === 0) return routing;
+    return routing.map((e) => {
+        if (e.type !== 'pcb_trace') return e;
+        const route = (e as { route?: unknown }).route;
+        if (!Array.isArray(route)) return e;
+        const kept = route.filter((p) => {
+            const pt = p as { route_type?: string; x?: unknown; y?: unknown };
+            return pt.route_type !== 'via' || !described.has(key(pt.x, pt.y));
+        });
+        return kept.length === route.length ? e : { ...e, route: kept };
+    });
 }
 
 /** Drop routed geometry so an external router starts from placement only. */

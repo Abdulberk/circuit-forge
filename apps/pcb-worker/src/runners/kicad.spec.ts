@@ -156,6 +156,47 @@ describe('the notary memo — a second identical DRC is skipped, but only when i
     });
 });
 
+/**
+ * The 3D export is the one consumer that cannot refill the copper pour itself: `export gerbers` has
+ * `--check-zones` and `pcb drc` has `--refill-zones`, but `export glb` has only `--include-zones`, which
+ * exports a fill that already exists. pcb-core emits the zone UNFILLED, so without an explicit fill the
+ * customer's fab bundle carried a ground plane and the 3D preview they inspect did not.
+ */
+describe('exportGlb — the pour is filled before the board is rendered', () => {
+    const glbWrites = () =>
+        execFileMock.mockImplementation((bin: string, args: string[], _o: unknown, cb: Cb) => {
+            if (bin === 'python3') return cb(null);
+            writeFileSync(args[args.indexOf('--output') + 1]!, 'glTF-bytes');
+            cb(null);
+        });
+
+    it('runs the zone fill on the board BEFORE kicad-cli exports it', async () => {
+        glbWrites();
+        await makeNativeKicad({ cli: 'kicad-cli-for-test', workDir, fillZonesScript: '/fill.py' }).exportGlb('(board)');
+        const bins = execFileMock.mock.calls.map((c) => c[0] as string);
+        expect(bins[0]).toBe('python3'); // the fill, first
+        expect(bins[1]).toBe('kicad-cli-for-test'); // then the export
+        expect(execFileMock.mock.calls[0]![1]).toEqual(['/fill.py', expect.stringContaining('b.kicad_pcb')]);
+    });
+
+    it('still exports when the fill fails — a worse picture must not fail a manufacturable board', async () => {
+        execFileMock.mockImplementation((bin: string, args: string[], _o: unknown, cb: Cb) => {
+            if (bin === 'python3') return cb(Object.assign(new Error('pcbnew missing'), { code: 1 }));
+            writeFileSync(args[args.indexOf('--output') + 1]!, 'glTF-bytes');
+            cb(null);
+        });
+        await expect(
+            makeNativeKicad({ cli: 'kicad-cli-for-test', workDir, fillZonesScript: '/fill.py' }).exportGlb('(board)'),
+        ).resolves.toBeInstanceOf(Buffer);
+    });
+
+    it('asks kicad-cli to INCLUDE the zones it just filled', async () => {
+        glbWrites();
+        await makeNativeKicad({ cli: 'kicad-cli-for-test', workDir, fillZonesScript: '/fill.py' }).exportGlb('(board)');
+        expect(execFileMock.mock.calls[1]![1] as string[]).toContain('--include-zones');
+    });
+});
+
 describe('exportGerbers — what ships is exported from the board that was checked', () => {
     /** A plotted layer with real geometry: a Gerber carrying no D01/D02 draws nothing. */
     const PLOTTED = 'G04 plotted*\nX0Y0D02*\nX100Y0D01*\nM02*';

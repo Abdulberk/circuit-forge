@@ -24,6 +24,8 @@ const MAX_BUFFER = 64 * 1024 * 1024;
 
 export interface KicadOpts {
     cli?: string;
+    /** Path to the pcbnew zone-fill helper. Baked into the runtime image; overridable for tests. */
+    fillZonesScript?: string;
     timeoutMs?: number;
     workDir?: string;
     keep?: boolean;
@@ -102,6 +104,8 @@ function assertDeliverable(layers: Record<string, string>): void {
 
 export function makeNativeKicad(opts: KicadOpts = {}): NativeKicad {
     const cli = opts.cli ?? process.env.KICAD_CLI ?? 'kicad-cli';
+    const fillZonesScript =
+        opts.fillZonesScript ?? process.env.KICAD_FILL_ZONES_SCRIPT ?? '/usr/local/bin/fill-zones.py';
     const timeoutMs = opts.timeoutMs ?? 300_000;
     const baseDir = opts.workDir ?? tmpdir();
 
@@ -218,8 +222,38 @@ export function makeNativeKicad(opts: KicadOpts = {}): NativeKicad {
         });
     };
 
+    /**
+     * The 3D export is the ONLY consumer that cannot refill the copper pour itself.
+     *
+     * `pcb export gerbers` takes `--check-zones` and `pcb drc` takes `--refill-zones`, so both judge and
+     * plot a board whose ground plane is filled. `export glb` has only `--include-zones`, which exports a
+     * fill that already exists — and pcb-core emits the zone UNfilled (measured: every gallery board has
+     * one zone and zero filled polygons). The result was the same checked-≠-delivered split we closed on
+     * the gerber side: the bundle sent to the fab carried a ground plane and the 3D preview the customer
+     * inspects did not. Filling is only available through the pcbnew Python API, hence a script rather
+     * than a flag — it is a no-op on a board with no zones, so it runs unconditionally.
+     */
+    const fillZones = async (dir: string, boardPath: string): Promise<void> => {
+        try {
+            await execFileAsync('python3', [fillZonesScript, boardPath], {
+                cwd: dir,
+                timeout: timeoutMs,
+                maxBuffer: MAX_BUFFER,
+            });
+        } catch (e) {
+            // A pour that cannot be filled is a worse-looking preview, never a wrong verdict — DRC and the
+            // gerbers refill independently. Report it and carry on rather than failing a manufacturable job
+            // over its picture.
+            opts.log?.info(
+                { error: e instanceof Error ? e.message : String(e) },
+                'Zone fill before 3D export failed — the render will show no copper pour',
+            );
+        }
+    };
+
     const exportGlb = async (kicadPcb: string): Promise<Buffer> =>
         withBoard(kicadPcb, undefined, async (dir) => {
+            await fillZones(dir, join(dir, 'b.kicad_pcb'));
             const out = join(dir, 'b.glb');
             await execFileAsync(
                 cli,

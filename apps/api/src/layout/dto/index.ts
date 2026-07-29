@@ -160,7 +160,7 @@ export class CreateLayoutDto {
 
     @ApiPropertyOptional({
         description:
-            "Placement engine: 'grid' (default), 'auto' (TypeScript connectivity-aware), or 'rust' (out-of-process optimized engine)",
+            "Placement engine. Omit for the default: 'auto' (connectivity-aware, floor-guaranteed — it is only adopted when it beats the grid). 'grid' forces the deterministic connectivity-blind grid; 'rust' uses the out-of-process optimized engine.",
         enum: ['grid', 'auto', 'rust'],
     })
     @IsOptional()

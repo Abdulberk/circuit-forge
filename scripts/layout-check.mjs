@@ -25,7 +25,7 @@ assertImagesMatchProduction();
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const pkgRoot = join(__dirname, '..', 'packages', 'pcb-core');
 const outRoot = join(pkgRoot, '.layout-check');
-const { layoutCircuit, exportDsn, mergeSes, stripRouting, injectModels } = await import(
+const { layoutCircuit, exportDsn, mergeSes, stripRouting, injectModels, hasVisibleDesignators } = await import(
     new URL(`file://${join(pkgRoot, 'dist', 'index.js').replace(/\\/g, '/')}`).href
 );
 
@@ -333,6 +333,76 @@ if (frOk) {
         } else {
             ok(`${name}: delivery agrees with the route — tier=quality, DRC-certified, margin ${qd.marginMm}mm`);
         }
+
+        // The routing headroom must be GIVEN BACK. freerouting routes inside an oversized outline (the
+        // margin ladder above), and that headroom used to survive into the delivered board: measured on
+        // this very fixture, a 22×11mm circuit shipped as a 50×40mm board — 83% of the laminate empty,
+        // priced by area, and invisible to every check because empty copper-free area violates no rule.
+        // pcb-core now trims the outline back and re-certifies it with the notary; assert that it did,
+        // because a silently-skipped trim looks exactly like a working one from the outside.
+        const outline = (pcb) => {
+            const xs = [], ys = [];
+            for (const m of pcb.matchAll(/\(gr_line\s+\(start ([-\d.]+) ([-\d.]+)\)\s+\(end ([-\d.]+) ([-\d.]+)\)[\s\S]{0,200}?Edge\.Cuts/g)) {
+                xs.push(+m[1], +m[3]);
+                ys.push(+m[2], +m[4]);
+            }
+            return xs.length ? { w: Math.max(...xs) - Math.min(...xs), h: Math.max(...ys) - Math.min(...ys) } : null;
+        };
+        const trimmedTo = outline(q.outputs.kicadPcb);
+        const trimNote = q.diagnostics.find((d) => d.code === 'PCB052');
+        // The board was routed inside (auto-size + 2×margin). Anything close to that is untrimmed.
+        const routedW = (trimmedTo?.w ?? 0) + 2 * (q.delivery?.routing?.marginMm ?? 0);
+        if (!trimmedTo) {
+            fail(`${name}: delivered board has no Edge.Cuts outline to measure`);
+        } else if (!trimNote) {
+            fail(`${name}: no PCB052 — the outline trim did not even report an outcome`);
+        } else if (!trimNote.message.includes('trimmed')) {
+            fail(`${name}: routing headroom NOT returned — ${trimNote.message}`);
+        } else {
+            ok(
+                `${name}: routing headroom returned — delivered ${trimmedTo.w.toFixed(1)}×${trimmedTo.h.toFixed(1)}mm ` +
+                    `instead of ~${routedW.toFixed(1)}mm wide, DRC re-certified`,
+            );
+        }
+
+        // Reference designators must be PLOTTED, and that is checked on the OUTPUT rather than inferred
+        // from the source. circuit-json-to-kicad writes each designator twice — a modern
+        // `(property "Reference" …)` carrying `(hide yes)` and a legacy visible `(fp_text reference …)`.
+        // Reading only the hidden property makes the silkscreen look blank; it is not, kicad-cli plots the
+        // fp_text (re-hiding the property leaves the F.Silkscreen gerber byte-identical). But fp_text is the
+        // DEPRECATED half of that pair: the release that drops it leaves only the hidden property, and every
+        // board then ships unlabelled — assemblable by a pick-and-place machine and by nobody else. Nothing
+        // downstream would notice, because silkscreen carries no design rule, so DRC stays clean and the
+        // manufacturability verdict does not move. This is the only thing that would go red.
+        const designated = hasVisibleDesignators(q.outputs.kicadPcb);
+        const silkOps = (l) => ((q.outputs.gerbers.layers[l] ?? '').match(/D0[123]\*/g) ?? []).length;
+        const plotted = silkOps('F_SilkScreen') + silkOps('B_SilkScreen');
+        if (!designated)
+            fail(`${name}: no VISIBLE reference designator on either silkscreen layer — the board ships unlabelled`);
+        else if (plotted === 0)
+            fail(`${name}: the board declares designators but the delivered silkscreen gerbers plot nothing`);
+        else ok(`${name}: designators reach the delivered silkscreen — ${plotted} plotted operation(s)`);
+
+        // ONE PHYSICAL HOLE, ONE DRILL HIT. dsn-converter describes every layer change twice — as a
+        // standalone pcb_via carrying the real padstack AND as a route_type:'via' waypoint inside the trace
+        // — and circuit-json-to-kicad emits a (via …) record for both. The waypoint has no dimensions, so
+        // its record lands at KiCad's 0.8/0.4 default. Measured on a delivered board before the fix, the
+        // drill file carried "T1 (0.300) X90.657Y-110.535" and "T2 (0.400) X90.657Y-110.535": two hits, two
+        // tool diameters, one coordinate. The wider one wins, so the finished annular ring is 0.10mm
+        // against a 0.15mm rule — on a board stamped manufacturable.
+        //
+        // KiCad does report it, as `holes_co_located`, but at WARNING severity, and the notary runs
+        // --severity-error. So this is checked structurally instead, on our own output, where it is exact.
+        const viaRecords = [...q.outputs.kicadPcb.matchAll(/\(via[\s\S]{0,240}?\(at ([-\d.]+) ([-\d.]+)\)/g)]
+            .map((m) => `${m[1]},${m[2]}`);
+        const coincident = viaRecords.filter((v, i) => viaRecords.indexOf(v) !== i);
+        if (coincident.length)
+            fail(
+                `${name}: ${coincident.length} via(s) described TWICE at the same coordinate — the fab drills ` +
+                    `each of ${[...new Set(coincident)].join(' / ')} twice, at two different diameters`,
+            );
+        else
+            ok(`${name}: ${viaRecords.length} via(s), each described exactly once — no coincident drill hits`);
 
         // real 3D bodies for every footprint
         const injectResult = injectModels(q.outputs.kicadPcb);

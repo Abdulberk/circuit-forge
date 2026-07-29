@@ -32,6 +32,7 @@ import {
     mergeSes,
     stripRouting,
     enlargeBoard,
+    shrinkBoardToContent,
     findFullyUnroutedNets,
     type FreeroutingRunner,
 } from './route';
@@ -711,6 +712,20 @@ async function applyQualityRoute(
                 reason: `no ${best.mode === 'drc' ? 'DRC-clean' : 'fully-routed'} quality route across ${best.tried} margin attempt(s)`,
             };
         }
+        // The routing headroom is invisible in every downstream check — empty laminate violates no rule —
+        // so whether it was given back is reported explicitly rather than left to be inferred from the size.
+        if (best.trim?.applied)
+            diagnostics.push({
+                code: 'PCB052',
+                severity: 'info',
+                message: `routing headroom returned — outline trimmed ${best.trim.before} → ${best.trim.after} at a ${best.trim.clearanceMm}mm copper keep-out, re-certified by the notary.`,
+            });
+        else if (best.trim)
+            diagnostics.push({
+                code: 'PCB052',
+                severity: 'info',
+                message: `outline kept at the routing size — ${best.trim.reason}.`,
+            });
         const traces = best.routedBoard!.filter((e) => e.type === 'pcb_trace').length;
         const vias = best.routedBoard!.filter((e) => e.type === 'pcb_via').length;
         diagnostics.push({
@@ -745,6 +760,71 @@ async function applyQualityRoute(
 }
 
 /**
+ * Give back the routing headroom once routing is done — but only if KiCad still certifies the board.
+ *
+ * The margin ladder deliberately routes inside an OVERSIZED outline (freerouting cannot route outside the
+ * boundary, and a tightly auto-sized board leaves dense nets unfinished). Once a margin is accepted that
+ * headroom is finished work: it survives only as empty laminate the customer buys, prices a larger panel
+ * on, and sees in the 3D preview as a board floating in green. Nothing downstream would ever flag it,
+ * because empty copper-free area violates no design rule.
+ *
+ * The trim is proposed, then RE-JUDGED by the same oracle that accepted the board. If the tighter outline
+ * is not certified — a trace that ran close to the old boundary now sits inside the edge keep-out — the
+ * accepted board is returned untouched. A smaller board is a nicer board; a smaller board that fails DRC
+ * is not a board at all, so the certified one always wins.
+ */
+async function trimAccepted(
+    routed: TscElement[],
+    profile: FabProfile,
+    notaryDrc: NonNullable<LayoutOptions['notaryDrc']>,
+): Promise<{ board: TscElement[]; trim: TrimOutcome }> {
+    const before = boardSize(routed);
+    for (const clearanceMm of TRIM_CLEARANCES_MM) {
+        const trimmed = shrinkBoardToContent(routed, clearanceMm);
+        if (trimmed === routed) return { board: routed, trim: { applied: false, reason: 'the outline was already tight' } };
+        try {
+            const { kicadPcb } = await assembleKicadPcb(trimmed, profile);
+            if (await notaryDrc(kicadPcb, kicadProjectJson(profile)))
+                return { board: trimmed, trim: { applied: true, clearanceMm, before, after: boardSize(trimmed) } };
+        } catch (e) {
+            // The oracle failed to JUDGE rather than judging against us. An unjudged board is never
+            // delivered: keep the outline that was actually certified, and say why.
+            return {
+                board: routed,
+                trim: { applied: false, reason: `the DRC oracle could not judge the trimmed outline (${e instanceof Error ? e.message : String(e)})` },
+            };
+        }
+    }
+    return {
+        board: routed,
+        trim: { applied: false, reason: `no keep-out in ${TRIM_CLEARANCES_MM.join('/')}mm produced a DRC-clean outline` },
+    };
+}
+
+/** What trimAccepted did, so the caller can report it rather than the board silently keeping its headroom. */
+type TrimOutcome =
+    | { applied: true; clearanceMm: number; before: string; after: string }
+    | { applied: false; reason: string };
+
+/**
+ * Copper-to-edge keep-out to leave when trimming, widest first.
+ *
+ * Not just `EDGE_CLEARANCE_MM`: that is the value KiCad REJECTS below, so trimming to exactly it leaves a
+ * board sitting on the rule with no tolerance for the stroke width of the outline itself or for pad
+ * geometry the bounds round. Measured on a real accepted board, a 0.3mm trim came back with six
+ * `copper_edge_clearance` violations reading "actual 0.0000 mm". So the ladder opens at a comfortable
+ * 1mm — still a ~13mm/side saving on a default 6mm routing margin — and steps down to a tight-but-legal
+ * 0.5mm only if the roomier outline somehow fails. The rule floor is never proposed.
+ */
+const TRIM_CLEARANCES_MM = [1, 0.5];
+
+/** "38.0×28.0mm" for a rectangular board, for diagnostics only. */
+function boardSize(board: TscElement[]): string {
+    const b = board.find((e) => e.type === 'pcb_board') as { width?: number; height?: number } | undefined;
+    return `${Number(b?.width ?? 0).toFixed(1)}×${Number(b?.height ?? 0).toFixed(1)}mm`;
+}
+
+/**
  * Try a spread of routing margins; return the first margin whose board passes the oracle.
  * Oracle = injected notaryDrc (real KiCad DRC: 0 violations AND 0 unconnected — the reliable one) when
  * present, else the cheap net-presence pre-check. `accepted:false` means no margin passed (caller falls
@@ -761,6 +841,7 @@ async function routeBestMargin(
     marginMm: number;
     tried: number;
     mode: 'drc' | 'presence';
+    trim?: TrimOutcome;
 }> {
     const freeroute = opts.freeroute!;
     const notaryDrc = opts.notaryDrc;
@@ -775,8 +856,10 @@ async function routeBestMargin(
         if (notaryDrc) {
             const routed = await mergeSes(routingBase, dsn, ses);
             const { kicadPcb } = await assembleKicadPcb(routed, profile);
-            if (await notaryDrc(kicadPcb, kicadProjectJson(profile)))
-                return { routedBoard: routed, accepted: true, marginMm, tried, mode };
+            if (await notaryDrc(kicadPcb, kicadProjectJson(profile))) {
+                const { board, trim } = await trimAccepted(routed, profile, notaryDrc);
+                return { routedBoard: board, accepted: true, marginMm, tried, mode, trim };
+            }
         } else if (findFullyUnroutedNets(dsn, ses).length === 0) {
             return { routedBoard: await mergeSes(routingBase, dsn, ses), accepted: true, marginMm, tried, mode };
         }
@@ -856,7 +939,7 @@ export {
     resolveFabProfile,
 } from './fab-profile';
 export type { FabProfile, FabProfileInput, FabTierName, ResolvedFabProfile, ZoneInjectionResult } from './fab-profile';
-export { generateGerbers, generateKicadPcb, buildBomCsv, buildPnpCsv } from './outputs';
+export { generateGerbers, generateKicadPcb, buildBomCsv, buildPnpCsv, hasVisibleDesignators } from './outputs';
 export type { GerberOutputs } from './outputs';
 export { evaluateTscircuit } from './evaluate';
 export { exportDsn, mergeSes, stripRouting, applyFabRulesToDsn, applyPerNetWidths, enlargeBoard } from './route';

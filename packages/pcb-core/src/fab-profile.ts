@@ -233,6 +233,13 @@ export function boardExtraProps(profile: FabProfile): string {
 }
 
 /**
+ * Copper-to-board-edge keep-out, in mm. It is a DRC rule below (`min_copper_edge_clearance`) AND the
+ * floor any outline-shrink must respect, so it is one exported constant rather than two literals that
+ * drift apart — a shrink that used a smaller number would produce boards KiCad then rejects.
+ */
+export const EDGE_CLEARANCE_MM = 0.3;
+
+/**
  * Minimal KiCad project (.kicad_pro) carrying the profile as board design rules. kicad-cli loads the
  * sibling project for `pcb drc`, so violations are judged against OUR profile, not KiCad defaults.
  */
@@ -245,7 +252,7 @@ export function kicadProjectJson(profile: FabProfile): string {
                     rules: {
                         min_clearance: profile.minClearanceMm,
                         min_connection: profile.minTraceWidthMm,
-                        min_copper_edge_clearance: 0.3,
+                        min_copper_edge_clearance: EDGE_CLEARANCE_MM,
                         min_hole_clearance: 0.25,
                         min_hole_to_hole: 0.25,
                         min_microvia_diameter: 0.2,

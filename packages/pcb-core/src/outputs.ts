@@ -27,6 +27,31 @@ export async function generateKicadPcb(circuitJson: TscElement[]): Promise<strin
     return converter.getOutputString();
 }
 
+/**
+ * Does this board carry visible reference designators on a silkscreen layer?
+ *
+ * WHY THIS IS A FUNCTION AND NOT AN ASSUMPTION. circuit-json-to-kicad writes each designator TWICE: as a
+ * modern `(property "Reference" …)` carrying `(hide yes)`, and as a legacy `(fp_text reference …)` that is
+ * visible. Reading the source, the hidden property looks like a blank silkscreen — it is not; kicad-cli
+ * plots the fp_text, and re-hiding the property leaves the F.Silkscreen gerber byte-identical (measured).
+ * The board has always been labelled.
+ *
+ * What is NOT guaranteed is that it stays that way. `fp_text` is the deprecated half of that pair, and the
+ * day a converter or KiCad release drops it, the property is all that is left and every board silently
+ * ships blank — assemblable by a pick-and-place machine reading the PnP file, and by essentially nobody
+ * else. Nothing downstream would notice: silkscreen carries no design rule, so DRC stays clean and the
+ * manufacturability verdict does not move. So the property is left exactly as the converter emits it, and
+ * the OUTPUT is checked instead of the input.
+ */
+export function hasVisibleDesignators(kicadPcb: string): boolean {
+    // Either representation counts as long as it is not hidden — the question is what gets plotted, not
+    // which of the two spellings the converter happens to use this year.
+    for (const m of kicadPcb.matchAll(/\((?:fp_text\s+reference|property "Reference")[\s\S]{0,400}?\n {4}\)/g)) {
+        if (/\(layer "?[FB]\.SilkS/.test(m[0]) && !m[0].includes('(hide yes)')) return true;
+    }
+    return false;
+}
+
 // ---------------------------------------------------------------- BOM / PnP (pure)
 
 /** BOM from OUR component data (designator/value/footprint + catalog fields when present). */
