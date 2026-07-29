@@ -24,9 +24,6 @@ const BOARDS = [
 
 const TARGET = 40; // world units on largest side
 
-// KiCad's generic LED STEP model is a neutral beige chip — indistinguishable from a resistor/cap and
-// carries no emitter color. We make LEDs READ as LEDs: a lit, emissive, colored epoxy dome. The GLB
-// has no per-LED color, so we vary color by board position → a lively, colorful, real-looking board.
 // The GLB carries no emitter colour — KiCad's LED_D5.0mm STEP is a neutral epoxy dome — so a colour
 // has to be chosen. Red is the modal 5mm indicator LED by a wide margin, so it is the least-wrong
 // default, and it is the one that reads against a green board. Varying it per position was an earlier
@@ -108,62 +105,89 @@ function buildLayerMaterials(peel: THREE.CanvasTexture | null) {
      * real board rather than a green slab.
      */
     const mask = new THREE.MeshPhysicalMaterial({
-        color: '#14743b', // LPI green as it reads front-lit, averaged over copper and bare laminate
-        roughness: 0.42,
+        color: '#0e6b36', // mask over BARE laminate — the field between traces
+        roughness: 0.45,
         metalness: 0,
-        clearcoat: 1, // the mask's own gloss coat — one specular lobe, not two
-        clearcoatRoughness: 0.12,
-        transparent: true,
-        opacity: 0.94, // enough to read as paint, little enough to ghost the traces beneath
-        depthWrite: true,
+        clearcoat: 1, // the cured-resin/air interface; this is what makes it read as a PCB
+        clearcoatRoughness: 0.16, // broad enough that the key light spreads instead of punching a hole
+        // The orange-peel dimple is a property of the AIR interface, not of the pigment body, so it
+        // belongs on the clearcoat normal. On the base lobe it perturbed the diffuse shading instead,
+        // which is the wrong surface entirely.
+        clearcoatNormalMap: peel ?? undefined,
+        clearcoatNormalScale: new THREE.Vector2(0.1, 0.1),
+        ior: 1.56,
+        transparent: false,
+        opacity: 1,
+        side: THREE.DoubleSide, // zero-thickness sheet; the exporter's winding is not guaranteed
         envMapIntensity: 0.9,
-        normalMap: peel ?? undefined,
-        normalScale: new THREE.Vector2(0.15, 0.15),
     });
+    /** The underside sheet, which must NOT receive the top sheet's geometric offset. Same look. */
+    const maskBottom = mask.clone();
     /**
-     * Copper under the mask is COPPER — a metal seen through a coloured filter is still a metal.
+     * This mesh is not bare copper — it is the SAME solder mask, seen over a brighter backscatterer.
      *
-     * Painting it as a green dielectric (metalness 0.22) was the single biggest material error here: it
-     * tinted green twice, once in the copper and again in the mask above it, and it removed the metallic
-     * response that makes a trace catch the light differently from the field around it.
+     * With the mask sheet dropped below the copper crowns (see mergeDrawCalls), the copper prisms are
+     * what is visible wherever a trace runs, so their material has to be "mask over copper": lighter
+     * and slightly warmer than the field, because the coating drains thinner off trace tops and copper
+     * bounces back more light than dull laminate. It stays a dielectric at metalness 0 — the mask is a
+     * turbid, particle-filled medium and a double pass through it destroys the metal's directionality.
+     * The clearcoat must match the field's exactly or every trace edge grows a visible gloss seam.
      */
     const copper = new THREE.MeshPhysicalMaterial({
-        color: '#b87333',
-        metalness: 1,
-        roughness: 0.38,
-        envMapIntensity: 1,
+        color: '#1d8442',
+        metalness: 0,
+        roughness: 0.5,
+        clearcoat: 1,
+        clearcoatRoughness: 0.16, // must match the field exactly, or every trace edge grows a gloss seam
+        ior: 1.56,
+        envMapIntensity: 0.9,
     });
     /** ENIG: immersion gold over nickel. A real metal — no clearcoat, that is a second stacked lobe. */
+    /** ENIG — the only exposed metal on these boards, so it carries a lot of the realism budget. In a
+     *  metalness-1 workflow the base colour IS F0, so this must be measured gold reflectance rather than
+     *  a palette swatch. Satin, not mirror: the thin electroless nickel never levels the etched copper. */
     const pad = new THREE.MeshPhysicalMaterial({
         color: '#ffe0a0',
         metalness: 1,
-        roughness: 0.34,
+        roughness: 0.3,
         envMapIntensity: 1.15,
     });
+    /** Silkscreen ink. Opaque: at 0.92 over an opaque green mask the lerp pulled the white toward the
+     *  board and turned it a dirty grey-green — the warmth belongs in the base colour instead. Never pure
+     *  white, which reads as emissive. */
     const silk = new THREE.MeshPhysicalMaterial({
-        color: '#eae8e0',
+        color: '#eae7de',
         metalness: 0,
-        roughness: 0.88,
-        transparent: true,
-        opacity: 0.92,
-        envMapIntensity: 0.35,
+        roughness: 0.82,
+        specularIntensity: 0.45, // faint epoxy-binder sheen — dialled here, not with a clearcoat
+        transparent: false,
+        opacity: 1,
+        side: THREE.DoubleSide,
+        envMapIntensity: 0.3,
     });
     /** Bare FR4 as seen at the ROUTED EDGE — lighter and warmer than the masked face, and slightly
      *  fibrous. It is never glossy: the router leaves cut glass fibre, not a coated surface. */
+    /**
+     * Once the mask plane covers the core's top face this is a RIM material: the routed edge, the drill
+     * barrels, and the thin bare-laminate rings inside pad openings. That is exactly where tan FR4 is
+     * correct. No normal map — ensurePlanarUV runs per PRIMITIVE and board_PCB is eight of them, so each
+     * face would get its own arbitrary 0..1 mapping. specularIntensity stays at 1: the grazing Fresnel
+     * rim along the 1.6 mm edge is most of what makes it read as a hard material rather than cardboard.
+     */
     const pcb = new THREE.MeshPhysicalMaterial({
-        color: '#dacdab',
+        color: '#c9b98a',
         metalness: 0,
-        roughness: 0.85,
-        envMapIntensity: 0.55,
-        normalMap: peel ?? undefined,
-        normalScale: new THREE.Vector2(0.08, 0.08),
+        roughness: 0.78,
+        ior: 1.55,
+        envMapIntensity: 0.45,
     });
     mask.name = 'Soldermask (maske)';
+    maskBottom.name = 'Soldermask (alt yüz)';
     copper.name = 'Bakır izler (maske altı)';
     pad.name = 'Pad (ENIG altın)';
     silk.name = 'Silkscreen (baskı)';
     pcb.name = 'FR4 (kart gövdesi)';
-    return { mask, copper, via: copper, pad, silk, pcb } as const;
+    return { mask, maskBottom, copper, via: copper, pad, silk, pcb } as const;
 }
 type LayerMats = ReturnType<typeof buildLayerMaterials>;
 
@@ -298,9 +322,11 @@ function makeLedResolver() {
             m = new THREE.MeshPhysicalMaterial({
                 color,
                 emissive: color,
-                emissiveIntensity: 0.85,
-                transmission: 0.45,
-                thickness: 1.2,
+                emissiveIntensity: 2.2,
+                transmission: 0.55,
+                thickness: 2,
+                attenuationColor: new THREE.Color(color),
+                attenuationDistance: 4,
                 ior: 1.5,
                 roughness: 0.14,
                 metalness: 0,
@@ -319,6 +345,9 @@ function makeLedResolver() {
 function assignMaterials(meshes: THREE.Mesh[], layerMats: LayerMats, nameOf: (m: THREE.Object3D) => string) {
     const resolvePart = makePartResolver();
     const resolveLed = makeLedResolver();
+    // The board mid-plane in glTF units (metres): the core spans 0 … 1.510 mm.
+    const MID_Y = 0.000755;
+    const worldY = new THREE.Vector3();
     const byLayer: Partial<Record<Layer, THREE.Material>> = {
         soldermask: layerMats.mask,
         copper: layerMats.copper,
@@ -338,7 +367,14 @@ function assignMaterials(meshes: THREE.Mesh[], layerMats: LayerMats, nameOf: (m:
             m.material = resolveLed();
             continue;
         } // real KiCad dome, tinted
-        const lm = byLayer[layerOf(name)];
+        const layer = layerOf(name);
+        // `board_soldermask` is TWO sheets, top and bottom. They must not share a material instance:
+        // the top one gets a geometric offset below, and merging is keyed by material identity.
+        if (layer === 'soldermask') {
+            m.material = m.getWorldPosition(worldY).y > MID_Y ? layerMats.mask : layerMats.maskBottom;
+            continue;
+        }
+        const lm = byLayer[layer];
         if (lm) m.material = lm;
         else if (Array.isArray(m.material))
             m.material = m.material.map((mt) => resolvePart(mt as THREE.MeshStandardMaterial));
@@ -346,7 +382,33 @@ function assignMaterials(meshes: THREE.Mesh[], layerMats: LayerMats, nameOf: (m:
     }
 }
 
-function mergeDrawCalls(scene: THREE.Group, meshes: THREE.Mesh[], nameOf: (m: THREE.Object3D) => string) {
+/**
+ * Layer heights measured in every board GLB (glTF units are metres; identical across all eight):
+ *
+ *     FR4 core top      1.510 mm
+ *     copper top        1.545 mm   (35 µm)
+ *     pad top           1.550 mm
+ *     soldermask plane  1.560 mm   ← zero thickness, sitting 15 µm ABOVE the copper
+ *     silkscreen plane  1.585 mm
+ *
+ * The mask sheet covering the copper is the whole reason it was drawn at opacity 0.5: transparency was
+ * standing in for "let me see the layer underneath". That is a lerp toward the backdrop, and it is why
+ * the board rendered khaki over tan laminate.
+ *
+ * Dropping the sheet 30 µm replaces the trick with the real thing. The copper then stands 15 µm proud
+ * of the field, so every trace gets an actual shoulder — the exporter writes closed prisms, side walls
+ * included — and that shoulder catches the clearcoat highlight. It is the relief a normal map is
+ * usually faked to imitate, except here it is geometry, so it self-shadows and occludes correctly.
+ */
+const MASK_DROP_M = 0.00003;
+const SILK_DROP_M = 0.00002;
+
+function mergeDrawCalls(
+    scene: THREE.Group,
+    meshes: THREE.Mesh[],
+    nameOf: (m: THREE.Object3D) => string,
+    layerMats: LayerMats,
+) {
     try {
         const buckets = new Map<
             string,
@@ -374,6 +436,11 @@ function mergeDrawCalls(scene: THREE.Group, meshes: THREE.Mesh[], nameOf: (m: TH
             if (!g) throw new Error('mergeGeometries returned null');
             const mm = new THREE.Mesh(g, mat);
             mm.name = `merged_${layer}`;
+            // Applied to the merged mesh rather than baked into the vertices so it stays legible, and
+            // because this lives inside the GLB scene — before the fit-to-view scale — the offset is
+            // carried through that scale and stays physically proportional on every board.
+            if (mat === layerMats.mask) mm.position.y = -MASK_DROP_M;
+            else if (mat === layerMats.silk) mm.position.y = -SILK_DROP_M;
             mm.castShadow = true;
             mm.receiveShadow = true;
             merged.push(mm);
@@ -416,7 +483,7 @@ function processScene(scene: THREE.Group, layerMats: LayerMats, parser?: GltfPar
             if (m.isMesh && m.geometry) meshes.push(m);
         });
         assignMaterials(meshes, layerMats, nameOf);
-        mergeDrawCalls(scene, meshes, nameOf);
+        mergeDrawCalls(scene, meshes, nameOf, layerMats);
     }
     return collectMaterials(scene);
 }
@@ -478,7 +545,10 @@ function Floor() {
 
 /* --------- adjustable light rig --------- */
 export type LightState = { intensity: number; azimuth: number; elevation: number; color: string; exposure: number };
-const DEFAULT_LIGHT: LightState = { intensity: 1.5, azimuth: 35, elevation: 55, color: '#fff4e6', exposure: 1.05 };
+// A single hard directional source against a clearcoat at roughness 0.10 puts a very tight, very
+// intense highlight on the board and blows out whichever corner it lands on. The environment now
+// carries most of the illumination, so the key light only has to shape and cast the contact shadow.
+const DEFAULT_LIGHT: LightState = { intensity: 0.85, azimuth: 35, elevation: 58, color: '#fff4e6', exposure: 1.0 };
 
 function lightPos(l: LightState): [number, number, number] {
     const el = (l.elevation * Math.PI) / 180,
@@ -971,9 +1041,13 @@ export default function Viewer() {
         <div style={{ position: 'fixed', inset: 0, background: '#080d10' }}>
             <Canvas
                 shadows="variance"
-                dpr={[1, 1.5]}
+                // Supersampling is the only anti-aliasing that recovers a sub-pixel trace edge; no
+                // post filter can reconstruct geometry that was never sampled.
+                dpr={[1, 2]}
                 gl={{ antialias: false, powerPreference: 'high-performance' }}
-                camera={{ fov: 34, position: [24, 30, 46], near: 0.1, far: 3000 }}
+                // A 0.5 … 400 frustum instead of 0.1 … 3000 buys back depth precision, which matters
+                // when layers are tens of microns apart.
+                camera={{ fov: 34, position: [24, 30, 46], near: 0.5, far: 400 }}
                 // NOTE: tone mapping is deliberately NOT set here. @react-three/postprocessing forces
                 // gl.toneMapping to NoToneMapping whenever an EffectComposer is mounted, so anything set
                 // on the renderer is silently discarded — which is what left this scene rendering with no
