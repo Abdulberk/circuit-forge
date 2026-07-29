@@ -793,6 +793,7 @@ export {
     type ScreenResult,
     // Tolerance-aware robustness tier (layered on top of the nominal verdict).
     classifyRobustness,
+    robustnessScopeEntry,
     ROBUSTNESS_PROFILES,
     type RobustnessVerdict,
     type RobustnessTier,

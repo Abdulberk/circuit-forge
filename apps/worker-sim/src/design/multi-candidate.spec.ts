@@ -23,6 +23,10 @@ jest.mock('@circuitforge/llm-core', () => ({
         evaluated: y?.evaluated ?? null,
         note: 'stub',
     }),
+    // Pure entry-mapper. It must be in the mock: an omitted export from this module is undefined at call
+    // time, not a loud failure, and the orchestrator would ship a manifest built from nothing.
+    robustnessScopeEntry: (v?: { tier: string; note: string }) =>
+        v && v.tier !== 'unknown' ? { status: 'run', detail: v.note } : { status: 'not-run', detail: v?.note },
 }));
 jest.mock('./pools', () => ({
     llmSem: { run: (fn: () => unknown) => fn() },
@@ -66,6 +70,14 @@ const loopResultOf = (seed: unknown) => ({
     },
     acceptanceCriteria: [],
     assertions: [{ pass: true }],
+    // What a finalist loop really returns: it ran with mcEnabled:false, so its own manifest says robustness
+    // did not run. Stage 4 then runs Monte-Carlo on the winner — the case this fixture exists to cover.
+    scope: {
+        checks: [
+            { id: 'sim', status: 'run' },
+            { id: 'robustness', status: 'not-run', detail: 'no Monte-Carlo ran — nominal values only' },
+        ],
+    },
 });
 
 beforeEach(() => {
@@ -123,6 +135,21 @@ describe('runMultiCandidateDesign', () => {
         expect(alt.simulation).toBeUndefined();
         expect(alt.circuit).toBeDefined();
         expect(alt).toMatchObject({ ok: true, assertionsPassed: 1, assertionsTotal: 1 });
+    });
+
+    it('the winner\x27s scope manifest is restated to match the Monte-Carlo that Stage 4 actually ran', async () => {
+        // Finalists run MC-off, so the winner arrives carrying "robustness: not-run". Stage 4 then runs MC on
+        // it and attaches a robustness verdict. Spreading the winner unchanged would put a manifest that says
+        // nothing was measured directly next to a tier that says it was — the disclosure contradicting the
+        // result it is supposed to describe, which is worse than shipping no disclosure at all.
+        const res = (await runMultiCandidateDesign(input, deps, { n: 4, k: 2, llmBudget: 12 })) as {
+            scope?: { checks: Array<{ id: string; status: string; detail?: string }> };
+            robustness?: { tier: string };
+        };
+        const checks = new Map((res.scope?.checks ?? []).map((c) => [c.id, c]));
+        expect(res.robustness?.tier).toBe('robust');
+        expect(checks.get('robustness')).toMatchObject({ status: 'run', detail: 'stub' });
+        expect(checks.get('sim')!.status).toBe('run'); // every other check is left exactly as the loop wrote it
     });
 
     it('per-request LLM budget caps fan-out (no finalist full-loops when the budget is spent screening)', async () => {

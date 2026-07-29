@@ -6,7 +6,10 @@
 import {
     buildManifest,
     buildElectricalScope,
+    EXCLUDED_CHECKS,
+    excludedEntries,
     buildLayoutScope,
+    withCheck,
     CHECK_IDS,
     CHECK_LABELS,
     type CheckId,
@@ -47,6 +50,33 @@ describe('buildManifest — the disclosure invariant', () => {
     });
 });
 
+describe('withCheck — restating one check a later stage actually ran', () => {
+    it('replaces exactly one entry, keeps the rest and the order untouched', () => {
+        const m = buildManifest(['sim', 'erc', 'robustness'], { sim: { status: 'run' } });
+        const after = withCheck(m, 'robustness', { status: 'run', detail: 'MC on the winner' });
+        expect(after.checks.map((c) => c.id)).toEqual(['sim', 'erc', 'robustness']);
+        expect(byId(after).get('robustness')).toEqual({
+            id: 'robustness',
+            status: 'run',
+            detail: 'MC on the winner',
+        });
+        expect(byId(after).get('sim')!.status).toBe('run');
+        expect(byId(after).get('erc')!.status).toBe('not-run');
+        expect(byId(m).get('robustness')!.status).toBe('not-run'); // the input is not mutated
+    });
+
+    it('refuses a check the manifest does not own (a fragment cannot grow a foreign claim)', () => {
+        const m = buildManifest(['sim'], { sim: { status: 'run' } });
+        expect(() => withCheck(m, 'drc', { status: 'run' })).toThrow(/does not own/);
+    });
+
+    it('refuses to mark a check excluded with no registered reason', () => {
+        // "excluded" with an empty detail reads as a considered decision while saying nothing — a more
+        // convincing form of silence than silence. It must be impossible to emit by accident.
+        expect(() => excludedEntries('drc')).toThrow(/no exclusion reason/);
+    });
+});
+
 describe('buildElectricalScope — the /verify-design fragment', () => {
     it('discloses assertion COVERAGE per dimension and marks the rest not-run', () => {
         const m = buildElectricalScope({ simRan: true, coveredDimensions: ['voltage', 'current'] });
@@ -66,22 +96,48 @@ describe('buildElectricalScope — the /verify-design fragment', () => {
         expect(g.get('polarity')!.status).toBe('not-run');
     });
 
-    it('discloses the derating + robustness reviews (checks that actually run must not be dropped)', () => {
+    it('discloses the resistor-power + robustness reviews (checks that actually run must not be dropped)', () => {
         // default (no reports) → not-run, disclosed not omitted
         const off = byId(buildElectricalScope({ simRan: true, coveredDimensions: [] }));
-        expect(off.get('derating')!.status).toBe('not-run');
+        expect(off.get('stress.resistor-power')!.status).toBe('not-run');
         expect(off.get('robustness')!.status).toBe('not-run');
         // when they produced a result → run
         const on = byId(
             buildElectricalScope({
                 simRan: true,
                 coveredDimensions: [],
-                derating: { status: 'run', detail: 'resistor power vs rating' },
+                resistorPower: { status: 'run', detail: 'resistor power vs rating' },
                 robustness: { status: 'run', detail: 'corner robustness' },
             }),
         );
-        expect(on.get('derating')!.status).toBe('run');
+        expect(on.get('stress.resistor-power')!.status).toBe('run');
         expect(on.get('robustness')!.status).toBe('run');
+    });
+
+    it('the resistor-power check never speaks for the other two stress axes', () => {
+        // The regression this pins: one id called "derating" that only measured resistor dissipation, whose
+        // label promised capacitor voltage margin and current headroom too. Running it must not silence the
+        // two axes nobody checks — they stay separately listed and separately not-run.
+        const g = byId(
+            buildElectricalScope({
+                simRan: true,
+                coveredDimensions: [],
+                resistorPower: { status: 'run', detail: 'resistor power vs rating' },
+            }),
+        );
+        expect(g.get('stress.voltage')!.status).toBe('not-run');
+        expect(g.get('stress.current')!.status).toBe('not-run');
+    });
+
+    it('lists the domains we do not analyse as EXCLUDED with a stated reason', () => {
+        // Absent is indistinguishable from passed. Thermal, EMI and compliance are out of scope by decision,
+        // so they carry the decision and its reason instead of being left out of the list.
+        const g = byId(buildElectricalScope({ simRan: true, coveredDimensions: [] }));
+        for (const id of ['thermal', 'emi', 'compliance'] as const) {
+            expect(g.get(id)!.status).toBe('excluded');
+            expect(g.get(id)!.detail).toBeTruthy();
+            expect(EXCLUDED_CHECKS[id]).toBeTruthy();
+        }
     });
 
     it('a skipped simulation is disclosed as sim not-run (never implies it ran)', () => {

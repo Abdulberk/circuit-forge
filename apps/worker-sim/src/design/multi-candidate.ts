@@ -13,12 +13,14 @@
  * N=1 (the default) degenerates to a single runDesignLoop — byte-identical to the pre-multi-candidate path,
  * so the feature ships DARK and is enabled by config.
  */
+import { withCheck } from '@circuit-forge/eda-core';
 import {
     runDesignLoop,
     screenCandidate,
     selectFinalists,
     runYieldAnalysis,
     classifyRobustness,
+    robustnessScopeEntry,
     type DesignDeps,
     type DesignLoopInput,
     type DesignResult,
@@ -188,10 +190,16 @@ export async function runMultiCandidateDesign(
 
     // Winner keeps its full result (incl. waveform series); alternatives are series-free summaries (#6 row-bound).
     // Re-classify robustness from the winner-only MC just run (the per-finalist loops ran MC-off → 'unknown').
+    const robustness = classifyRobustness(yieldReport, deps.robustnessProfile);
     return {
         ...winner,
         ...(yieldReport ? { yield: yieldReport } : {}),
-        robustness: classifyRobustness(yieldReport, deps.robustnessProfile),
+        robustness,
+        // The winner's manifest was written by a loop that ran with Monte-Carlo OFF, so it states that
+        // robustness did not run — while the verdict directly above it now says it did. Spreading the winner
+        // unchanged would ship those two side by side and let the disclosure contradict the result it
+        // describes. Restate exactly the one check this stage changed, and nothing else.
+        ...(winner.scope ? { scope: withCheck(winner.scope, 'robustness', robustnessScopeEntry(robustness)) } : {}),
         candidates: { generated: screened.length, finalists: finalized.length, llmCalls },
         alternatives: finalized.filter((r) => r !== winner).map(summarizeAlternative),
     };

@@ -13,8 +13,8 @@
  *   - TRAN, floating   → differential Vrms(A−B) can't be recovered from per-node RMS, so fall back to the
  *                        last-timestep ΔV²/R. (basis 'last-timestep')
  *   - AC               → a frequency-domain |H| sweep has no time-domain power; last-timestep snapshot only.
- * Each resistor's dissipation is compared to its rating (explicit `properties.powerRating` W, else a
- * conservative default) and flagged when exceeded.
+ * Each resistor's dissipation is compared to its rating — the part's declared `properties.powerRating`, else
+ * the standard rating for its package size, else a conservative default — and flagged when exceeded.
  *
  * Deliberately INFORMATIONAL: an exceeded DEFAULT rating is a warning surfaced in the evidence pack,
  * not an automatic verdict failure — the default is a guess, and false-failing a design on a guessed
@@ -24,8 +24,51 @@ import { sanitizeNodeName, parseSpiceValue, type CircuitJson } from '@circuit-fo
 
 import type { SimMeasurement } from './circuit-simulator.service';
 
-/** Standard through-hole/SMD resistor rating when the component doesn't declare one. */
+/** Rating used when the part declares none and its footprint says nothing — a through-hole axial resistor,
+ *  the most common part with no package code. */
 const DEFAULT_RESISTOR_RATING_W = 0.25;
+
+/**
+ * Power rating by chip-resistor package, in watts at 70 °C.
+ *
+ * WHY THIS TABLE EXISTS. Package size IS the power rating for a chip resistor — that is what the size is
+ * for. Charging every resistor the same 0.25 W regardless of package was wrong in the dangerous direction:
+ * an 0603 is rated 0.1 W, so a design dissipating 0.2 W in one passed the check with 2.5× the power budget
+ * it actually has. The board is built, that resistor runs hot, drifts, and eventually opens — and the
+ * verification report said it was fine. A rating is only a check if it is the real one.
+ *
+ * Values are the LOWEST in common vendor use for each size (Yageo/Vishay/Panasonic thick-film all publish
+ * these; some premium lines rate higher). Lowest is the right choice: over-stating a rating hides a real
+ * over-power finding, while under-stating it surfaces one the designer can dismiss by declaring the actual
+ * part. The error that costs nothing is the one to prefer.
+ */
+const CHIP_RESISTOR_RATING_W: Readonly<Record<string, number>> = {
+    '01005': 0.031, // 1/32 W
+    '0201': 0.05, //  1/20 W
+    '0402': 0.0625, // 1/16 W
+    '0603': 0.1, //   1/10 W
+    '0805': 0.125, // 1/8 W
+    '1206': 0.25, //  1/4 W
+    '1210': 0.5, //   1/2 W
+    '2010': 0.75, //  3/4 W
+    '1218': 1,
+    '2512': 1,
+};
+
+/**
+ * The imperial package code in a footprint name, or null.
+ *
+ * Takes the FIRST code in the string on purpose. KiCad writes both spellings ("R_0201_0603Metric"), and
+ * 0603 is simultaneously an imperial size (0.1 W) and the metric spelling of 0201 (0.05 W) — so a scan that
+ * matched anywhere would read that footprint as twice the rating it has. Imperial comes first in every
+ * KiCad name and is the only form bare tscircuit footprints use, so first-match is the unambiguous read.
+ * Anything unrecognised (axial DIN bodies, MELF, a bare metric code) returns null and keeps the default,
+ * rather than guessing from a name we do not actually understand.
+ */
+function packageRatingW(footprint: string | undefined): number | null {
+    const code = footprint?.match(/[0-9]{4,5}/)?.[0];
+    return code === undefined ? null : (CHIP_RESISTOR_RATING_W[code] ?? null);
+}
 
 export interface PowerFinding {
     designator: string;
@@ -35,10 +78,13 @@ export interface PowerFinding {
      *  time-averaged heating Vrms²/R for a grounded resistor in a transient), or 'last-timestep' (a snapshot
      *  — a floating transient resistor or an AC sweep, where the true average isn't recoverable here). */
     basis: 'operating-point' | 'rms' | 'last-timestep';
-    /** The rating it was checked against (explicit or default). */
+    /** The rating it was checked against. */
     ratingW: number;
-    /** True when ratingW is the fallback default (so the UI/AI can treat "over" as a softer warning). */
-    ratingIsDefault: boolean;
+    /** Where ratingW came from. Only 'declared' is the part's own number; 'footprint' is the standard
+     *  rating for that package size, and 'default' is a blanket assumption. A consumer treating "over
+     *  rating" as a hard problem should require 'declared' — the other two are strong hints, not datasheet
+     *  facts, and false-failing a design on an assumed rating is worse than reporting it. */
+    ratingSource: 'declared' | 'footprint' | 'default';
     /** dissipationW > ratingW. */
     overRating: boolean;
 }
@@ -58,11 +104,17 @@ function nodeKey(probeOrNet: string): string {
     return sanitizeNodeName(m ? m[1]! : probeOrNet.trim()).toLowerCase();
 }
 
-function ratingOf(properties: Record<string, unknown> | undefined): { ratingW: number; isDefault: boolean } {
+/** Rating in preference order: what the part declares, then what its package implies, then the fallback. */
+function ratingOf(
+    properties: Record<string, unknown> | undefined,
+    footprint: string | undefined,
+): { ratingW: number; ratingSource: PowerFinding['ratingSource'] } {
     const raw = properties?.powerRating;
     const n = typeof raw === 'number' ? raw : typeof raw === 'string' ? Number(raw) : NaN;
-    if (Number.isFinite(n) && n > 0) return { ratingW: n, isDefault: false };
-    return { ratingW: DEFAULT_RESISTOR_RATING_W, isDefault: true };
+    if (Number.isFinite(n) && n > 0) return { ratingW: n, ratingSource: 'declared' };
+    const pkg = packageRatingW(footprint);
+    if (pkg !== null) return { ratingW: pkg, ratingSource: 'footprint' };
+    return { ratingW: DEFAULT_RESISTOR_RATING_W, ratingSource: 'default' };
 }
 
 /**
@@ -138,13 +190,13 @@ export function computeResistorPower(
             basis = 'operating-point';
         }
 
-        const { ratingW, isDefault } = ratingOf(r.properties);
+        const { ratingW, ratingSource } = ratingOf(r.properties, r.footprint);
         components.push({
             designator: r.designator,
             dissipationW: Number(dissipationW.toPrecision(4)),
             basis,
             ratingW,
-            ratingIsDefault: isDefault,
+            ratingSource,
             overRating: dissipationW > ratingW,
         });
     }

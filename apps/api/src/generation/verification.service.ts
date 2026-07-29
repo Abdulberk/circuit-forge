@@ -455,16 +455,16 @@ export class VerificationService {
             // counts as run — a skipped or failed run produced no usable simulation, so it is disclosed
             // not-run, never a false "Simulation ran"), assertion COVERAGE (which quantities the supplied
             // assertions check — coverage, not requirement satisfaction, since no prompt is threaded here),
-            // the resistor-power/derating review, tolerance robustness (MC tier + its basis, or corner), and
+            // the resistor-power review, tolerance robustness (MC tier + its basis, or corner), and
             // orientation role-consistency — each disclosed run ONLY when it produced a result. Decoupling
             // presence stays not-run (deferred: no power-rail marking to identify a rail reliably).
             scope: buildElectricalScope({
                 simRan: sim.simStatus === 'ok',
                 coveredDimensions: [...new Set(assertions.map(criterionDimension))],
-                derating: power
+                resistorPower: power
                     ? {
                           status: 'run',
-                          detail: 'resistor power vs rating — informational, default-rating-based; caps/semiconductors/current not covered',
+                          detail: 'resistor power vs rating — informational; rating from the part when it declares one, else its package size, else a 0.25W default',
                       }
                     : { status: 'not-run', detail: 'no resistor-power data (sim not ok / no resistors)' },
                 robustness: robustnessManifest,
