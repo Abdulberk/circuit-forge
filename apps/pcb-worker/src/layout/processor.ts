@@ -15,6 +15,7 @@ import {
     drcToChecks,
     airwiresFromDrc,
     buildLayoutScope,
+    type LayoutOptions,
 } from '@circuit-forge/pcb-core';
 import { Prisma } from '@prisma/client';
 import { Job, Worker } from 'bullmq';
@@ -141,13 +142,28 @@ export async function processLayoutJob(job: Job<LayoutJobPayload>): Promise<void
         }
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
         const circuit = row.circuit as any;
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        const options = (row.options ?? {}) as any;
+        // The API validated this JSON against LayoutOptionsDto before it was stored, so it is described
+        // rather than re-parsed here — but described as the SUBSET this worker reads. `any` let a typo in
+        // a field name compile into a silently-ignored option.
+        const options = (row.options ?? {}) as Pick<
+            LayoutOptions,
+            'placer' | 'fabProfile' | 'netCurrentsA'
+        >;
 
         const freeroute = makeNativeFreeroutingRunner();
         const kicad = makeNativeKicad({ log: logger });
+        // The PRODUCT default is connectivity-aware placement; pcb-core keeps 'grid' as its library default
+        // because that is a published npm contract. The two differ on purpose: a library must not change what
+        // an existing caller gets on an upgrade, but a customer whose request says nothing about placement is
+        // asking for our best board, not our simplest one.
+        //
+        // Safe by construction rather than by hope: 'auto' is floor-guaranteed — the force-directed pass must
+        // beat the grid on wire length AND re-pass eval+parity AND (with a DRC oracle) route clean, or the grid
+        // board is delivered unchanged. The worst case is the old behaviour plus one extra placement attempt,
+        // and `delivery.placement` records which engine the shipped board actually used either way.
+        const placer: 'grid' | 'auto' | 'rust' = options.placer ?? 'auto';
         const rustPlace =
-            options.placer === 'rust'
+            placer === 'rust'
                 ? makeRustPlacementRunner({ binary: config.RUST_PLACER_PATH, timeoutMs: config.RUST_PLACER_TIMEOUT_MS })
                 : undefined;
 
@@ -157,7 +173,7 @@ export async function processLayoutJob(job: Job<LayoutJobPayload>): Promise<void
             notaryDrc: kicad.notaryDrc,
             fabProfile: options.fabProfile,
             netCurrentsA: options.netCurrentsA,
-            placer: options.placer,
+            placer,
             rustPlace,
             routingMarginMm: config.PCB_ROUTING_MARGIN_MM,
         });

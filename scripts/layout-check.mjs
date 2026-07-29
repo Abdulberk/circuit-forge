@@ -334,6 +334,47 @@ if (frOk) {
             ok(`${name}: delivery agrees with the route — tier=quality, DRC-certified, margin ${qd.marginMm}mm`);
         }
 
+        // The routing headroom must be GIVEN BACK. freerouting routes inside an oversized outline (the
+        // margin ladder above), and that headroom used to survive into the delivered board: measured on
+        // this very fixture, a 22×11mm circuit shipped as a 50×40mm board — 83% of the laminate empty,
+        // priced by area, and invisible to every check because empty copper-free area violates no rule.
+        // pcb-core now trims the outline back and re-certifies it with the notary; assert that it did,
+        // because a silently-skipped trim looks exactly like a working one from the outside.
+        const outline = (pcb) => {
+            const xs = [], ys = [];
+            for (const m of pcb.matchAll(/\(gr_line\s+\(start ([-\d.]+) ([-\d.]+)\)\s+\(end ([-\d.]+) ([-\d.]+)\)[\s\S]{0,200}?Edge\.Cuts/g)) {
+                xs.push(+m[1], +m[3]);
+                ys.push(+m[2], +m[4]);
+            }
+            return xs.length ? { w: Math.max(...xs) - Math.min(...xs), h: Math.max(...ys) - Math.min(...ys) } : null;
+        };
+        const trimmedTo = outline(q.outputs.kicadPcb);
+        const trimNote = q.diagnostics.find((d) => d.code === 'PCB052');
+        // The board was routed inside (auto-size + 2×margin). Anything close to that is untrimmed.
+        const routedW = (trimmedTo?.w ?? 0) + 2 * (q.delivery?.routing?.marginMm ?? 0);
+        if (!trimmedTo) {
+            fail(`${name}: delivered board has no Edge.Cuts outline to measure`);
+        } else if (!trimNote) {
+            fail(`${name}: no PCB052 — the outline trim did not even report an outcome`);
+        } else if (!trimNote.message.includes('trimmed')) {
+            fail(`${name}: routing headroom NOT returned — ${trimNote.message}`);
+        } else {
+            ok(
+                `${name}: routing headroom returned — delivered ${trimmedTo.w.toFixed(1)}×${trimmedTo.h.toFixed(1)}mm ` +
+                    `instead of ~${routedW.toFixed(1)}mm wide, DRC re-certified`,
+            );
+        }
+
+        // Reference designators must be PRINTED. circuit-json-to-kicad hides every footprint property; a
+        // board with no R1/C1/U1 on the silkscreen cannot be hand-assembled, reworked or cross-referenced
+        // against its own schematic — and it is the single most recognisable feature of a real PCB.
+        const refBlocks = [...q.outputs.kicadPcb.matchAll(/\(property "Reference"[\s\S]{0,400}?\n {4}\)/g)];
+        const hiddenRefs = refBlocks.filter((b) => b[0].includes('(hide yes)')).length;
+        if (refBlocks.length === 0) fail(`${name}: the board carries no Reference properties at all`);
+        else if (hiddenRefs > 0)
+            fail(`${name}: ${hiddenRefs}/${refBlocks.length} reference designator(s) still hidden — the silkscreen ships blank`);
+        else ok(`${name}: all ${refBlocks.length} reference designator(s) printed on silkscreen`);
+
         // real 3D bodies for every footprint
         const injectResult = injectModels(q.outputs.kicadPcb);
         writeFileSync(join(dir, 'board_quality.kicad_pcb'), q.outputs.kicadPcb);

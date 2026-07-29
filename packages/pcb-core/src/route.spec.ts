@@ -4,6 +4,7 @@ import {
     applyPerNetWidths,
     stripRouting,
     enlargeBoard,
+    shrinkBoardToContent,
     findFullyUnroutedNets,
     fixPlaceRotations,
 } from './route';
@@ -226,5 +227,81 @@ describe('enlargeBoard — symmetric routing headroom without moving the placeme
         expect(enlargeBoard(board, 0)).toBe(board);
         const outlined = [{ type: 'pcb_board', width: 38, height: 28, outline: [{ x: 0, y: 0 }] }] as never[];
         expect((enlargeBoard(outlined, 6)[0] as unknown as { width: number }).width).toBe(38); // outline board not grown
+    });
+});
+
+describe('shrinkBoardToContent — hand the routing headroom back once routing is finished', () => {
+    const board = (w: number, h: number, center = { x: 0, y: 0 }, extra: object = {}) => ({
+        type: 'pcb_board',
+        width: w,
+        height: h,
+        center,
+        ...extra,
+    });
+    const pad = (x: number, y: number, w = 1, h = 1) => ({ type: 'pcb_smtpad', x, y, width: w, height: h });
+    const boardOf = (els: object[]) => els.find((e) => (e as { type: string }).type === 'pcb_board') as
+        | { width: number; height: number; center: { x: number; y: number } }
+        | undefined;
+
+    it('shrinks a 30mm board around 10mm of content, leaving exactly the edge keep-out', () => {
+        const out = shrinkBoardToContent([board(30, 30), pad(-5, -5), pad(5, 5)] as never, 0.3);
+        // content spans -5.5..5.5 on both axes (pads are 1mm wide) → 11mm + 2×0.3 keep-out
+        expect(boardOf(out)!.width).toBeCloseTo(11.6, 6);
+        expect(boardOf(out)!.height).toBeCloseTo(11.6, 6);
+    });
+
+    it('re-centres on the CONTENT — an off-centre layout must not be clipped by the shrink', () => {
+        const out = shrinkBoardToContent([board(40, 40), pad(8, 8), pad(12, 12)] as never, 0.5);
+        expect(boardOf(out)!.center).toEqual({ x: 10, y: 10 });
+    });
+
+    it('keeps every element that is not the board, untouched', () => {
+        const els = [board(30, 30), pad(1, 1), { type: 'pcb_trace', route: [{ x: 0, y: 0, width: 0.2 }] }];
+        const out = shrinkBoardToContent(els as never, 0.3);
+        expect(out).toHaveLength(3);
+        expect(out.filter((e) => e.type !== 'pcb_board')).toEqual(els.slice(1));
+    });
+
+    it('counts traces, vias, through-holes and courtyards as content — none of them may fall off the edge', () => {
+        const out = shrinkBoardToContent(
+            [
+                board(60, 60),
+                pad(0, 0),
+                { type: 'pcb_trace', route: [{ x: 9, y: 0, width: 0.4 }] },
+                { type: 'pcb_via', x: 0, y: -8, outer_diameter: 0.6 },
+                { type: 'pcb_plated_hole', x: -7, y: 0, outer_diameter: 1.2 },
+                { type: 'pcb_courtyard_outline', outline: [{ x: 0, y: 11 }] },
+            ] as never,
+            0,
+        );
+        expect(boardOf(out)!.width).toBeCloseTo(9.2 + 7.6, 6); // trace right edge 9.2, hole left edge -7.6
+        expect(boardOf(out)!.height).toBeCloseTo(11 + 8.3, 6); // courtyard top 11, via bottom -8.3
+    });
+
+    it('IGNORES silkscreen — a wide designator must not be able to veto the shrink', () => {
+        const out = shrinkBoardToContent(
+            [board(30, 30), pad(0, 0), { type: 'pcb_silkscreen_text', anchor_position: { x: 14, y: 14 } }] as never,
+            0.3,
+        );
+        expect(boardOf(out)!.width).toBeCloseTo(1.6, 6);
+    });
+
+    it.each([
+        ['a custom outline — that shape belongs to the designer, not to our headroom', [board(30, 30, { x: 0, y: 0 }, { outline: [{ x: 0, y: 0 }] }), pad(0, 0)]],
+        ['a board with no measurable content', [board(30, 30)]],
+        ['no board element at all', [pad(0, 0)]],
+    ])('returns the input UNCHANGED for %s', (_label: string, els: object[]) => {
+        expect(shrinkBoardToContent(els as never, 0.3)).toBe(els);
+    });
+
+    it('never GROWS a board whose content already overflows it — DRC reports that, we do not hide it', () => {
+        const els = [board(5, 5), pad(-20, -20), pad(20, 20)];
+        expect(shrinkBoardToContent(els as never, 0.3)).toBe(els);
+    });
+
+    it('shrinks only the axis that has slack when the other is already tight', () => {
+        const out = shrinkBoardToContent([board(40, 4), pad(0, -1.5), pad(0, 1.5)] as never, 0.3);
+        expect(boardOf(out)!.width).toBeCloseTo(1.6, 6); // 1mm of pad + 2×0.3 keep-out
+        expect(boardOf(out)!.height).toBe(4); // no slack (4mm of content needs 4.6mm) — left exactly as it was
     });
 });

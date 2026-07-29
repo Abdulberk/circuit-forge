@@ -141,6 +141,28 @@ describe('a board KiCad REJECTED must not become a downloadable bundle', () => {
     });
 });
 
+describe('placement default — a request that says nothing gets our best placement, not our simplest', () => {
+    beforeEach(() => drcReport.mockResolvedValue({ violations: [], unconnected_items: [] }));
+    const placerArg = () => (layoutCircuit.mock.calls[0]![1] as { placer?: string }).placer;
+
+    it('defaults to the connectivity-aware engine when the request omits one', async () => {
+        await processLayoutJob(job);
+        expect(placerArg()).toBe('auto');
+    });
+
+    it.each(['grid', 'auto', 'rust'])('honours an explicit %s — the default never overrides a choice', async (placer) => {
+        layoutJob.findUnique.mockResolvedValue({ circuit: { components: [], nets: [] }, options: { placer } });
+        await processLayoutJob(job);
+        expect(placerArg()).toBe(placer);
+    });
+
+    it('does NOT spin up the rust runner for the defaulted engine', async () => {
+        // The default must not quietly acquire rust's out-of-process cost or its binary dependency.
+        await processLayoutJob(job);
+        expect((layoutCircuit.mock.calls[0]![1] as { rustPlace?: unknown }).rustPlace).toBeUndefined();
+    });
+});
+
 describe('a board KiCad ACCEPTED is delivered', () => {
     beforeEach(() => drcReport.mockResolvedValue({ violations: [], unconnected_items: [] }));
 

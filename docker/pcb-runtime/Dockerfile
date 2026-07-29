@@ -37,4 +37,10 @@ ENV JAVA_HOME=/opt/java/openjdk \
     KICAD_CLI=kicad-cli \
     JAVA_BIN=/opt/java/openjdk/bin/java
 
-RUN node --version && java -version && kicad-cli version
+# Zone filling is only reachable through the pcbnew Python API — `kicad-cli pcb export glb` and
+# `pcb render` have no equivalent of the gerber exporter's `--check-zones`, so without this the 3D view
+# shows a board with no ground plane while the delivered gerbers have one. See the script header.
+COPY docker/pcb-runtime/fill-zones.py /usr/local/bin/fill-zones.py
+
+# Fail the BUILD if pcbnew is not importable, rather than discovering it when a job runs.
+RUN node --version && java -version && kicad-cli version && python3 -c "import pcbnew"

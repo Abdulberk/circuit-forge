@@ -24,7 +24,42 @@ export async function generateKicadPcb(circuitJson: TscElement[]): Promise<strin
     const mod = await import('circuit-json-to-kicad');
     const converter = new mod.CircuitJsonToKicadPcbConverter(circuitJson as never);
     converter.runUntilFinished();
-    return converter.getOutputString();
+    return showReferenceDesignators(converter.getOutputString());
+}
+
+/**
+ * Print the reference designators. circuit-json-to-kicad emits every footprint property — Reference,
+ * Value, Datasheet, Description — with `(hide yes)`, which is right for the three that live on the
+ * fabrication layer and wrong for the one that lives on silkscreen: it means our boards ship with a blank
+ * white-on-green silkscreen and no R1, C1 or U1 anywhere on them.
+ *
+ * That is not cosmetic. The designator is how a human finds the part: it is what assembly instructions,
+ * rework notes, test procedures and every schematic cross-reference name. A board without them can be
+ * populated by a pick-and-place machine reading the PnP file, and by essentially nobody else. It is also
+ * the single most recognisable feature of a real PCB, which is why our renders read as toys.
+ *
+ * Only the Reference property is unhidden, and only its own `(hide yes)`: Value/Datasheet/Description sit
+ * on F.Fab, are frequently empty, and printing them would clutter the silkscreen without adding
+ * information. Our KiCad rules set `min_silk_clearance` to 0, so nothing here can turn a certified board
+ * into a rejected one — and the DRC notary re-judges every board regardless.
+ */
+export function showReferenceDesignators(kicadPcb: string): string {
+    const lines = kicadPcb.split('\n');
+    const out: string[] = [];
+    let inReference = false;
+    for (const line of lines) {
+        if (line.includes('(property "Reference"')) inReference = true;
+        // A property block ends where the next one begins; `(hide yes)` precedes `(uuid …)` in the
+        // generator's output, so a Reference block that somehow lacks the flag simply falls through.
+        else if (inReference && /^\s*\(property "/.test(line)) inReference = false;
+
+        if (inReference && /^\s*\(hide yes\)\s*$/.test(line)) {
+            inReference = false; // the one flag this block owns — the rest of it is left alone
+            continue;
+        }
+        out.push(line);
+    }
+    return out.join('\n');
 }
 
 // ---------------------------------------------------------------- BOM / PnP (pure)
