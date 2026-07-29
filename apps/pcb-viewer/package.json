@@ -3,7 +3,7 @@
     "version": "0.1.0",
     "private": true,
     "scripts": {
-        "dev": "next dev -p 3100",
+        "dev": "node clean-stale-next.mjs && next dev -p 3100",
         "build": "next build",
         "start": "next start -p 3100",
         "lint": "next lint"
