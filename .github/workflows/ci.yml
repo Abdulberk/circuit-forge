@@ -309,3 +309,40 @@ jobs:
 
       - name: The worker-sim image can load its entrypoint
         run: docker run --rm --entrypoint node cf-worker-sim:ci -e "require.resolve('@prisma/client'); console.log('ok')"
+
+  # pcb-viewer is deliberately OUTSIDE the pnpm workspace (its React 18 must not meet the React 19 that
+  # tscircuit needs), which also made it invisible to every other job here: turbo does not see it, so the
+  # root build/lint/typecheck all skip it. It had never been production-built in CI or locally, and two
+  # defects rode that gap — a missing @types/node that makes `next build` exit 1 on a fresh clone, and a
+  # half-wired lint script. This job is the one thing that would have caught either.
+  viewer:
+    name: pcb-viewer (production build)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 8.14.1
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      # --ignore-workspace is load-bearing: without it pnpm resolves against the root workspace and pulls
+      # the React it was excluded to avoid. --frozen-lockfile is what makes the fresh-clone claim real.
+      - name: Install (standalone, frozen)
+        working-directory: apps/pcb-viewer
+        run: pnpm install --ignore-workspace --frozen-lockfile
+
+      - name: Typecheck
+        working-directory: apps/pcb-viewer
+        run: npx tsc --noEmit
+
+      - name: Production build
+        working-directory: apps/pcb-viewer
+        run: pnpm build
+
+      # `next build` self-heals a missing @types/node by installing it mid-build and rewriting
+      # package.json + the lockfile. That would turn a red build into a green one on a machine with a
+      # writable tree, and hide the very failure this job exists to catch — so the tree must come out clean.
+      - name: The build did not rewrite its own manifest
+        run: git diff --exit-code -- apps/pcb-viewer/package.json apps/pcb-viewer/pnpm-lock.yaml

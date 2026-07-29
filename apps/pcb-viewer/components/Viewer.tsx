@@ -115,8 +115,12 @@ function buildLayerMaterials(peel: THREE.CanvasTexture | null) {
         color: '#0e6b36', // mask over BARE laminate — the field between traces
         roughness: 0.45,
         metalness: 0,
-        clearcoat: 1, // the cured-resin/air interface; this is what makes it read as a PCB
-        clearcoatRoughness: 0.16, // broad enough that the key light spreads instead of punching a hole
+        // The cured-resin/air interface — what makes the surface read as a PCB rather than as paint.
+        // At clearcoat 1.0 / roughness 0.16 grazing Fresnel drove the coat to near-total reflectance and
+        // the whole near half of the board rendered as polished aluminium: measured saturation fell 0.88
+        // face-on to 0.22 at a shallow angle. Halved and broadened, it keeps the gloss and loses the foil.
+        clearcoat: 0.5,
+        clearcoatRoughness: 0.3,
         // The orange-peel dimple is a property of the AIR interface, not of the pigment body, so it
         // belongs on the clearcoat normal. On the base lobe it perturbed the diffuse shading instead,
         // which is the wrong surface entirely.
@@ -144,8 +148,8 @@ function buildLayerMaterials(peel: THREE.CanvasTexture | null) {
         color: '#22954b',
         metalness: 0,
         roughness: 0.5,
-        clearcoat: 1,
-        clearcoatRoughness: 0.16, // must match the field exactly, or every trace edge grows a gloss seam
+        clearcoat: 0.5,
+        clearcoatRoughness: 0.3, // must match the field exactly, or every trace edge grows a gloss seam
         ior: 1.56,
         envMapIntensity: 0.9,
     });
@@ -409,15 +413,14 @@ function assignMaterials(meshes: THREE.Mesh[], layerMats: LayerMats, nameOf: (m:
                 const mn = Math.min(c.r, c.g, c.b);
                 return mx > 0 && (mx - mn) / mx > 0.25;
             };
+            // Non-epoxy sub-materials are the LEAD FRAME, and they must not go through the generic part
+            // resolver: its dark branch would paint them as black IC epoxy. A lead is bare tinned metal.
+            const lead = layerMats.pad;
             m.material = Array.isArray(src)
-                ? src.map((mt) =>
-                      isEpoxy(mt as THREE.MeshStandardMaterial)
-                          ? resolveLed()
-                          : resolvePart(mt as THREE.MeshStandardMaterial),
-                  )
+                ? src.map((mt) => (isEpoxy(mt as THREE.MeshStandardMaterial) ? resolveLed() : lead))
                 : isEpoxy(src as THREE.MeshStandardMaterial)
                   ? resolveLed()
-                  : resolvePart(src as THREE.MeshStandardMaterial);
+                  : lead;
             continue;
         }
         const layer = layerOf(name);
@@ -557,6 +560,7 @@ function Board({
     const { scene, parser } = useGLTF(url);
     const camera = useThree((st) => st.camera);
     const controls = useThree((st) => st.controls);
+    const size = useThree((st) => st.size);
     const group = useRef<THREE.Group>(null);
 
     useLayoutEffect(() => {
@@ -606,8 +610,13 @@ function Board({
         g.updateWorldMatrix(true, true);
         const fitted = new THREE.Box3().setFromObject(g);
         const sphere = fitted.getBoundingSphere(new THREE.Sphere());
-        const fov = (camera as THREE.PerspectiveCamera).fov ?? 34;
-        const dist = (sphere.radius / Math.sin((fov * 0.5 * Math.PI) / 180)) * 1.06;
+        // Fit to whichever axis is TIGHTER. Sizing off the vertical field of view alone fits the board
+        // top-to-bottom and lets a narrow or portrait window crop it left and right, while every internal
+        // measure still reports a perfect fit.
+        const persp = camera as THREE.PerspectiveCamera;
+        const vFov = ((persp.fov ?? 34) * Math.PI) / 180;
+        const hFov = 2 * Math.atan(Math.tan(vFov / 2) * (persp.aspect || 1));
+        const dist = (sphere.radius / Math.sin(Math.min(vFov, hFov) / 2)) * 1.06;
         const dir = camera.position.clone().sub(sphere.center).normalize();
         camera.position.copy(sphere.center).addScaledVector(dir, dist);
         camera.lookAt(sphere.center);
@@ -616,7 +625,8 @@ function Board({
             orbit.target.copy(sphere.center);
             orbit.update?.();
         }
-    }, [scene, parser, layerMats, onMaterials, camera, controls]);
+        // The viewport is a dependency: without it a resize leaves the camera framing the old aspect.
+    }, [scene, parser, layerMats, onMaterials, camera, controls, size.width, size.height]);
 
     return (
         <group ref={group}>
@@ -681,7 +691,9 @@ function Floor() {
             {/* A black shadow on a black floor carries no information, which is the real reason the board
                 looked like it was floating. Lifting the ground gives the contact shadow something to be
                 darker THAN. */}
-            <meshStandardMaterial color="#262b2e" roughness={0.92} metalness={0} envMapIntensity={0.15} />
+            {/* envMapIntensity 0.15 rendered this at luminance 18 — darker than the sky behind it, so a
+                shadow on it had nothing to be darker THAN. */}
+            <meshStandardMaterial color="#262b2e" roughness={0.92} metalness={0} envMapIntensity={0.5} />
         </mesh>
     );
 }
@@ -825,7 +837,10 @@ function makeStudioEnvironment(state: EnvState): THREE.Scene {
         new THREE.SphereGeometry(80, 24, 16),
         new THREE.MeshBasicMaterial({
             side: THREE.BackSide,
-            color: new THREE.Color(0x1b2128).multiplyScalar(state.brightness),
+            // Lifted from near-black: an up-facing pad samples the overhead key and reads gold, but a
+            // VERTICAL surface — the TO-220 tab, every header pin — samples this surround. At 0x1b2128
+            // they came out darker than the floor and read as matte plastic rather than metal.
+            color: new THREE.Color(0x3a434c).multiplyScalar(state.brightness),
         }),
     );
     env.add(surround);
@@ -838,6 +853,9 @@ function makeStudioEnvironment(state: EnvState): THREE.Scene {
         [34, 30, -48, 22, 12, 0, Math.PI / 2, 1.5],
         [36, 22, 6, 26, -48, 0, 0, 1.1],
         [70, 40, 0, -16, 16, Math.PI / 2, 0, 0.5],
+        // Two large side sources at pin height, so a vertical metal face has something to reflect.
+        [60, 45, 48, 14, 0, 0, -Math.PI / 2, 1.4],
+        [60, 45, 0, 14, 48, 0, Math.PI, 1.2],
     ];
     // The panel intensities carry the tab controls: brightness scales them all, contrast spreads them
     // apart around the key, and the tint colours them. Before this the three sliders were inert — they
@@ -1356,8 +1374,11 @@ export default function Viewer() {
                     <Floor />
                     {/* A single 58° key casts almost nothing under a flat slab, so the board read as floating
                     no matter how the floor was lit. This is the contact cue, rendered once and frozen. */}
+                    {/* BELOW the laminate seat (y=0) and above the floor (y=-0.02). At +0.01 it was
+                        inside the 2.2-unit-thick slab it was meant to ground, fully occluded — which is
+                        why the board still read as floating after the floor was lifted. */}
                     <ContactShadows
-                        position={[0, 0.01, 0]}
+                        position={[0, -0.01, 0]}
                         scale={70}
                         far={9}
                         blur={2.4}

@@ -29,7 +29,11 @@
         "db:studio": "pnpm --filter api db:studio",
         "db:seed": "pnpm --filter api db:seed",
         "clean": "turbo run clean && rm -rf node_modules",
-        "typecheck": "turbo run typecheck"
+        "typecheck": "turbo run typecheck",
+        "verify:3d-alignment": "node scripts/verify-3d-alignment.mjs",
+        "verify:3d-materials": "node scripts/verify-3d-materials.mjs",
+        "gen:gallery": "node scripts/gen-gallery.mjs",
+        "measure:board": "node scripts/measure-board.mjs"
     },
     "devDependencies": {
         "@types/node": "^20.11.0",
