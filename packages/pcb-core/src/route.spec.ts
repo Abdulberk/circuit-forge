@@ -5,6 +5,7 @@ import {
     stripRouting,
     enlargeBoard,
     shrinkBoardToContent,
+    dropDuplicateViaWaypoints,
     findFullyUnroutedNets,
     fixPlaceRotations,
 } from './route';
@@ -227,6 +228,52 @@ describe('enlargeBoard — symmetric routing headroom without moving the placeme
         expect(enlargeBoard(board, 0)).toBe(board);
         const outlined = [{ type: 'pcb_board', width: 38, height: 28, outline: [{ x: 0, y: 0 }] }] as never[];
         expect((enlargeBoard(outlined, 6)[0] as unknown as { width: number }).width).toBe(38); // outline board not grown
+    });
+});
+
+describe('coincident vias — one physical hole must be described once', () => {
+    const via = (x: number, y: number) => ({ type: 'pcb_via', x, y, outer_diameter: 0.6, hole_diameter: 0.3 });
+    const trace = (route: object[]) => ({ type: 'pcb_trace', pcb_trace_id: 't1', route });
+    const wp = (x: number, y: number) => ({ route_type: 'via', x, y, from_layer: 'top', to_layer: 'bottom' });
+    const wire = (x: number, y: number, layer: string) => ({ route_type: 'wire', x, y, width: 0.2, layer });
+    const routeOf = (els: object[]) =>
+        (els.find((e) => (e as { type: string }).type === 'pcb_trace') as { route: { route_type: string }[] }).route;
+
+    it('drops the trace waypoint that duplicates a real via — the second drill hit', () => {
+        const out = dropDuplicateViaWaypoints([
+            via(1, 2),
+            trace([wire(0, 0, 'top'), wp(1, 2), wire(3, 3, 'bottom')]),
+        ] as never);
+        expect(routeOf(out).filter((p) => p.route_type === 'via')).toHaveLength(0);
+        expect(out.filter((e) => e.type === 'pcb_via')).toHaveLength(1); // the described one survives
+    });
+
+    it('KEEPS a waypoint with no matching via — that one IS the only record of the layer change', () => {
+        // Losing a via is a broken board; duplicating one is a bad hole. Only the safe direction is taken.
+        const out = dropDuplicateViaWaypoints([
+            via(9, 9),
+            trace([wire(0, 0, 'top'), wp(1, 2), wire(3, 3, 'bottom')]),
+        ] as never);
+        expect(routeOf(out).filter((p) => p.route_type === 'via')).toHaveLength(1);
+    });
+
+    it('matches on position, not on identity — coordinates arrive re-serialized', () => {
+        const out = dropDuplicateViaWaypoints([
+            { ...via(1.00001, 2), x: 1.000009 },
+            trace([wp(1.000011, 2)]),
+        ] as never);
+        expect(routeOf(out)).toHaveLength(0);
+    });
+
+    it('leaves the wire waypoints and every other element untouched', () => {
+        const els = [via(1, 2), trace([wire(0, 0, 'top'), wp(1, 2), wire(3, 3, 'bottom')])];
+        const out = dropDuplicateViaWaypoints(els as never);
+        expect(routeOf(out).map((p) => p.route_type)).toEqual(['wire', 'wire']);
+    });
+
+    it('is a no-op on a board with no vias at all', () => {
+        const els = [trace([wire(0, 0, 'top'), wire(3, 3, 'top')])];
+        expect(dropDuplicateViaWaypoints(els as never)).toBe(els);
     });
 });
 

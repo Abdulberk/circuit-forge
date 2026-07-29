@@ -383,6 +383,27 @@ if (frOk) {
             fail(`${name}: the board declares designators but the delivered silkscreen gerbers plot nothing`);
         else ok(`${name}: designators reach the delivered silkscreen — ${plotted} plotted operation(s)`);
 
+        // ONE PHYSICAL HOLE, ONE DRILL HIT. dsn-converter describes every layer change twice — as a
+        // standalone pcb_via carrying the real padstack AND as a route_type:'via' waypoint inside the trace
+        // — and circuit-json-to-kicad emits a (via …) record for both. The waypoint has no dimensions, so
+        // its record lands at KiCad's 0.8/0.4 default. Measured on a delivered board before the fix, the
+        // drill file carried "T1 (0.300) X90.657Y-110.535" and "T2 (0.400) X90.657Y-110.535": two hits, two
+        // tool diameters, one coordinate. The wider one wins, so the finished annular ring is 0.10mm
+        // against a 0.15mm rule — on a board stamped manufacturable.
+        //
+        // KiCad does report it, as `holes_co_located`, but at WARNING severity, and the notary runs
+        // --severity-error. So this is checked structurally instead, on our own output, where it is exact.
+        const viaRecords = [...q.outputs.kicadPcb.matchAll(/\(via[\s\S]{0,240}?\(at ([-\d.]+) ([-\d.]+)\)/g)]
+            .map((m) => `${m[1]},${m[2]}`);
+        const coincident = viaRecords.filter((v, i) => viaRecords.indexOf(v) !== i);
+        if (coincident.length)
+            fail(
+                `${name}: ${coincident.length} via(s) described TWICE at the same coordinate — the fab drills ` +
+                    `each of ${[...new Set(coincident)].join(' / ')} twice, at two different diameters`,
+            );
+        else
+            ok(`${name}: ${viaRecords.length} via(s), each described exactly once — no coincident drill hits`);
+
         // real 3D bodies for every footprint
         const injectResult = injectModels(q.outputs.kicadPcb);
         writeFileSync(join(dir, 'board_quality.kicad_pcb'), q.outputs.kicadPcb);

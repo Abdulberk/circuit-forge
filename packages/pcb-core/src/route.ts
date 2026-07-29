@@ -372,7 +372,46 @@ export async function mergeSes(original: TscElement[], dsn: string, ses: string)
         base as never,
     ) as TscElement[];
     const routing = reconstructed.filter((e) => e.type === 'pcb_trace' || e.type === 'pcb_via');
-    return [...base, ...routing];
+    return [...base, ...dropDuplicateViaWaypoints(routing)];
+}
+
+/**
+ * Describe each via ONCE.
+ *
+ * dsn-converter reconstructs every layer change twice: as a standalone `pcb_via` carrying the real padstack
+ * (0.6mm pad / 0.3mm drill, from our fab profile) and, redundantly, as a `route_type:'via'` waypoint inside
+ * the trace that passes through it. circuit-json-to-kicad faithfully emits a `(via …)` record for BOTH —
+ * and the waypoint carries no dimensions, so that second record lands at KiCad's built-in default of
+ * 0.8mm/0.4mm.
+ *
+ * The result reaches the customer. Measured on a delivered board: the drill file contains
+ * `T1 (0.300) X90.657Y-110.535` and `T2 (0.400) X90.657Y-110.535` — two hits, two tool diameters, one
+ * coordinate. The fab drills the hole twice; the wider one wins, so the finished annular ring is
+ * (0.6−0.4)/2 = 0.10mm against a 0.15mm rule, on a board stamped manufacturable.
+ *
+ * Nothing caught it. KiCad does report it — `holes_co_located` — but at WARNING severity, and the notary
+ * runs `--severity-error`, so the verdict never saw it. Every via on every board we have ever produced is
+ * affected; it predates the outline and pour work by months.
+ *
+ * The standalone element is the authoritative one, so the waypoint is dropped — but only where a real via
+ * sits at that exact point. A waypoint with no matching element is the ONLY record of that layer change and
+ * is left alone, because losing a via is a broken board and a duplicated one is merely a bad hole.
+ */
+export function dropDuplicateViaWaypoints(routing: TscElement[]): TscElement[] {
+    const key = (x: unknown, y: unknown): string => `${Number(x).toFixed(4)},${Number(y).toFixed(4)}`;
+    const at = (e: TscElement): { x?: unknown; y?: unknown } => e as unknown as { x?: unknown; y?: unknown };
+    const described = new Set(routing.filter((e) => e.type === 'pcb_via').map((e) => key(at(e).x, at(e).y)));
+    if (described.size === 0) return routing;
+    return routing.map((e) => {
+        if (e.type !== 'pcb_trace') return e;
+        const route = (e as { route?: unknown }).route;
+        if (!Array.isArray(route)) return e;
+        const kept = route.filter((p) => {
+            const pt = p as { route_type?: string; x?: unknown; y?: unknown };
+            return pt.route_type !== 'via' || !described.has(key(pt.x, pt.y));
+        });
+        return kept.length === route.length ? e : { ...e, route: kept };
+    });
 }
 
 /** Drop routed geometry so an external router starts from placement only. */
