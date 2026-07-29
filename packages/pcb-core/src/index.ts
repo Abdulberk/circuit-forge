@@ -781,7 +781,8 @@ async function trimAccepted(
     const before = boardSize(routed);
     for (const clearanceMm of TRIM_CLEARANCES_MM) {
         const trimmed = shrinkBoardToContent(routed, clearanceMm);
-        if (trimmed === routed) return { board: routed, trim: { applied: false, reason: 'the outline was already tight' } };
+        if (trimmed === routed)
+            return { board: routed, trim: { applied: false, reason: 'the outline was already tight' } };
         try {
             const { kicadPcb } = await assembleKicadPcb(trimmed, profile);
             if (await notaryDrc(kicadPcb, kicadProjectJson(profile)))
@@ -791,13 +792,19 @@ async function trimAccepted(
             // delivered: keep the outline that was actually certified, and say why.
             return {
                 board: routed,
-                trim: { applied: false, reason: `the DRC oracle could not judge the trimmed outline (${e instanceof Error ? e.message : String(e)})` },
+                trim: {
+                    applied: false,
+                    reason: `the DRC oracle could not judge the trimmed outline (${e instanceof Error ? e.message : String(e)})`,
+                },
             };
         }
     }
     return {
         board: routed,
-        trim: { applied: false, reason: `no keep-out in ${TRIM_CLEARANCES_MM.join('/')}mm produced a DRC-clean outline` },
+        trim: {
+            applied: false,
+            reason: `no keep-out in ${TRIM_CLEARANCES_MM.join('/')}mm produced a DRC-clean outline`,
+        },
     };
 }
 

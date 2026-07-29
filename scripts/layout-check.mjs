@@ -49,11 +49,56 @@ const gnd = (netId) => ({ id: 'gnd1', type: 'ground', designator: 'GND1', pins: 
 const dividerLed = {
     version: '1.0',
     components: [
-        { id: 'v1', type: 'voltage_source', designator: 'V1', value: 'DC 9', pins: [{ pinId: '+', netId: 'vin' }, { pinId: '-', netId: 'gnd' }] },
-        { id: 'r1', type: 'resistor', designator: 'R1', value: '10k', pins: [{ pinId: '1', netId: 'vin' }, { pinId: '2', netId: 'vout' }] },
-        { id: 'r2', type: 'resistor', designator: 'R2', value: '10k', pins: [{ pinId: '1', netId: 'vout' }, { pinId: '2', netId: 'gnd' }] },
-        { id: 'r3', type: 'resistor', designator: 'R3', value: '330', pins: [{ pinId: '1', netId: 'vout' }, { pinId: '2', netId: 'ledk' }] },
-        { id: 'd1', type: 'diode', designator: 'LED1', model: 'led_red', pins: [{ pinId: 'anode', netId: 'ledk' }, { pinId: 'cathode', netId: 'gnd' }] },
+        {
+            id: 'v1',
+            type: 'voltage_source',
+            designator: 'V1',
+            value: 'DC 9',
+            pins: [
+                { pinId: '+', netId: 'vin' },
+                { pinId: '-', netId: 'gnd' },
+            ],
+        },
+        {
+            id: 'r1',
+            type: 'resistor',
+            designator: 'R1',
+            value: '10k',
+            pins: [
+                { pinId: '1', netId: 'vin' },
+                { pinId: '2', netId: 'vout' },
+            ],
+        },
+        {
+            id: 'r2',
+            type: 'resistor',
+            designator: 'R2',
+            value: '10k',
+            pins: [
+                { pinId: '1', netId: 'vout' },
+                { pinId: '2', netId: 'gnd' },
+            ],
+        },
+        {
+            id: 'r3',
+            type: 'resistor',
+            designator: 'R3',
+            value: '330',
+            pins: [
+                { pinId: '1', netId: 'vout' },
+                { pinId: '2', netId: 'ledk' },
+            ],
+        },
+        {
+            id: 'd1',
+            type: 'diode',
+            designator: 'LED1',
+            model: 'led_red',
+            pins: [
+                { pinId: 'anode', netId: 'ledk' },
+                { pinId: 'cathode', netId: 'gnd' },
+            ],
+        },
         gnd('gnd'),
     ],
     nets: [
@@ -68,14 +113,87 @@ const dividerLed = {
 const ceAmp = {
     version: '1.0',
     components: [
-        { id: 'v1', type: 'voltage_source', designator: 'V1', value: 'DC 12', pins: [{ pinId: '+', netId: 'vcc' }, { pinId: '-', netId: 'gnd' }] },
-        { id: 'v2', type: 'voltage_source', designator: 'V2', value: 'SIN(0 0.01 1k)', pins: [{ pinId: '+', netId: 'in' }, { pinId: '-', netId: 'gnd' }] },
-        { id: 'q1', type: 'bjt', designator: 'Q1', model: 'QGENNPN', pins: [{ pinId: 'c', netId: 'vc' }, { pinId: 'b', netId: 'vb' }, { pinId: 'e', netId: 've' }] },
-        { id: 'rc', type: 'resistor', designator: 'RC1', value: '4.7k', pins: [{ pinId: '1', netId: 'vcc' }, { pinId: '2', netId: 'vc' }] },
-        { id: 'rb1', type: 'resistor', designator: 'RB1', value: '100k', pins: [{ pinId: '1', netId: 'vcc' }, { pinId: '2', netId: 'vb' }] },
-        { id: 'rb2', type: 'resistor', designator: 'RB2', value: '22k', pins: [{ pinId: '1', netId: 'vb' }, { pinId: '2', netId: 'gnd' }] },
-        { id: 're', type: 'resistor', designator: 'RE1', value: '1k', pins: [{ pinId: '1', netId: 've' }, { pinId: '2', netId: 'gnd' }] },
-        { id: 'c1', type: 'capacitor', designator: 'C1', value: '100n', pins: [{ pinId: '1', netId: 'in' }, { pinId: '2', netId: 'vb' }] },
+        {
+            id: 'v1',
+            type: 'voltage_source',
+            designator: 'V1',
+            value: 'DC 12',
+            pins: [
+                { pinId: '+', netId: 'vcc' },
+                { pinId: '-', netId: 'gnd' },
+            ],
+        },
+        {
+            id: 'v2',
+            type: 'voltage_source',
+            designator: 'V2',
+            value: 'SIN(0 0.01 1k)',
+            pins: [
+                { pinId: '+', netId: 'in' },
+                { pinId: '-', netId: 'gnd' },
+            ],
+        },
+        {
+            id: 'q1',
+            type: 'bjt',
+            designator: 'Q1',
+            model: 'QGENNPN',
+            pins: [
+                { pinId: 'c', netId: 'vc' },
+                { pinId: 'b', netId: 'vb' },
+                { pinId: 'e', netId: 've' },
+            ],
+        },
+        {
+            id: 'rc',
+            type: 'resistor',
+            designator: 'RC1',
+            value: '4.7k',
+            pins: [
+                { pinId: '1', netId: 'vcc' },
+                { pinId: '2', netId: 'vc' },
+            ],
+        },
+        {
+            id: 'rb1',
+            type: 'resistor',
+            designator: 'RB1',
+            value: '100k',
+            pins: [
+                { pinId: '1', netId: 'vcc' },
+                { pinId: '2', netId: 'vb' },
+            ],
+        },
+        {
+            id: 'rb2',
+            type: 'resistor',
+            designator: 'RB2',
+            value: '22k',
+            pins: [
+                { pinId: '1', netId: 'vb' },
+                { pinId: '2', netId: 'gnd' },
+            ],
+        },
+        {
+            id: 're',
+            type: 'resistor',
+            designator: 'RE1',
+            value: '1k',
+            pins: [
+                { pinId: '1', netId: 've' },
+                { pinId: '2', netId: 'gnd' },
+            ],
+        },
+        {
+            id: 'c1',
+            type: 'capacitor',
+            designator: 'C1',
+            value: '100n',
+            pins: [
+                { pinId: '1', netId: 'in' },
+                { pinId: '2', netId: 'vb' },
+            ],
+        },
         gnd('gnd'),
     ],
     nets: [
@@ -92,18 +210,69 @@ const ceAmp = {
 const opampMixed = {
     version: '1.0',
     components: [
-        { id: 'u1', type: 'subckt', designator: 'U1', model: 'OPAMPGEN', pins: [
-            { pinId: 'out', netId: 'out' },
-            { pinId: 'in+', netId: 'gnd' },
-            { pinId: 'in-', netId: 'inm' },
-            { pinId: 'vcc', netId: 'vcc' },
-            { pinId: 'vee', netId: 'vee' },
-        ] },
-        { id: 'r1', type: 'resistor', designator: 'R1', value: '10k', pins: [{ pinId: '1', netId: 'in' }, { pinId: '2', netId: 'inm' }] },
-        { id: 'r2', type: 'resistor', designator: 'R2', value: '20k', pins: [{ pinId: '1', netId: 'inm' }, { pinId: '2', netId: 'out' }] },
-        { id: 'vp', type: 'voltage_source', designator: 'VCC1', value: 'DC 12', pins: [{ pinId: '+', netId: 'vcc' }, { pinId: '-', netId: 'gnd' }] },
-        { id: 'vn', type: 'voltage_source', designator: 'VEE1', value: 'DC -12', pins: [{ pinId: '+', netId: 'vee' }, { pinId: '-', netId: 'gnd' }] },
-        { id: 'vs', type: 'voltage_source', designator: 'VIN1', value: 'SIN(0 1 1k)', pins: [{ pinId: '+', netId: 'in' }, { pinId: '-', netId: 'gnd' }] },
+        {
+            id: 'u1',
+            type: 'subckt',
+            designator: 'U1',
+            model: 'OPAMPGEN',
+            pins: [
+                { pinId: 'out', netId: 'out' },
+                { pinId: 'in+', netId: 'gnd' },
+                { pinId: 'in-', netId: 'inm' },
+                { pinId: 'vcc', netId: 'vcc' },
+                { pinId: 'vee', netId: 'vee' },
+            ],
+        },
+        {
+            id: 'r1',
+            type: 'resistor',
+            designator: 'R1',
+            value: '10k',
+            pins: [
+                { pinId: '1', netId: 'in' },
+                { pinId: '2', netId: 'inm' },
+            ],
+        },
+        {
+            id: 'r2',
+            type: 'resistor',
+            designator: 'R2',
+            value: '20k',
+            pins: [
+                { pinId: '1', netId: 'inm' },
+                { pinId: '2', netId: 'out' },
+            ],
+        },
+        {
+            id: 'vp',
+            type: 'voltage_source',
+            designator: 'VCC1',
+            value: 'DC 12',
+            pins: [
+                { pinId: '+', netId: 'vcc' },
+                { pinId: '-', netId: 'gnd' },
+            ],
+        },
+        {
+            id: 'vn',
+            type: 'voltage_source',
+            designator: 'VEE1',
+            value: 'DC -12',
+            pins: [
+                { pinId: '+', netId: 'vee' },
+                { pinId: '-', netId: 'gnd' },
+            ],
+        },
+        {
+            id: 'vs',
+            type: 'voltage_source',
+            designator: 'VIN1',
+            value: 'SIN(0 1 1k)',
+            pins: [
+                { pinId: '+', netId: 'in' },
+                { pinId: '-', netId: 'gnd' },
+            ],
+        },
         gnd('gnd'),
     ],
     nets: [
@@ -115,7 +284,12 @@ const opampMixed = {
         { id: 'gnd', name: 'GND', isGround: true },
     ],
     models: [
-        { name: 'OPAMPGEN', device: 'subckt', body: '.subckt OPAMPGEN out inp inn vcc vee\n.ends', ports: ['out', 'in+', 'in-', 'vcc', 'vee'] },
+        {
+            name: 'OPAMPGEN',
+            device: 'subckt',
+            body: '.subckt OPAMPGEN out inp inn vcc vee\n.ends',
+            ports: ['out', 'in+', 'in-', 'vcc', 'vee'],
+        },
     ],
 };
 
@@ -147,10 +321,17 @@ for (const [name, circuit] of cases) {
     writeFileSync(join(dir, 'diagnostics.json'), JSON.stringify(result.diagnostics, null, 1));
 
     if (!result.ok) {
-        fail(`${name}: layoutCircuit not ok — ${result.diagnostics.filter((d) => d.severity === 'error').map((d) => `${d.code} ${d.message}`).join(' | ')}`);
+        fail(
+            `${name}: layoutCircuit not ok — ${result.diagnostics
+                .filter((d) => d.severity === 'error')
+                .map((d) => `${d.code} ${d.message}`)
+                .join(' | ')}`,
+        );
         continue;
     }
-    ok(`layout ok in ${Date.now() - t0}ms — traces=${result.stats.traces} vias=${result.stats.vias} completeness=${result.completeness}`);
+    ok(
+        `layout ok in ${Date.now() - t0}ms — traces=${result.stats.traces} vias=${result.stats.vias} completeness=${result.completeness}`,
+    );
 
     // The board must SAY it was routed by the local router. This run injects no freerouting runner, so a
     // `tier: 'quality'` here would mean the field is decorative — and a decorative honesty field is worse
@@ -185,22 +366,32 @@ for (const [name, circuit] of cases) {
     writeFileSync(join(dir, 'pnp.csv'), result.outputs.pnpCsv);
 
     const pourNote = result.diagnostics.find((d) => d.code === 'PCB032' || d.code === 'PCB033');
-    if (pourNote) ok(`pour: ${pourNote.code === 'PCB032' ? 'zone injected' : 'skipped honestly'} — ${pourNote.message.slice(0, 90)}`);
+    if (pourNote)
+        ok(
+            `pour: ${pourNote.code === 'PCB032' ? 'zone injected' : 'skipped honestly'} — ${pourNote.message.slice(0, 90)}`,
+        );
 
     // SEMANTIC ANCHORS: the parity check certifies against the adapter's own selectors; these asserts
     // pin the STATIC map to tscircuit's OWN hints on a real evaluated board (upstream alias-change alarm).
     if (name === 'ce-amp') {
         const q1 = result.evaluated.find((e) => e.type === 'source_component' && e.name === 'Q1');
-        const qPorts = result.evaluated.filter((e) => e.type === 'source_port' && e.source_component_id === q1?.source_component_id);
+        const qPorts = result.evaluated.filter(
+            (e) => e.type === 'source_port' && e.source_component_id === q1?.source_component_id,
+        );
         for (const letter of ['c', 'b', 'e']) {
             const matches = qPorts.filter((p) => (p.port_hints ?? []).includes(letter));
-            if (matches.length !== 1) fail(`semantic anchor: transistor hint '${letter}' matches ${matches.length} ports (expected exactly 1) — upstream alias change!`);
+            if (matches.length !== 1)
+                fail(
+                    `semantic anchor: transistor hint '${letter}' matches ${matches.length} ports (expected exactly 1) — upstream alias change!`,
+                );
         }
         ok('semantic anchors: transistor c/b/e hints unique on the real board');
     }
     if (name === 'divider-led') {
         const led = result.evaluated.find((e) => e.type === 'source_component' && e.name === 'LED1');
-        const ledPorts = result.evaluated.filter((e) => e.type === 'source_port' && e.source_component_id === led?.source_component_id);
+        const ledPorts = result.evaluated.filter(
+            (e) => e.type === 'source_port' && e.source_component_id === led?.source_component_id,
+        );
         const anode = ledPorts.filter((p) => (p.port_hints ?? []).includes('anode'));
         const cathode = ledPorts.filter((p) => (p.port_hints ?? []).includes('cathode'));
         if (anode.length !== 1 || cathode.length !== 1 || anode[0] === cathode[0]) {
@@ -219,7 +410,8 @@ try {
 } catch {
     console.log(`\n(kicad notary skipped — ${KICAD_IMAGE} not available locally)`);
 }
-if (!dockerOk && STRICT) fail(`PCB_GATE_STRICT: ${KICAD_IMAGE} not available — the DRC gate cannot run (refusing a silent green).`);
+if (!dockerOk && STRICT)
+    fail(`PCB_GATE_STRICT: ${KICAD_IMAGE} not available — the DRC gate cannot run (refusing a silent green).`);
 
 if (dockerOk) {
     // NOTARY POLICY (Phase 1): the DRC verdict is REPORTED as the manufacturable-stamp status, not a
@@ -233,16 +425,34 @@ if (dockerOk) {
         try {
             execFileSync(
                 'docker',
-                ['run', '--rm', ...dockerUserArgs(), '-v', `${toDocker(dir)}:/work`, KICAD_IMAGE, 'kicad-cli', 'pcb', 'drc',
-                    '--refill-zones', '--exit-code-violations', '--severity-error', '--format', 'json',
-                    '--output', '/work/drc.json', '/work/board.kicad_pcb'],
+                [
+                    'run',
+                    '--rm',
+                    ...dockerUserArgs(),
+                    '-v',
+                    `${toDocker(dir)}:/work`,
+                    KICAD_IMAGE,
+                    'kicad-cli',
+                    'pcb',
+                    'drc',
+                    '--refill-zones',
+                    '--exit-code-violations',
+                    '--severity-error',
+                    '--format',
+                    'json',
+                    '--output',
+                    '/work/drc.json',
+                    '/work/board.kicad_pcb',
+                ],
                 { stdio: 'pipe', timeout: 300000, env: { ...process.env, MSYS_NO_PATHCONV: '1' } },
             );
             ok(`${name}: DRC CLEAN — manufacturable stamp ✔`);
         } catch (e) {
             // exit 5 = violations found (the notary DID run); anything else = the notary itself failed.
             if (e.status !== 5) {
-                fail(`${name}: kicad-cli execution failed (exit ${e.status ?? '?'}) — ${String(e.stderr ?? e).slice(0, 200)}`);
+                fail(
+                    `${name}: kicad-cli execution failed (exit ${e.status ?? '?'}) — ${String(e.stderr ?? e).slice(0, 200)}`,
+                );
                 continue;
             }
             // Exit 5 means kicad-cli found violations AND/OR unconnected items. Distinguish the three cases
@@ -252,7 +462,9 @@ if (dockerOk) {
             // failure impossible to diagnose from the log. Same posture as the production runner: no report
             // file is not evidence of anything.
             if (!existsSync(join(dir, 'drc.json'))) {
-                fail(`${name}: kicad-cli exited 5 but wrote NO report to the mounted dir — the notary did not actually report (mount/permission problem, not a board problem)`);
+                fail(
+                    `${name}: kicad-cli exited 5 but wrote NO report to the mounted dir — the notary did not actually report (mount/permission problem, not a board problem)`,
+                );
                 continue;
             }
             const report = JSON.parse(readFileSync(join(dir, 'drc.json'), 'utf8'));
@@ -260,10 +472,17 @@ if (dockerOk) {
             const unconn = report.unconnected_items ?? [];
             const byType = {};
             for (const v of viols) byType[v.type] = (byType[v.type] ?? 0) + 1;
-            const detail = [
-                viols.length ? `${viols.length} violation(s): ${Object.entries(byType).map(([t, n]) => `${t}×${n}`).join(', ')}` : null,
-                unconn.length ? `${unconn.length} unconnected item(s)` : null,
-            ].filter(Boolean).join(' + ') || 'exit 5 with an empty report (unexpected)';
+            const detail =
+                [
+                    viols.length
+                        ? `${viols.length} violation(s): ${Object.entries(byType)
+                              .map(([t, n]) => `${t}×${n}`)
+                              .join(', ')}`
+                        : null,
+                    unconn.length ? `${unconn.length} unconnected item(s)` : null,
+                ]
+                    .filter(Boolean)
+                    .join(' + ') || 'exit 5 with an empty report (unexpected)';
             console.log(`  ⚠ ${name}: stamp NOT clean — ${detail} (quality-router tier pending, Phase 2)`);
         }
     }
@@ -301,7 +520,12 @@ if (frOk) {
             continue;
         }
         if (!q.ok || !q.outputs) {
-            fail(`${name}: quality route not ok — ${q.diagnostics.filter((d) => d.severity === 'error').map((d) => d.code).join(',')}`);
+            fail(
+                `${name}: quality route not ok — ${q.diagnostics
+                    .filter((d) => d.severity === 'error')
+                    .map((d) => d.code)
+                    .join(',')}`,
+            );
             continue;
         }
         const applied = q.diagnostics.find((d) => d.code === 'PCB030' && d.message.includes('applied'));
@@ -341,8 +565,11 @@ if (frOk) {
         // pcb-core now trims the outline back and re-certifies it with the notary; assert that it did,
         // because a silently-skipped trim looks exactly like a working one from the outside.
         const outline = (pcb) => {
-            const xs = [], ys = [];
-            for (const m of pcb.matchAll(/\(gr_line\s+\(start ([-\d.]+) ([-\d.]+)\)\s+\(end ([-\d.]+) ([-\d.]+)\)[\s\S]{0,200}?Edge\.Cuts/g)) {
+            const xs = [],
+                ys = [];
+            for (const m of pcb.matchAll(
+                /\(gr_line\s+\(start ([-\d.]+) ([-\d.]+)\)\s+\(end ([-\d.]+) ([-\d.]+)\)[\s\S]{0,200}?Edge\.Cuts/g,
+            )) {
                 xs.push(+m[1], +m[3]);
                 ys.push(+m[2], +m[4]);
             }
@@ -393,16 +620,16 @@ if (frOk) {
         //
         // KiCad does report it, as `holes_co_located`, but at WARNING severity, and the notary runs
         // --severity-error. So this is checked structurally instead, on our own output, where it is exact.
-        const viaRecords = [...q.outputs.kicadPcb.matchAll(/\(via[\s\S]{0,240}?\(at ([-\d.]+) ([-\d.]+)\)/g)]
-            .map((m) => `${m[1]},${m[2]}`);
+        const viaRecords = [...q.outputs.kicadPcb.matchAll(/\(via[\s\S]{0,240}?\(at ([-\d.]+) ([-\d.]+)\)/g)].map(
+            (m) => `${m[1]},${m[2]}`,
+        );
         const coincident = viaRecords.filter((v, i) => viaRecords.indexOf(v) !== i);
         if (coincident.length)
             fail(
                 `${name}: ${coincident.length} via(s) described TWICE at the same coordinate — the fab drills ` +
                     `each of ${[...new Set(coincident)].join(' / ')} twice, at two different diameters`,
             );
-        else
-            ok(`${name}: ${viaRecords.length} via(s), each described exactly once — no coincident drill hits`);
+        else ok(`${name}: ${viaRecords.length} via(s), each described exactly once — no coincident drill hits`);
 
         // real 3D bodies for every footprint
         const injectResult = injectModels(q.outputs.kicadPcb);
@@ -410,11 +637,15 @@ if (frOk) {
         writeFileSync(join(dir, 'board_quality_bodies.kicad_pcb'), injectResult.kicadPcb);
         writeFileSync(join(dir, 'board_quality.kicad_pro'), q.outputs.kicadPro);
         if (injectResult.unmatched.length) {
-            fail(`${name}: ${injectResult.unmatched.length} footprint(s) with no 3D body — ${injectResult.unmatched.map((u) => u.id).join(', ')}`);
+            fail(
+                `${name}: ${injectResult.unmatched.length} footprint(s) with no 3D body — ${injectResult.unmatched.map((u) => u.id).join(', ')}`,
+            );
         } else if (injectResult.injected === 0) {
             // Vacuous-pass guard: zero unmatched AND zero injected means the regex matched nothing (e.g. the
             // converter changed footprint formatting) — a silent "all bodied" that bodied nothing.
-            fail(`${name}: injectModels matched 0 footprints — 3D-body injection is broken (footprint format changed?)`);
+            fail(
+                `${name}: injectModels matched 0 footprints — 3D-body injection is broken (footprint format changed?)`,
+            );
         } else {
             ok(`${name}: 3D bodies injected for all ${injectResult.injected} footprint(s)`);
         }
@@ -424,26 +655,51 @@ if (frOk) {
         try {
             execFileSync(
                 'docker',
-                ['run', '--rm', ...dockerUserArgs(), '-v', `${toDocker(dir)}:/work`, KICAD_IMAGE, 'kicad-cli', 'pcb', 'drc',
-                    '--refill-zones', '--exit-code-violations', '--severity-error', '--format', 'json',
-                    '--output', '/work/drc_quality.json', '/work/board_quality.kicad_pcb'],
+                [
+                    'run',
+                    '--rm',
+                    ...dockerUserArgs(),
+                    '-v',
+                    `${toDocker(dir)}:/work`,
+                    KICAD_IMAGE,
+                    'kicad-cli',
+                    'pcb',
+                    'drc',
+                    '--refill-zones',
+                    '--exit-code-violations',
+                    '--severity-error',
+                    '--format',
+                    'json',
+                    '--output',
+                    '/work/drc_quality.json',
+                    '/work/board_quality.kicad_pcb',
+                ],
                 { stdio: 'pipe', timeout: 300000, env: { ...process.env, MSYS_NO_PATHCONV: '1' } },
             );
             ok(`${name}: quality DRC CLEAN — manufacturable stamp ✔✔ (traces=${q.stats.traces} vias=${q.stats.vias})`);
         } catch (e) {
             if (e.status !== 5) {
-                fail(`${name}: quality kicad-cli failed (exit ${e.status ?? '?'}) — ${String(e.stderr ?? e).slice(0, 200)}`);
+                fail(
+                    `${name}: quality kicad-cli failed (exit ${e.status ?? '?'}) — ${String(e.stderr ?? e).slice(0, 200)}`,
+                );
                 continue;
             }
             // The stamp requires BOTH zero rule violations AND zero unconnected nets (an unrouted net is a
             // real defect, reported separately from `violations` in the DRC JSON).
-            const report = existsSync(join(dir, 'drc_quality.json')) ? JSON.parse(readFileSync(join(dir, 'drc_quality.json'), 'utf8')) : null;
+            const report = existsSync(join(dir, 'drc_quality.json'))
+                ? JSON.parse(readFileSync(join(dir, 'drc_quality.json'), 'utf8'))
+                : null;
             const viols = report?.violations ?? [];
             const unconnected = report?.unconnected_items ?? [];
             const byType = {};
             for (const v of viols) byType[v.type] = (byType[v.type] ?? 0) + 1;
             const parts = [];
-            if (viols.length) parts.push(`${viols.length} violation(s): ${Object.entries(byType).map(([t, n]) => `${t}×${n}`).join(', ')}`);
+            if (viols.length)
+                parts.push(
+                    `${viols.length} violation(s): ${Object.entries(byType)
+                        .map(([t, n]) => `${t}×${n}`)
+                        .join(', ')}`,
+                );
             if (unconnected.length) parts.push(`${unconnected.length} unrouted net(s)`);
             fail(`${name}: quality DRC NOT clean — ${parts.join(' + ')}`);
         }
@@ -459,22 +715,46 @@ if (frOk) {
             const gbrDir = join(dir, 'delivered-gbr');
             rmSync(gbrDir, { recursive: true, force: true });
             mkdirSync(gbrDir, { recursive: true });
-            execFileSync('docker',
-                ['run', '--rm', ...dockerUserArgs(), '-v', `${toDocker(dir)}:/work`, KICAD_IMAGE, 'kicad-cli', 'pcb', 'export',
-                    'gerbers', '--check-zones', '--output', '/work/delivered-gbr', '/work/board_quality.kicad_pcb'],
-                { stdio: 'pipe', timeout: 300000, env: { ...process.env, MSYS_NO_PATHCONV: '1' } });
+            execFileSync(
+                'docker',
+                [
+                    'run',
+                    '--rm',
+                    ...dockerUserArgs(),
+                    '-v',
+                    `${toDocker(dir)}:/work`,
+                    KICAD_IMAGE,
+                    'kicad-cli',
+                    'pcb',
+                    'export',
+                    'gerbers',
+                    '--check-zones',
+                    '--output',
+                    '/work/delivered-gbr',
+                    '/work/board_quality.kicad_pcb',
+                ],
+                { stdio: 'pipe', timeout: 300000, env: { ...process.env, MSYS_NO_PATHCONV: '1' } },
+            );
             const delivered = {};
             for (const f of readdirSync(gbrDir)) {
                 if (f.endsWith('.gbrjob') || f.endsWith('.drl')) continue;
-                delivered[f.replace(/^board_quality-/, '').replace(/\.[^.]+$/, '')] = readFileSync(join(gbrDir, f), 'utf8');
+                delivered[f.replace(/^board_quality-/, '').replace(/\.[^.]+$/, '')] = readFileSync(
+                    join(gbrDir, f),
+                    'utf8',
+                );
             }
             const required = ['F_Cu', 'B_Cu', 'Edge_Cuts', 'F_Mask', 'B_Mask'];
             const missing = required.filter((l) => delivered[l] === undefined);
             // A Gerber with no D01/D02/D03 plots nothing: headers, then M02*. Existence is not content.
             const blank = required.filter((l) => delivered[l] !== undefined && !/D0[123]\*/.test(delivered[l]));
-            if (missing.length) fail(`${name}: delivered bundle is missing ${missing.join(', ')} — a board no fab can build`);
-            else if (blank.length) fail(`${name}: delivered ${blank.join(', ')} plotted NO geometry — well-formed and empty`);
-            else ok(`${name}: delivered fab bundle complete — ${Object.keys(delivered).length} layers, all of ${required.join('/')} carry geometry`);
+            if (missing.length)
+                fail(`${name}: delivered bundle is missing ${missing.join(', ')} — a board no fab can build`);
+            else if (blank.length)
+                fail(`${name}: delivered ${blank.join(', ')} plotted NO geometry — well-formed and empty`);
+            else
+                ok(
+                    `${name}: delivered fab bundle complete — ${Object.keys(delivered).length} layers, all of ${required.join('/')} carry geometry`,
+                );
         } catch (e) {
             fail(`${name}: delivered-gerber export failed — ${String(e.stderr ?? e).slice(-300)}`);
         }
@@ -486,9 +766,27 @@ if (frOk) {
                 rmSync(join(dir, out), { force: true });
                 execFileSync(
                     'docker',
-                    ['run', '--rm', ...dockerUserArgs(), '-v', `${toDocker(dir)}:/work`, KICAD_IMAGE, 'kicad-cli', 'pcb', 'export', 'glb',
-                        '--include-tracks', '--include-pads', '--include-zones', '--include-silkscreen', '--include-soldermask',
-                        '--subst-models', '--output', `/work/${out}`, `/work/${src}`],
+                    [
+                        'run',
+                        '--rm',
+                        ...dockerUserArgs(),
+                        '-v',
+                        `${toDocker(dir)}:/work`,
+                        KICAD_IMAGE,
+                        'kicad-cli',
+                        'pcb',
+                        'export',
+                        'glb',
+                        '--include-tracks',
+                        '--include-pads',
+                        '--include-zones',
+                        '--include-silkscreen',
+                        '--include-soldermask',
+                        '--subst-models',
+                        '--output',
+                        `/work/${out}`,
+                        `/work/${src}`,
+                    ],
                     { stdio: 'pipe', timeout: 300000, env: { ...process.env, MSYS_NO_PATHCONV: '1' } },
                 );
                 return statSync(join(dir, out)).size;
@@ -504,7 +802,11 @@ if (frOk) {
                 try {
                     return exportGlb(src, out);
                 } catch (e) {
-                    console.log(`  … glb export crashed (${String(e.stderr ?? e).slice(0, 80).trim()}) — retrying once`);
+                    console.log(
+                        `  … glb export crashed (${String(e.stderr ?? e)
+                            .slice(0, 80)
+                            .trim()}) — retrying once`,
+                    );
                     return exportGlb(src, out);
                 }
             };
@@ -512,8 +814,14 @@ if (frOk) {
                 const bareBytes = exportGlbResilient('board_quality.kicad_pcb', 'board_quality.glb'); // same flags, no (model ...) refs
                 const bodiedBytes = exportGlbResilient('board_quality_bodies.kicad_pcb', 'board_quality_bodies.glb');
                 const ratio = bodiedBytes / Math.max(bareBytes, 1);
-                if (ratio >= 1.3) ok(`${name}: GLB bodies resolved — bodied ${Math.round(bodiedBytes / 1024)} KB vs bare ${Math.round(bareBytes / 1024)} KB (${ratio.toFixed(1)}×)`);
-                else fail(`${name}: --subst-models did NOT add body geometry — bodied ${Math.round(bodiedBytes / 1024)} KB vs bare ${Math.round(bareBytes / 1024)} KB (${ratio.toFixed(2)}×, expected ≥1.3×)`);
+                if (ratio >= 1.3)
+                    ok(
+                        `${name}: GLB bodies resolved — bodied ${Math.round(bodiedBytes / 1024)} KB vs bare ${Math.round(bareBytes / 1024)} KB (${ratio.toFixed(1)}×)`,
+                    );
+                else
+                    fail(
+                        `${name}: --subst-models did NOT add body geometry — bodied ${Math.round(bodiedBytes / 1024)} KB vs bare ${Math.round(bareBytes / 1024)} KB (${ratio.toFixed(2)}×, expected ≥1.3×)`,
+                    );
             } catch (e) {
                 fail(`${name}: glb export failed TWICE — ${String(e.stderr ?? e).slice(0, 200)}`);
             }
@@ -528,14 +836,20 @@ const fixtures = join(pkgRoot, '__fixtures__');
 try {
     const denseCj = JSON.parse(readFileSync(join(fixtures, 'dense.circuit.json'), 'utf8'));
     const dsn = await exportDsn(stripRouting(denseCj));
-    if (dsn.length > 1000 && dsn.includes('(pcb')) ok(`exportDsn: ${dsn.length} bytes of DSN from the stripped golden board`);
+    if (dsn.length > 1000 && dsn.includes('(pcb'))
+        ok(`exportDsn: ${dsn.length} bytes of DSN from the stripped golden board`);
     else fail(`exportDsn produced implausible output (${dsn.length} bytes)`);
 
-    const merged = await mergeSes(denseCj, readFileSync(join(fixtures, 'dense.dsn'), 'utf8'), readFileSync(join(fixtures, 'dense.ses'), 'utf8'));
+    const merged = await mergeSes(
+        denseCj,
+        readFileSync(join(fixtures, 'dense.dsn'), 'utf8'),
+        readFileSync(join(fixtures, 'dense.ses'), 'utf8'),
+    );
     const traces = merged.filter((e) => e.type === 'pcb_trace').length;
     const components = merged.filter((e) => e.type === 'pcb_component').length;
     // The splice must PRESERVE the placed board (components/pads), not reconstruct a loose-trace shell.
-    if (traces > 0 && components > 0) ok(`mergeSes: golden SES spliced onto the full board — ${traces} traces + ${components} components preserved`);
+    if (traces > 0 && components > 0)
+        ok(`mergeSes: golden SES spliced onto the full board — ${traces} traces + ${components} components preserved`);
     else fail(`mergeSes: expected traces AND preserved components, got traces=${traces} components=${components}`);
 } catch (e) {
     fail(`freerouting bridge: ${String(e).slice(0, 300)}`);
@@ -578,13 +892,17 @@ try {
     else if (q.delivery?.routing?.tier !== 'local' || !q.delivery.routing.degradedReason) {
         fail(`delivery must report the local tier with a reason — got ${JSON.stringify(q.delivery?.routing)}`);
     } else {
-        ok(`the board is still delivered, honestly — tier=local, reason="${q.delivery.routing.degradedReason.slice(0, 70)}"`);
+        ok(
+            `the board is still delivered, honestly — tier=local, reason="${q.delivery.routing.degradedReason.slice(0, 70)}"`,
+        );
     }
 
     // And the placement must report that it fell back BECAUSE the router failed, not because the layout
     // was rejected on its own merits — those are different problems with different fixes.
     if (q.delivery?.placement?.engine !== 'grid' || !/router failed/i.test(q.delivery.placement.degradedReason ?? '')) {
-        fail(`placement should report a grid fallback caused by the router — got ${JSON.stringify(q.delivery?.placement)}`);
+        fail(
+            `placement should report a grid fallback caused by the router — got ${JSON.stringify(q.delivery?.placement)}`,
+        );
     } else {
         ok(`placement blames the right thing — grid fallback, reason names the router failure`);
     }
@@ -604,7 +922,12 @@ console.log(`
 try {
     const partial = await layoutCircuit(dividerLed, { fabProfile: { minTraceWidthMm: 0.25 } });
     if (!partial.ok) {
-        fail(`partial profile: layout not ok — ${partial.diagnostics.filter((d) => d.severity === `error`).map((d) => d.code).join(`,`)}`);
+        fail(
+            `partial profile: layout not ok — ${partial.diagnostics
+                .filter((d) => d.severity === `error`)
+                .map((d) => d.code)
+                .join(`,`)}`,
+        );
     } else {
         ok(`layout ok with a one-field override — traces=${partial.stats.traces} vias=${partial.stats.vias}`);
 
@@ -613,13 +936,18 @@ try {
         if (bad.length) fail(`design rules contain non-finite values: ${JSON.stringify(bad)}`);
         else ok(`design rules all finite — min_via_diameter=${rules.min_via_diameter} (drill+2*annular, was NaN)`);
 
-        if (rules.min_track_width !== 0.25) fail(`the override did not reach the rules (min_track_width=${rules.min_track_width})`);
+        if (rules.min_track_width !== 0.25)
+            fail(`the override did not reach the rules (min_track_width=${rules.min_track_width})`);
         else ok(`the override itself is honoured — min_track_width=0.25`);
 
         if (partial.fab?.tier !== `economy`) fail(`resolved tier not recorded (got ${JSON.stringify(partial.fab)})`);
-        else ok(`the board records the rules it was built by — tier=${partial.fab.tier}, ${Object.keys(partial.fab.profile).length} complete fields`);
+        else
+            ok(
+                `the board records the rules it was built by — tier=${partial.fab.tier}, ${Object.keys(partial.fab.profile).length} complete fields`,
+            );
 
-        if (partial.fab?.profile?.gndPour !== true) fail(`the ground pour was silently switched off by an unrelated override`);
+        if (partial.fab?.profile?.gndPour !== true)
+            fail(`the ground pour was silently switched off by an unrelated override`);
         else ok(`ground pour still ON — an unrelated override no longer deletes the ground plane`);
     }
 
@@ -627,7 +955,8 @@ try {
     // disclosed, rather than quietly routed and then rejected at the panel.
     const tooFine = await layoutCircuit(dividerLed, { fabProfile: { minClearanceMm: 0.02 } });
     const raised = tooFine.diagnostics.find((d) => d.code === `fab_profile_adjusted`);
-    if (tooFine.fab?.profile?.minClearanceMm !== 0.2) fail(`unmanufacturable clearance not clamped (got ${tooFine.fab?.profile?.minClearanceMm})`);
+    if (tooFine.fab?.profile?.minClearanceMm !== 0.2)
+        fail(`unmanufacturable clearance not clamped (got ${tooFine.fab?.profile?.minClearanceMm})`);
     else if (!raised) fail(`clamped silently — the adjustment was not disclosed`);
     else ok(`unmanufacturable value clamped AND disclosed — ${raised.message}`);
 } catch (e) {

@@ -46,9 +46,8 @@ const sizes = String(process.env.BENCH_SIZES ?? '25,50,100,200,400,800')
     .filter((v) => Number.isInteger(v) && v >= 2);
 const reps = positiveInt(process.env.BENCH_REPS, 5);
 const warmups = nonNegativeInt(process.env.BENCH_WARMUPS, 1);
-const requestedStarts = process.env.RUST_PLACER_STARTS === undefined
-    ? undefined
-    : positiveInt(process.env.RUST_PLACER_STARTS, 4);
+const requestedStarts =
+    process.env.RUST_PLACER_STARTS === undefined ? undefined : positiveInt(process.env.RUST_PLACER_STARTS, 4);
 
 if (sizes.length === 0) {
     console.error('BENCH_SIZES did not contain a valid component count');
@@ -130,9 +129,8 @@ export function makeSyntheticPlacementInput(count) {
             const signal = leafNets[local - 1];
             const previous = local > 1 ? leafNets[local - 2] : 'GND';
             const next = local < length - 1 ? leafNets[local] : 'VCC';
-            const id = local === 1
-                ? `J${String(cluster + 1).padStart(3, '0')}`
-                : `P${String(global + 1).padStart(4, '0')}`;
+            const id =
+                local === 1 ? `J${String(cluster + 1).padStart(3, '0')}` : `P${String(global + 1).padStart(4, '0')}`;
 
             if (local === 1) {
                 parts.push({
@@ -140,7 +138,10 @@ export function makeSyntheticPlacementInput(count) {
                     w: 5.1,
                     h: 2.54,
                     role: 'connector',
-                    pads: [{ x: -1.27, y: 0, net: 'VCC' }, { x: 1.27, y: 0, net: signal }],
+                    pads: [
+                        { x: -1.27, y: 0, net: 'VCC' },
+                        { x: 1.27, y: 0, net: signal },
+                    ],
                 });
             } else if (local % 7 === 0) {
                 parts.push({
@@ -199,9 +200,7 @@ function timed(fn) {
 }
 
 function halfExtents(part, rotation) {
-    return rotation === 90 || rotation === 270
-        ? [part.h / 2, part.w / 2]
-        : [part.w / 2, part.h / 2];
+    return rotation === 90 || rotation === 270 ? [part.h / 2, part.w / 2] : [part.w / 2, part.h / 2];
 }
 
 function canonicalPlacement(output) {
@@ -210,7 +209,13 @@ function canonicalPlacement(output) {
         const p = output.positions[id];
         positions[id] = { x: p.x, y: p.y, rotation: p.rotation };
     }
-    return JSON.stringify({ ok: output?.ok, boardW: output?.boardW, boardH: output?.boardH, hpwl: output?.hpwl, positions });
+    return JSON.stringify({
+        ok: output?.ok,
+        boardW: output?.boardW,
+        boardH: output?.boardH,
+        hpwl: output?.hpwl,
+        positions,
+    });
 }
 
 function checkInvariants(input, output) {
@@ -237,11 +242,15 @@ function checkInvariants(input, output) {
         }
         if (!Number.isFinite(pos.x) || !Number.isFinite(pos.y)) errors.push(`${part.id} has non-finite coordinates`);
         if (![0, 90, 180, 270].includes(pos.rotation)) errors.push(`${part.id} has invalid rotation ${pos.rotation}`);
-        if (Math.abs(pos.x / input.gridMm - Math.round(pos.x / input.gridMm)) > 1e-6) errors.push(`${part.id} x is off-grid`);
-        if (Math.abs(pos.y / input.gridMm - Math.round(pos.y / input.gridMm)) > 1e-6) errors.push(`${part.id} y is off-grid`);
+        if (Math.abs(pos.x / input.gridMm - Math.round(pos.x / input.gridMm)) > 1e-6)
+            errors.push(`${part.id} x is off-grid`);
+        if (Math.abs(pos.y / input.gridMm - Math.round(pos.y / input.gridMm)) > 1e-6)
+            errors.push(`${part.id} y is off-grid`);
         const [hx, hy] = halfExtents(part, pos.rotation);
-        if (Math.abs(pos.x) + hx > output.boardW / 2 - input.marginMm + tolerance) errors.push(`${part.id} exceeds board x bound`);
-        if (Math.abs(pos.y) + hy > output.boardH / 2 - input.marginMm + tolerance) errors.push(`${part.id} exceeds board y bound`);
+        if (Math.abs(pos.x) + hx > output.boardW / 2 - input.marginMm + tolerance)
+            errors.push(`${part.id} exceeds board x bound`);
+        if (Math.abs(pos.y) + hy > output.boardH / 2 - input.marginMm + tolerance)
+            errors.push(`${part.id} exceeds board y bound`);
     }
 
     for (let i = 0; i < input.parts.length; i++) {
@@ -280,17 +289,19 @@ function fixed(value, digits = 1) {
 }
 
 console.log('Rust placement A/B benchmark');
-console.log(JSON.stringify({
-    node: process.version,
-    platform: `${platform()} ${release()}`,
-    cpu: cpus()[0]?.model ?? 'unknown',
-    binary,
-    sizes,
-    reps,
-    warmups,
-    rustStarts: requestedStarts ?? 'binary-default',
-    rustTiming: 'wall clock including JSON files + process startup',
-}));
+console.log(
+    JSON.stringify({
+        node: process.version,
+        platform: `${platform()} ${release()}`,
+        cpu: cpus()[0]?.model ?? 'unknown',
+        binary,
+        sizes,
+        reps,
+        warmups,
+        rustStarts: requestedStarts ?? 'binary-default',
+        rustTiming: 'wall clock including JSON files + process startup',
+    }),
+);
 
 const results = [];
 let failed = false;
@@ -363,21 +374,23 @@ for (const size of sizes) {
     });
 }
 
-console.table(results.map((r) => ({
-    parts: r.parts,
-    pads: r.pads,
-    'TS p50 ms': fixed(r.ts.medianMs),
-    'Rust CLI p50 ms': fixed(r.rust.medianCliMs),
-    'speedup x': fixed(r.comparison.speedup, 2),
-    'TS HPWL': fixed(r.ts.hpwl),
-    'Rust HPWL': fixed(r.rust.hpwl),
-    'HPWL delta %': fixed(r.comparison.hpwlDeltaPct),
-    'TS area mm2': fixed(r.ts.boardAreaMm2, 0),
-    'Rust area mm2': fixed(r.rust.boardAreaMm2, 0),
-    'area delta %': fixed(r.comparison.areaDeltaPct),
-    invariants: r.ts.invariant.ok && r.rust.invariant.ok ? 'PASS' : 'FAIL',
-    deterministic: r.ts.deterministic && r.rust.deterministic ? 'PASS' : 'FAIL',
-})));
+console.table(
+    results.map((r) => ({
+        parts: r.parts,
+        pads: r.pads,
+        'TS p50 ms': fixed(r.ts.medianMs),
+        'Rust CLI p50 ms': fixed(r.rust.medianCliMs),
+        'speedup x': fixed(r.comparison.speedup, 2),
+        'TS HPWL': fixed(r.ts.hpwl),
+        'Rust HPWL': fixed(r.rust.hpwl),
+        'HPWL delta %': fixed(r.comparison.hpwlDeltaPct),
+        'TS area mm2': fixed(r.ts.boardAreaMm2, 0),
+        'Rust area mm2': fixed(r.rust.boardAreaMm2, 0),
+        'area delta %': fixed(r.comparison.areaDeltaPct),
+        invariants: r.ts.invariant.ok && r.rust.invariant.ok ? 'PASS' : 'FAIL',
+        deterministic: r.ts.deterministic && r.rust.deterministic ? 'PASS' : 'FAIL',
+    })),
+);
 
 for (const row of results) {
     const problems = [

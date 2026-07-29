@@ -21,19 +21,53 @@ const runnerMod = await import('../apps/worker-sim/dist/simulation/runner.js');
 const runSimulation = runnerMod.runSimulation ?? runnerMod.default?.runSimulation;
 
 let failures = 0;
-const ok = (cond, msg) => { console.log(`${cond ? '  ✓' : '  ✗ FAIL:'} ${msg}`); if (!cond) failures++; };
+const ok = (cond, msg) => {
+    console.log(`${cond ? '  ✓' : '  ✗ FAIL:'} ${msg}`);
+    if (!cond) failures++;
+};
 const uid = () => `live-${Math.random().toString(36).slice(2)}-${process.hrtime.bigint()}`;
 
 // A sound 10V/1k/1k divider (out = 5V) — converges in one shot.
 const DIVIDER = {
     version: '1.0',
     components: [
-        { id: 'v1', type: 'voltage_source', designator: 'V1', value: 'DC 10', pins: [{ pinId: '+', netId: 'in' }, { pinId: '-', netId: 'gnd' }] },
-        { id: 'r1', type: 'resistor', designator: 'R1', value: '1k', pins: [{ pinId: '1', netId: 'in' }, { pinId: '2', netId: 'out' }] },
-        { id: 'r2', type: 'resistor', designator: 'R2', value: '1k', pins: [{ pinId: '1', netId: 'out' }, { pinId: '2', netId: 'gnd' }] },
+        {
+            id: 'v1',
+            type: 'voltage_source',
+            designator: 'V1',
+            value: 'DC 10',
+            pins: [
+                { pinId: '+', netId: 'in' },
+                { pinId: '-', netId: 'gnd' },
+            ],
+        },
+        {
+            id: 'r1',
+            type: 'resistor',
+            designator: 'R1',
+            value: '1k',
+            pins: [
+                { pinId: '1', netId: 'in' },
+                { pinId: '2', netId: 'out' },
+            ],
+        },
+        {
+            id: 'r2',
+            type: 'resistor',
+            designator: 'R2',
+            value: '1k',
+            pins: [
+                { pinId: '1', netId: 'out' },
+                { pinId: '2', netId: 'gnd' },
+            ],
+        },
         { id: 'gnd', type: 'ground', designator: 'GND1', pins: [{ pinId: '1', netId: 'gnd' }] },
     ],
-    nets: [{ id: 'in', name: 'in' }, { id: 'out', name: 'out' }, { id: 'gnd', name: 'gnd', isGround: true }],
+    nets: [
+        { id: 'in', name: 'in' },
+        { id: 'out', name: 'out' },
+        { id: 'gnd', name: 'gnd', isGround: true },
+    ],
 };
 
 // A hard-comparator relaxation oscillator: an ideal discontinuity at node d. Its transient operating
@@ -68,22 +102,37 @@ async function main() {
     ok(!!r2.convergence, 'a convergence report was produced (the failure was diagnosed, not swallowed)');
     if (r2.convergence) {
         ok(r2.convergence.recovered === false, `honestly reports recovered=false (got ${r2.convergence.recovered})`);
-        ok(r2.convergence.kind === 'timestep_collapse', `diagnosed kind=timestep_collapse (got ${r2.convergence.kind})`);
-        ok(Array.isArray(r2.convergence.triedRemedies) && r2.convergence.triedRemedies.length === 3,
-            `walked the full transient ladder — 3 remedies tried (got ${r2.convergence.triedRemedies?.length}: ${JSON.stringify(r2.convergence.triedRemedies)})`);
+        ok(
+            r2.convergence.kind === 'timestep_collapse',
+            `diagnosed kind=timestep_collapse (got ${r2.convergence.kind})`,
+        );
+        ok(
+            Array.isArray(r2.convergence.triedRemedies) && r2.convergence.triedRemedies.length === 3,
+            `walked the full transient ladder — 3 remedies tried (got ${r2.convergence.triedRemedies?.length}: ${JSON.stringify(r2.convergence.triedRemedies)})`,
+        );
     }
-    ok(/timestep too small/i.test(r2.error ?? '') || /timestep too small/i.test(r2.stderr ?? ''),
-        'the real ngspice "Timestep too small" message was captured from the -o log (stderr fold works)');
+    ok(
+        /timestep too small/i.test(r2.error ?? '') || /timestep too small/i.test(r2.stderr ?? ''),
+        'the real ngspice "Timestep too small" message was captured from the -o log (stderr fold works)',
+    );
 
     console.log('\nP3 — a remedied deck (applySolverOptions output) is valid ngspice and runs clean');
     const remedied = applySolverOptions(goodNetlist, { method: 'gear', itl4: 1000, reltol: '1e-2', gmin: '1e-9' });
-    ok(/\.options\b/i.test(remedied) && /reltol=1e-2/.test(remedied) && /method=gear/.test(remedied),
-        'applySolverOptions injected a .options card with the remedy tokens');
+    ok(
+        /\.options\b/i.test(remedied) && /reltol=1e-2/.test(remedied) && /method=gear/.test(remedied),
+        'applySolverOptions injected a .options card with the remedy tokens',
+    );
     const r3 = await runSimulation({ jobId: uid(), netlist: remedied, probeNames: [], analysisType: 'op' });
-    ok(r3.success === true, `the remedied deck simulates successfully (success=${r3.success}${r3.error ? `, error=${r3.error}` : ''})`);
+    ok(
+        r3.success === true,
+        `the remedied deck simulates successfully (success=${r3.success}${r3.error ? `, error=${r3.error}` : ''})`,
+    );
 
     console.log(`\n${failures === 0 ? 'ALL LIVE CHECKS PASSED' : `${failures} LIVE CHECK(S) FAILED`}`);
     process.exit(failures === 0 ? 0 : 1);
 }
 
-main().catch((e) => { console.error('live proof crashed:', e); process.exit(1); });
+main().catch((e) => {
+    console.error('live proof crashed:', e);
+    process.exit(1);
+});

@@ -54,7 +54,6 @@ describe('buildPnpCsv', () => {
     });
 });
 
-
 describe('hasVisibleDesignators — the board must SAY which part is which, whichever spelling KiCad uses', () => {
     /** The modern half of what circuit-json-to-kicad emits: hidden, and NOT what gets plotted. */
     const property = (hidden: boolean) =>
@@ -69,9 +68,14 @@ describe('hasVisibleDesignators — the board must SAY which part is which, whic
 
     /** The legacy half — deprecated, visible, and the one kicad-cli actually plots today. */
     const fpText = (layer = 'F.SilkS') =>
-        ['    (fp_text', '      reference', '      "U1"', '      (at 0 -2.92 0)', `      (layer ${layer})`, '    )'].join(
-            '\n',
-        );
+        [
+            '    (fp_text',
+            '      reference',
+            '      "U1"',
+            '      (at 0 -2.92 0)',
+            `      (layer ${layer})`,
+            '    )',
+        ].join('\n');
 
     it('accepts the legacy fp_text — this is why our boards were never actually blank', () => {
         expect(hasVisibleDesignators([property(true), fpText()].join('\n'))).toBe(true);

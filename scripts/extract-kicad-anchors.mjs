@@ -36,7 +36,8 @@ const TARGETS = {
 };
 for (let n = 2; n <= 8; n++) {
     const nn = String(n).padStart(2, '0');
-    TARGETS[`PinHeader_1x${nn}_P2.54mm_Vertical`] = `Connector_PinHeader_2.54mm.pretty/PinHeader_1x${nn}_P2.54mm_Vertical.kicad_mod`;
+    TARGETS[`PinHeader_1x${nn}_P2.54mm_Vertical`] =
+        `Connector_PinHeader_2.54mm.pretty/PinHeader_1x${nn}_P2.54mm_Vertical.kicad_mod`;
 }
 for (const size of ['0402_1005', '0603_1608', '0805_2012', '1206_3216']) {
     const [imp, met] = size.split('_');
@@ -55,16 +56,28 @@ function parseSexpr(text) {
         while (i < text.length) {
             const ch = text[i];
             if (ch === '(') out.push(node());
-            else if (ch === ')') { i++; return out; }
-            else if (ch === '"') {
-                let j = i + 1, s = '';
-                while (j < text.length && text[j] !== '"') { s += text[j] === '\\' ? text[++j] : text[j]; j++; }
-                out.push(s); i = j + 1;
+            else if (ch === ')') {
+                i++;
+                return out;
+            } else if (ch === '"') {
+                let j = i + 1,
+                    s = '';
+                while (j < text.length && text[j] !== '"') {
+                    s += text[j] === '\\' ? text[++j] : text[j];
+                    j++;
+                }
+                out.push(s);
+                i = j + 1;
             } else if (/\s/.test(ch)) i++;
             else {
-                let j = i, s = '';
-                while (j < text.length && !/[\s()"]/.test(text[j])) { s += text[j]; j++; }
-                out.push(s); i = j;
+                let j = i,
+                    s = '';
+                while (j < text.length && !/[\s()"]/.test(text[j])) {
+                    s += text[j];
+                    j++;
+                }
+                out.push(s);
+                i = j;
             }
         }
         return out;
@@ -77,10 +90,12 @@ const kid = (n, tag) => kids(n, tag)[0];
 
 function extract(modText, file) {
     const root = parseSexpr(modText);
-    const pads = kids(root, 'pad').map((p) => {
-        const at = kid(p, 'at') ?? [];
-        return { n: String(p[1]), x: Number(at[1] ?? 0), y: Number(at[2] ?? 0) };
-    }).filter((p) => Number.isFinite(p.x) && Number.isFinite(p.y));
+    const pads = kids(root, 'pad')
+        .map((p) => {
+            const at = kid(p, 'at') ?? [];
+            return { n: String(p[1]), x: Number(at[1] ?? 0), y: Number(at[2] ?? 0) };
+        })
+        .filter((p) => Number.isFinite(p.x) && Number.isFinite(p.y));
     const model = kid(root, 'model');
     const xyzOf = (tag) => {
         const t = model ? kid(model, tag) : null;
@@ -96,10 +111,16 @@ const anchors = {};
 const missing = [];
 for (const [name, rel] of Object.entries(TARGETS)) {
     try {
-        const txt = execFileSync('docker', ['run', '--rm', IMAGE, 'cat', `${FP_ROOT}/${rel}`],
-            { encoding: 'utf8', timeout: 120000, maxBuffer: 8 * 1024 * 1024, env: { ...process.env, MSYS_NO_PATHCONV: '1' } });
+        const txt = execFileSync('docker', ['run', '--rm', IMAGE, 'cat', `${FP_ROOT}/${rel}`], {
+            encoding: 'utf8',
+            timeout: 120000,
+            maxBuffer: 8 * 1024 * 1024,
+            env: { ...process.env, MSYS_NO_PATHCONV: '1' },
+        });
         anchors[name] = extract(txt, rel);
-        console.log(`✓ ${name}: ${anchors[name].pads.length} pads, nativeOffset=[${anchors[name].nativeOffset}], nativeRotate=[${anchors[name].nativeRotate}]`);
+        console.log(
+            `✓ ${name}: ${anchors[name].pads.length} pads, nativeOffset=[${anchors[name].nativeOffset}], nativeRotate=[${anchors[name].nativeRotate}]`,
+        );
     } catch {
         missing.push(name);
         console.warn(`✗ ${name}: ${rel} not found in image — skipped`);
@@ -122,5 +143,10 @@ export interface KicadAnchor {
 
 export const KICAD_ANCHORS: Record<string, KicadAnchor> = `;
 
-writeFileSync(OUT, banner + JSON.stringify(anchors, null, 4).replace(/"([A-Za-z_][A-Za-z0-9_]*)":/g, '$1:') + ' as const;\n');
-console.log(`\nwrote ${OUT} (${Object.keys(anchors).length} anchors${missing.length ? `, ${missing.length} missing` : ''})`);
+writeFileSync(
+    OUT,
+    banner + JSON.stringify(anchors, null, 4).replace(/"([A-Za-z_][A-Za-z0-9_]*)":/g, '$1:') + ' as const;\n',
+);
+console.log(
+    `\nwrote ${OUT} (${Object.keys(anchors).length} anchors${missing.length ? `, ${missing.length} missing` : ''})`,
+);

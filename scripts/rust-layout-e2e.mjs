@@ -50,8 +50,19 @@ async function runOne(circuit, placer) {
     const adopted = r.diagnostics.find((d) => d.code === 'PCB050' && /ADOPTED/.test(d.message))?.message ?? null;
     const rejected = r.diagnostics.find((d) => d.code === 'PCB051')?.message ?? null;
     // the Rust path logs its own stage time; the TS path does not, so this is present only for 'rust'
-    const placeStage = r.diagnostics.find((d) => d.code === 'PCB050' && /engine completed in/.test(d.message))?.message ?? null;
-    return { ok: r.ok, secs, drcClean, adopted, rejected, placeStage, vias: r.stats?.vias, traces: r.stats?.traces, board: boardArea(r.evaluated) };
+    const placeStage =
+        r.diagnostics.find((d) => d.code === 'PCB050' && /engine completed in/.test(d.message))?.message ?? null;
+    return {
+        ok: r.ok,
+        secs,
+        drcClean,
+        adopted,
+        rejected,
+        placeStage,
+        vias: r.stats?.vias,
+        traces: r.stats?.traces,
+        board: boardArea(r.evaluated),
+    };
 }
 
 const selected = process.argv.slice(2);
@@ -64,20 +75,27 @@ const rows = [];
 for (const [name, circuit] of cases) {
     console.log(`────────── ${name} (${circuit.components.length} components)`);
     const auto = await runOne(circuit, 'auto');
-    console.log(`  auto: ok=${auto.ok} DRC=${auto.drcClean ? '✔' : '✗'} board=${auto.board} vias=${auto.vias} total=${auto.secs.toFixed(1)}s ${auto.adopted ? 'ADOPTED' : auto.rejected ? 'grid-kept' : ''}`);
+    console.log(
+        `  auto: ok=${auto.ok} DRC=${auto.drcClean ? '✔' : '✗'} board=${auto.board} vias=${auto.vias} total=${auto.secs.toFixed(1)}s ${auto.adopted ? 'ADOPTED' : auto.rejected ? 'grid-kept' : ''}`,
+    );
     const rust = await runOne(circuit, 'rust');
-    console.log(`  rust: ok=${rust.ok} DRC=${rust.drcClean ? '✔' : '✗'} board=${rust.board} vias=${rust.vias} total=${rust.secs.toFixed(1)}s ${rust.adopted ? 'ADOPTED' : rust.rejected ? 'grid-kept' : ''}`);
+    console.log(
+        `  rust: ok=${rust.ok} DRC=${rust.drcClean ? '✔' : '✗'} board=${rust.board} vias=${rust.vias} total=${rust.secs.toFixed(1)}s ${rust.adopted ? 'ADOPTED' : rust.rejected ? 'grid-kept' : ''}`,
+    );
     if (rust.placeStage) console.log(`     · ${rust.placeStage.replace(/^.*?: /, '')}`);
     rows.push({ name, auto, rust });
 }
 
 console.log('\n════════ TOTAL LAYOUT TIME (auto vs rust) ════════');
-let autoSum = 0, rustSum = 0;
+let autoSum = 0,
+    rustSum = 0;
 for (const { name, auto, rust } of rows) {
     autoSum += auto.secs;
     rustSum += rust.secs;
     const delta = auto.secs ? (100 * (rust.secs - auto.secs)) / auto.secs : 0;
-    console.log(`  ${name.padEnd(18)} auto ${auto.secs.toFixed(1)}s → rust ${rust.secs.toFixed(1)}s (${delta >= 0 ? '+' : ''}${delta.toFixed(0)}%)  DRC ${auto.drcClean ? '✔' : '✗'}→${rust.drcClean ? '✔' : '✗'}`);
+    console.log(
+        `  ${name.padEnd(18)} auto ${auto.secs.toFixed(1)}s → rust ${rust.secs.toFixed(1)}s (${delta >= 0 ? '+' : ''}${delta.toFixed(0)}%)  DRC ${auto.drcClean ? '✔' : '✗'}→${rust.drcClean ? '✔' : '✗'}`,
+    );
 }
 console.log(`  ${'TOTAL'.padEnd(18)} auto ${autoSum.toFixed(1)}s → rust ${rustSum.toFixed(1)}s`);
 console.log('\nNote: on these small gallery boards, placement (auto or rust) is tens of ms while freerouting');

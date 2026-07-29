@@ -258,10 +258,7 @@ describe('coincident vias — one physical hole must be described once', () => {
     });
 
     it('matches on position, not on identity — coordinates arrive re-serialized', () => {
-        const out = dropDuplicateViaWaypoints([
-            { ...via(1.00001, 2), x: 1.000009 },
-            trace([wp(1.000011, 2)]),
-        ] as never);
+        const out = dropDuplicateViaWaypoints([{ ...via(1.00001, 2), x: 1.000009 }, trace([wp(1.000011, 2)])] as never);
         expect(routeOf(out)).toHaveLength(0);
     });
 
@@ -286,9 +283,10 @@ describe('shrinkBoardToContent — hand the routing headroom back once routing i
         ...extra,
     });
     const pad = (x: number, y: number, w = 1, h = 1) => ({ type: 'pcb_smtpad', x, y, width: w, height: h });
-    const boardOf = (els: object[]) => els.find((e) => (e as { type: string }).type === 'pcb_board') as
-        | { width: number; height: number; center: { x: number; y: number } }
-        | undefined;
+    const boardOf = (els: object[]) =>
+        els.find((e) => (e as { type: string }).type === 'pcb_board') as
+            | { width: number; height: number; center: { x: number; y: number } }
+            | undefined;
 
     it('shrinks a 30mm board around 10mm of content, leaving exactly the edge keep-out', () => {
         const out = shrinkBoardToContent([board(30, 30), pad(-5, -5), pad(5, 5)] as never, 0.3);
@@ -334,7 +332,10 @@ describe('shrinkBoardToContent — hand the routing headroom back once routing i
     });
 
     it.each([
-        ['a custom outline — that shape belongs to the designer, not to our headroom', [board(30, 30, { x: 0, y: 0 }, { outline: [{ x: 0, y: 0 }] }), pad(0, 0)]],
+        [
+            'a custom outline — that shape belongs to the designer, not to our headroom',
+            [board(30, 30, { x: 0, y: 0 }, { outline: [{ x: 0, y: 0 }] }), pad(0, 0)],
+        ],
         ['a board with no measurable content', [board(30, 30)]],
         ['no board element at all', [pad(0, 0)]],
     ])('returns the input UNCHANGED for %s', (_label: string, els: object[]) => {

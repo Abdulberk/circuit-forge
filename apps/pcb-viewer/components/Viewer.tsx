@@ -1,11 +1,11 @@
 'use client';
-import { Suspense, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { Component, Suspense, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import * as THREE from 'three';
 import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
-import { EXRLoader } from 'three/examples/jsm/loaders/EXRLoader.js';
-import { Canvas, useThree, useLoader } from '@react-three/fiber';
-import { OrbitControls, Environment, useGLTF, Html } from '@react-three/drei';
-import { EffectComposer, Bloom, N8AO, SMAA } from '@react-three/postprocessing';
+import { Canvas, useThree } from '@react-three/fiber';
+import { ContactShadows, OrbitControls, useGLTF, Html } from '@react-three/drei';
+import { EffectComposer, Bloom, N8AO, SMAA, ToneMapping } from '@react-three/postprocessing';
+import { ToneMappingMode, SMAAPreset } from 'postprocessing';
 
 // Real, DRC-clean board GLBs our pipeline produced (served from /public). Every one is genuine
 // pcb-core output: CircuitJson → tscircuit eval → freerouting → KiCad DRC ✔ → 3D bodies whose
@@ -23,10 +23,17 @@ const BOARDS = [
 
 const TARGET = 40; // world units on largest side
 
-// KiCad's generic LED STEP model is a neutral beige chip — indistinguishable from a resistor/cap and
-// carries no emitter color. We make LEDs READ as LEDs: a lit, emissive, colored epoxy dome. The GLB
-// has no per-LED color, so we vary color by board position → a lively, colorful, real-looking board.
-const LED_COLORS = ['#ff3b30', '#34c759', '#ffd60a', '#0a84ff', '#ff9f0a', '#ff2d55', '#30d0e0', '#bf5af2'];
+/** drei caches by the exact string handed to useGLTF, so the preload and the component have to build
+ *  the URL the same way. They did not: the preload asked for a leading-slash path while the component
+ *  asked for a bare filename, which made the preload dead code and downloaded every board twice. */
+const boardUrl = (id: string): string => `/${id}`;
+
+// The GLB carries no emitter colour — KiCad's LED_D5.0mm STEP is a neutral epoxy dome — so a colour
+// has to be chosen. Red is the modal 5mm indicator LED by a wide margin, so it is the least-wrong
+// default, and it is the one that reads against a green board. Varying it per position was an earlier
+// choice here; it invented information the file does not carry, and on a board of identical LEDs it is
+// simply wrong. One colour, stated as an assumption.
+const LED_COLOR = '#e8342a';
 
 /* ------------------------------------------------------------------ */
 /* Procedural orange-peel normal map (sprayed LPI lacquer micro-dimple) */
@@ -79,7 +86,10 @@ function makeOrangePeelNormal(): THREE.CanvasTexture | null {
     ctx.putImageData(img, 0, 0);
     const t = new THREE.CanvasTexture(c);
     t.wrapS = t.wrapT = THREE.RepeatWrapping;
-    t.repeat.set(3, 3);
+    // ensurePlanarUV maps whatever it is given across 0..1, so a fixed repeat count stretches the dimple
+    // to a different physical size on every board. The mask sheet is re-scaled per board in
+    // ensurePlanarUV instead; this stays at 1 so the two are not multiplied.
+    t.repeat.set(1, 1);
     return t;
 }
 
@@ -87,54 +97,104 @@ function makeOrangePeelNormal(): THREE.CanvasTexture | null {
 /* Physically-grounded PCB layer materials (named for the inspector).  */
 /* ------------------------------------------------------------------ */
 function buildLayerMaterials(peel: THREE.CanvasTexture | null) {
+    /**
+     * Solder mask is NOT a translucent sheet.
+     *
+     * It was modelled as one — a dark green plane at opacity 0.5 over the tan laminate — and that is why
+     * the board came out khaki. Alpha blending is a lerp toward whatever is behind it, so it can only ever
+     * average two colours; it cannot act as a filter. Physically the mask is translucent the way house
+     * paint is: a highly-pigmented layer whose own colour dominates. Verified directly in the running
+     * viewer — with the laminate temporarily set to magenta the board rendered magenta, proving the mask
+     * was contributing almost nothing.
+     *
+     * So the mask is opaque and carries the board's colour. The copper underneath is a separate mesh at a
+     * lower height; a small alpha keeps a hint of it, which is the single strongest cue that this is a
+     * real board rather than a green slab.
+     */
     const mask = new THREE.MeshPhysicalMaterial({
-        color: '#0e4526',
-        roughness: 0.5,
+        color: '#0e6b36', // mask over BARE laminate — the field between traces
+        roughness: 0.45,
         metalness: 0,
-        clearcoat: 0.55,
-        clearcoatRoughness: 0.32,
-        transparent: true,
-        opacity: 0.5,
-        envMapIntensity: 0.8,
-        normalMap: peel ?? undefined,
-        normalScale: new THREE.Vector2(0.15, 0.15),
+        clearcoat: 1, // the cured-resin/air interface; this is what makes it read as a PCB
+        clearcoatRoughness: 0.16, // broad enough that the key light spreads instead of punching a hole
+        // The orange-peel dimple is a property of the AIR interface, not of the pigment body, so it
+        // belongs on the clearcoat normal. On the base lobe it perturbed the diffuse shading instead,
+        // which is the wrong surface entirely.
+        clearcoatNormalMap: peel ?? undefined,
+        clearcoatNormalScale: new THREE.Vector2(0.1, 0.1),
+        ior: 1.56,
+        transparent: false,
+        opacity: 1,
+        side: THREE.DoubleSide, // zero-thickness sheet; the exporter's winding is not guaranteed
+        envMapIntensity: 0.9,
     });
+    /** The underside sheet, which must NOT receive the top sheet's geometric offset. Same look. */
+    const maskBottom = mask.clone();
+    /**
+     * This mesh is not bare copper — it is the SAME solder mask, seen over a brighter backscatterer.
+     *
+     * With the mask sheet dropped below the copper crowns (see mergeDrawCalls), the copper prisms are
+     * what is visible wherever a trace runs, so their material has to be "mask over copper": lighter
+     * and slightly warmer than the field, because the coating drains thinner off trace tops and copper
+     * bounces back more light than dull laminate. It stays a dielectric at metalness 0 — the mask is a
+     * turbid, particle-filled medium and a double pass through it destroys the metal's directionality.
+     * The clearcoat must match the field's exactly or every trace edge grows a visible gloss seam.
+     */
     const copper = new THREE.MeshPhysicalMaterial({
-        color: '#2a9151',
-        metalness: 0.22,
-        roughness: 0.48,
-        clearcoat: 0.35,
-        clearcoatRoughness: 0.4,
-        envMapIntensity: 1.0,
+        color: '#22954b',
+        metalness: 0,
+        roughness: 0.5,
+        clearcoat: 1,
+        clearcoatRoughness: 0.16, // must match the field exactly, or every trace edge grows a gloss seam
+        ior: 1.56,
+        envMapIntensity: 0.9,
     });
+    /** ENIG: immersion gold over nickel. A real metal — no clearcoat, that is a second stacked lobe. */
+    /** ENIG — the only exposed metal on these boards, so it carries a lot of the realism budget. In a
+     *  metalness-1 workflow the base colour IS F0, so this must be measured gold reflectance rather than
+     *  a palette swatch. Satin, not mirror: the thin electroless nickel never levels the etched copper. */
     const pad = new THREE.MeshPhysicalMaterial({
-        color: '#d9b544',
+        color: '#ffe0a0',
         metalness: 1,
-        roughness: 0.38,
-        envMapIntensity: 1.35,
+        roughness: 0.3,
+        envMapIntensity: 1.15,
     });
+    /** Silkscreen ink. Opaque: at 0.92 over an opaque green mask the lerp pulled the white toward the
+     *  board and turned it a dirty grey-green — the warmth belongs in the base colour instead. Never pure
+     *  white, which reads as emissive. */
     const silk = new THREE.MeshPhysicalMaterial({
-        color: '#eae8e0',
+        color: '#eae7de',
         metalness: 0,
-        roughness: 0.88,
-        transparent: true,
-        opacity: 0.92,
-        envMapIntensity: 0.35,
+        roughness: 0.82,
+        specularIntensity: 0.45, // faint epoxy-binder sheen — dialled here, not with a clearcoat
+        transparent: false,
+        opacity: 1,
+        side: THREE.DoubleSide,
+        envMapIntensity: 0.85,
     });
+    /** Bare FR4 as seen at the ROUTED EDGE — lighter and warmer than the masked face, and slightly
+     *  fibrous. It is never glossy: the router leaves cut glass fibre, not a coated surface. */
+    /**
+     * Once the mask plane covers the core's top face this is a RIM material: the routed edge, the drill
+     * barrels, and the thin bare-laminate rings inside pad openings. That is exactly where tan FR4 is
+     * correct. No normal map — ensurePlanarUV runs per PRIMITIVE and board_PCB is eight of them, so each
+     * face would get its own arbitrary 0..1 mapping. specularIntensity stays at 1: the grazing Fresnel
+     * rim along the 1.6 mm edge is most of what makes it read as a hard material rather than cardboard.
+     */
     const pcb = new THREE.MeshPhysicalMaterial({
-        color: '#a89a6a',
+        color: '#c9b98a',
         metalness: 0,
-        roughness: 0.7,
+        roughness: 0.78,
+        ior: 1.55,
         envMapIntensity: 0.45,
-        normalMap: peel ?? undefined,
-        normalScale: new THREE.Vector2(0.08, 0.08),
     });
     mask.name = 'Soldermask (maske)';
+    maskBottom.name = 'Soldermask (alt yüz)';
     copper.name = 'Bakır izler (maske altı)';
     pad.name = 'Pad (ENIG altın)';
     silk.name = 'Silkscreen (baskı)';
     pcb.name = 'FR4 (kart gövdesi)';
-    return { mask, copper, via: copper, pad, silk, pcb } as const;
+    return { mask, maskBottom, copper, via: copper, pad, silk, pcb } as const;
 }
 type LayerMats = ReturnType<typeof buildLayerMaterials>;
 
@@ -214,6 +274,18 @@ function makePartResolver() {
                 envMapIntensity: 1.2,
             });
             out.name = 'Metal terminal';
+        } else if (mx > 0.55 && r >= g && g > b && relSat < 0.55) {
+            // Gold plating is a WARM metal, so it never passes a desaturation test — the header pins were
+            // falling through to the generic coloured-part branch and rendering as matte tan sticks, which
+            // is the loudest wrong object on the connector boards. Hue order r ≥ g > b with a moderate
+            // saturation is what separates gold from an orange plastic.
+            out = new THREE.MeshPhysicalMaterial({
+                color: '#e8c179',
+                metalness: 1,
+                roughness: 0.32,
+                envMapIntensity: 1.2,
+            });
+            out.name = 'Altın kaplama pin';
         } else {
             // Coloured bodies: epoxy, plastic housings, LED lenses, capacitor sleeves. None of them are
             // metal — but KiCad's 3D models omit `metallicFactor`, and the glTF spec says an absent factor
@@ -235,6 +307,9 @@ function makePartResolver() {
 function attrSig(geo: THREE.BufferGeometry): string {
     return Object.keys(geo.attributes).sort().join(',') + (geo.index ? '+i' : '');
 }
+/** Board-plan size, in the GLB own units (metres), that one tile of the micro-texture covers. */
+const PEEL_TILE_M = 0.006;
+
 function ensurePlanarUV(geo: THREE.BufferGeometry) {
     if (geo.attributes.uv) return;
     geo.computeBoundingBox();
@@ -249,8 +324,11 @@ function ensurePlanarUV(geo: THREE.BufferGeometry) {
     const uv = new Float32Array(pos.count * 2);
     for (let i = 0; i < pos.count; i++) {
         const p = new THREE.Vector3(pos.getX(i), pos.getY(i), pos.getZ(i));
-        uv[i * 2] = (p[u] - bb.min[u]) / (size[u] || 1);
-        uv[i * 2 + 1] = (p[v] - bb.min[v]) / (size[v] || 1);
+        // In TILES of a fixed physical size, not normalised 0..1. Normalising stretched one tile of
+        // micro-texture across the whole board, so the dimple was a different physical size on every
+        // board — and on the long thin ones it read as crumpled foil rather than sprayed lacquer.
+        uv[i * 2] = (p[u] - bb.min[u]) / PEEL_TILE_M;
+        uv[i * 2 + 1] = (p[v] - bb.min[v]) / PEEL_TILE_M;
     }
     geo.setAttribute('uv', new THREE.BufferAttribute(uv, 2));
 }
@@ -262,20 +340,23 @@ function ensurePlanarUV(geo: THREE.BufferGeometry) {
  */
 function makeLedResolver() {
     const cache = new Map<string, THREE.Material>();
-    const tmp = new THREE.Vector3();
-    return (mesh: THREE.Mesh): THREE.Material => {
-        const p = mesh.getWorldPosition(tmp);
-        const color = LED_COLORS[Math.abs(Math.round(p.x * 3.1 + p.z * 7.7)) % LED_COLORS.length];
+    return (): THREE.Material => {
+        const color = LED_COLOR;
         let m = cache.get(color);
         if (!m) {
             m = new THREE.MeshPhysicalMaterial({
                 color,
                 emissive: color,
-                emissiveIntensity: 0.85,
-                transmission: 0.45,
-                thickness: 1.2,
+                // A lit indicator LED is not a uniformly glowing solid: the epoxy dome still carries a sharp specular
+                // highlight from the room. Flooding the surface with emission erases it and the part reads as
+                // moulded plastic. Kept just above the bloom threshold so the glow survives, no higher.
+                emissiveIntensity: 1.25,
+                // No transmission. It routes the material through three's transmission pass, where the
+                // dome loses the sharp environment specular that makes it read as moulded epoxy rather
+                // than as painted plastic. A lit LED does not need refraction to be convincing; it needs
+                // a hard highlight and a glow.
                 ior: 1.5,
-                roughness: 0.14,
+                roughness: 0.22,
                 metalness: 0,
                 clearcoat: 1,
                 clearcoatRoughness: 0.06,
@@ -292,6 +373,9 @@ function makeLedResolver() {
 function assignMaterials(meshes: THREE.Mesh[], layerMats: LayerMats, nameOf: (m: THREE.Object3D) => string) {
     const resolvePart = makePartResolver();
     const resolveLed = makeLedResolver();
+    // The board mid-plane in glTF units (metres): the core spans 0 … 1.510 mm.
+    const MID_Y = 0.000755;
+    const centre = new THREE.Vector3();
     const byLayer: Partial<Record<Layer, THREE.Material>> = {
         soldermask: layerMats.mask,
         copper: layerMats.copper,
@@ -303,15 +387,55 @@ function assignMaterials(meshes: THREE.Mesh[], layerMats: LayerMats, nameOf: (m:
     for (const m of meshes) {
         m.castShadow = true;
         m.receiveShadow = true;
+        // The exporter marks solids double-sided, which doubles the fragment work and lets back faces
+        // fight the front ones in the depth prepass. The two zero-thickness sheets opt back in via their
+        // own materials.
+        const src0 = Array.isArray(m.material) ? m.material[0] : m.material;
+        if (src0) src0.side = THREE.FrontSide;
         const name = nameOf(m);
         // KiCad footprint names are underscore-delimited (`LED_D5.0mm`, `LED_0603_1608Metric`), so LED is
         // matched as a token. A bare substring test would also claim anything that merely contains the
         // letters and hand it a glowing emissive dome.
-        if (/(^|[_\-])led([_\-]|$)/i.test(name)) {
-            m.material = resolveLed(m);
+        if (/(^|[-_])led([-_]|$)/i.test(name)) {
+            // The imported mesh is the whole part — epoxy dome, flange AND metal leads — so handing the
+            // emissive material to all of it made the leads glow like hot wire. The epoxy is the coloured
+            // sub-material; anything desaturated is metal and goes through the ordinary part path.
+            const src = m.userData.__origMat ?? m.material;
+            m.userData.__origMat = src;
+            const isEpoxy = (mt: THREE.MeshStandardMaterial) => {
+                const c = mt?.color;
+                if (!c) return true;
+                const mx = Math.max(c.r, c.g, c.b);
+                const mn = Math.min(c.r, c.g, c.b);
+                return mx > 0 && (mx - mn) / mx > 0.25;
+            };
+            m.material = Array.isArray(src)
+                ? src.map((mt) =>
+                      isEpoxy(mt as THREE.MeshStandardMaterial)
+                          ? resolveLed()
+                          : resolvePart(mt as THREE.MeshStandardMaterial),
+                  )
+                : isEpoxy(src as THREE.MeshStandardMaterial)
+                  ? resolveLed()
+                  : resolvePart(src as THREE.MeshStandardMaterial);
             continue;
-        } // real KiCad dome, tinted
-        const lm = byLayer[layerOf(name)];
+        }
+        const layer = layerOf(name);
+        // `board_soldermask` is TWO sheets, top and bottom. They must not share a material instance:
+        // the top one gets a geometric offset below, and merging is keyed by material identity.
+        if (layer === 'soldermask') {
+            // By GEOMETRY, not by node origin. KiCad writes both mask sheets as UNTRANSFORMED nodes at
+            // the origin and bakes the height into the vertex data, so `getWorldPosition().y` returns 0
+            // for both — the earlier test put the top sheet in the bottom bucket, left `layerMats.mask`
+            // attached to nothing, and made the 30 µm drop below unreachable. The board rendered with
+            // every trace still buried under an opaque sheet, and it read as a plain green plane.
+            if (!m.geometry.boundingBox) m.geometry.computeBoundingBox();
+            m.geometry.boundingBox!.getCenter(centre);
+            m.localToWorld(centre);
+            m.material = centre.y > MID_Y ? layerMats.mask : layerMats.maskBottom;
+            continue;
+        }
+        const lm = byLayer[layer];
         if (lm) m.material = lm;
         else if (Array.isArray(m.material))
             m.material = m.material.map((mt) => resolvePart(mt as THREE.MeshStandardMaterial));
@@ -319,7 +443,33 @@ function assignMaterials(meshes: THREE.Mesh[], layerMats: LayerMats, nameOf: (m:
     }
 }
 
-function mergeDrawCalls(scene: THREE.Group, meshes: THREE.Mesh[], nameOf: (m: THREE.Object3D) => string) {
+/**
+ * Layer heights measured in every board GLB (glTF units are metres; identical across all eight):
+ *
+ *     FR4 core top      1.510 mm
+ *     copper top        1.545 mm   (35 µm)
+ *     pad top           1.550 mm
+ *     soldermask plane  1.560 mm   ← zero thickness, sitting 15 µm ABOVE the copper
+ *     silkscreen plane  1.585 mm
+ *
+ * The mask sheet covering the copper is the whole reason it was drawn at opacity 0.5: transparency was
+ * standing in for "let me see the layer underneath". That is a lerp toward the backdrop, and it is why
+ * the board rendered khaki over tan laminate.
+ *
+ * Dropping the sheet 30 µm replaces the trick with the real thing. The copper then stands 15 µm proud
+ * of the field, so every trace gets an actual shoulder — the exporter writes closed prisms, side walls
+ * included — and that shoulder catches the clearcoat highlight. It is the relief a normal map is
+ * usually faked to imitate, except here it is geometry, so it self-shadows and occludes correctly.
+ */
+const MASK_DROP_M = 0.00003;
+const SILK_DROP_M = 0.00002;
+
+function mergeDrawCalls(
+    scene: THREE.Group,
+    meshes: THREE.Mesh[],
+    nameOf: (m: THREE.Object3D) => string,
+    layerMats: LayerMats,
+) {
     try {
         const buckets = new Map<
             string,
@@ -347,6 +497,11 @@ function mergeDrawCalls(scene: THREE.Group, meshes: THREE.Mesh[], nameOf: (m: TH
             if (!g) throw new Error('mergeGeometries returned null');
             const mm = new THREE.Mesh(g, mat);
             mm.name = `merged_${layer}`;
+            // Applied to the merged mesh rather than baked into the vertices so it stays legible, and
+            // because this lives inside the GLB scene — before the fit-to-view scale — the offset is
+            // carried through that scale and stays physically proportional on every board.
+            if (mat === layerMats.mask) mm.position.y = -MASK_DROP_M;
+            else if (mat === layerMats.silk) mm.position.y = -SILK_DROP_M;
             mm.castShadow = true;
             mm.receiveShadow = true;
             merged.push(mm);
@@ -389,7 +544,7 @@ function processScene(scene: THREE.Group, layerMats: LayerMats, parser?: GltfPar
             if (m.isMesh && m.geometry) meshes.push(m);
         });
         assignMaterials(meshes, layerMats, nameOf);
-        mergeDrawCalls(scene, meshes, nameOf);
+        mergeDrawCalls(scene, meshes, nameOf, layerMats);
     }
     return collectMaterials(scene);
 }
@@ -400,6 +555,8 @@ function Board({
     onMaterials,
 }: Readonly<{ url: string; layerMats: LayerMats; onMaterials: (m: MatEntry[]) => void }>) {
     const { scene, parser } = useGLTF(url);
+    const camera = useThree((st) => st.camera);
+    const controls = useThree((st) => st.controls);
     const group = useRef<THREE.Group>(null);
 
     useLayoutEffect(() => {
@@ -412,26 +569,54 @@ function Board({
         g.scale.setScalar(1);
         g.position.set(0, 0, 0);
         g.updateWorldMatrix(true, true);
-        const raw = new THREE.Box3().setFromObject(g);
+
+        // Orientation comes from the LAMINATE, never from the whole scene. The core is 1.510 mm thick
+        // against ~25 mm in plan, so its own thinnest axis names the board normal without ambiguity.
+        // Inferring it from the scene bounding box let a tall part vote: regulator-5v carries a TO-220
+        // whose model spans −8.15 … +20.37 mm, which made the scene taller than it was wide and stood
+        // the whole board up on its edge like a wall.
+        const slab = boardSlab(g);
         const rs = new THREE.Vector3();
-        raw.getSize(rs);
+        (slab ?? new THREE.Box3().setFromObject(g)).getSize(rs);
         if (rs.z <= rs.x && rs.z <= rs.y) g.rotation.x = -Math.PI / 2;
         else if (rs.x <= rs.y && rs.x <= rs.z) g.rotation.z = Math.PI / 2;
 
         g.updateWorldMatrix(true, true);
-        const box = new THREE.Box3().setFromObject(g);
+        // Frame the LAMINATE's footprint. Scaling to the whole scene let a tall part decide how big the
+        // board is: the 7805's heatsink tab is 20 mm over a 25 mm board, so that one component pushed the
+        // board to a third of its proper size and ran off the top of the viewport.
+        const plan = boardSlab(g) ?? new THREE.Box3().setFromObject(g);
         const size = new THREE.Vector3();
-        box.getSize(size);
-        const maxDim = Math.max(size.x, size.y, size.z) || 1;
-        g.scale.setScalar(TARGET / maxDim);
+        plan.getSize(size);
+        g.scale.setScalar(TARGET / (Math.max(size.x, size.z) || 1));
         g.updateWorldMatrix(true, true);
         const box2 = new THREE.Box3().setFromObject(g);
         const center = new THREE.Vector3();
         box2.getCenter(center);
         g.position.x -= center.x;
         g.position.z -= center.z;
-        g.position.y -= box2.min.y;
-    }, [scene, parser, layerMats, onMaterials]);
+        // Seat the LAMINATE on the floor, not the whole scene: the scene's lowest point is the tip of a
+        // through-hole lead, which was holding every board ~1.4 mm in the air on its own pins.
+        const seated = boardSlab(g);
+        g.position.y -= (seated ?? box2).min.y;
+
+        // Then move the CAMERA to fit, instead of shrinking the board until its tallest part happens to
+        // fit a fixed camera. Every board keeps the same physical presence in frame, and a 20 mm heatsink
+        // tab on a 25 mm board simply pushes the camera back rather than making the board tiny.
+        g.updateWorldMatrix(true, true);
+        const fitted = new THREE.Box3().setFromObject(g);
+        const sphere = fitted.getBoundingSphere(new THREE.Sphere());
+        const fov = (camera as THREE.PerspectiveCamera).fov ?? 34;
+        const dist = (sphere.radius / Math.sin((fov * 0.5 * Math.PI) / 180)) * 1.06;
+        const dir = camera.position.clone().sub(sphere.center).normalize();
+        camera.position.copy(sphere.center).addScaledVector(dir, dist);
+        camera.lookAt(sphere.center);
+        const orbit = controls as { target?: THREE.Vector3; update?: () => void } | null;
+        if (orbit?.target) {
+            orbit.target.copy(sphere.center);
+            orbit.update?.();
+        }
+    }, [scene, parser, layerMats, onMaterials, camera, controls]);
 
     return (
         <group ref={group}>
@@ -440,18 +625,73 @@ function Board({
     );
 }
 
+/** World-space bounds of the laminate alone (the merged board_PCB), or null if it is not there. */
+function boardSlab(root: THREE.Object3D): THREE.Box3 | null {
+    let found: THREE.Object3D | null = null;
+    root.traverse((o) => {
+        if (!found && (o as THREE.Mesh).isMesh && o.name === 'merged_pcb') found = o;
+    });
+    return found ? new THREE.Box3().setFromObject(found) : null;
+}
+
+/**
+ * three r169 dropped WebGL1 entirely, so on a blocklisted GPU, a locked-down browser or a machine with
+ * software rendering disabled, `new WebGLRenderer` throws — and it throws from inside the Canvas, taking
+ * the whole React tree down with it. The page went completely blank: no canvas, no message, no board
+ * list, just an uncaught error retried in a loop. The chips and the caption are plain DOM siblings and
+ * have no reason to die with the renderer.
+ */
+class CanvasBoundary extends Component<{ children: ReactNode }, { failed: boolean }> {
+    constructor(props: { children: ReactNode }) {
+        super(props);
+        this.state = { failed: false };
+    }
+    static getDerivedStateFromError() {
+        return { failed: true };
+    }
+    render() {
+        if (!this.state.failed) return this.props.children;
+        return (
+            <div
+                style={{
+                    position: 'absolute',
+                    inset: 0,
+                    display: 'grid',
+                    placeItems: 'center',
+                    padding: 32,
+                    textAlign: 'center',
+                    color: '#9fb3a8',
+                    font: '14px/1.7 ui-monospace, monospace',
+                }}
+            >
+                <div>
+                    <div style={{ fontSize: 15, color: '#cfe0d6', marginBottom: 8 }}>3B görünüm açılamadı</div>
+                    Bu tarayıcıda WebGL 2 kullanılamıyor. Donanım hızlandırmayı açmayı veya güncel bir masaüstü tarayıcı
+                    kullanmayı deneyin.
+                </div>
+            </div>
+        );
+    }
+}
+
 function Floor() {
     return (
         <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, -0.02, 0]} receiveShadow>
             <planeGeometry args={[600, 600]} />
-            <meshStandardMaterial color="#0d1114" roughness={0.92} metalness={0} envMapIntensity={0.15} />
+            {/* A black shadow on a black floor carries no information, which is the real reason the board
+                looked like it was floating. Lifting the ground gives the contact shadow something to be
+                darker THAN. */}
+            <meshStandardMaterial color="#262b2e" roughness={0.92} metalness={0} envMapIntensity={0.15} />
         </mesh>
     );
 }
 
 /* --------- adjustable light rig --------- */
 export type LightState = { intensity: number; azimuth: number; elevation: number; color: string; exposure: number };
-const DEFAULT_LIGHT: LightState = { intensity: 1.5, azimuth: 35, elevation: 55, color: '#fff4e6', exposure: 1.05 };
+// A single hard directional source against a clearcoat at roughness 0.10 puts a very tight, very
+// intense highlight on the board and blows out whichever corner it lands on. The environment now
+// carries most of the illumination, so the key light only has to shape and cast the contact shadow.
+const DEFAULT_LIGHT: LightState = { intensity: 2.4, azimuth: 35, elevation: 58, color: '#fff4e6', exposure: 1.05 };
 
 function lightPos(l: LightState): [number, number, number] {
     const el = (l.elevation * Math.PI) / 180,
@@ -468,15 +708,40 @@ function Exposure({ value }: Readonly<{ value: number }>) {
     return null;
 }
 
+/**
+ * Development-only inspection hook: publishes the live scene, renderer and camera on `window.__viewer`.
+ *
+ * This exists because judging a render from its source is unreliable — every realism claim in this
+ * viewer that was checked by reading the code rather than by querying the running scene turned out to
+ * be wrong about something (a material that was never assigned, a post-processing chain whose shader
+ * does not compile). A headless Chrome driving this page can now ask what is actually there.
+ *
+ * Mounted only outside production (gated at the call site), so a production bundle neither exposes the
+ * handle nor pays for the subscription.
+ */
+function DevInspect() {
+    const { scene, gl, camera } = useThree();
+    useEffect(() => {
+        if (process.env.NODE_ENV === 'production') return;
+        (window as unknown as { __viewer?: unknown }).__viewer = { scene, gl, camera, THREE };
+        return () => {
+            delete (window as unknown as { __viewer?: unknown }).__viewer;
+        };
+    }, [scene, gl, camera]);
+    return null;
+}
+
 export type ShadowState = { enabled: boolean; radius: number; intensity: number; bias: number };
-const DEFAULT_SHADOW: ShadowState = { enabled: true, radius: 6, intensity: 0.9, bias: -0.0004 };
+const DEFAULT_SHADOW: ShadowState = { enabled: true, radius: 3, intensity: 0.9, bias: -0.0004 };
 
 function Rig({ light, shadow }: Readonly<{ light: LightState; shadow: ShadowState }>) {
     const p = lightPos(light);
     return (
         <>
             <Exposure value={light.exposure} />
-            <hemisphereLight intensity={0.15} groundColor="#0a0a08" />
+            <hemisphereLight intensity={0.12} groundColor="#0a0a08" />
+            {/* Key: the only shadow caster. Its frustum reaches ±45 because the board's half-diagonal is
+                about 28 world units and ±30 was clipping the shadow at the corners. */}
             <directionalLight
                 castShadow={shadow.enabled}
                 color={light.color}
@@ -487,13 +752,17 @@ function Rig({ light, shadow }: Readonly<{ light: LightState; shadow: ShadowStat
                 shadow-radius={shadow.radius}
                 shadow-bias={shadow.bias}
                 shadow-intensity={shadow.intensity}
-                shadow-camera-left={-30}
-                shadow-camera-right={30}
-                shadow-camera-top={30}
-                shadow-camera-bottom={-30}
+                shadow-camera-left={-45}
+                shadow-camera-right={45}
+                shadow-camera-top={45}
+                shadow-camera-bottom={-45}
                 shadow-camera-near={1}
                 shadow-camera-far={250}
             />
+            {/* Fill opens the shadow side without flattening; rim separates the board from the ground.
+                Neither casts — one shadow, one direction, is what reads as a real light. */}
+            <directionalLight color="#cfe2ff" position={[-52, 26, -18]} intensity={0.7} />
+            <directionalLight color="#ffd9a8" position={[8, -6, -54]} intensity={0.9} />
         </>
     );
 }
@@ -503,42 +772,149 @@ export type EnvState = { brightness: number; contrast: number; color: string; st
 const DEFAULT_ENV: EnvState = { brightness: 1, contrast: 1, color: '#ffffff', strength: 0.9 };
 
 /**
- * Load the EXR once as float data, then apply photographic brightness / contrast (pivot at
- * scene-linear 18% gray) / color-tint per pixel into a fresh DataTexture. `strength` maps to the
- * native environmentIntensity (IBL contribution). Reprocess only when a photo control changes.
+ * Hand the environment map to each layer material explicitly.
+ *
+ * three r169 only honours a material's own `envMapIntensity` when that material has its OWN envMap. If it
+ * is null and `scene.environment` is set, the renderer overwrites the uniform from
+ * `scene.environmentIntensity` on every frame:
+ *
+ *     if (material.isMeshStandardMaterial && material.envMap === null && scene.environment !== null)
+ *         uniforms.envMapIntensity.value = scene.environmentIntensity;
+ *
+ * So every per-material weighting authored here — gold pads above the mask, silkscreen pulled down — was
+ * being discarded before it reached the shader. Assigning the map is what makes those numbers real.
  */
-function AdjustableEnvironment({ url, env }: Readonly<{ url: string; env: EnvState }>) {
-    const tex = useLoader(EXRLoader, url, (l) => (l as EXRLoader).setDataType(THREE.FloatType));
-    const processed = useMemo(() => {
-        const img = tex.image as unknown as { data: Float32Array; width: number; height: number };
-        const src = img.data;
-        const out = new Float32Array(src.length);
-        const c = new THREE.Color(env.color);
-        const B = env.brightness,
-            K = env.contrast,
-            P = 0.18;
-        for (let i = 0; i < src.length; i += 4) {
-            let r = src[i] * c.r,
-                g = src[i + 1] * c.g,
-                b = src[i + 2] * c.b;
-            r = (r - P) * K + P;
-            g = (g - P) * K + P;
-            b = (b - P) * K + P;
-            r *= B;
-            g *= B;
-            b *= B;
-            out[i] = r > 0 ? r : 0;
-            out[i + 1] = g > 0 ? g : 0;
-            out[i + 2] = b > 0 ? b : 0;
-            out[i + 3] = src[i + 3];
-        }
-        const dt = new THREE.DataTexture(out, img.width, img.height, THREE.RGBAFormat, THREE.FloatType);
-        dt.mapping = THREE.EquirectangularReflectionMapping;
-        dt.needsUpdate = true;
-        return dt;
-    }, [tex, env.brightness, env.contrast, env.color]);
-    useEffect(() => () => processed.dispose(), [processed]);
-    return <Environment map={processed} environmentIntensity={env.strength} />;
+function BindEnvMap({ mats, url }: Readonly<{ mats: LayerMats; url: string }>) {
+    const scene = useThree((st) => st.scene);
+    const env = useThree((st) => st.scene.environment);
+    const epoch = useContextEpoch();
+    useEffect(() => {
+        const e = scene.environment;
+        if (!e) return;
+        const bind = (m: THREE.Material | THREE.Material[] | null) => {
+            for (const one of Array.isArray(m) ? m : [m]) {
+                const std = one as THREE.MeshStandardMaterial | null;
+                if (!std || !('envMapIntensity' in std) || std.envMap === e) continue;
+                std.envMap = e;
+                std.needsUpdate = true;
+            }
+        };
+        // The layer materials are held outside the scene graph, so they are bound directly; the component
+        // bodies come from the GLB and are reached by walking it. Both need it for the same reason — an
+        // authored envMapIntensity is discarded unless the material owns an envMap.
+        for (const m of Object.values(mats) as THREE.MeshPhysicalMaterial[]) bind(m);
+        scene.traverse((o) => {
+            const mesh = o as THREE.Mesh;
+            if (mesh.isMesh) bind(mesh.material);
+        });
+    }, [scene, env, mats, url, epoch]);
+    return null;
+}
+
+/**
+ * A studio softbox environment, built rather than downloaded.
+ *
+ * The pads are metalness 1, so they reflect the environment verbatim, and a clearcoat at roughness 0.16
+ * produces nearly all of its visible effect by reflecting discrete bright shapes. An indoor room HDRI
+ * gives them a broad, shapeless wash; what reads as a product photograph is a dark surround with a few
+ * large, clean rectangular sources. Procedural means it is exactly controllable and costs no asset.
+ */
+function makeStudioEnvironment(state: EnvState): THREE.Scene {
+    const env = new THREE.Scene();
+    const surround = new THREE.Mesh(
+        new THREE.SphereGeometry(80, 24, 16),
+        new THREE.MeshBasicMaterial({
+            side: THREE.BackSide,
+            color: new THREE.Color(0x1b2128).multiplyScalar(state.brightness),
+        }),
+    );
+    env.add(surround);
+    // The ENIG pads are metalness 1 and face straight up, so whatever sits overhead IS their colour.
+    // With a small key and a near-black surround they reflected the void and read as dull olive; the
+    // overhead source is now wide enough to cover the angles a flat pad actually samples.
+    const panels: Array<[number, number, number, number, number, number, number, number]> = [
+        //  w,   h,   x,   y,   z, rotX, rotY, intensity
+        [95, 70, 0, 40, 4, -Math.PI / 2, 0, 2.6],
+        [34, 30, -48, 22, 12, 0, Math.PI / 2, 1.5],
+        [36, 22, 6, 26, -48, 0, 0, 1.1],
+        [70, 40, 0, -16, 16, Math.PI / 2, 0, 0.5],
+    ];
+    // The panel intensities carry the tab controls: brightness scales them all, contrast spreads them
+    // apart around the key, and the tint colours them. Before this the three sliders were inert — they
+    // still drove the EXR pipeline that the procedural studio replaced.
+    const tint = new THREE.Color(state.color);
+    for (const [w, h, x, y, z, rx, ry, i] of panels) {
+        const lit = Math.max(0, (i - 1) * state.contrast + 1) * state.brightness;
+        const panel = new THREE.Mesh(
+            new THREE.PlaneGeometry(w, h),
+            new THREE.MeshBasicMaterial({ color: tint.clone().multiplyScalar(lit) }),
+        );
+        panel.position.set(x, y, z);
+        panel.rotation.set(rx, ry, 0);
+        env.add(panel);
+    }
+    return env;
+}
+
+/**
+ * A lost-and-restored WebGL context takes the environment with it, permanently and silently.
+ *
+ * `scene.environment` is a render-target texture with no CPU-side image, so three has nothing to
+ * re-upload after a restore — measured, the frame comes back bit-identical to having no environment at
+ * all. Neither the PMREM effect nor the envMap binding can notice on their own: their deps are objects
+ * that do not change, and a direct mutation of `scene.environment` is invisible to an r3f selector.
+ * This counter is the signal both of them subscribe to.
+ */
+function useContextEpoch(): number {
+    const gl = useThree((st) => st.gl);
+    const [epoch, setEpoch] = useState(0);
+    useEffect(() => {
+        const el = gl.domElement;
+        const onRestore = () => setEpoch((n) => n + 1);
+        el.addEventListener('webglcontextrestored', onRestore);
+        return () => el.removeEventListener('webglcontextrestored', onRestore);
+    }, [gl]);
+    return epoch;
+}
+
+/** React StrictMode double-invokes the material and texture factories in development, so a discarded
+ *  set is created on every mount. Nothing was releasing them. */
+function DisposeOnUnmount({ peel, mats }: Readonly<{ peel: THREE.CanvasTexture | null; mats: LayerMats }>) {
+    useEffect(
+        () => () => {
+            peel?.dispose();
+            for (const m of Object.values(mats) as THREE.Material[]) m.dispose();
+        },
+        [peel, mats],
+    );
+    return null;
+}
+
+function StudioEnvironment({ env }: Readonly<{ env: EnvState }>) {
+    const { gl, scene } = useThree();
+    const epoch = useContextEpoch();
+    useEffect(() => {
+        const pmrem = new THREE.PMREMGenerator(gl);
+        const src = makeStudioEnvironment(env);
+        const rt = pmrem.fromScene(src, 0.04);
+        scene.environment = rt.texture;
+        pmrem.dispose();
+        src.traverse((o) => {
+            const m = o as THREE.Mesh;
+            if (m.isMesh) {
+                m.geometry.dispose();
+                (m.material as THREE.Material).dispose();
+            }
+        });
+        return () => {
+            rt.dispose();
+            scene.environment = null;
+        };
+    }, [gl, scene, epoch, env.brightness, env.contrast, env.color]);
+    useEffect(() => {
+        scene.environmentIntensity = env.strength;
+    }, [scene, env.strength]);
+    return null;
 }
 
 /* ------------------------------ Inspector panel (HTML overlay) ------------------------------ */
@@ -878,9 +1254,25 @@ function Panel({
             () => setToast('konsola yazıldı'),
         );
     };
+    const narrow = useNarrow();
+    const [open, setOpen] = useState(false);
+    if (narrow && !open)
+        return (
+            <button
+                onClick={() => setOpen(true)}
+                style={{ ...panelStyle, width: 'auto', padding: '9px 14px', cursor: 'pointer' }}
+            >
+                ayarlar
+            </button>
+        );
     return (
-        <div style={panelStyle}>
+        <div style={narrow ? { ...panelStyle, left: 14, right: 14, width: 'auto' } : panelStyle}>
             <div style={{ display: 'flex', gap: 5, marginBottom: 10 }}>
+                {narrow && (
+                    <button onClick={() => setOpen(false)} style={tabBtn(false)}>
+                        ✕
+                    </button>
+                )}
                 <button onClick={() => setTab('mat')} style={tabBtn(tab === 'mat')}>
                     Malzeme
                 </button>
@@ -907,6 +1299,7 @@ function Panel({
 
 export default function Viewer() {
     const [url, setUrl] = useState(BOARDS[0].id);
+    const narrowUi = useNarrow();
     const [spin, setSpin] = useState(false);
     const [materials, setMaterials] = useState<MatEntry[]>([]);
     const [light, setLightState] = useState<LightState>(DEFAULT_LIGHT);
@@ -920,86 +1313,171 @@ export default function Viewer() {
 
     return (
         <div style={{ position: 'fixed', inset: 0, background: '#080d10' }}>
-            <Canvas
-                shadows="variance"
-                dpr={[1, 1.5]}
-                gl={{ antialias: false, powerPreference: 'high-performance' }}
-                camera={{ fov: 34, position: [24, 30, 46], near: 0.1, far: 3000 }}
-                onCreated={({ gl }) => {
-                    gl.toneMapping =
-                        (THREE as unknown as { AgXToneMapping?: THREE.ToneMapping }).AgXToneMapping ??
-                        THREE.ACESFilmicToneMapping;
-                }}
-            >
-                <color attach="background" args={['#0b1013']} />
-                <Rig light={light} shadow={shadow} />
-
-                <Suspense
-                    fallback={
-                        <Html center style={{ color: '#cfe0d6', font: '14px ui-monospace, monospace' }}>
-                            3D…
-                        </Html>
-                    }
+            <CanvasBoundary>
+                <Canvas
+                    shadows="variance"
+                    // r3f clamps dpr to the display's own devicePixelRatio, so on a 1× monitor this is
+                    // exactly 1 and SMAA is the only anti-aliasing in play; on HiDPI it renders native. It is
+                    // not supersampling and cannot be — the ceiling only prevents paying for more than 1.75×.
+                    dpr={[1, 1.75]}
+                    gl={{ antialias: false, stencil: false, powerPreference: 'high-performance' }}
+                    // A 0.5 … 400 frustum instead of 0.1 … 3000 buys back depth precision, which matters
+                    // when layers are tens of microns apart.
+                    camera={{ fov: 34, position: [24, 30, 46], near: 0.5, far: 400 }}
+                    // NOTE: tone mapping is deliberately NOT set here. @react-three/postprocessing forces
+                    // gl.toneMapping to NoToneMapping whenever an EffectComposer is mounted, so anything set
+                    // on the renderer is silently discarded — which is what left this scene rendering with no
+                    // tone curve at all. The chain owns it, via <ToneMapping> below.
+                    onCreated={({ scene }) => {
+                        // Per-material envMapIntensity is overwritten from this every frame, so it has to be
+                        // set explicitly rather than left at its default.
+                        scene.environmentIntensity = 0.9;
+                    }}
                 >
-                    <Board key={url} url={url} layerMats={layerMats} onMaterials={setMaterials} />
-                    <AdjustableEnvironment url="/env.exr" env={env} />
-                </Suspense>
-                <Floor />
+                    <color attach="background" args={['#151a1d']} />
+                    {/* The 600-unit floor used to end in a hard horizon line across the frame at any low
+                    camera angle. Fog dissolves its far edge into the background instead. */}
+                    <fogExp2 attach="fog" args={['#151a1d', 0.0034]} />
+                    {process.env.NODE_ENV !== 'production' && <DevInspect />}
+                    <Rig light={light} shadow={shadow} />
 
-                <OrbitControls
-                    makeDefault
-                    autoRotate={spin}
-                    autoRotateSpeed={0.6}
-                    enableDamping
-                    dampingFactor={0.12}
-                    rotateSpeed={0.5}
-                    zoomSpeed={0.6}
-                    panSpeed={0.5}
-                    enablePan
-                    target={[0, 2.5, 0]}
-                    minDistance={12}
-                    maxDistance={220}
-                    maxPolarAngle={Math.PI * 0.5}
-                />
+                    <Suspense
+                        fallback={
+                            <Html center style={{ color: '#cfe0d6', font: '14px ui-monospace, monospace' }}>
+                                3D…
+                            </Html>
+                        }
+                    >
+                        <Board key={url} url={boardUrl(url)} layerMats={layerMats} onMaterials={setMaterials} />
+                        <DisposeOnUnmount peel={peel} mats={layerMats} />
+                        <StudioEnvironment env={env} />
+                        <BindEnvMap mats={layerMats} url={url} />
+                    </Suspense>
+                    <Floor />
+                    {/* A single 58° key casts almost nothing under a flat slab, so the board read as floating
+                    no matter how the floor was lit. This is the contact cue, rendered once and frozen. */}
+                    <ContactShadows
+                        position={[0, 0.01, 0]}
+                        scale={70}
+                        far={9}
+                        blur={2.4}
+                        opacity={0.72}
+                        resolution={1024}
+                        frames={1}
+                        color="#04070a"
+                    />
 
-                <EffectComposer>
-                    <N8AO halfRes quality="performance" aoRadius={3} intensity={1.4} distanceFalloff={1} />
-                    <Bloom luminanceThreshold={0.95} intensity={0.12} mipmapBlur />
-                    <SMAA />
-                </EffectComposer>
-            </Canvas>
+                    <OrbitControls
+                        makeDefault
+                        autoRotate={spin}
+                        autoRotateSpeed={0.6}
+                        enableDamping
+                        dampingFactor={0.12}
+                        rotateSpeed={0.5}
+                        zoomSpeed={0.6}
+                        panSpeed={0.5}
+                        enablePan
+                        target={[0, 2.5, 0]}
+                        minDistance={12}
+                        maxDistance={220}
+                        maxPolarAngle={Math.PI * 0.5}
+                    />
 
-            <div
-                style={{
-                    position: 'absolute',
-                    left: 16,
-                    top: 16,
-                    display: 'flex',
-                    gap: 8,
-                    flexWrap: 'wrap',
-                    maxWidth: 'calc(100% - 340px)',
-                }}
-            >
-                {BOARDS.map((b) => (
-                    <button key={b.id} onClick={() => setUrl(b.id)} style={chip(url === b.id)}>
-                        <span
-                            style={{
-                                opacity: 0.5,
-                                marginRight: 6,
-                                fontSize: 10,
-                                textTransform: 'uppercase',
-                                letterSpacing: 0.4,
-                            }}
-                        >
-                            {b.cat}
-                        </span>
-                        {b.title}
+                    {/* multisampling 0: the composer defaults to 8x MSAA, which on top of SMAA meant the
+                    frame was anti-aliased twice and paid for once more in the full-resolution AO pass. */}
+                    {/*
+                    KNOWN UPSTREAM ISSUE, bisected here: any chain with a SECOND render-target pass makes
+                    ANGLE log `GL_INVALID_OPERATION: glBlitFramebuffer: Read and write depth stencil
+                    attachments cannot be the same image` once per frame. Measured warning counts over a
+                    ten-second run: ToneMapping alone 0 · +Bloom 0 · +SMAA 12 · +MSAA-instead-of-SMAA 11 ·
+                    composer removed entirely 0. It survives multisampling 0, stencilBuffer false,
+                    stencil:false on the renderer, N8AO removed, VSM swapped for PCF, and SMAA switched to
+                    colour edge detection — so it is postprocessing 6.x sharing a depth attachment across
+                    its ping-pong buffers on three r169, not something this file can configure away.
+                    No visual defect results and Chrome tolerates it; giving up SMAA or AO to silence a log
+                    line would cost more than it buys. Revisit on the next postprocessing release.
+                */}
+                    <EffectComposer multisampling={0} stencilBuffer={false}>
+                        {/* Contact darkness where a package meets the laminate — the cue that stops components
+                        reading as decals printed on a green plane. */}
+                        {/* A world radius, not a screen-space one. Contact occlusion is a fixed physical
+                        distance — the gap under a 0603 body — and a screen-space radius grows with zoom,
+                        so parts lost their contact darkening exactly when you leaned in to look at it.
+                        Every board is fit to the same 40-unit target, so one world radius covers all. */}
+                        <N8AO aoRadius={1.1} quality="medium" intensity={2.2} distanceFalloff={0.8} />
+                        {/* The buffer here is linear HDR, not display-referred, so a threshold below 1 catches
+                        ordinary lit surfaces. Above 1 it catches only genuine emitters — the LED domes. */}
+                        <Bloom luminanceThreshold={0.82} intensity={0.3} mipmapBlur />
+                        {/* Khronos PBR Neutral, not ACES or AgX: both of those desaturate a saturated green
+                        subject hard and pull the small gold details toward grey. Neutral keeps the board
+                        green and the ENIG gold while still rolling off the specular highlights. */}
+                        <ToneMapping mode={ToneMappingMode.NEUTRAL} />
+                        <SMAA preset={SMAAPreset.ULTRA} />
+                    </EffectComposer>
+                </Canvas>
+            </CanvasBoundary>
+
+            {/* Nine chips wrap to seven rows on a narrow window and cover the board they select. */}
+            {narrowUi ? (
+                <div
+                    style={{
+                        position: 'absolute',
+                        left: 16,
+                        top: 16,
+                        display: 'flex',
+                        gap: 8,
+                        alignItems: 'center',
+                    }}
+                >
+                    <select
+                        value={url}
+                        onChange={(e) => setUrl(e.target.value)}
+                        aria-label="devre"
+                        style={{ ...chip(true), padding: 9, maxWidth: 230 }}
+                    >
+                        {BOARDS.map((b) => (
+                            <option key={b.id} value={b.id}>
+                                {b.title}
+                            </option>
+                        ))}
+                    </select>
+                    <button onClick={() => setSpin((sp) => !sp)} style={chip(spin)}>
+                        {spin ? '⏸' : '▶'}
                     </button>
-                ))}
-                <button onClick={() => setSpin((s) => !s)} style={chip(spin)}>
-                    {spin ? '⏸ döndürmeyi durdur' : '▶ otomatik döndür'}
-                </button>
-            </div>
+                </div>
+            ) : (
+                <div
+                    style={{
+                        position: 'absolute',
+                        left: 16,
+                        top: 16,
+                        display: 'flex',
+                        gap: 8,
+                        flexWrap: 'wrap',
+                        maxWidth: 'calc(100% - 340px)',
+                    }}
+                >
+                    {BOARDS.map((b) => (
+                        <button key={b.id} onClick={() => setUrl(b.id)} style={chip(url === b.id)}>
+                            <span
+                                style={{
+                                    opacity: 0.5,
+                                    marginRight: 6,
+                                    fontSize: 10,
+                                    textTransform: 'uppercase',
+                                    letterSpacing: 0.4,
+                                }}
+                            >
+                                {b.cat}
+                            </span>
+                            {b.title}
+                        </button>
+                    ))}
+                    <button onClick={() => setSpin((s) => !s)} style={chip(spin)}>
+                        {spin ? '⏸ döndürmeyi durdur' : '▶ otomatik döndür'}
+                    </button>
+                </div>
+            )}
 
             <Panel
                 materials={materials}
@@ -1025,6 +1503,22 @@ export default function Viewer() {
             </div>
         </div>
     );
+}
+
+/** Below this width a fixed 320 px inspector is 40% of the window and at 480 px it overflows it, so
+ *  it collapses to a toggle instead of covering the board it exists to inspect. */
+const PANEL_BREAKPOINT = 900;
+
+function useNarrow(): boolean {
+    const [narrow, setNarrow] = useState(false);
+    useEffect(() => {
+        const mq = window.matchMedia(`(max-width: ${PANEL_BREAKPOINT - 1}px)`);
+        const sync = () => setNarrow(mq.matches);
+        sync();
+        mq.addEventListener('change', sync);
+        return () => mq.removeEventListener('change', sync);
+    }, []);
+    return narrow;
 }
 
 const panelStyle: React.CSSProperties = {
@@ -1076,4 +1570,4 @@ const chip = (on: boolean): React.CSSProperties => ({
     cursor: 'pointer',
 });
 
-BOARDS.forEach((b) => useGLTF.preload('/' + b.id));
+BOARDS.forEach((b) => useGLTF.preload(boardUrl(b.id)));

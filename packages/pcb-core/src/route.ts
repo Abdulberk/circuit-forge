@@ -260,7 +260,6 @@ export function shrinkBoardToContent(board: TscElement[], clearanceMm: number): 
     );
 }
 
-
 /**
  * One axis of the shrink: the tighter size and the centre that goes with it, or null when there is no
  * slack to give back.
@@ -270,12 +269,7 @@ export function shrinkBoardToContent(board: TscElement[], clearanceMm: number): 
  * midpoint because freerouting's copper is not symmetric — a shrink that kept the old centre would clip
  * whichever side the routing leaned towards.
  */
-function axis(
-    min: number,
-    max: number,
-    oldSize: number,
-    clearanceMm: number,
-): { size: number; center: number } | null {
+function axis(min: number, max: number, oldSize: number, clearanceMm: number): { size: number; center: number } | null {
     const size = max - min + 2 * clearanceMm;
     return size < oldSize ? { size, center: (min + max) / 2 } : null;
 }
