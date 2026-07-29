@@ -25,7 +25,7 @@ assertImagesMatchProduction();
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const pkgRoot = join(__dirname, '..', 'packages', 'pcb-core');
 const outRoot = join(pkgRoot, '.layout-check');
-const { layoutCircuit, exportDsn, mergeSes, stripRouting, injectModels } = await import(
+const { layoutCircuit, exportDsn, mergeSes, stripRouting, injectModels, hasVisibleDesignators } = await import(
     new URL(`file://${join(pkgRoot, 'dist', 'index.js').replace(/\\/g, '/')}`).href
 );
 
@@ -365,15 +365,23 @@ if (frOk) {
             );
         }
 
-        // Reference designators must be PRINTED. circuit-json-to-kicad hides every footprint property; a
-        // board with no R1/C1/U1 on the silkscreen cannot be hand-assembled, reworked or cross-referenced
-        // against its own schematic — and it is the single most recognisable feature of a real PCB.
-        const refBlocks = [...q.outputs.kicadPcb.matchAll(/\(property "Reference"[\s\S]{0,400}?\n {4}\)/g)];
-        const hiddenRefs = refBlocks.filter((b) => b[0].includes('(hide yes)')).length;
-        if (refBlocks.length === 0) fail(`${name}: the board carries no Reference properties at all`);
-        else if (hiddenRefs > 0)
-            fail(`${name}: ${hiddenRefs}/${refBlocks.length} reference designator(s) still hidden — the silkscreen ships blank`);
-        else ok(`${name}: all ${refBlocks.length} reference designator(s) printed on silkscreen`);
+        // Reference designators must be PLOTTED, and that is checked on the OUTPUT rather than inferred
+        // from the source. circuit-json-to-kicad writes each designator twice — a modern
+        // `(property "Reference" …)` carrying `(hide yes)` and a legacy visible `(fp_text reference …)`.
+        // Reading only the hidden property makes the silkscreen look blank; it is not, kicad-cli plots the
+        // fp_text (re-hiding the property leaves the F.Silkscreen gerber byte-identical). But fp_text is the
+        // DEPRECATED half of that pair: the release that drops it leaves only the hidden property, and every
+        // board then ships unlabelled — assemblable by a pick-and-place machine and by nobody else. Nothing
+        // downstream would notice, because silkscreen carries no design rule, so DRC stays clean and the
+        // manufacturability verdict does not move. This is the only thing that would go red.
+        const designated = hasVisibleDesignators(q.outputs.kicadPcb);
+        const silkOps = (l) => ((q.outputs.gerbers.layers[l] ?? '').match(/D0[123]\*/g) ?? []).length;
+        const plotted = silkOps('F_SilkScreen') + silkOps('B_SilkScreen');
+        if (!designated)
+            fail(`${name}: no VISIBLE reference designator on either silkscreen layer — the board ships unlabelled`);
+        else if (plotted === 0)
+            fail(`${name}: the board declares designators but the delivered silkscreen gerbers plot nothing`);
+        else ok(`${name}: designators reach the delivered silkscreen — ${plotted} plotted operation(s)`);
 
         // real 3D bodies for every footprint
         const injectResult = injectModels(q.outputs.kicadPcb);

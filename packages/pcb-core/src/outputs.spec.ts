@@ -1,7 +1,7 @@
 import type { CircuitJson } from '@circuit-forge/eda-core';
 
 import { classifyCircuit } from './layoutability';
-import { buildBomCsv, buildPnpCsv, showReferenceDesignators } from './outputs';
+import { buildBomCsv, buildPnpCsv, hasVisibleDesignators } from './outputs';
 import type { TscElement } from './parity';
 
 const circuit: CircuitJson = {
@@ -55,51 +55,45 @@ describe('buildPnpCsv', () => {
 });
 
 
-describe('showReferenceDesignators — the board says which part is which', () => {
-    /** The exact block circuit-json-to-kicad emits (copied from a real generated board). */
-    const property = (name: string, layer: string) =>
+describe('hasVisibleDesignators — the board must SAY which part is which, whichever spelling KiCad uses', () => {
+    /** The modern half of what circuit-json-to-kicad emits: hidden, and NOT what gets plotted. */
+    const property = (hidden: boolean) =>
         [
-            `    (property "${name}" "U1"`,
+            '    (property "Reference" "U1"',
             '      (at 0 -3 0)',
-            `      (layer ${layer})`,
-            '      (hide yes)',
+            '      (layer F.SilkS)',
+            ...(hidden ? ['      (hide yes)'] : []),
             '      (uuid 65eabe80-6cf1-7821-3fcd-aec212a9e563)',
-            '      (effects (font (size 1.27 1.27) (thickness 0.15)))',
             '    )',
         ].join('\n');
 
-    it('unhides the Reference so it is actually printed on silkscreen', () => {
-        const out = showReferenceDesignators(property('Reference', 'F.SilkS'));
-        expect(out).not.toContain('(hide yes)');
-        expect(out).toContain('(property "Reference" "U1"');
-        expect(out).toContain('(layer F.SilkS)');
-    });
-
-    it.each(['Value', 'Datasheet', 'Description'])('leaves %s hidden — silkscreen is not a dumping ground', (name) => {
-        expect(showReferenceDesignators(property(name, 'F.Fab'))).toContain('(hide yes)');
-    });
-
-    it('unhides EVERY footprint, not just the first', () => {
-        const board = [property('Reference', 'F.SilkS'), property('Reference', 'F.SilkS')].join('\n');
-        expect(showReferenceDesignators(board)).not.toContain('(hide yes)');
-    });
-
-    it('unhides only the Reference when both properties sit on the same footprint', () => {
-        const board = [property('Reference', 'F.SilkS'), property('Value', 'F.Fab')].join('\n');
-        const out = showReferenceDesignators(board);
-        expect(out.match(/\(hide yes\)/g)).toHaveLength(1);
-        expect(out.slice(out.indexOf('"Value"'))).toContain('(hide yes)');
-    });
-
-    it('removes the flag and NOTHING else — uuid, position, layer and effects survive', () => {
-        const src = property('Reference', 'F.SilkS');
-        expect(showReferenceDesignators(src).split('\n')).toEqual(
-            src.split('\n').filter((l) => !l.includes('(hide yes)')),
+    /** The legacy half — deprecated, visible, and the one kicad-cli actually plots today. */
+    const fpText = (layer = 'F.SilkS') =>
+        ['    (fp_text', '      reference', '      "U1"', '      (at 0 -2.92 0)', `      (layer ${layer})`, '    )'].join(
+            '\n',
         );
+
+    it('accepts the legacy fp_text — this is why our boards were never actually blank', () => {
+        expect(hasVisibleDesignators([property(true), fpText()].join('\n'))).toBe(true);
     });
 
-    it('is a no-op on a board that has no hidden references', () => {
-        const src = '(kicad_pcb (version 20241229))';
-        expect(showReferenceDesignators(src)).toBe(src);
+    it('accepts an unhidden property — the modern spelling, for when the legacy one goes away', () => {
+        expect(hasVisibleDesignators(property(false))).toBe(true);
+    });
+
+    it('REJECTS a board whose only designator is the hidden property — the blank-silkscreen regression', () => {
+        expect(hasVisibleDesignators(property(true))).toBe(false);
+    });
+
+    it('REJECTS a board with no designators at all', () => {
+        expect(hasVisibleDesignators('(kicad_pcb (version 20241229))')).toBe(false);
+    });
+
+    it('counts the BACK silkscreen too — a bottom-side board is still labelled', () => {
+        expect(hasVisibleDesignators(fpText('B.SilkS'))).toBe(true);
+    });
+
+    it('does NOT count a designator moved to the fabrication layer — F.Fab is never printed', () => {
+        expect(hasVisibleDesignators(fpText('F.Fab'))).toBe(false);
     });
 });

@@ -939,7 +939,7 @@ export {
     resolveFabProfile,
 } from './fab-profile';
 export type { FabProfile, FabProfileInput, FabTierName, ResolvedFabProfile, ZoneInjectionResult } from './fab-profile';
-export { generateGerbers, generateKicadPcb, buildBomCsv, buildPnpCsv } from './outputs';
+export { generateGerbers, generateKicadPcb, buildBomCsv, buildPnpCsv, hasVisibleDesignators } from './outputs';
 export type { GerberOutputs } from './outputs';
 export { evaluateTscircuit } from './evaluate';
 export { exportDsn, mergeSes, stripRouting, applyFabRulesToDsn, applyPerNetWidths, enlargeBoard } from './route';

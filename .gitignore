@@ -57,3 +57,4 @@ stdout.log
 *.stackdump
 # Unpacked copy of a published npm tarball, kept for diffing releases against the source tree
 eda-check/
+packages/pcb-core/.gallery-before/
