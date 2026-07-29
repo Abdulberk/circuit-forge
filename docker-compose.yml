@@ -49,6 +49,15 @@ services:
       timeout: 5s
       retries: 5
 
+  # Creates the artifact bucket and LOCKS IT DOWN. The bucket holds customers' manufacturing bundles
+  # (gerbers/BOM/pick-and-place) and 3D renders — their circuit designs. It was previously created with
+  # `mc anonymous set download`, which grants unauthenticated GetObject AND ListBucket: measured on the
+  # running stack, an anonymous `GET /circuitforge/?list-type=2` enumerated every key and a plain GET
+  # returned a customer's board.glb in full. That bypasses the ENTIRE authorization model — org membership,
+  # the presigned-URL flow, and the rule that a DRC-rejected board yields no downloadable bundle.
+  #
+  # Nothing needs public access: every S3 client in apps/api is server-side and credentialed, and both
+  # artifact paths hand the browser a presigned URL (assets.service.ts, layout.service.ts).
   create-bucket:
     image: minio/mc
     container_name: circuitforge-create-bucket
@@ -59,7 +68,7 @@ services:
       /bin/sh -c "
       mc alias set myminio http://minio:9000 minioadmin minioadmin;
       mc mb myminio/circuitforge --ignore-existing;
-      mc anonymous set download myminio/circuitforge;
+      mc anonymous set none myminio/circuitforge;
       exit 0;
       "
 
