@@ -36,12 +36,19 @@ function closeOf(text, open) {
 /** Every tscircuit footprint with an injected model: expected body-origin position in board mm. */
 function expectedBodies(kicadPcb) {
     const out = [];
-    const re = /\(footprint\s*\n\s*"(tscircuit:[^"]+)"/g;
+    // Whitespace-permissive on purpose. These two patterns were pinned to one exact KiCad pretty-print
+    // and went stale when the emitted formatting changed — the footprint name moved onto the same line as
+    // `(footprint`, and `(offset (xyz …))` became a multi-line block. The script then parsed ZERO
+    // footprints on every board and reported all eight as FAILED alignment, while the boards were in fact
+    // exact. A gate that cannot tell "nothing to check" from "the check failed" is worse than no gate.
+    const re = /\(footprint\s+"(tscircuit:[^"]+)"/g;
     let m;
     while ((m = re.exec(kicadPcb))) {
         const body = kicadPcb.slice(m.index, closeOf(kicadPcb, m.index));
         const at = /\(at\s+(-?[\d.]+)\s+(-?[\d.]+)(?:\s+(-?[\d.]+))?\s*\)/.exec(body);
-        const model = /\(model\s+"([^"]+)"\s*\n?\s*\(offset \(xyz (-?[\d.]+) (-?[\d.]+) (-?[\d.]+)\)\)/.exec(body);
+        const model = /\(model\s+"([^"]+)"[\s\S]*?\(offset\s*\(xyz\s+(-?[\d.]+)\s+(-?[\d.]+)\s+(-?[\d.]+)\s*\)/.exec(
+            body,
+        );
         if (!at || !model) continue;
         const fpRot = Number(at[3] ?? 0);
         if (fpRot !== 0) {
@@ -198,8 +205,16 @@ for (const name of boards) {
     const expected = expectedAll.filter((e) => !e.skip);
     const nodes = bodyNodes(parseGlbJson(readFileSync(glbPath)));
 
+    if (expectedAll.length === 0) {
+        // Distinct from an alignment failure: it means the .kicad_pcb no longer parses, which is format
+        // drift and not a misplaced body. Naming it separately is what makes the next KiCad bump
+        // diagnosable instead of looking like eight broken boards.
+        console.log(`── ${name}: parsed 0 footprints from board.kicad_pcb — kicad_pcb format drift?`);
+        failures++;
+        continue;
+    }
     if (expected.length === 0) {
-        console.log(`── ${name}: no expectations (no models?)`);
+        console.log(`── ${name}: every footprint skipped (${skipped.length} rotated) — nothing to verify`);
         failures++;
         continue;
     }

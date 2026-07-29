@@ -51,8 +51,18 @@ docker compose up -d postgres redis minio   # if not already running
 pnpm dev
 ```
 
-`pnpm dev` starts **seven** workspace packages: `api`, `worker-sim`, `pcb-worker`, `pcb-viewer`, and the
-three libraries in watch mode (`eda-core`, `llm-core`, `pcb-core`).
+`pnpm dev` starts **six** workspace packages: `api`, `worker-sim`, `pcb-worker`, and the three
+libraries in watch mode (`eda-core`, `llm-core`, `pcb-core`).
+
+`pcb-viewer` is NOT among them. It is deliberately excluded from the pnpm workspace so its React 18
+never meets the React 19 that tscircuit requires, which also means turbo cannot see it. Run it on its
+own:
+
+```bash
+cd apps/pcb-viewer
+pnpm install --ignore-workspace   # once
+pnpm dev                          # http://localhost:3100
+```
 
 ## PCB layout worker (optional)
 

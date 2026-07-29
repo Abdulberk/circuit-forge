@@ -20,7 +20,24 @@ import { readFileSync, readdirSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-import { GLTFLoader } from '../apps/pcb-viewer/node_modules/three/examples/jsm/loaders/GLTFLoader.js';
+// three lives in TWO places here: the root workspace has it through pcb-core, and apps/pcb-viewer
+// keeps its own standalone install. Resolving only through the viewer path breaks on a fresh clone,
+// because that directory exists only after a separate `pnpm install --ignore-workspace` inside the
+// app. Try the workspace copy first and fall back, so the script runs from either state.
+const { GLTFLoader } = await (async () => {
+    const candidates = [
+        'three/examples/jsm/loaders/GLTFLoader.js',
+        '../apps/pcb-viewer/node_modules/three/examples/jsm/loaders/GLTFLoader.js',
+    ];
+    for (const spec of candidates) {
+        try {
+            return await import(spec);
+        } catch {
+            /* try the next location */
+        }
+    }
+    throw new Error('three is not installed — run `pnpm install` at the repo root');
+})();
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const GLB_DIR = process.argv[2] ?? join(HERE, '..', 'apps', 'pcb-viewer', 'public');
