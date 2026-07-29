@@ -1,10 +1,10 @@
 'use client';
-import { Suspense, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { Component, Suspense, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import * as THREE from 'three';
 import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
 import { EXRLoader } from 'three/examples/jsm/loaders/EXRLoader.js';
 import { Canvas, useThree, useLoader } from '@react-three/fiber';
-import { OrbitControls, Environment, useGLTF, Html } from '@react-three/drei';
+import { ContactShadows, OrbitControls, Environment, useGLTF, Html } from '@react-three/drei';
 import { EffectComposer, Bloom, N8AO, SMAA, ToneMapping } from '@react-three/postprocessing';
 import { ToneMappingMode, SMAAPreset } from 'postprocessing';
 
@@ -23,6 +23,11 @@ const BOARDS = [
 ];
 
 const TARGET = 40; // world units on largest side
+
+/** drei caches by the exact string handed to useGLTF, so the preload and the component have to build
+ *  the URL the same way. They did not: the preload asked for a leading-slash path while the component
+ *  asked for a bare filename, which made the preload dead code and downloaded every board twice. */
+const boardUrl = (id: string): string => `/${id}`;
 
 // The GLB carries no emitter colour — KiCad's LED_D5.0mm STEP is a neutral epoxy dome — so a colour
 // has to be chosen. Red is the modal 5mm indicator LED by a wide margin, so it is the least-wrong
@@ -82,7 +87,10 @@ function makeOrangePeelNormal(): THREE.CanvasTexture | null {
     ctx.putImageData(img, 0, 0);
     const t = new THREE.CanvasTexture(c);
     t.wrapS = t.wrapT = THREE.RepeatWrapping;
-    t.repeat.set(3, 3);
+    // ensurePlanarUV maps whatever it is given across 0..1, so a fixed repeat count stretches the dimple
+    // to a different physical size on every board. The mask sheet is re-scaled per board in
+    // ensurePlanarUV instead; this stays at 1 so the two are not multiplied.
+    t.repeat.set(1, 1);
     return t;
 }
 
@@ -163,7 +171,7 @@ function buildLayerMaterials(peel: THREE.CanvasTexture | null) {
         transparent: false,
         opacity: 1,
         side: THREE.DoubleSide,
-        envMapIntensity: 0.3,
+        envMapIntensity: 0.85,
     });
     /** Bare FR4 as seen at the ROUTED EDGE — lighter and warmer than the masked face, and slightly
      *  fibrous. It is never glossy: the router leaves cut glass fibre, not a coated surface. */
@@ -267,6 +275,18 @@ function makePartResolver() {
                 envMapIntensity: 1.2,
             });
             out.name = 'Metal terminal';
+        } else if (mx > 0.55 && r >= g && g > b && relSat < 0.55) {
+            // Gold plating is a WARM metal, so it never passes a desaturation test — the header pins were
+            // falling through to the generic coloured-part branch and rendering as matte tan sticks, which
+            // is the loudest wrong object on the connector boards. Hue order r ≥ g > b with a moderate
+            // saturation is what separates gold from an orange plastic.
+            out = new THREE.MeshPhysicalMaterial({
+                color: '#e8c179',
+                metalness: 1,
+                roughness: 0.32,
+                envMapIntensity: 1.2,
+            });
+            out.name = 'Altın kaplama pin';
         } else {
             // Coloured bodies: epoxy, plastic housings, LED lenses, capacitor sleeves. None of them are
             // metal — but KiCad's 3D models omit `metallicFactor`, and the glTF spec says an absent factor
@@ -288,6 +308,9 @@ function makePartResolver() {
 function attrSig(geo: THREE.BufferGeometry): string {
     return Object.keys(geo.attributes).sort().join(',') + (geo.index ? '+i' : '');
 }
+/** Board-plan size, in the GLB own units (metres), that one tile of the micro-texture covers. */
+const PEEL_TILE_M = 0.006;
+
 function ensurePlanarUV(geo: THREE.BufferGeometry) {
     if (geo.attributes.uv) return;
     geo.computeBoundingBox();
@@ -302,8 +325,11 @@ function ensurePlanarUV(geo: THREE.BufferGeometry) {
     const uv = new Float32Array(pos.count * 2);
     for (let i = 0; i < pos.count; i++) {
         const p = new THREE.Vector3(pos.getX(i), pos.getY(i), pos.getZ(i));
-        uv[i * 2] = (p[u] - bb.min[u]) / (size[u] || 1);
-        uv[i * 2 + 1] = (p[v] - bb.min[v]) / (size[v] || 1);
+        // In TILES of a fixed physical size, not normalised 0..1. Normalising stretched one tile of
+        // micro-texture across the whole board, so the dimple was a different physical size on every
+        // board — and on the long thin ones it read as crumpled foil rather than sprayed lacquer.
+        uv[i * 2] = (p[u] - bb.min[u]) / PEEL_TILE_M;
+        uv[i * 2 + 1] = (p[v] - bb.min[v]) / PEEL_TILE_M;
     }
     geo.setAttribute('uv', new THREE.BufferAttribute(uv, 2));
 }
@@ -350,7 +376,7 @@ function assignMaterials(meshes: THREE.Mesh[], layerMats: LayerMats, nameOf: (m:
     const resolveLed = makeLedResolver();
     // The board mid-plane in glTF units (metres): the core spans 0 … 1.510 mm.
     const MID_Y = 0.000755;
-    const worldY = new THREE.Vector3();
+    const centre = new THREE.Vector3();
     const byLayer: Partial<Record<Layer, THREE.Material>> = {
         soldermask: layerMats.mask,
         copper: layerMats.copper,
@@ -372,14 +398,42 @@ function assignMaterials(meshes: THREE.Mesh[], layerMats: LayerMats, nameOf: (m:
         // matched as a token. A bare substring test would also claim anything that merely contains the
         // letters and hand it a glowing emissive dome.
         if (/(^|[-_])led([-_]|$)/i.test(name)) {
-            m.material = resolveLed();
+            // The imported mesh is the whole part — epoxy dome, flange AND metal leads — so handing the
+            // emissive material to all of it made the leads glow like hot wire. The epoxy is the coloured
+            // sub-material; anything desaturated is metal and goes through the ordinary part path.
+            const src = m.userData.__origMat ?? m.material;
+            m.userData.__origMat = src;
+            const isEpoxy = (mt: THREE.MeshStandardMaterial) => {
+                const c = mt?.color;
+                if (!c) return true;
+                const mx = Math.max(c.r, c.g, c.b);
+                const mn = Math.min(c.r, c.g, c.b);
+                return mx > 0 && (mx - mn) / mx > 0.25;
+            };
+            m.material = Array.isArray(src)
+                ? src.map((mt) =>
+                      isEpoxy(mt as THREE.MeshStandardMaterial)
+                          ? resolveLed()
+                          : resolvePart(mt as THREE.MeshStandardMaterial),
+                  )
+                : isEpoxy(src as THREE.MeshStandardMaterial)
+                  ? resolveLed()
+                  : resolvePart(src as THREE.MeshStandardMaterial);
             continue;
-        } // real KiCad dome, tinted
+        }
         const layer = layerOf(name);
         // `board_soldermask` is TWO sheets, top and bottom. They must not share a material instance:
         // the top one gets a geometric offset below, and merging is keyed by material identity.
         if (layer === 'soldermask') {
-            m.material = m.getWorldPosition(worldY).y > MID_Y ? layerMats.mask : layerMats.maskBottom;
+            // By GEOMETRY, not by node origin. KiCad writes both mask sheets as UNTRANSFORMED nodes at
+            // the origin and bakes the height into the vertex data, so `getWorldPosition().y` returns 0
+            // for both — the earlier test put the top sheet in the bottom bucket, left `layerMats.mask`
+            // attached to nothing, and made the 30 µm drop below unreachable. The board rendered with
+            // every trace still buried under an opaque sheet, and it read as a plain green plane.
+            if (!m.geometry.boundingBox) m.geometry.computeBoundingBox();
+            m.geometry.boundingBox!.getCenter(centre);
+            m.localToWorld(centre);
+            m.material = centre.y > MID_Y ? layerMats.mask : layerMats.maskBottom;
             continue;
         }
         const lm = byLayer[layer];
@@ -502,6 +556,8 @@ function Board({
     onMaterials,
 }: Readonly<{ url: string; layerMats: LayerMats; onMaterials: (m: MatEntry[]) => void }>) {
     const { scene, parser } = useGLTF(url);
+    const camera = useThree((st) => st.camera);
+    const controls = useThree((st) => st.controls);
     const group = useRef<THREE.Group>(null);
 
     useLayoutEffect(() => {
@@ -514,32 +570,109 @@ function Board({
         g.scale.setScalar(1);
         g.position.set(0, 0, 0);
         g.updateWorldMatrix(true, true);
-        const raw = new THREE.Box3().setFromObject(g);
+
+        // Orientation comes from the LAMINATE, never from the whole scene. The core is 1.510 mm thick
+        // against ~25 mm in plan, so its own thinnest axis names the board normal without ambiguity.
+        // Inferring it from the scene bounding box let a tall part vote: regulator-5v carries a TO-220
+        // whose model spans −8.15 … +20.37 mm, which made the scene taller than it was wide and stood
+        // the whole board up on its edge like a wall.
+        const slab = boardSlab(g);
         const rs = new THREE.Vector3();
-        raw.getSize(rs);
+        (slab ?? new THREE.Box3().setFromObject(g)).getSize(rs);
         if (rs.z <= rs.x && rs.z <= rs.y) g.rotation.x = -Math.PI / 2;
         else if (rs.x <= rs.y && rs.x <= rs.z) g.rotation.z = Math.PI / 2;
 
         g.updateWorldMatrix(true, true);
-        const box = new THREE.Box3().setFromObject(g);
+        // Frame the LAMINATE's footprint. Scaling to the whole scene let a tall part decide how big the
+        // board is: the 7805's heatsink tab is 20 mm over a 25 mm board, so that one component pushed the
+        // board to a third of its proper size and ran off the top of the viewport.
+        const plan = boardSlab(g) ?? new THREE.Box3().setFromObject(g);
         const size = new THREE.Vector3();
-        box.getSize(size);
-        const maxDim = Math.max(size.x, size.y, size.z) || 1;
-        g.scale.setScalar(TARGET / maxDim);
+        plan.getSize(size);
+        g.scale.setScalar(TARGET / (Math.max(size.x, size.z) || 1));
         g.updateWorldMatrix(true, true);
         const box2 = new THREE.Box3().setFromObject(g);
         const center = new THREE.Vector3();
         box2.getCenter(center);
         g.position.x -= center.x;
         g.position.z -= center.z;
-        g.position.y -= box2.min.y;
-    }, [scene, parser, layerMats, onMaterials]);
+        // Seat the LAMINATE on the floor, not the whole scene: the scene's lowest point is the tip of a
+        // through-hole lead, which was holding every board ~1.4 mm in the air on its own pins.
+        const seated = boardSlab(g);
+        g.position.y -= (seated ?? box2).min.y;
+
+        // Then move the CAMERA to fit, instead of shrinking the board until its tallest part happens to
+        // fit a fixed camera. Every board keeps the same physical presence in frame, and a 20 mm heatsink
+        // tab on a 25 mm board simply pushes the camera back rather than making the board tiny.
+        g.updateWorldMatrix(true, true);
+        const fitted = new THREE.Box3().setFromObject(g);
+        const sphere = fitted.getBoundingSphere(new THREE.Sphere());
+        const fov = (camera as THREE.PerspectiveCamera).fov ?? 34;
+        const dist = (sphere.radius / Math.sin(((fov * 0.5) * Math.PI) / 180)) * 1.06;
+        const dir = camera.position.clone().sub(sphere.center).normalize();
+        camera.position.copy(sphere.center).addScaledVector(dir, dist);
+        camera.lookAt(sphere.center);
+        const orbit = controls as { target?: THREE.Vector3; update?: () => void } | null;
+        if (orbit?.target) {
+            orbit.target.copy(sphere.center);
+            orbit.update?.();
+        }
+    }, [scene, parser, layerMats, onMaterials, camera, controls]);
 
     return (
         <group ref={group}>
             <primitive object={scene} />
         </group>
     );
+}
+
+/** World-space bounds of the laminate alone (the merged board_PCB), or null if it is not there. */
+function boardSlab(root: THREE.Object3D): THREE.Box3 | null {
+    let found: THREE.Object3D | null = null;
+    root.traverse((o) => {
+        if (!found && (o as THREE.Mesh).isMesh && o.name === 'merged_pcb') found = o;
+    });
+    return found ? new THREE.Box3().setFromObject(found) : null;
+}
+
+/**
+ * three r169 dropped WebGL1 entirely, so on a blocklisted GPU, a locked-down browser or a machine with
+ * software rendering disabled, `new WebGLRenderer` throws — and it throws from inside the Canvas, taking
+ * the whole React tree down with it. The page went completely blank: no canvas, no message, no board
+ * list, just an uncaught error retried in a loop. The chips and the caption are plain DOM siblings and
+ * have no reason to die with the renderer.
+ */
+class CanvasBoundary extends Component<{ children: ReactNode }, { failed: boolean }> {
+    constructor(props: { children: ReactNode }) {
+        super(props);
+        this.state = { failed: false };
+    }
+    static getDerivedStateFromError() {
+        return { failed: true };
+    }
+    render() {
+        if (!this.state.failed) return this.props.children;
+        return (
+            <div
+                style={{
+                    position: 'absolute',
+                    inset: 0,
+                    display: 'grid',
+                    placeItems: 'center',
+                    padding: 32,
+                    textAlign: 'center',
+                    color: '#9fb3a8',
+                    font: '14px/1.7 ui-monospace, monospace',
+                }}
+            >
+                <div>
+                    <div style={{ fontSize: 15, color: '#cfe0d6', marginBottom: 8 }}>3B görünüm açılamadı</div>
+                    Bu tarayıcıda WebGL 2 kullanılamıyor. Donanım hızlandırmayı açmayı veya güncel bir
+                    masaüstü tarayıcı kullanmayı deneyin.
+                </div>
+            </div>
+        );
+    }
 }
 
 function Floor() {
@@ -1156,11 +1289,13 @@ export default function Viewer() {
 
     return (
         <div style={{ position: 'fixed', inset: 0, background: '#080d10' }}>
+            <CanvasBoundary>
             <Canvas
                 shadows="variance"
-                // Supersampling is the only anti-aliasing that recovers a sub-pixel trace edge; no
-                // post filter can reconstruct geometry that was never sampled.
-                dpr={[1, 2]}
+                // dpr clamps to the display's own devicePixelRatio, so this is not supersampling — it
+                // just stops the canvas rendering below native. The actual edge quality comes from SMAA
+                // in the chain; MSAA is disabled on the composer for the same reason.
+                dpr={[1, 1.75]}
                 gl={{ antialias: false, powerPreference: 'high-performance' }}
                 // A 0.5 … 400 frustum instead of 0.1 … 3000 buys back depth precision, which matters
                 // when layers are tens of microns apart.
@@ -1186,11 +1321,23 @@ export default function Viewer() {
                         </Html>
                     }
                 >
-                    <Board key={url} url={url} layerMats={layerMats} onMaterials={setMaterials} />
+                    <Board key={url} url={boardUrl(url)} layerMats={layerMats} onMaterials={setMaterials} />
                     <StudioEnvironment strength={env.strength} />
                     <BindEnvMap mats={layerMats} url={url} />
                 </Suspense>
                 <Floor />
+                {/* A single 58° key casts almost nothing under a flat slab, so the board read as floating
+                    no matter how the floor was lit. This is the contact cue, rendered once and frozen. */}
+                <ContactShadows
+                    position={[0, 0.01, 0]}
+                    scale={70}
+                    far={9}
+                    blur={2.4}
+                    opacity={0.72}
+                    resolution={1024}
+                    frames={1}
+                    color="#04070a"
+                />
 
                 <OrbitControls
                     makeDefault
@@ -1208,13 +1355,16 @@ export default function Viewer() {
                     maxPolarAngle={Math.PI * 0.5}
                 />
 
-                <EffectComposer>
+                {/* multisampling 0: the composer defaults to 8x MSAA, which on top of SMAA meant the
+                    frame was anti-aliased twice and paid for once more in the full-resolution AO pass. */}
+                <EffectComposer multisampling={0}>
                     {/* Contact darkness where a package meets the laminate — the cue that stops components
                         reading as decals printed on a green plane. */}
-                    {/* screenSpaceRadius, not a world radius: the fit-to-view scale varies 2.19× across
-                        the eight boards, so no single world-space radius is correct on all of them. 32 px
-                        is the contact scale regardless of how big the board is on screen. */}
-                    <N8AO screenSpaceRadius aoRadius={32} quality="medium" intensity={2} distanceFalloff={1} />
+                    {/* A world radius, not a screen-space one. Contact occlusion is a fixed physical
+                        distance — the gap under a 0603 body — and a screen-space radius grows with zoom,
+                        so parts lost their contact darkening exactly when you leaned in to look at it.
+                        Every board is fit to the same 40-unit target, so one world radius covers all. */}
+                    <N8AO aoRadius={1.1} quality="medium" intensity={2.2} distanceFalloff={0.8} />
                     {/* The buffer here is linear HDR, not display-referred, so a threshold below 1 catches
                         ordinary lit surfaces. Above 1 it catches only genuine emitters — the LED domes. */}
                     <Bloom luminanceThreshold={1.15} intensity={0.28} mipmapBlur />
@@ -1225,6 +1375,7 @@ export default function Viewer() {
                     <SMAA preset={SMAAPreset.ULTRA} />
                 </EffectComposer>
             </Canvas>
+            </CanvasBoundary>
 
             <div
                 style={{
@@ -1333,4 +1484,4 @@ const chip = (on: boolean): React.CSSProperties => ({
     cursor: 'pointer',
 });
 
-BOARDS.forEach((b) => useGLTF.preload('/' + b.id));
+BOARDS.forEach((b) => useGLTF.preload(boardUrl(b.id)));
