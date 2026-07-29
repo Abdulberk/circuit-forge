@@ -346,10 +346,21 @@ describe('Platform Admin API (e2e, real stack)', () => {
     // ---------------------------------------------------------------- audit trail
     describe('admin audit trail', () => {
         it('every mutation left an admin.* row with adminActorId + before/after + requestId', async () => {
-            const suspendLog = await get('/admin/audit-logs?action=admin.org.suspend', adminTok).expect(200);
+            // Scoped to THIS run's operator on purpose. `action` alone is a platform-wide query, and a sibling
+            // suite (org-audit-log) seeds its own admin.org.suspend row into the same database under a
+            // different actor — so "the newest suspend row" belonged to whichever suite won the race, and the
+            // assertion below passed or failed on parallel-worker interleaving rather than on behaviour. Both
+            // filters stay under test: the rows come back action-filtered and every one is checked for it.
+            const suspendLog = await get(
+                `/admin/audit-logs?action=admin.org.suspend&adminActorId=${opId}`,
+                adminTok,
+            ).expect(200);
             expect(suspendLog.body.total).toBeGreaterThanOrEqual(1);
+            for (const item of suspendLog.body.items) {
+                expect(item.action).toBe('admin.org.suspend');
+                expect(item.adminActorId).toBe(opId);
+            }
             const row = suspendLog.body.items[0];
-            expect(row.adminActorId).toBe(opId);
             expect(row.meta).toHaveProperty('before');
             expect(row.meta).toHaveProperty('after');
             expect(typeof row.meta.requestId).toBe('string');
