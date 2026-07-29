@@ -555,4 +555,116 @@ describe('runDesignLoop — ERC hard gate (SDK-free)', () => {
         expect(res.history.some((h) => h.status === 'ERC_ERROR')).toBe(true);
         expect(String(res.warning)).toMatch(/electrical rule|ERC/i);
     });
+
+    it('a verdict reached without a simulation still ships a manifest, with sim disclosed not-run', async () => {
+        // The exit that used to be silent. No sim ran, so nothing about voltages was measured — and the
+        // result must SAY that rather than leave the reader to infer it from a missing field.
+        const runSim = {
+            createQuickSim: jest.fn(async () => ({ jobId: 'j1' })),
+            getStatus: jest.fn(async () => ({ status: 'SUCCEEDED', metrics: { pointsCount: 2 } })),
+            getResult: jest.fn(async () => ({ status: 'SUCCEEDED', result: { meta: { pointsCount: 2 }, series: [] } })),
+            createMonteCarloJob: jest.fn(),
+        };
+        const res = await runDesignLoop(
+            {
+                prompt: 'a 5V rail',
+                seedCircuit: SEED_NO_GROUND,
+                seedAnalysisConfig: { type: 'op' } as never,
+                seedCriteria: [{ probe: 'a', metric: 'final', op: 'approx', value: 5, tol: 0.1 }] as never,
+                maxRounds: 1,
+            },
+            fakeDeps({ runSim: runSim as unknown as DesignDeps['runSim'] }),
+        );
+        const checks = new Map((res.scope?.checks ?? []).map((c) => [c.id, c]));
+        expect(checks.get('sim')!.status).toBe('not-run');
+        // The criterion names a voltage, but no simulation evaluated it — coverage is not claimed.
+        expect(checks.get('assertion.voltage')!.status).toBe('not-run');
+    });
+});
+
+describe('runDesignLoop — the scope manifest travels with the verdict', () => {
+    const SEED: CircuitJson = {
+        version: '1.0',
+        components: [
+            {
+                id: 'v1',
+                type: 'voltage_source',
+                designator: 'V1',
+                value: 'DC 10',
+                pins: [
+                    { pinId: '+', netId: 'in' },
+                    { pinId: '-', netId: '0' },
+                ],
+            },
+            {
+                id: 'r1',
+                type: 'resistor',
+                designator: 'R1',
+                value: '1k',
+                pins: [
+                    { pinId: '1', netId: 'in' },
+                    { pinId: '2', netId: '0' },
+                ],
+            },
+            { id: 'gnd', type: 'ground', designator: 'GND1', pins: [{ pinId: '1', netId: '0' }] },
+        ],
+        nets: [
+            { id: 'in', name: 'in' },
+            { id: '0', name: '0', isGround: true },
+        ],
+    } as unknown as CircuitJson;
+
+    it('a verified design discloses what ran, what did not, and what is out of scope', async () => {
+        const runSim = {
+            createQuickSim: jest.fn(async () => ({ jobId: 'j1' })),
+            getStatus: jest.fn(async () => ({ status: 'SUCCEEDED', metrics: { pointsCount: 2 } })),
+            getResult: jest.fn(async () => ({
+                status: 'SUCCEEDED',
+                result: {
+                    meta: { pointsCount: 2 },
+                    series: [
+                        {
+                            name: 'v(in)',
+                            points: [
+                                { x: 0, y: 10 },
+                                { x: 1, y: 10 },
+                            ],
+                        },
+                    ],
+                },
+                metrics: { pointsCount: 2 },
+            })),
+            createMonteCarloJob: jest.fn(), // returns undefined → no MC ran → robustness must read not-run
+        };
+        const res = await runDesignLoop(
+            {
+                prompt: 'a 10V rail',
+                seedCircuit: SEED,
+                seedAnalysisConfig: { type: 'op' } as never,
+                seedCriteria: [{ probe: 'in', metric: 'final', op: 'approx', value: 10, tol: 0.1 }] as never,
+                maxRounds: 1,
+            },
+            fakeDeps({ runSim: runSim as unknown as DesignDeps['runSim'] }),
+        );
+        expect(res.verified).toBe(true);
+        const checks = new Map((res.scope!.checks ?? []).map((c) => [c.id, c]));
+        // ran, and said so
+        expect(checks.get('sim')!.status).toBe('run');
+        expect(checks.get('erc')!.status).toBe('run');
+        expect(checks.get('assertion.voltage')!.status).toBe('run');
+        // did NOT run — the point of the manifest. "verified" above must not be read as covering these.
+        for (const id of [
+            'assertion.thd',
+            'stress.resistor-power',
+            'stress.voltage',
+            'decoupling',
+            'robustness',
+        ] as const)
+            expect(checks.get(id)!.status).toBe('not-run');
+        // out of scope by decision, each with its reason attached
+        for (const id of ['thermal', 'emi', 'compliance'] as const) {
+            expect(checks.get(id)!.status).toBe('excluded');
+            expect(checks.get(id)!.detail).toBeTruthy();
+        }
+    });
 });

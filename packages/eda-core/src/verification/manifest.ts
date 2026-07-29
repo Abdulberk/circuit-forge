@@ -29,10 +29,18 @@ export const CHECK_IDS = [
     'assertion.current',
     'assertion.frequency',
     'assertion.thd',
-    'derating',
+    'stress.resistor-power',
+    'stress.voltage',
+    'stress.current',
     'robustness',
     'decoupling',
     'polarity',
+    // Domains we do not analyse. They are listed EXACTLY so their absence stops being invisible: a reader
+    // of the manifest can tell "we looked and it passed" from "nobody looked", which is the whole point of
+    // the primitive. Silence is the one thing a scope manifest must never do.
+    'thermal',
+    'emi',
+    'compliance',
     // layout / manufacturability (GET /layouts/:id)
     'connectivity-parity',
     'drc',
@@ -67,13 +75,36 @@ export const CHECK_LABELS: Record<CheckId, string> = {
     'assertion.current': 'Current spec asserted',
     'assertion.frequency': 'Frequency spec asserted',
     'assertion.thd': 'Distortion (THD) spec asserted',
-    derating: 'Component derating / stress',
+    // Named for what it MEASURES, not for the family it belongs to. It was called "Component derating /
+    // stress", which promises capacitor voltage margin, diode reverse voltage, transistor Vds and current
+    // through anything — none of which run. A reader who saw "stress: checked" stopped looking, which is
+    // exactly the false confidence the manifest exists to prevent.
+    'stress.resistor-power': 'Resistor power vs rating',
+    'stress.voltage': 'Voltage stress vs absolute maximum',
+    'stress.current': 'Current stress vs rating',
     robustness: 'Tolerance robustness (Monte-Carlo / corners)',
     decoupling: 'Decoupling present',
     polarity: 'Polarity orientation-consistency',
     'connectivity-parity': 'Netlist ↔ layout connectivity',
     drc: 'Design-rule check (fab tier)',
     manufacturability: 'Manufacturable (DRC-clean gate)',
+    thermal: 'Thermal / junction temperature',
+    emi: 'EMI / EMC',
+    compliance: 'Regulatory compliance',
+};
+
+/**
+ * Checks that are out of scope by DECISION, with the reason. These are not gaps waiting to be filled —
+ * each needs an input the design does not carry (a thermal resistance datum), or is a laboratory
+ * measurement that no simulation can stand in for (radiated emissions, a certification test). Stating the
+ * reason is what separates a considered exclusion from an oversight.
+ */
+export const EXCLUDED_CHECKS: Partial<Record<CheckId, string>> = {
+    thermal:
+        'needs a per-part thermal resistance and an ambient/airflow assumption the design does not carry — a junction-temperature number without them would be invented',
+    emi: 'radiated and conducted emissions are a laboratory measurement on a physical board, not a property derivable from a netlist',
+    compliance:
+        'certification (CE, FCC, UL) is granted against a built unit by an accredited body — no analysis here can assert it',
 };
 
 /**
@@ -99,8 +130,9 @@ export function buildElectricalScope(input: {
     simRan: boolean;
     /** dimensions the SUPPLIED assertions cover (via criterionDimension). */
     coveredDimensions: readonly SpecDimension[];
-    /** the resistor-power/derating review — 'run' when it produced a report (informational), else not-run. */
-    derating?: DeterminedEntry;
+    /** Resistor dissipation vs rating — 'run' when it produced a report (informational), else not-run. Named
+     *  for what it measures: it does NOT cover capacitors, semiconductors or current. */
+    resistorPower?: DeterminedEntry;
     /** worst-case corner / Monte-Carlo robustness — 'run' only when the caller requested and it executed. */
     robustness?: DeterminedEntry;
     decoupling?: DeterminedEntry;
@@ -117,10 +149,15 @@ export function buildElectricalScope(input: {
             'assertion.current',
             'assertion.frequency',
             'assertion.thd',
-            'derating',
+            'stress.resistor-power',
+            'stress.voltage',
+            'stress.current',
             'robustness',
             'decoupling',
             'polarity',
+            'thermal',
+            'emi',
+            'compliance',
         ],
         {
             sim: { status: input.simRan ? 'run' : 'not-run' },
@@ -129,10 +166,15 @@ export function buildElectricalScope(input: {
             'assertion.current': dim('current'),
             'assertion.frequency': dim('frequency'),
             'assertion.thd': dim('thd'),
-            derating: input.derating ?? {
+            'stress.resistor-power': input.resistorPower ?? {
                 status: 'not-run',
                 detail: 'no resistor-power data (sim not ok / no resistors)',
             },
+            // The other two stress axes have no detector. They are OWNED and disclosed not-run rather than
+            // left out, because the reader has to be able to see that nobody checked the capacitor on the
+            // 12V rail. An unlisted check is indistinguishable from a passed one.
+            'stress.voltage': { status: 'not-run', detail: 'no absolute-maximum voltage check is implemented' },
+            'stress.current': { status: 'not-run', detail: 'no per-part current-rating check is implemented' },
             robustness: input.robustness ?? { status: 'not-run', detail: 'tolerance robustness not requested' },
             // Decoupling presence is DEFERRED, not merely unimplemented: the circuit model has no power-rail
             // marking, so a "rail" could only be guessed (a DC source may drive a signal/reference net), and
@@ -143,7 +185,41 @@ export function buildElectricalScope(input: {
                 detail: 'deferred — no power-rail marking in the model to identify a rail reliably (needs an isPower net field / power-pin roles)',
             },
             polarity: input.polarity ?? { status: 'not-run', detail: 'no polarized diode/zener/LED to evaluate' },
+            ...excludedEntries('thermal', 'emi', 'compliance'),
         },
+    );
+}
+
+/**
+ * Restate ONE check on an existing manifest, for the case where a later stage actually ran it.
+ *
+ * The multi-candidate design path is the reason this exists: each finalist runs its fix-loop with
+ * Monte-Carlo off, and MC runs once at the end on the winner alone. The winner therefore carries a manifest
+ * that says robustness did not run, next to a robustness verdict that did — the manifest contradicting the
+ * verdict beside it, which is worse than having no manifest. Rebuilding it in place keeps the two in step.
+ *
+ * Throws on an id the manifest does not own: a fragment lists the checks belonging to its own endpoint, and
+ * quietly appending a foreign one would let a producer claim a check it has no business reporting.
+ */
+export function withCheck(manifest: ScopeManifest, id: CheckId, entry: DeterminedEntry): ScopeManifest {
+    if (!manifest.checks.some((c) => c.id === id)) throw new Error(`withCheck: manifest does not own check "${id}"`);
+    return { checks: manifest.checks.map((c) => (c.id === id ? { id, ...entry } : c)) };
+}
+
+/**
+ * Turn ids from the exclusion registry into determined entries, so a reason is written once and reused.
+ *
+ * Throws on an id with no registered reason. "Excluded" with a blank reason is the failure mode this whole
+ * primitive exists to prevent — it reads as considered while saying nothing, which is a more convincing
+ * version of silence than silence itself.
+ */
+export function excludedEntries(...ids: readonly CheckId[]): Partial<Record<CheckId, DeterminedEntry>> {
+    return Object.fromEntries(
+        ids.map((id) => {
+            const detail = EXCLUDED_CHECKS[id];
+            if (!detail) throw new Error(`excludedEntries: no exclusion reason registered for "${id}"`);
+            return [id, { status: 'excluded', detail }];
+        }),
     );
 }
 

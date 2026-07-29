@@ -24,10 +24,13 @@ import {
     isCurrentProbe,
     currentKey,
     classifyRobustness,
+    buildElectricalScope,
     ROBUSTNESS_PROFILES,
     type RobustnessTier,
     type RobustnessBars,
     type RobustnessVerdict,
+    type ScopeManifest,
+    type DeterminedEntry,
     type CircuitJson,
     type AnalysisConfig,
     type DataSeries,
@@ -82,6 +85,17 @@ export interface DesignResult {
     yield?: Record<string, unknown>;
     /** Tolerance-aware robustness tier (layered on top of nominal `verified`; never false-fails). */
     robustness?: RobustnessVerdict;
+    /**
+     * What this run actually checked, and what it did not.
+     *
+     * The loop returns `verified: true` on a design that met its acceptance criteria — a claim about the
+     * quantities those criteria name and NOTHING else. Without the manifest travelling next to that flag, a
+     * reader had no way to tell the checks that ran and passed from the ones that were never attempted, so
+     * "verified" silently read as "checked everywhere". The other verdict surfaces (/verify-design, /layouts)
+     * have carried this disclosure from the start; the AI loop — the surface a user is most likely to trust
+     * blindly — was the one that did not.
+     */
+    scope?: ScopeManifest;
     /** Index signature so a caller may still treat the result as a loose record (the API persists it as Json,
      *  and the tests read fields dynamically). Named members above keep their precise types (e.g. circuit). */
     [key: string]: unknown;
@@ -383,6 +397,7 @@ export async function runDesignLoop(input: DesignLoopInput, deps: DesignDeps): P
                 simulation: { jobId, status: status.status, metrics: status.metrics, result: result.result },
                 ...(yieldReport ? { yield: yieldReport } : {}),
                 robustness,
+                scope: designScope({ simHealthy, criteria, robustness }),
                 ...(freqCaveat ? { caveats: freqCaveat } : {}),
             };
         }
@@ -460,6 +475,7 @@ export async function runDesignLoop(input: DesignLoopInput, deps: DesignDeps): P
               : coverageMiss
                 ? `The circuit simulates and meets its stated criteria, but you specified a ${lastUncovered.join('/')} target that no acceptance criterion verifies — treat it as unverified for that quantity.`
                 : 'Could not produce a successful simulation within the round budget.',
+        scope: designScope({ simHealthy: lastRoundHealthy, criteria }),
         ...(freqCaveat ? { caveats: freqCaveat } : {}),
     };
 }
@@ -514,6 +530,52 @@ async function applyFix(
     };
 }
 
+/**
+ * How a robustness verdict discloses itself on the manifest.
+ *
+ * Tier 'unknown' means no Monte-Carlo evaluated anything — no toleranced parts, or no simulation capacity.
+ * That is "checked at nominal values only", which is a not-run: the design may still be correct, but nothing
+ * about component spread was measured, and the manifest must not let that read as a pass.
+ *
+ * Exported because the multi-candidate path runs Monte-Carlo AFTER the loop that built the manifest, and has
+ * to restate this one entry with the same wording rather than inventing a second phrasing for it.
+ */
+export function robustnessScopeEntry(verdict?: RobustnessVerdict): DeterminedEntry {
+    return verdict && verdict.tier !== 'unknown'
+        ? { status: 'run', detail: verdict.note }
+        : { status: 'not-run', detail: verdict?.note ?? 'no Monte-Carlo ran — nominal values only' };
+}
+
+/**
+ * The scope manifest for a design-loop verdict, built from the run's OWN state rather than from intent.
+ *
+ * Every argument is something the loop observed: whether a simulation produced usable data, which quantities
+ * the acceptance criteria measure, whether Monte-Carlo actually evaluated variants. Nothing here is asserted
+ * because the code path exists — a check reports 'run' only when it produced a result on THIS run, which is
+ * the only version of the disclosure that can be trusted.
+ *
+ * Deliberately absent as 'run': the resistor-power review (that analysis lives on the /verify-design path and
+ * is not part of this loop), decoupling and polarity (no detector wired here). They are disclosed not-run.
+ */
+function designScope(input: {
+    simHealthy: boolean;
+    criteria: readonly AcceptanceCriterion[];
+    robustness?: RobustnessVerdict;
+}): ScopeManifest {
+    return buildElectricalScope({
+        simRan: input.simHealthy,
+        // Coverage is claimed ONLY when a simulation produced usable data. A criterion that names a voltage
+        // target proves nothing on a run that never simulated — on an inconclusive or failed-sim exit the
+        // dimensions collapse to none, so no quantity is reported as covered by a check that never executed.
+        coveredDimensions: input.simHealthy ? [...new Set(input.criteria.map((c) => criterionDimension(c)))] : [],
+        robustness: robustnessScopeEntry(input.robustness),
+        resistorPower: {
+            status: 'not-run',
+            detail: 'component stress is not reviewed by the design loop (it runs on the verify-design path)',
+        },
+    });
+}
+
 async function inconclusive(
     deps: DesignDeps,
     circuit: CircuitJson,
@@ -534,6 +596,10 @@ async function inconclusive(
         history,
         simulation: { status: history[history.length - 1]?.status ?? 'UNAVAILABLE' },
         warning,
+        // Inconclusive means no simulation produced usable data on any round, so nothing was checked. The
+        // manifest still ships: a caller must be able to read "these are the things that did not run" off
+        // the same field on every exit, rather than inferring it from the field being absent.
+        scope: designScope({ simHealthy: false, criteria: [] }),
     };
 }
 

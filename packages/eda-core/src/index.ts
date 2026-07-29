@@ -254,6 +254,9 @@ export {
 export {
     CHECK_IDS,
     CHECK_LABELS,
+    EXCLUDED_CHECKS,
+    excludedEntries,
+    withCheck,
     buildManifest,
     buildElectricalScope,
     buildLayoutScope,

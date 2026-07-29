@@ -67,7 +67,7 @@ describe('computeResistorPower', () => {
         expect(r1.dissipationW).toBeCloseTo(0.025, 6); // (10-5)²/1000
         expect(r2.dissipationW).toBeCloseTo(0.025, 6); // (5-0)²/1000 — R2 to ground
         expect(rep.anyOverRating).toBe(false); // both under the 0.25W default
-        expect(r1.ratingIsDefault).toBe(true);
+        expect(r1.ratingSource).toBe('default');
     });
 
     it('flags a resistor over its rating; an explicit properties.powerRating overrides the default', () => {
@@ -80,9 +80,53 @@ describe('computeResistorPower', () => {
         const rep = computeResistorPower(c, DIVIDER_MEAS)!;
         const r1 = rep.components.find((x) => x.designator === 'R1')!;
         expect(r1.ratingW).toBe(0.01);
-        expect(r1.ratingIsDefault).toBe(false);
+        expect(r1.ratingSource).toBe('declared');
         expect(r1.overRating).toBe(true); // 0.025 > 0.01
         expect(rep.anyOverRating).toBe(true);
+    });
+
+    it('takes the rating from the PACKAGE when the part declares none — an 0603 is 0.1W, not 0.25W', () => {
+        // The regression this pins, exactly: R1 is a 100Ω 0603 dropping 5V, so it dissipates 0.25W. Against
+        // the old flat 0.25W default that is not "over" (0.25 > 0.25 is false) and the report called it
+        // fine — while the part it is actually specified as is rated 0.1W and would be running at 2.5× its
+        // limit on a real board. Same circuit, same measurements; only the rating was wrong.
+        const c: CircuitJson = {
+            ...DIVIDER,
+            components: DIVIDER.components.map((comp) =>
+                comp.designator === 'R1'
+                    ? { ...comp, value: '100', footprint: '0603' }
+                    : { ...comp, footprint: '1206' },
+            ),
+        };
+        const rep = computeResistorPower(c, DIVIDER_MEAS)!;
+        const r1 = rep.components.find((x) => x.designator === 'R1')!;
+        const r2 = rep.components.find((x) => x.designator === 'R2')!;
+        expect(r1).toMatchObject({ dissipationW: 0.25, ratingW: 0.1, ratingSource: 'footprint', overRating: true });
+        expect(r2).toMatchObject({ ratingW: 0.25, ratingSource: 'footprint', overRating: false });
+        expect(rep.anyOverRating).toBe(true);
+    });
+
+    it('reads the IMPERIAL code when a footprint name carries both spellings', () => {
+        // "R_0201_0603Metric" is an 0201 (0.05W) written with its metric alias. Matching "0603" anywhere in
+        // the string would rate it 0.1W — double — and quietly clear a resistor that is over its limit.
+        const c: CircuitJson = {
+            ...DIVIDER,
+            components: DIVIDER.components.map((comp) => ({ ...comp, footprint: 'R_0201_0603Metric' })),
+        };
+        const rep = computeResistorPower(c, DIVIDER_MEAS)!;
+        expect(rep.components.every((x) => x.ratingW === 0.05)).toBe(true);
+    });
+
+    it('keeps the default for a package it does not recognise (never guesses from a name)', () => {
+        const c: CircuitJson = {
+            ...DIVIDER,
+            components: DIVIDER.components.map((comp) => ({
+                ...comp,
+                footprint: 'R_Axial_DIN0207_L6.3mm_D2.5mm_P10.16mm_Horizontal',
+            })),
+        };
+        const rep = computeResistorPower(c, DIVIDER_MEAS)!;
+        expect(rep.components.every((x) => x.ratingSource === 'default' && x.ratingW === 0.25)).toBe(true);
     });
 
     it('skips resistors whose nodes were not measured or whose value is unparseable (never guesses)', () => {
