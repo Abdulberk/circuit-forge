@@ -5,7 +5,8 @@ import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js
 import { EXRLoader } from 'three/examples/jsm/loaders/EXRLoader.js';
 import { Canvas, useThree, useLoader } from '@react-three/fiber';
 import { OrbitControls, Environment, useGLTF, Html } from '@react-three/drei';
-import { EffectComposer, Bloom, N8AO, SMAA } from '@react-three/postprocessing';
+import { EffectComposer, Bloom, N8AO, SMAA, ToneMapping } from '@react-three/postprocessing';
+import { ToneMappingMode } from 'postprocessing';
 
 // Real, DRC-clean board GLBs our pipeline produced (served from /public). Every one is genuine
 // pcb-core output: CircuitJson → tscircuit eval → freerouting → KiCad DRC ✔ → 3D bodies whose
@@ -26,7 +27,12 @@ const TARGET = 40; // world units on largest side
 // KiCad's generic LED STEP model is a neutral beige chip — indistinguishable from a resistor/cap and
 // carries no emitter color. We make LEDs READ as LEDs: a lit, emissive, colored epoxy dome. The GLB
 // has no per-LED color, so we vary color by board position → a lively, colorful, real-looking board.
-const LED_COLORS = ['#ff3b30', '#34c759', '#ffd60a', '#0a84ff', '#ff9f0a', '#ff2d55', '#30d0e0', '#bf5af2'];
+// The GLB carries no emitter colour — KiCad's LED_D5.0mm STEP is a neutral epoxy dome — so a colour
+// has to be chosen. Red is the modal 5mm indicator LED by a wide margin, so it is the least-wrong
+// default, and it is the one that reads against a green board. Varying it per position was an earlier
+// choice here; it invented information the file does not carry, and on a board of identical LEDs it is
+// simply wrong. One colour, stated as an assumption.
+const LED_COLOR = '#e8342a';
 
 /* ------------------------------------------------------------------ */
 /* Procedural orange-peel normal map (sprayed LPI lacquer micro-dimple) */
@@ -87,31 +93,52 @@ function makeOrangePeelNormal(): THREE.CanvasTexture | null {
 /* Physically-grounded PCB layer materials (named for the inspector).  */
 /* ------------------------------------------------------------------ */
 function buildLayerMaterials(peel: THREE.CanvasTexture | null) {
+    /**
+     * Solder mask is NOT a translucent sheet.
+     *
+     * It was modelled as one — a dark green plane at opacity 0.5 over the tan laminate — and that is why
+     * the board came out khaki. Alpha blending is a lerp toward whatever is behind it, so it can only ever
+     * average two colours; it cannot act as a filter. Physically the mask is translucent the way house
+     * paint is: a highly-pigmented layer whose own colour dominates. Verified directly in the running
+     * viewer — with the laminate temporarily set to magenta the board rendered magenta, proving the mask
+     * was contributing almost nothing.
+     *
+     * So the mask is opaque and carries the board's colour. The copper underneath is a separate mesh at a
+     * lower height; a small alpha keeps a hint of it, which is the single strongest cue that this is a
+     * real board rather than a green slab.
+     */
     const mask = new THREE.MeshPhysicalMaterial({
-        color: '#0e4526',
-        roughness: 0.5,
+        color: '#14743b', // LPI green as it reads front-lit, averaged over copper and bare laminate
+        roughness: 0.42,
         metalness: 0,
-        clearcoat: 0.55,
-        clearcoatRoughness: 0.32,
+        clearcoat: 1, // the mask's own gloss coat — one specular lobe, not two
+        clearcoatRoughness: 0.12,
         transparent: true,
-        opacity: 0.5,
-        envMapIntensity: 0.8,
+        opacity: 0.94, // enough to read as paint, little enough to ghost the traces beneath
+        depthWrite: true,
+        envMapIntensity: 0.9,
         normalMap: peel ?? undefined,
         normalScale: new THREE.Vector2(0.15, 0.15),
     });
+    /**
+     * Copper under the mask is COPPER — a metal seen through a coloured filter is still a metal.
+     *
+     * Painting it as a green dielectric (metalness 0.22) was the single biggest material error here: it
+     * tinted green twice, once in the copper and again in the mask above it, and it removed the metallic
+     * response that makes a trace catch the light differently from the field around it.
+     */
     const copper = new THREE.MeshPhysicalMaterial({
-        color: '#2a9151',
-        metalness: 0.22,
-        roughness: 0.48,
-        clearcoat: 0.35,
-        clearcoatRoughness: 0.4,
-        envMapIntensity: 1.0,
-    });
-    const pad = new THREE.MeshPhysicalMaterial({
-        color: '#d9b544',
+        color: '#b87333',
         metalness: 1,
         roughness: 0.38,
-        envMapIntensity: 1.35,
+        envMapIntensity: 1,
+    });
+    /** ENIG: immersion gold over nickel. A real metal — no clearcoat, that is a second stacked lobe. */
+    const pad = new THREE.MeshPhysicalMaterial({
+        color: '#ffe0a0',
+        metalness: 1,
+        roughness: 0.34,
+        envMapIntensity: 1.15,
     });
     const silk = new THREE.MeshPhysicalMaterial({
         color: '#eae8e0',
@@ -121,11 +148,13 @@ function buildLayerMaterials(peel: THREE.CanvasTexture | null) {
         opacity: 0.92,
         envMapIntensity: 0.35,
     });
+    /** Bare FR4 as seen at the ROUTED EDGE — lighter and warmer than the masked face, and slightly
+     *  fibrous. It is never glossy: the router leaves cut glass fibre, not a coated surface. */
     const pcb = new THREE.MeshPhysicalMaterial({
-        color: '#a89a6a',
+        color: '#dacdab',
         metalness: 0,
-        roughness: 0.7,
-        envMapIntensity: 0.45,
+        roughness: 0.85,
+        envMapIntensity: 0.55,
         normalMap: peel ?? undefined,
         normalScale: new THREE.Vector2(0.08, 0.08),
     });
@@ -262,10 +291,8 @@ function ensurePlanarUV(geo: THREE.BufferGeometry) {
  */
 function makeLedResolver() {
     const cache = new Map<string, THREE.Material>();
-    const tmp = new THREE.Vector3();
-    return (mesh: THREE.Mesh): THREE.Material => {
-        const p = mesh.getWorldPosition(tmp);
-        const color = LED_COLORS[Math.abs(Math.round(p.x * 3.1 + p.z * 7.7)) % LED_COLORS.length];
+    return (): THREE.Material => {
+        const color = LED_COLOR;
         let m = cache.get(color);
         if (!m) {
             m = new THREE.MeshPhysicalMaterial({
@@ -307,8 +334,8 @@ function assignMaterials(meshes: THREE.Mesh[], layerMats: LayerMats, nameOf: (m:
         // KiCad footprint names are underscore-delimited (`LED_D5.0mm`, `LED_0603_1608Metric`), so LED is
         // matched as a token. A bare substring test would also claim anything that merely contains the
         // letters and hand it a glowing emissive dome.
-        if (/(^|[_\-])led([_\-]|$)/i.test(name)) {
-            m.material = resolveLed(m);
+        if (/(^|[-_])led([-_]|$)/i.test(name)) {
+            m.material = resolveLed();
             continue;
         } // real KiCad dome, tinted
         const lm = byLayer[layerOf(name)];
@@ -465,6 +492,28 @@ function Exposure({ value }: Readonly<{ value: number }>) {
     useLayoutEffect(() => {
         gl.toneMappingExposure = value;
     }, [gl, value]);
+    return null;
+}
+
+/**
+ * Development-only inspection hook: publishes the live scene, renderer and camera on `window.__viewer`.
+ *
+ * This exists because judging a render from its source is unreliable — every realism claim in this
+ * viewer that was checked by reading the code rather than by querying the running scene turned out to
+ * be wrong about something (a material that was never assigned, a post-processing chain whose shader
+ * does not compile). A headless Chrome driving this page can now ask what is actually there.
+ *
+ * Stripped from production builds: the whole component returns null when NODE_ENV is 'production'.
+ */
+function DevInspect() {
+    const { scene, gl, camera } = useThree();
+    useEffect(() => {
+        if (process.env.NODE_ENV === 'production') return;
+        (window as unknown as { __viewer?: unknown }).__viewer = { scene, gl, camera, THREE };
+        return () => {
+            delete (window as unknown as { __viewer?: unknown }).__viewer;
+        };
+    }, [scene, gl, camera]);
     return null;
 }
 
@@ -925,13 +974,18 @@ export default function Viewer() {
                 dpr={[1, 1.5]}
                 gl={{ antialias: false, powerPreference: 'high-performance' }}
                 camera={{ fov: 34, position: [24, 30, 46], near: 0.1, far: 3000 }}
-                onCreated={({ gl }) => {
-                    gl.toneMapping =
-                        (THREE as unknown as { AgXToneMapping?: THREE.ToneMapping }).AgXToneMapping ??
-                        THREE.ACESFilmicToneMapping;
+                // NOTE: tone mapping is deliberately NOT set here. @react-three/postprocessing forces
+                // gl.toneMapping to NoToneMapping whenever an EffectComposer is mounted, so anything set
+                // on the renderer is silently discarded — which is what left this scene rendering with no
+                // tone curve at all. The chain owns it, via <ToneMapping> below.
+                onCreated={({ scene }) => {
+                    // Per-material envMapIntensity is overwritten from this every frame, so it has to be
+                    // set explicitly rather than left at its default.
+                    scene.environmentIntensity = 0.9;
                 }}
             >
                 <color attach="background" args={['#0b1013']} />
+                <DevInspect />
                 <Rig light={light} shadow={shadow} />
 
                 <Suspense
@@ -963,8 +1017,14 @@ export default function Viewer() {
                 />
 
                 <EffectComposer>
-                    <N8AO halfRes quality="performance" aoRadius={3} intensity={1.4} distanceFalloff={1} />
-                    <Bloom luminanceThreshold={0.95} intensity={0.12} mipmapBlur />
+                    {/* Contact darkness where a package meets the laminate — the cue that stops components
+                        reading as decals printed on a green plane. */}
+                    <N8AO halfRes quality="performance" aoRadius={3} intensity={1.8} distanceFalloff={1} />
+                    <Bloom luminanceThreshold={0.92} intensity={0.14} mipmapBlur />
+                    {/* Khronos PBR Neutral, not ACES or AgX: both of those desaturate a saturated green
+                        subject hard and pull the small gold details toward grey. Neutral keeps the board
+                        green and the ENIG gold while still rolling off the specular highlights. */}
+                    <ToneMapping mode={ToneMappingMode.NEUTRAL} />
                     <SMAA />
                 </EffectComposer>
             </Canvas>
