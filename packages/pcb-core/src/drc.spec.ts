@@ -82,6 +82,16 @@ describe('drcCategory — coarse grouping with verbatim pass-through', () => {
         expect(drcCategory('annular_width')).toBe('via_drill');
         expect(drcCategory('courtyards_overlap')).toBe('placement');
     });
+    it('groups the types the severity split newly surfaced (they would all read as "other")', () => {
+        // Measured on a real report: 32 findings on one board, 22 of them text constraints and one an
+        // isolated copper island. Left uncategorized, the grouping a consumer relies on would put almost
+        // everything in the catch-all bucket and stop being a grouping at all.
+        expect(drcCategory('text_height')).toBe('text');
+        expect(drcCategory('text_thickness')).toBe('text');
+        expect(drcCategory('silk_edge_clearance')).toBe('silk');
+        expect(drcCategory('isolated_copper')).toBe('copper');
+        expect(drcCategory('lib_footprint_issues')).toBe('footprint');
+    });
     it('passes unknown types through as "other" (no hand-table to maintain)', () => {
         expect(drcCategory('some_future_kicad_check')).toBe('other');
     });

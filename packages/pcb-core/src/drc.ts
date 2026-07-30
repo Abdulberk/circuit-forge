@@ -109,10 +109,18 @@ const CATEGORY: Record<string, string> = {
     copper_overlap: 'copper',
     copper_sliver: 'copper',
     zone_has_empty_net: 'copper',
+    isolated_copper: 'copper',
     courtyards_overlap: 'placement',
     silk_over_copper: 'silk',
     silk_overlap: 'silk',
+    silk_edge_clearance: 'silk',
     missing_footprint: 'footprint',
+    lib_footprint_issues: 'footprint',
+    // Text constraints get their own group rather than riding under 'silk'. KiCad applies them to text on
+    // ANY layer, and they are now the single most common finding we surface — measured, 22 of the 32 on one
+    // board — so folding them into an existing group would drown it.
+    text_height: 'text',
+    text_thickness: 'text',
 };
 export function drcCategory(type: string): string {
     return CATEGORY[type] ?? 'other';
