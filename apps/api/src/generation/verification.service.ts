@@ -56,7 +56,7 @@ import {
 } from './circuit-simulator.service';
 import type { AssertionDto } from './dto';
 import { attachGenericModels } from './model-resolution';
-import { computeResistorPower, type PowerReport } from './power-analysis';
+import { computeResistorPower, declaredOverloads, describeOverloads, type PowerReport } from './power-analysis';
 
 // Assertion evaluation now lives in the shared, pure ./assertions module (used by the AI design loop too).
 // Re-export so existing importers (controllers, specs) keep their './verification.service' path unchanged.
@@ -69,7 +69,8 @@ const VERIFY_POLL_TIMEOUT_MS = 90_000;
 export interface DesignEvidence {
     /** pass = sim ok, no ERC errors, all assertions pass. fail = an ERC error, OR ngspice actually ran
      *  and the circuit failed/couldn't simulate, OR an assertion was not met, OR the Monte-Carlo robustness
-     *  gate flipped it (an at-risk tier on tolerances the user fully specified — see `montecarlo`).
+     *  gate flipped it (an at-risk tier on tolerances the user fully specified — see `montecarlo`), OR a
+     *  component was run past the limit its OWN datasheet declares (see `power`).
      *  inconclusive = the simulation couldn't RUN (ngspice not configured, OR the worker/queue was
      *  unavailable / backed up) so specs couldn't be checked — an OPERATIONAL state, never about the design. */
     verdict: 'pass' | 'fail' | 'inconclusive';
@@ -85,8 +86,11 @@ export interface DesignEvidence {
     /** Set when the run hit a convergence failure — the Convergence Doctor's diagnosis + what fixed it
      *  (or what was tried). Lets the UI surface "needed solver help: <remedy>" on an otherwise-pass. */
     convergence?: ConvergenceReport;
-    /** Per-resistor steady-state power dissipation + over-rating flags (informational — does NOT change
-     *  the verdict, since the default rating is a guess). Present only when the run produced data. */
+    /** Per-resistor steady-state power dissipation + over-rating flags. An overload against a rating WE
+     *  assumed (package code or the blanket default) is reported and never gates — that would be a verdict
+     *  about our guess. An overload against the rating the PART declares DOES flip the verdict, provided the
+     *  dissipation is a steady/time-averaged figure rather than a snapshot (see declaredOverloads). Present
+     *  only when the run produced data. */
     power?: PowerReport;
     /** Worst-case (corner) robustness — present only when the caller requested it AND the nominal verdict is
      *  'pass'. INFORMATIONAL (never changes `verdict` — same posture as `power` / Monte-Carlo robustness):
@@ -412,6 +416,17 @@ export class VerificationService {
             verdict = 'pass';
         }
 
+        // COMPONENT STRESS GATE. A part run past the limit its own datasheet states is not a verified
+        // design, however cleanly it simulates: it will drift, run hot and eventually open, and every
+        // assertion above will have passed while it does. So an overload counts here — but only when both
+        // the limit and the measurement are solid enough to refuse someone over. `declaredOverloads` is
+        // where that judgement lives: the rating must come from the PART (never our package guess or the
+        // blanket default), and the dissipation must be a steady or time-averaged figure (never a
+        // last-timestep snapshot, which for an AC sweep is whatever the waveform was doing at the end).
+        // Everything excluded here is still reported — it just does not withhold the badge.
+        const overloads = declaredOverloads(power);
+        if (verdict === 'pass' && overloads.length > 0) verdict = 'fail';
+
         // Robustness (INFORMATIONAL): worst-case corner + Monte-Carlo tolerance-yield tier, run only on a
         // nominal PASS with a worker+user. Extracted to keep verify() legible; the MC gate MAY flip the verdict
         // (only a complete at-risk run whose tolerance spread the user owns entirely — see assessRobustness).
@@ -431,9 +446,12 @@ export class VerificationService {
             verdict,
             // When the robustness gate flipped the verdict, the honest top-level reason is the tier's own note
             // (the nominal sim/ERC/assertions all passed, so summarize() would render an empty "Not verified: .").
-            summary: montecarlo?.gated
-                ? `Not production-robust: ${montecarlo.note}`
-                : this.summarize(verdict, sim, assertionResults),
+            summary:
+                overloads.length > 0
+                    ? `Component over its declared rating: ${describeOverloads(overloads)}.`
+                    : montecarlo?.gated
+                      ? `Not production-robust: ${montecarlo.note}`
+                      : this.summarize(verdict, sim, assertionResults),
             simStatus: sim.simStatus,
             analysisType: sim.analysisType,
             runError: sim.runError,
@@ -464,7 +482,10 @@ export class VerificationService {
                 resistorPower: power
                     ? {
                           status: 'run',
-                          detail: 'resistor power vs rating — informational; rating from the part when it declares one, else its package size, else a 0.25W default',
+                          detail:
+                              overloads.length > 0
+                                  ? `resistor power vs rating — ${overloads.length} part(s) over a DECLARED rating; this withheld the verdict`
+                                  : 'resistor power vs rating — rating from the part when it declares one, else its package size, else a 0.25W default; only a declared-rating overload gates',
                       }
                     : { status: 'not-run', detail: 'no resistor-power data (sim not ok / no resistors)' },
                 robustness: robustnessManifest,
@@ -770,7 +791,8 @@ export class VerificationService {
      * (the API image ships no ngspice; the worker has it + the rlimit sandbox) — keeping untrusted
      * execution in one isolated tier. Falls back to the INLINE simulator only when there's no userId/
      * queue (local dev + the live specs), where the Convergence Doctor's remedy ladder still applies.
-     * (Slice 1: the worker path is single-pass; moving the ladder worker-side is the next slice.)
+     * The remedy ladder is NOT inline-only: the worker walks it too and reports what fixed the run in
+     * metrics.convergence, so prod and local dev reach the same verdict on a circuit that needs solver help.
      */
     private async runSimulation(
         circuit: unknown,
