@@ -14,6 +14,7 @@ import { execFileSync } from 'node:child_process';
 import { makeFreeroutingRunner } from './lib/freerouting.mjs';
 import { makeKicadDrcRunner } from './lib/kicad-drc.mjs';
 import { galleryCases } from './lib/gallery-circuits.mjs';
+import { KICAD_IMAGE, assertImagesMatchProduction } from './lib/eda-images.mjs';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const pkgRoot = join(__dirname, '..', 'packages', 'pcb-core');
@@ -23,7 +24,21 @@ const { layoutCircuit, injectModels } = await import(
     new URL(`file://${join(pkgRoot, 'dist', 'index.js').replace(/\\/g, '/')}`).href
 );
 
-const KICAD_IMAGE = 'kicad/kicad:10.0-full';
+/**
+ * The KiCad image comes from lib/eda-images.mjs, by digest, and is asserted against the production
+ * Dockerfile before any board is generated.
+ *
+ * It used to be a local `'kicad/kicad:10.0-full'` — the bare rolling tag, which upstream republishes for
+ * every 10.0.x patch. That is the exact hazard eda-images.mjs was written to prevent, and it was defeated
+ * here in the most confusing way possible: the DRC oracle this script INJECTS resolves the pinned digest,
+ * while the three kicad-cli calls below (the 3D export, the board renders, the delivered gerbers) used the
+ * tag. So a single gallery run could judge a board with one KiCad and photograph and export it with
+ * another, and every side would be "correct" about the reference it was given. Harmless today — the tag
+ * still resolves to the pin — but the trigger is an upstream republish, which arrives without warning and
+ * with nothing to detect it.
+ */
+assertImagesMatchProduction();
+
 /** Our own runtime image — the only one carrying the pcbnew zone-fill helper. */
 const RUNTIME_IMAGE = process.env.PCB_RUNTIME_IMAGE ?? 'pcb-runtime:3dfix';
 const toDocker = (p) => p.replace(/\\/g, '/');
