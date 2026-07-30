@@ -174,15 +174,35 @@ describe('buildLayoutScope — the /layouts fragment', () => {
             }),
         );
         expect(g.get('drc')).toMatchObject({ status: 'run' });
-        expect(g.get('drc')!.detail).toMatch(/DRC-clean/);
+        expect(g.get('drc')!.detail).toMatch(/no blocking violation/);
         expect(g.get('manufacturability')!.detail).toMatch(/delivered/);
         expect(g.get('connectivity-parity')!.detail).toBe('17/17 pins isomorphic');
     });
 
     it('an un-manufacturable board discloses the withheld bundle + violation count', () => {
         const g = byId(buildLayoutScope({ drcClean: false, drcViolations: 27, manufacturable: false }));
-        expect(g.get('drc')!.detail).toMatch(/27 rule violation/);
+        expect(g.get('drc')!.detail).toMatch(/27 blocking violation/);
         expect(g.get('manufacturability')!.detail).toMatch(/withheld/);
+    });
+
+    it('a clean DRC discloses the warnings it did not gate on — and says so when none were collected', () => {
+        // "DRC-clean" with nothing beside it read as "the board had nothing to say". Measured, every one of
+        // the eight gallery boards reported zero blocking violations while carrying warning-severity
+        // findings, so the verdict and what it excluded have to arrive together.
+        const withWarnings = byId(
+            buildLayoutScope({ drcClean: true, drcViolations: 0, drcWarnings: 37, manufacturable: true }),
+        );
+        expect(withWarnings.get('drc')!.detail).toMatch(/37 warning-severity finding\(s\) reported/);
+        expect(withWarnings.get('drc')!.detail).toMatch(/none of which gate delivery/);
+
+        const none = byId(buildLayoutScope({ drcClean: true, drcViolations: 0, drcWarnings: 0, manufacturable: true }));
+        expect(none.get('drc')!.detail).toMatch(/no warning-severity findings/);
+
+        // Omitted is NOT the same as zero: a report produced at error severity could not have carried them,
+        // and claiming "none" for a question that was never asked is the exact failure this primitive exists
+        // to prevent.
+        const notAsked = byId(buildLayoutScope({ drcClean: true, drcViolations: 0, manufacturable: true }));
+        expect(notAsked.get('drc')!.detail).toMatch(/not collected on this run/);
     });
 
     it('lists exactly its three owned checks (no decoupling/polarity leakage)', () => {

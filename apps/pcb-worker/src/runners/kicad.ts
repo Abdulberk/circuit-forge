@@ -15,7 +15,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { promisify } from 'node:util';
 
-import type { GerberOutputs } from '@circuit-forge/pcb-core';
+import { parseDrcReport, type GerberOutputs } from '@circuit-forge/pcb-core';
 
 const execFileAsync = promisify(execFile);
 /** kicad-cli progress/warnings go to stdout/stderr which we never read (results are files); a chatty run can
@@ -135,46 +135,38 @@ export function makeNativeKicad(opts: KicadOpts = {}): NativeKicad {
     const notaryDrc = async (kicadPcb: string, kicadPro?: string): Promise<boolean> =>
         withBoard(kicadPcb, kicadPro, async (dir) => {
             const out = join(dir, 'd.json');
-            let clean: boolean;
-            try {
-                await execFileAsync(
-                    cli,
-                    [
-                        'pcb',
-                        'drc',
-                        '--refill-zones',
-                        '--exit-code-violations',
-                        '--severity-error',
-                        '--format',
-                        'json',
-                        '--output',
-                        out,
-                        join(dir, 'b.kicad_pcb'),
-                    ],
-                    { timeout: timeoutMs, maxBuffer: MAX_BUFFER },
-                );
-                clean = true;
-            } catch (e) {
-                // `--exit-code-violations` makes kicad exit 5 on DRC violations. Async execFile surfaces the
-                // exit code on `.code` (NOT `.status`, which is execFileSync's field) — 5 ⇒ dirty (accept-reject).
-                if ((e as { code?: number }).code === 5) clean = false;
-                else throw e;
-            }
-            // The DRC run wrote `out` for BOTH exit codes (0 clean / 5 violations), and the JSON is byte-identical
-            // to drcReport's (only --exit-code-violations differs, which sets the exit code, not the output). Cache
-            // it best-effort so drcReport can skip a redundant run — a parse failure must NEVER flip the verdict.
-            try {
-                lastDrc = null;
-                if (existsSync(out)) {
-                    const report = JSON.parse(readFileSync(out, 'utf8')) as KicadDrcJson;
-                    // Only memoize a report that IS one. Caching an unrecognised shape would hand drcReport a
-                    // report it would otherwise have rejected, quietly routing around the guard below.
-                    if (isDrcReport(report)) lastDrc = { board: kicadPcb, pro: kicadPro, report };
-                }
-            } catch {
-                lastDrc = null;
-            }
-            return clean;
+            // `--severity-all`, and the REPORT decides — not the exit code. Asking kicad for errors only made
+            // the report incapable of holding anything else, so every warning it found on our boards was
+            // discarded before anyone could read it. `--exit-code-violations` cannot survive that change: at
+            // this severity it exits 5 on a warning too, so trusting the code would fail every board over a
+            // silkscreen label. pcb-core's parseDrcReport owns which severities block; the exit code is now
+            // only a crash signal.
+            await execFileAsync(
+                cli,
+                [
+                    'pcb',
+                    'drc',
+                    '--refill-zones',
+                    '--severity-all',
+                    '--format',
+                    'json',
+                    '--output',
+                    out,
+                    join(dir, 'b.kicad_pcb'),
+                ],
+                { timeout: timeoutMs, maxBuffer: MAX_BUFFER },
+            );
+            // FAIL-CLOSED, same reasoning as drcReport: without --exit-code-violations a clean exit carries no
+            // verdict at all, so a missing or unrecognisable report must throw rather than read as a board
+            // with nothing wrong with it. This is the accept/reject boundary for the fab bundle.
+            if (!existsSync(out))
+                throw new Error('kicad-cli DRC produced no report file — refusing to assume the board is DRC-clean');
+            const report = JSON.parse(readFileSync(out, 'utf8')) as KicadDrcJson;
+            if (!isDrcReport(report))
+                throw new Error('kicad-cli DRC report is missing violations/unconnected_items — refusing to judge');
+            // Memoize so drcReport can skip a redundant run on the same board.
+            lastDrc = { board: kicadPcb, pro: kicadPro, report };
+            return parseDrcReport(report).clean;
         });
 
     const drcReport = async (kicadPcb: string, kicadPro?: string): Promise<KicadDrcJson> => {
@@ -191,7 +183,7 @@ export function makeNativeKicad(opts: KicadOpts = {}): NativeKicad {
                     'pcb',
                     'drc',
                     '--refill-zones',
-                    '--severity-error',
+                    '--severity-all',
                     '--format',
                     'json',
                     '--output',

@@ -29,9 +29,13 @@ export interface DrcEntry {
     items: DrcItem[];
 }
 export interface ParsedDrc {
-    /** 0 violations AND 0 unconnected — the notary's manufacturable definition. */
+    /** 0 BLOCKING violations AND 0 unconnected — the notary's manufacturable definition. */
     clean: boolean;
+    /** Blocking violations only — what `clean` is decided on and what withholds the fab bundle. */
     violations: DrcEntry[];
+    /** Non-blocking findings KiCad rates below error. Real defects, reported and never gated on — see
+     *  `parseDrcReport`. Empty until a report is produced at a severity that includes them. */
+    warnings: DrcEntry[];
     unconnected: DrcEntry[];
 }
 export interface DrcCheck {
@@ -51,12 +55,39 @@ export interface Airwire {
     to: Pt;
 }
 
-/** Normalize a raw kicad-cli DRC JSON into violations + unconnected + a clean verdict. */
+/**
+ * Severities KiCad rates below "error". A finding at one of these is real but does not withhold the fab
+ * bundle — a silkscreen label a fraction under the declared minimum text height is worth reporting and is
+ * not worth refusing to build a board over.
+ *
+ * Anything NOT in this list blocks, including a severity we do not recognise. That direction is deliberate:
+ * if KiCad renames a level or a report arrives without one, the board must fail the gate and be looked at,
+ * never sail through it. An unknown severity is an unknown risk.
+ */
+const NON_BLOCKING_SEVERITIES = new Set(['warning', 'ignore', 'exclusion', 'info']);
+
+/**
+ * Normalize a raw kicad-cli DRC JSON into blocking violations + warnings + unconnected + a clean verdict.
+ *
+ * WHY SEVERITY IS SPLIT HERE (30 Tem 2026). Both runners used to ask kicad-cli for `--severity-error`, so
+ * the report physically could not contain anything else and every entry in it was blocking by
+ * construction. That made the reports agree with the gate — and made the gate the only thing anyone could
+ * see. Measured across all eight gallery boards, asking for every severity surfaced 349 findings on boards
+ * that all reported "0 violations": the reference designators on every board are printed under the minimum
+ * text height WE declared, three boards have silkscreen running off the edge or overlapping, and one has a
+ * copper island not connected to its net. None of that was wrong of the gate to allow through. All of it
+ * was wrong to be invisible — "DRC-clean" read as "nothing to say about this board".
+ *
+ * So the report now carries everything and this function decides what blocks. The gate is UNCHANGED: only
+ * error-severity entries land in `violations`, so a board that passed before passes now.
+ */
 export function parseDrcReport(json: unknown): ParsedDrc {
     const j = (json ?? {}) as { violations?: DrcEntry[]; unconnected_items?: DrcEntry[] };
-    const violations = Array.isArray(j.violations) ? j.violations : [];
+    const all = Array.isArray(j.violations) ? j.violations : [];
     const unconnected = Array.isArray(j.unconnected_items) ? j.unconnected_items : [];
-    return { clean: violations.length === 0 && unconnected.length === 0, violations, unconnected };
+    const violations = all.filter((v) => !NON_BLOCKING_SEVERITIES.has(String(v?.severity).toLowerCase()));
+    const warnings = all.filter((v) => NON_BLOCKING_SEVERITIES.has(String(v?.severity).toLowerCase()));
+    return { clean: violations.length === 0 && unconnected.length === 0, violations, warnings, unconnected };
 }
 
 /**
@@ -96,9 +127,18 @@ function parseItemDesc(description: string): { pad?: string; net: string; design
     return { pad: padM?.[1], net: m[1] ?? '', designator: m[2] ?? '' };
 }
 
-/** Categorized checks for the contract's `checks.drc[]` (violations only; unconnected surfaces as airwires). */
+/**
+ * Categorized checks for the contract's `checks.drc[]` — every finding KiCad reported, blocking or not
+ * (unconnected nets surface separately as airwires).
+ *
+ * Warnings are included rather than filtered out. They do not move the manufacturability verdict and are
+ * not meant to: each entry carries its own `severity`, so a consumer can present "blocks the build" and
+ * "worth looking at" differently. Dropping them here would put the list back in exactly the state the
+ * severity split was made to end — a board reporting nothing to say about itself while its labels are
+ * printed under the minimum height we declared.
+ */
 export function drcToChecks(report: ParsedDrc): DrcCheck[] {
-    return report.violations.map((v) => ({
+    return [...report.violations, ...report.warnings].map((v) => ({
         category: drcCategory(v.type),
         type: v.type,
         severity: v.severity,

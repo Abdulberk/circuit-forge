@@ -22,6 +22,15 @@ const clearanceViolation = {
     ],
 };
 
+// A real warning-severity finding: kicad-cli 10 reports these on every one of our boards (measured
+// 30 Tem 2026) because the converter emits designators below the min_text_height we declare ourselves.
+const textHeightWarning = {
+    type: 'text_height',
+    severity: 'warning',
+    description: 'Text height out of range (0.75mm < 0.8mm)',
+    items: [{ description: 'Reference designator R2', pos: { x: 92, y: 101 }, uuid: 'w1' }],
+};
+
 describe('parseDrcReport — normalize kicad-cli DRC json', () => {
     it('is clean only when both violations and unconnected are empty', () => {
         expect(parseDrcReport({ violations: [], unconnected_items: [] }).clean).toBe(true);
@@ -29,8 +38,40 @@ describe('parseDrcReport — normalize kicad-cli DRC json', () => {
         expect(parseDrcReport({ violations: [clearanceViolation], unconnected_items: [] }).clean).toBe(false);
     });
     it('defaults missing arrays safely (garbage/empty input → clean, no crash)', () => {
-        expect(parseDrcReport(undefined)).toEqual({ clean: true, violations: [], unconnected: [] });
+        expect(parseDrcReport(undefined)).toEqual({ clean: true, violations: [], warnings: [], unconnected: [] });
         expect(parseDrcReport({}).clean).toBe(true);
+    });
+
+    it('splits by severity: a warning is REPORTED but does not make the board dirty', () => {
+        // Measured on all eight gallery boards: every one reports zero blocking violations while carrying
+        // warning-severity findings — designators printed under the minimum text height we declared, silk
+        // running off the edge, an isolated copper island. Asking kicad for errors only made those
+        // physically absent from the report, so "DRC-clean" read as "nothing to say about this board".
+        const r = parseDrcReport({ violations: [textHeightWarning, clearanceViolation], unconnected_items: [] });
+        expect(r.clean).toBe(false); // the ERROR still blocks — the gate did not move
+        expect(r.violations).toEqual([clearanceViolation]);
+        expect(r.warnings).toEqual([textHeightWarning]);
+
+        const w = parseDrcReport({ violations: [textHeightWarning], unconnected_items: [] });
+        expect(w.clean).toBe(true); // a warning alone never withholds the fab bundle
+        expect(w.warnings).toHaveLength(1);
+    });
+
+    it('an UNRECOGNISED severity blocks (an unknown level is an unknown risk)', () => {
+        // The direction matters: if KiCad renames a level or a report arrives without one, the board must
+        // stop at the gate and be looked at. Guessing "probably harmless" is how a real defect ships.
+        const odd = { ...clearanceViolation, severity: 'catastrophic' };
+        const none = { ...clearanceViolation, severity: undefined as unknown as string };
+        expect(parseDrcReport({ violations: [odd], unconnected_items: [] }).clean).toBe(false);
+        expect(parseDrcReport({ violations: [none], unconnected_items: [] }).clean).toBe(false);
+    });
+
+    it('drcToChecks carries warnings through, each keeping its own severity', () => {
+        const checks = drcToChecks(
+            parseDrcReport({ violations: [clearanceViolation, textHeightWarning], unconnected_items: [] }),
+        );
+        expect(checks.map((c) => c.severity)).toEqual(['error', 'warning']);
+        expect(checks.map((c) => c.type)).toEqual(['clearance', 'text_height']);
     });
 });
 

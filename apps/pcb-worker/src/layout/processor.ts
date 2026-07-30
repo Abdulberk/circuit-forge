@@ -234,6 +234,7 @@ export async function processLayoutJob(job: Job<LayoutJobPayload>): Promise<void
                 parityPins: { checked: q.parity.checkedPins, expected: q.parity.expectedPins },
                 drcClean: parsed.clean,
                 drcViolations: parsed.violations.length,
+                drcWarnings: parsed.warnings.length,
                 manufacturable: verdict.manufacturable,
             }) as unknown as Prisma.InputJsonValue,
         };
