@@ -232,6 +232,9 @@ export async function processLayoutJob(job: Job<LayoutJobPayload>): Promise<void
             // manufacturability) — decoupling/polarity are the electrical endpoint's concern, absent here.
             scope: buildLayoutScope({
                 parityPins: { checked: q.parity.checkedPins, expected: q.parity.expectedPins },
+                // Straight from the delivery record, so the manifest cannot disagree with the field beside
+                // it about whether the router ever judged this board.
+                routing: q.delivery.routing,
                 drcClean: parsed.clean,
                 drcViolations: parsed.violations.length,
                 drcWarnings: parsed.warnings.length,

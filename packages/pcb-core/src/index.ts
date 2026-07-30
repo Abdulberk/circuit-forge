@@ -127,6 +127,30 @@ export interface LayoutResult {
             marginMm?: number;
             /** Why the quality tier was not used. Absent exactly when tier === 'quality'. */
             degradedReason?: string;
+            /**
+             * WHAT KIND of thing went wrong, as data rather than prose. Absent exactly when
+             * tier === 'quality'.
+             *
+             * `degradedReason` has always carried the words, but words are not a contract and a consumer
+             * reading `tier`/`drcCertified` could not tell these two apart:
+             *
+             *   'board-rejected' — every routing margin was tried and the DRC oracle rejected all of them.
+             *                      That is a finding ABOUT THE BOARD and the user's to act on.
+             *   'tool-fault'     — the router or the oracle died before it could judge anything: a timeout,
+             *                      a crash, a wedged container. That is a fact about OUR infrastructure and
+             *                      says nothing whatever about the board.
+             *
+             * Both used to surface identically — tier 'local', drcCertified false — so a board whose route
+             * merely ran out of clock was delivered looking exactly like a board that cannot be routed.
+             * Measured 30 Tem 2026: our SIMPLEST board takes 255s of a 300s per-attempt budget on an idle
+             * machine, so this is not a rare corner; and it was observed twice in one session, once with a
+             * wedged Docker and once 45s short of the cap.
+             */
+            degradedCause?: 'not-requested' | 'no-runner' | 'board-rejected' | 'tool-fault';
+            /** Margins attempted / offered. On a 'tool-fault' this is how much of the ladder actually ran,
+             *  so "1 of 6" cannot be mistaken for a board that survived six honest attempts. */
+            marginsTried?: number;
+            marginsOffered?: number;
         };
         placement: {
             /** The engine whose positions the delivered board actually uses. */
@@ -149,7 +173,7 @@ export interface LayoutResult {
 const undelivered = (opts: LayoutOptions, why: string): LayoutResult['delivery'] => {
     const requested = opts.placer ?? 'grid';
     return {
-        routing: { tier: 'local', drcCertified: false, degradedReason: why },
+        routing: { tier: 'local', drcCertified: false, degradedReason: why, degradedCause: 'not-requested' },
         placement: {
             engine: 'grid',
             requested,
@@ -325,6 +349,9 @@ export async function layoutCircuit(circuit: CircuitJson, opts: LayoutOptions = 
             drcCertified: route.clean,
             ...(route.marginMm !== undefined ? { marginMm: route.marginMm } : {}),
             ...(route.reason ? { degradedReason: route.reason } : {}),
+            ...(route.cause ? { degradedCause: route.cause } : {}),
+            ...(route.marginsTried !== undefined ? { marginsTried: route.marginsTried } : {}),
+            ...(route.marginsOffered !== undefined ? { marginsOffered: route.marginsOffered } : {}),
         },
         placement: {
             engine: placementAdopted ? placementRequested : 'grid',
@@ -668,6 +695,11 @@ interface QualityRouteOutcome {
      *  A dirty board and a broken tool must not drive the same retry policy: retrying a broken tool on a
      *  bigger board only spends the timeout again. */
     toolFailed?: boolean;
+    /** Typed counterpart to `reason` — see LayoutResult['delivery'].routing.degradedCause. */
+    cause?: NonNullable<LayoutResult['delivery']['routing']['degradedCause']>;
+    /** How much of the margin ladder actually ran before this outcome was reached. */
+    marginsTried?: number;
+    marginsOffered?: number;
 }
 
 async function applyQualityRoute(
@@ -678,7 +710,13 @@ async function applyQualityRoute(
     diagnostics: LayoutDiagnostic[],
 ): Promise<QualityRouteOutcome> {
     if (opts.router !== 'quality')
-        return { routedBoard: evaluated, qualityApplied: false, clean: false, reason: "router:'fast' was requested" };
+        return {
+            routedBoard: evaluated,
+            qualityApplied: false,
+            clean: false,
+            reason: "router:'fast' was requested",
+            cause: 'not-requested',
+        };
     if (!opts.freeroute) {
         diagnostics.push({
             code: 'PCB030',
@@ -690,6 +728,7 @@ async function applyQualityRoute(
             qualityApplied: false,
             clean: false,
             reason: 'no freerouting runner was injected',
+            cause: 'no-runner',
         };
     }
     try {
@@ -710,6 +749,9 @@ async function applyQualityRoute(
                 qualityApplied: false,
                 clean: false,
                 reason: `no ${best.mode === 'drc' ? 'DRC-clean' : 'fully-routed'} quality route across ${best.tried} margin attempt(s)`,
+                cause: 'board-rejected',
+                marginsTried: best.tried,
+                marginsOffered: best.offered,
             };
         }
         // The routing headroom is invisible in every downstream check — empty laminate violates no rule —
@@ -747,14 +789,22 @@ async function applyQualityRoute(
         diagnostics.push({
             code: 'PCB035',
             severity: 'warning',
-            message: `quality route failed (${String(e).slice(0, 160)}) — falling back to the local fast route.`,
+            message:
+                `the quality router or its DRC oracle FAILED${ladderWhere(e)} — it never judged this board. ` +
+                `Falling back to the local fast route. This is an infrastructure fault, not a finding about ` +
+                `the design (${faultText(e).slice(0, 160)}).`,
         });
         return {
             routedBoard: evaluated,
             qualityApplied: false,
             clean: false,
-            reason: `quality route failed: ${String(e).slice(0, 200)}`,
+            reason: `the quality router failed before it could judge this board${ladderWhere(e)}: ${faultText(e).slice(0, 180)}`,
             toolFailed: true,
+            cause: 'tool-fault',
+            // How far the ladder got before the tool died. Without it, a fault on the FIRST margin is
+            // indistinguishable from one on the last, and "the quality route failed" reads as though the
+            // board had been given every chance.
+            ...marginProgress(e),
         };
     }
 }
@@ -847,6 +897,7 @@ async function routeBestMargin(
     accepted: boolean;
     marginMm: number;
     tried: number;
+    offered: number;
     mode: 'drc' | 'presence';
     trim?: TrimOutcome;
 }> {
@@ -854,24 +905,74 @@ async function routeBestMargin(
     const notaryDrc = opts.notaryDrc;
     const mode = notaryDrc ? 'drc' : 'presence';
     const margins = opts.routingMarginMm !== undefined ? [opts.routingMarginMm] : [6, 4, 10, 2, 8, 12];
+    const offered = margins.length;
     let tried = 0;
     for (const marginMm of margins) {
         tried++;
-        const routingBase = enlargeBoard(evaluated, marginMm);
-        const dsn = await exportDsn(stripRouting(routingBase), profile, perNetWidthMm);
-        const ses = await freeroute(dsn);
-        if (notaryDrc) {
-            const routed = await mergeSes(routingBase, dsn, ses);
-            const { kicadPcb } = await assembleKicadPcb(routed, profile);
-            if (await notaryDrc(kicadPcb, kicadProjectJson(profile))) {
-                const { board, trim } = await trimAccepted(routed, profile, notaryDrc);
-                return { routedBoard: board, accepted: true, marginMm, tried, mode, trim };
+        try {
+            const routingBase = enlargeBoard(evaluated, marginMm);
+            const dsn = await exportDsn(stripRouting(routingBase), profile, perNetWidthMm);
+            const ses = await freeroute(dsn);
+            if (notaryDrc) {
+                const routed = await mergeSes(routingBase, dsn, ses);
+                const { kicadPcb } = await assembleKicadPcb(routed, profile);
+                if (await notaryDrc(kicadPcb, kicadProjectJson(profile))) {
+                    const { board, trim } = await trimAccepted(routed, profile, notaryDrc);
+                    return { routedBoard: board, accepted: true, marginMm, tried, offered, mode, trim };
+                }
+            } else if (findFullyUnroutedNets(dsn, ses).length === 0) {
+                return {
+                    routedBoard: await mergeSes(routingBase, dsn, ses),
+                    accepted: true,
+                    marginMm,
+                    tried,
+                    offered,
+                    mode,
+                };
             }
-        } else if (findFullyUnroutedNets(dsn, ses).length === 0) {
-            return { routedBoard: await mergeSes(routingBase, dsn, ses), accepted: true, marginMm, tried, mode };
+        } catch (e) {
+            // A tool fault carries HOW FAR the ladder got. Re-thrown rather than swallowed, because the
+            // caller's policy for a broken tool is deliberately different from its policy for a rejected
+            // board — but a fault on margin 1 of 6 must not be reportable as though the board had been
+            // given six honest attempts.
+            throw new RouteLadderError(e, tried, offered);
         }
     }
-    return { routedBoard: null, accepted: false, marginMm: 0, tried, mode };
+    return { routedBoard: null, accepted: false, marginMm: 0, tried, offered, mode };
+}
+
+/**
+ * A tool fault during the margin ladder, carrying how much of the ladder ran.
+ *
+ * The distinction this preserves is the whole point: "six margins tried, the oracle rejected every board"
+ * is a finding about the board, and "the router died on the first margin" is a fact about our
+ * infrastructure. Both used to arrive at the delivery boundary as the same thing.
+ */
+class RouteLadderError extends Error {
+    constructor(
+        readonly cause: unknown,
+        readonly tried: number,
+        readonly offered: number,
+    ) {
+        super(String(cause));
+        this.name = 'RouteLadderError';
+    }
+}
+
+/** The tool's own words, with our wrapper unwrapped — the wrapper exists to carry ladder progress, and
+ *  putting "RouteLadderError:" in front of the reason a fab engineer reads adds nothing. */
+function faultText(e: unknown): string {
+    return String(e instanceof RouteLadderError ? e.cause : e);
+}
+
+/** " on margin attempt 1 of 6" — omitted when the fault carried no ladder position. */
+function ladderWhere(e: unknown): string {
+    return e instanceof RouteLadderError ? ` on margin attempt ${e.tried} of ${e.offered}` : '';
+}
+
+/** Ladder progress from a thrown error, when it is one that carries it. */
+function marginProgress(e: unknown): { marginsTried?: number; marginsOffered?: number } {
+    return e instanceof RouteLadderError ? { marginsTried: e.tried, marginsOffered: e.offered } : {};
 }
 
 /** Report vias below the fab profile on the final copper (never mutate — enlarging manufactures shorts). */

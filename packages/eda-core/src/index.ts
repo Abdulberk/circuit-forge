@@ -266,6 +266,7 @@ export {
     type CheckEntry,
     type DeterminedEntry,
     type ScopeManifest,
+    type RoutingDisclosure,
 } from './verification/manifest';
 // Pre-layout design-review graph checks (orientation role-consistency; decoupling deferred until the
 // circuit model carries power-rail marking — see design-review.ts header)

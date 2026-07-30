@@ -17,9 +17,18 @@ import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { execFileSync } from 'node:child_process';
 
+import { KICAD_IMAGE, assertImagesMatchProduction } from './lib/eda-images.mjs';
+
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const OUT = join(__dirname, '..', 'packages', 'pcb-core', 'src', 'kicad-anchors.generated.ts');
-const IMAGE = 'kicad/kicad:10.0-full';
+// By DIGEST, from the one file that names the images, asserted against the production Dockerfile before
+// anything is harvested. The header above already promised a pinned image; the constant said otherwise, and
+// a bare `kicad/kicad:10.0-full` is republished by upstream for every 10.0.x patch. This script writes a
+// GENERATED module that ships in pcb-core — the reference pad constellations injectModels aligns 3D bodies
+// against — so harvesting from a KiCad production does not run is how a body ends up 2.54mm off its holes,
+// the exact defect the alignment verifier exists to catch.
+assertImagesMatchProduction();
+const IMAGE = KICAD_IMAGE;
 const FP_ROOT = '/usr/share/kicad/footprints';
 
 /** Model step basename -> footprint .kicad_mod path (inside the image). Covers every model

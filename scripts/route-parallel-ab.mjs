@@ -15,6 +15,8 @@ import { tmpdir } from 'node:os';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { performance } from 'node:perf_hooks';
+
+import { KICAD_IMAGE, FR_IMAGE as FR_IMAGE_PINNED } from './lib/eda-images.mjs';
 import { galleryCases } from './lib/gallery-circuits.mjs';
 
 const execFileAsync = promisify(execFile);
@@ -24,8 +26,10 @@ const outRoot = join(pkgRoot, '.route-parallel-ab');
 const { layoutCircuit } = await import(new URL(`file://${join(pkgRoot, 'dist', 'index.js').replace(/\\/g, '/')}`).href);
 mkdirSync(outRoot, { recursive: true });
 
-const FR_IMAGE = 'ghcr.io/freerouting/freerouting:2.2.4';
-const KI_IMAGE = 'kicad/kicad:10.0-full';
+const FR_IMAGE = FR_IMAGE_PINNED;
+// Same digest as everything else. This is a measurement harness, and a measurement taken against a
+// different binary than the product runs is not a measurement of the product.
+const KI_IMAGE = KICAD_IMAGE;
 const MAXBUF = 64 * 1024 * 1024;
 
 // ---- async (non-blocking) docker runners, same invocations as scripts/lib/*.mjs ----
