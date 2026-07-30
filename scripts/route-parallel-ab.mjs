@@ -17,6 +17,7 @@ import { fileURLToPath } from 'node:url';
 import { performance } from 'node:perf_hooks';
 
 import { KICAD_IMAGE, FR_IMAGE as FR_IMAGE_PINNED } from './lib/eda-images.mjs';
+import { makeKicadDrcRunner } from './lib/kicad-drc.mjs';
 import { galleryCases } from './lib/gallery-circuits.mjs';
 
 const execFileAsync = promisify(execFile);
@@ -71,48 +72,25 @@ async function freeroute(dsn) {
         rmSync(dir, { recursive: true, force: true });
     }
 }
+/**
+ * The DRC oracle, from the SHARED runner rather than a private copy.
+ *
+ * This harness carried its own kicad-cli invocation at --severity-error plus its own exit-5 read —
+ * a third implementation of the manufacturability verdict. Once the product moved to --severity-all
+ * with the severity policy living in pcb-core, that copy stopped merely duplicating the rule and
+ * started disagreeing with it. A measurement taken under a different rule than the product enforces
+ * measures nothing.
+ */
+const sharedNotary = makeKicadDrcRunner({ workDir: outRoot });
 async function notaryDrc(kicadPcb, kicadPro) {
-    const dir = mkdtempSync(join(outRoot, 'drc-'));
     const t = performance.now();
     try {
-        writeFileSync(join(dir, 'b.kicad_pcb'), kicadPcb);
-        writeFileSync(join(dir, 'b.kicad_pro'), kicadPro);
-        const mount = `${dir.replaceAll('\\', '/')}:/work`;
-        try {
-            await execFileAsync(
-                'docker',
-                [
-                    'run',
-                    '--rm',
-                    '-v',
-                    mount,
-                    KI_IMAGE,
-                    'kicad-cli',
-                    'pcb',
-                    'drc',
-                    '--refill-zones',
-                    '--exit-code-violations',
-                    '--severity-error',
-                    '--format',
-                    'json',
-                    '--output',
-                    '/work/d.json',
-                    '/work/b.kicad_pcb',
-                ],
-                { timeout: 300_000, maxBuffer: MAXBUF, env: { ...process.env, MSYS_NO_PATHCONV: '1' } },
-            );
-            return true;
-        } catch (e) {
-            if (e.code === 5) return false;
-            throw e;
-        }
+        return await sharedNotary(kicadPcb, kicadPro);
     } finally {
         meter.drc.n++;
         meter.drc.ms += performance.now() - t;
-        rmSync(dir, { recursive: true, force: true });
     }
 }
-
 const caseName = process.argv[2] ?? 'shift-register';
 const K = Number(process.argv[3] ?? 4);
 const [, circuit] = galleryCases.find(([n]) => n === caseName);

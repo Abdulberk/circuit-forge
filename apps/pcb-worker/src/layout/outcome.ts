@@ -9,10 +9,13 @@
  * claim. This gate closes both holes at the delivery boundary: the SUCCEEDED-regardless path AND the
  * local-router fallback, because both end at the same final DRC report.
  *
- * A board is manufacturable ONLY when the final KiCad DRC (run at --severity-error against the ordered fab
- * rules) finds zero rule violations AND zero unconnected nets. That is exactly `ParsedDrc.clean`; this
- * helper turns it into an explicit verdict + a human reason, kept pure so it is unit-testable on real DRC
- * reports without standing up the worker/DB/S3.
+ * A board is manufacturable ONLY when the final KiCad DRC finds zero BLOCKING rule violations and zero
+ * unconnected nets, judged against the ordered fab rules. The DRC itself runs at --severity-all so the
+ * report can carry warning-severity findings; those are reported to the user and never gate delivery,
+ * because a silkscreen label a fraction under the minimum text height is not a reason to refuse to build a
+ * board. Which severities block is pcb-core's decision, in one place — that is exactly `ParsedDrc.clean`,
+ * and this helper turns it into an explicit verdict + a human reason, kept pure so it is unit-testable on
+ * real DRC reports without standing up the worker/DB/S3.
  *
  * NOTE ON STATUS: manufacturability is NOT the job status. A completed analysis of a flawed board is still
  * a completed job (status SUCCEEDED) — surfacing it as FAILED would conflate a legitimate design outcome

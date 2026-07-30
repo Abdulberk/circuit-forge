@@ -12,7 +12,7 @@ import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { execFileSync } from 'node:child_process';
 import { makeFreeroutingRunner } from './lib/freerouting.mjs';
-import { makeKicadDrcRunner } from './lib/kicad-drc.mjs';
+import { makeKicadDrcRunner, makeKicadDrcReportRunner } from './lib/kicad-drc.mjs';
 import { galleryCases } from './lib/gallery-circuits.mjs';
 import { KICAD_IMAGE, assertImagesMatchProduction } from './lib/eda-images.mjs';
 
@@ -62,6 +62,8 @@ mkdirSync(outRoot, { recursive: true });
 mkdirSync(publicDir, { recursive: true });
 const freeroute = makeFreeroutingRunner({ workDir: outRoot });
 const notaryDrc = makeKicadDrcRunner({ workDir: outRoot });
+// The same runner the ladder uses, in report form — one verdict, one severity policy.
+const drcReportRunner = makeKicadDrcReportRunner({ workDir: outRoot });
 const summary = [];
 
 for (const [name, circuit] of cases) {
@@ -204,49 +206,38 @@ for (const [name, circuit] of cases) {
         }
     }
 
-    // DRC verdict (honest report)
-    rmSync(join(dir, 'drc.json'), { force: true });
+    // DRC verdict (honest report), from the SHARED runner — so a board pictured in the gallery is
+    // judged by exactly the code and the severity policy the product ships. This used to be its own
+    // kicad-cli invocation at --severity-error with its own exit-5 read: a second implementation of
+    // the manufacturability verdict, living in the tool whose whole purpose is to show what the
+    // product makes.
     try {
-        execFileSync(
-            'docker',
-            [
-                'run',
-                '--rm',
-                '-v',
-                `${toDocker(dir)}:/work`,
-                KICAD_IMAGE,
-                'kicad-cli',
-                'pcb',
-                'drc',
-                '--refill-zones',
-                '--exit-code-violations',
-                '--severity-error',
-                '--format',
-                'json',
-                '--output',
-                '/work/drc.json',
-                '/work/board.kicad_pcb',
-            ],
-            { stdio: 'pipe', timeout: 300000, env: dockerEnv },
+        // Read the board back FROM DISK: the pour-fill step rewrote it in place, so this is the board that
+        // was actually pictured and exported. (--refill-zones would make the verdict identical either way,
+        // but judging a different byte-stream from the one on show is the habit worth not having.)
+        const report = await drcReportRunner(
+            readFileSync(join(dir, 'board.kicad_pcb'), 'utf8'),
+            q.outputs.kicadPro,
         );
-        console.log(`  ✓ DRC CLEAN ✔`);
-        summary[summary.length - 1][2] += ' DRC✔';
-    } catch (e) {
-        if (e.status !== 5) {
-            console.error(`  ✗ DRC exec failed (${e.status})`);
-            continue;
+        const warned = report.warnings.length ? ` +${report.warnings.length}warn` : '';
+        if (report.clean) {
+            console.log(`  ✓ DRC CLEAN ✔${warned}`);
+            summary[summary.length - 1][2] += ' DRC✔';
+        } else {
+            const bt = {};
+            for (const x of report.violations) bt[x.type] = (bt[x.type] ?? 0) + 1;
+            console.log(
+                `  ⚠ DRC: ${report.violations.length} blocking violation(s) ${Object.entries(bt)
+                    .map(([t, n]) => `${t}×${n}`)
+                    .join(', ')}${report.unconnected.length ? ` + ${report.unconnected.length} unrouted` : ''}${warned}`,
+            );
+            summary[summary.length - 1][2] +=
+                ` DRC:${report.violations.length}v${report.unconnected.length ? `/${report.unconnected.length}u` : ''}`;
         }
-        const r = existsSync(join(dir, 'drc.json')) ? JSON.parse(readFileSync(join(dir, 'drc.json'), 'utf8')) : null;
-        const v = r?.violations ?? [],
-            u = r?.unconnected_items ?? [];
-        const bt = {};
-        for (const x of v) bt[x.type] = (bt[x.type] ?? 0) + 1;
-        console.log(
-            `  ⚠ DRC: ${v.length} violation(s) ${Object.entries(bt)
-                .map(([t, n]) => `${t}×${n}`)
-                .join(', ')}${u.length ? ` + ${u.length} unrouted` : ''}`,
-        );
-        summary[summary.length - 1][2] += ` DRC:${v.length}v${u.length ? `/${u.length}u` : ''}`;
+    } catch (e) {
+        // Fail-closed, same as the product: a notary that did not report is not a clean board.
+        console.error(`  ✗ DRC did not report — ${String(e).slice(0, 160)}`);
+        summary[summary.length - 1][2] += ' DRC?';
     }
 }
 

@@ -1,14 +1,24 @@
 /**
- * Docker-backed KiCad DRC oracle — the process side of pcb-core's `LayoutOptions.notaryDrc` seam.
- * Returns true iff the board is DRC-clean: zero BLOCKING rule violations and zero unconnected items,
- * judged against the sibling .kicad_pro / net class. Kept OUT of the pure library; the harness/worker
- * injects this so the quality margin-retry can use REAL DRC as its completeness+cleanliness oracle.
+ * Docker-backed KiCad DRC — the process side of pcb-core's `LayoutOptions.notaryDrc` seam, and the ONE
+ * place a harness may obtain a DRC verdict.
+ *
+ * Two exports over one implementation: `makeKicadDrcReportRunner` returns the parsed report (blocking
+ * violations, warnings, unconnected) and `makeKicadDrcRunner` returns just the boolean the margin ladder
+ * needs. They cannot disagree, because the second is the first's `.clean`.
+ *
+ * WHY BOTH (30 Tem 2026). The harnesses that exist to be EVIDENCE about the product — `pnpm test:layout`,
+ * the gallery generator, the routing A/B — each carried their own copy of the DRC invocation and their own
+ * reading of the result, and each printed its own "manufacturable stamp". Two implementations of the
+ * manufacturability verdict is one too many: a stamp computed by different code from different inputs is
+ * not evidence about the product, in either direction. They also all asked for `--severity-error`, so
+ * after the product started reporting warning-severity findings the harnesses still could not see them —
+ * a board reported CLEAN by the tool whose job is to check the tool.
  *
  * The verdict comes from the REPORT, not the exit code. kicad-cli is asked for `--severity-all` so the
- * report can carry warning-severity findings (which are reported and never gate delivery), and at that
- * severity `--exit-code-violations` exits 5 on a warning too — so reading the code would call every board
- * in the gallery dirty. pcb-core's parseDrcReport owns which severities block, in one place, for both this
- * harness and the production worker.
+ * report can carry warnings (reported, never gating), and at that severity `--exit-code-violations` exits
+ * 5 on a warning too — reading the code would call every board in the gallery dirty. pcb-core's
+ * parseDrcReport owns which severities block, in one place, for the harnesses and the production worker
+ * alike.
  */
 import { execFileSync } from 'node:child_process';
 import { writeFileSync, readFileSync, existsSync, mkdtempSync, rmSync } from 'node:fs';
@@ -26,16 +36,21 @@ const { parseDrcReport } = await import(
         .href
 );
 
-/** @param {{ image?: string, timeoutMs?: number, workDir?: string, keep?: boolean }} [opts] */
-export function makeKicadDrcRunner(opts = {}) {
+/**
+ * Run KiCad DRC and return pcb-core's parsed report.
+ *
+ * @param {{ image?: string, timeoutMs?: number, workDir?: string, keep?: boolean }} [opts]
+ * @returns {(kicadPcb: string, kicadPro?: string) => Promise<{clean: boolean, violations: unknown[], warnings: unknown[], unconnected: unknown[]}>}
+ */
+export function makeKicadDrcReportRunner(opts = {}) {
     const image = opts.image ?? KICAD_IMAGE;
     const timeoutMs = opts.timeoutMs ?? 300_000;
     const baseDir = opts.workDir ?? tmpdir();
-    return async function notaryDrc(kicadPcb, kicadPro) {
+    return async function drcReport(kicadPcb, kicadPro) {
         const dir = mkdtempSync(join(baseDir, 'drc-'));
         try {
             writeFileSync(join(dir, 'b.kicad_pcb'), kicadPcb);
-            writeFileSync(join(dir, 'b.kicad_pro'), kicadPro);
+            if (kicadPro) writeFileSync(join(dir, 'b.kicad_pro'), kicadPro);
             const mount = `${dir.replaceAll('\\', '/')}:/work`;
             try {
                 execFileSync(
@@ -46,7 +61,7 @@ export function makeKicadDrcRunner(opts = {}) {
                     { stdio: 'pipe', timeout: timeoutMs, env: { ...process.env, MSYS_NO_PATHCONV: '1' } },
                 );
             } catch (e) {
-                // Without --exit-code-violations a non-zero exit is the notary failing, not a verdict — and
+                // Without --exit-code-violations a non-zero exit is the notary FAILING, not a verdict — and
                 // the caller records this text as a degradation diagnostic and truncates it, so raise what
                 // the TOOL said rather than execFileSync's "Command failed: <the whole docker command>",
                 // which fills the whole budget with the command line and leaves no room for the reason.
@@ -55,13 +70,28 @@ export function makeKicadDrcRunner(opts = {}) {
                     `kicad-cli DRC failed (exit ${e.status ?? '?'})${said ? `: ${said.slice(-400)}` : ' with no output'}`,
                 );
             }
-            // FAIL-CLOSED: the file is now the sole verdict, so its absence must never read as a clean board.
+            // FAIL-CLOSED: the file is the sole verdict, so its absence must never read as a clean board.
             const out = join(dir, 'd.json');
             if (!existsSync(out))
                 throw new Error('kicad-cli DRC produced no report file — refusing to assume the board is DRC-clean');
-            return parseDrcReport(JSON.parse(readFileSync(out, 'utf8'))).clean;
+            return parseDrcReport(JSON.parse(readFileSync(out, 'utf8')));
         } finally {
             if (!opts.keep) rmSync(dir, { recursive: true, force: true });
         }
+    };
+}
+
+/**
+ * The boolean oracle the quality margin ladder runs on — true iff zero BLOCKING violations and zero
+ * unconnected items. Literally the report runner's `.clean`, so the ladder and any harness reporting on the
+ * same board can never reach different conclusions about it.
+ *
+ * @param {{ image?: string, timeoutMs?: number, workDir?: string, keep?: boolean }} [opts]
+ * @returns {(kicadPcb: string, kicadPro?: string) => Promise<boolean>}
+ */
+export function makeKicadDrcRunner(opts = {}) {
+    const report = makeKicadDrcReportRunner(opts);
+    return async function notaryDrc(kicadPcb, kicadPro) {
+        return (await report(kicadPcb, kicadPro)).clean;
     };
 }
