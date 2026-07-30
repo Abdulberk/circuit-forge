@@ -42,6 +42,7 @@ export const CHECK_IDS = [
     'emi',
     'compliance',
     // layout / manufacturability (GET /layouts/:id)
+    'routing',
     'connectivity-parity',
     'drc',
     'manufacturability',
@@ -85,6 +86,7 @@ export const CHECK_LABELS: Record<CheckId, string> = {
     robustness: 'Tolerance robustness (Monte-Carlo / corners)',
     decoupling: 'Decoupling present',
     polarity: 'Polarity orientation-consistency',
+    routing: 'Quality router judged the board',
     'connectivity-parity': 'Netlist ↔ layout connectivity',
     drc: 'Design-rule check (fab tier)',
     manufacturability: 'Manufacturable (DRC-clean gate)',
@@ -190,6 +192,56 @@ export function buildElectricalScope(input: {
     );
 }
 
+/** What the routing stage reports about itself — mirrors LayoutResult.delivery.routing. */
+export interface RoutingDisclosure {
+    tier: 'quality' | 'local';
+    degradedCause?: string;
+    marginsTried?: number;
+    marginsOffered?: number;
+}
+
+/**
+ * How the routing stage discloses itself.
+ *
+ * 'run' means the router produced a verdict about this board, whether or not we liked the verdict.
+ * 'not-run' means nobody reached one: the tool faulted, no runner was available, or the quality tier was
+ * never asked for. Reporting the second as though it were the first is the failure this entry exists to
+ * prevent — a board whose route merely ran out of clock was delivered looking exactly like a board that
+ * cannot be routed, leaving the user to act on a finding that was never made.
+ */
+function routingEntry(r?: RoutingDisclosure): DeterminedEntry {
+    if (!r) return { status: 'not-run', detail: 'no routing stage on this path' };
+    if (r.tier === 'quality') return { status: 'run', detail: 'the quality router routed this board' };
+    // Worded differently per cause on purpose. "6 of 6 attempted" is a completeness claim; "attempt 1 of 6"
+    // is a position. Reusing one phrase for both would let a fault on the first rung read like a board that
+    // survived a full ladder.
+    const attempted = r.marginsTried !== undefined && r.marginsOffered !== undefined;
+    switch (r.degradedCause) {
+        case 'board-rejected':
+            return {
+                status: 'run',
+                detail:
+                    `the quality router judged this board${attempted ? ` across all ${r.marginsOffered} routing margins` : ''} ` +
+                    `and none passed — the local route was delivered instead`,
+            };
+        case 'tool-fault':
+            return {
+                status: 'not-run',
+                detail:
+                    `the router or its DRC oracle failed before judging this board${attempted ? ` (it died on margin attempt ${r.marginsTried} of ${r.marginsOffered})` : ''} ` +
+                    `— an infrastructure fault, not a finding about the design`,
+            };
+        case 'no-runner':
+            return { status: 'not-run', detail: 'no quality router was available in this deployment' };
+        case 'not-requested':
+            return { status: 'not-run', detail: 'the quality router was not requested' };
+        default:
+            // An unrecognised cause is disclosed as unjudged. Guessing "probably rejected" would invent the
+            // one claim this entry exists to stop us making.
+            return { status: 'not-run', detail: 'the quality router did not reach a verdict (cause unrecorded)' };
+    }
+}
+
 /**
  * Restate ONE check on an existing manifest, for the case where a later stage actually ran it.
  *
@@ -226,11 +278,19 @@ export function excludedEntries(...ids: readonly CheckId[]): Partial<Record<Chec
 /** The layout / manufacturability (GET /layouts/:id) fragment, from the job's existing verdict signals. */
 export function buildLayoutScope(input: {
     parityPins?: { checked: number; expected: number };
+    /** What the router actually did, from LayoutResult.delivery.routing. Omit only on a path with no
+     *  routing stage at all. */
+    routing?: RoutingDisclosure;
     drcClean: boolean;
     drcViolations: number;
     manufacturable: boolean;
 }): ScopeManifest {
-    return buildManifest(['connectivity-parity', 'drc', 'manufacturability'], {
+    return buildManifest(['routing', 'connectivity-parity', 'drc', 'manufacturability'], {
+        // Whether the quality router ever REACHED a verdict on this board — a different question from
+        // whether the verdict was good. A router that timed out and a router that tried every margin and
+        // rejected them all both delivered the local fallback with drcCertified:false, so a withheld fab
+        // bundle read as a judgement about the design in both cases. Only one of them is.
+        routing: routingEntry(input.routing),
         'connectivity-parity': {
             status: 'run',
             detail: input.parityPins

@@ -185,10 +185,63 @@ describe('buildLayoutScope — the /layouts fragment', () => {
         expect(g.get('manufacturability')!.detail).toMatch(/withheld/);
     });
 
-    it('lists exactly its three owned checks (no decoupling/polarity leakage)', () => {
+    it('lists exactly its owned checks (no decoupling/polarity leakage)', () => {
         const ids = buildLayoutScope({ drcClean: true, drcViolations: 0, manufacturable: true })
             .checks.map((c) => c.id)
             .sort();
-        expect(ids).toEqual(['connectivity-parity', 'drc', 'manufacturability']);
+        expect(ids).toEqual(['connectivity-parity', 'drc', 'manufacturability', 'routing']);
+    });
+});
+
+describe('buildLayoutScope — routing: did anyone actually judge this board?', () => {
+    const routingOf = (routing?: Parameters<typeof buildLayoutScope>[0]['routing']) =>
+        byId(buildLayoutScope({ routing, drcClean: false, drcViolations: 0, manufacturable: false })).get('routing')!;
+
+    it('a TOOL FAULT is not-run — the board was never judged, and the ladder position proves it', () => {
+        // The defect this pins. A timeout, a crash and a wedged container all delivered `tier:'local'` with
+        // `drcCertified:false` — byte-identical to a board that genuinely cannot be routed. The user was
+        // invited to act on a finding nobody had made. Measured: our simplest board uses 255s of a 300s
+        // per-attempt budget on an idle machine, so this path is reached by ordinary load.
+        const e = routingOf({ tier: 'local', degradedCause: 'tool-fault', marginsTried: 1, marginsOffered: 6 });
+        expect(e.status).toBe('not-run');
+        expect(e.detail).toMatch(/not a finding about the design/i);
+        expect(e.detail).toMatch(/margin attempt 1 of 6/); // one rung of six — not a full ladder
+    });
+
+    it('a REJECTED board is run — the router reached a verdict, and it was about the board', () => {
+        const e = routingOf({ tier: 'local', degradedCause: 'board-rejected', marginsTried: 6, marginsOffered: 6 });
+        expect(e.status).toBe('run');
+        expect(e.detail).toMatch(/across all 6 routing margins/);
+        expect(e.detail).not.toMatch(/infrastructure/i);
+    });
+
+    it('the same delivered tier means opposite things — which is why the cause is typed', () => {
+        // Both are tier:'local'. If a consumer could only read the tier, these two would be one outcome.
+        const fault = routingOf({ tier: 'local', degradedCause: 'tool-fault' });
+        const judged = routingOf({ tier: 'local', degradedCause: 'board-rejected' });
+        expect(fault.status).not.toBe(judged.status);
+    });
+
+    it('a routed board is simply run', () => {
+        expect(routingOf({ tier: 'quality' })).toMatchObject({ status: 'run' });
+    });
+
+    it('an absent router and an unrequested one each say so, rather than implying a rejection', () => {
+        expect(routingOf({ tier: 'local', degradedCause: 'no-runner' }).detail).toMatch(
+            /no quality router.*available/i,
+        );
+        expect(routingOf({ tier: 'local', degradedCause: 'not-requested' }).detail).toMatch(/not requested/i);
+    });
+
+    it('an UNRECOGNISED cause is disclosed as unjudged, never guessed into a rejection', () => {
+        // Fail-closed on meaning: inventing "probably rejected" for a cause we do not know is the exact claim
+        // this entry exists to stop us making. Same direction as the DRC severity split.
+        const e = routingOf({ tier: 'local', degradedCause: 'something-new' });
+        expect(e.status).toBe('not-run');
+        expect(e.detail).toMatch(/did not reach a verdict/i);
+    });
+
+    it('omitting the routing disclosure entirely is not-run, not a silent pass', () => {
+        expect(routingOf(undefined)).toMatchObject({ status: 'not-run' });
     });
 });

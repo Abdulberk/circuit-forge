@@ -276,6 +276,61 @@ describe('first terminal state wins — a late finish cannot resurrect a reaped 
     });
 });
 
+describe('the scope manifest tells the truth about WHO failed', () => {
+    /** The persisted manifest's routing entry, as a caller would read it off the result row. */
+    const routingCheck = () => {
+        const result = lastUpdate().result as { scope?: { checks: { id: string; status: string; detail?: string }[] } };
+        return result.scope!.checks.find((c) => c.id === 'routing')!;
+    };
+
+    it('a router that timed out is disclosed as NOT-RUN, so a withheld bundle is not read as a design fault', async () => {
+        // The defect: a wedged container or a blown 300s budget delivered the local fallback with
+        // drcCertified:false — byte-identical to a board that genuinely cannot be routed. The user was
+        // invited to fix a design nobody had found anything wrong with.
+        layoutCircuit.mockResolvedValue({
+            ...okLayout(),
+            delivery: {
+                routing: {
+                    tier: 'local',
+                    drcCertified: false,
+                    degradedCause: 'tool-fault',
+                    degradedReason: 'the quality router failed before it could judge this board',
+                    marginsTried: 1,
+                    marginsOffered: 6,
+                },
+                placement: { engine: 'grid', requested: 'grid' },
+            },
+        });
+        await processLayoutJob(job);
+        expect(routingCheck().status).toBe('not-run');
+        expect(routingCheck().detail).toMatch(/not a finding about the design/i);
+    });
+
+    it('a router that judged every margin and rejected them is disclosed as RUN — that one IS about the board', async () => {
+        layoutCircuit.mockResolvedValue({
+            ...okLayout(),
+            delivery: {
+                routing: {
+                    tier: 'local',
+                    drcCertified: false,
+                    degradedCause: 'board-rejected',
+                    marginsTried: 6,
+                    marginsOffered: 6,
+                },
+                placement: { engine: 'grid', requested: 'grid' },
+            },
+        });
+        await processLayoutJob(job);
+        expect(routingCheck().status).toBe('run');
+        expect(routingCheck().detail).not.toMatch(/infrastructure/i);
+    });
+
+    it('a quality-routed board is disclosed as run', async () => {
+        await processLayoutJob(job); // okLayout() routes at the quality tier
+        expect(routingCheck().status).toBe('run');
+    });
+});
+
 describe('the gate cannot be bypassed by an upstream failure', () => {
     it('a layout pcb-core rejected never reaches the delivery path', async () => {
         layoutCircuit.mockResolvedValue({
