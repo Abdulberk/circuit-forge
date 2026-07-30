@@ -15,7 +15,7 @@ import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { execFileSync } from 'node:child_process';
 import { makeFreeroutingRunner } from './lib/freerouting.mjs';
-import { makeKicadDrcRunner } from './lib/kicad-drc.mjs';
+import { makeKicadDrcRunner, makeKicadDrcReportRunner } from './lib/kicad-drc.mjs';
 import { KICAD_IMAGE, FR_IMAGE, assertImagesMatchProduction, dockerUserArgs } from './lib/eda-images.mjs';
 
 // Before anything runs: the images this harness judges boards with MUST be the ones production runs.
@@ -413,78 +413,55 @@ try {
 if (!dockerOk && STRICT)
     fail(`PCB_GATE_STRICT: ${KICAD_IMAGE} not available — the DRC gate cannot run (refusing a silent green).`);
 
+// ONE runner for every DRC verdict in this harness — see scripts/lib/kicad-drc.mjs.
+const drcReportRunner = makeKicadDrcReportRunner({ workDir: outRoot });
+
 if (dockerOk) {
     // NOTARY POLICY (Phase 1): the DRC verdict is REPORTED as the manufacturable-stamp status, not a
     // process gate — the local fast router cannot yet meet the 0.2mm clearance profile on dense areas
-    // (tracks_crossing/clearance are ROUTER-quality issues; the freerouting quality tier lands in
-    // Phase 2 and owns the DRC-clean stamp). Errors-only severity: library-reference warnings are noise.
-    console.log('\n── notary: kicad-cli 10 DRC (--refill-zones, errors-only, judged by OUR .kicad_pro rules)');
+    // (tracks_crossing/clearance are ROUTER-quality issues; the freerouting quality tier owns the
+    // DRC-clean stamp).
+    //
+    // The verdict comes from the SHARED runner, which is the same code and the same severity policy the
+    // product ships. This harness used to run its own kicad-cli invocation at --severity-error and read
+    // exit 5 itself, which made its stamp a SECOND implementation of the manufacturability verdict — and a
+    // harness whose stamp is computed differently from the product's is not evidence about the product, in
+    // either direction. It also could not see warning-severity findings at all, so it reported CLEAN on
+    // boards the product now reports 30+ findings on.
+    console.log('\n── notary: kicad-cli 10 DRC (shared runner, judged by OUR .kicad_pro rules)');
     for (const [name, dir] of boards) {
-        const toDocker = (p) => p.replace(/\\/g, '/');
         rmSync(join(dir, 'drc.json'), { force: true }); // never let a STALE report masquerade as this run's verdict
+        let report;
         try {
-            execFileSync(
-                'docker',
-                [
-                    'run',
-                    '--rm',
-                    ...dockerUserArgs(),
-                    '-v',
-                    `${toDocker(dir)}:/work`,
-                    KICAD_IMAGE,
-                    'kicad-cli',
-                    'pcb',
-                    'drc',
-                    '--refill-zones',
-                    '--exit-code-violations',
-                    '--severity-error',
-                    '--format',
-                    'json',
-                    '--output',
-                    '/work/drc.json',
-                    '/work/board.kicad_pcb',
-                ],
-                { stdio: 'pipe', timeout: 300000, env: { ...process.env, MSYS_NO_PATHCONV: '1' } },
+            report = await drcReportRunner(
+                readFileSync(join(dir, 'board.kicad_pcb'), 'utf8'),
+                readFileSync(join(dir, 'board.kicad_pro'), 'utf8'),
             );
-            ok(`${name}: DRC CLEAN — manufacturable stamp ✔`);
         } catch (e) {
-            // exit 5 = violations found (the notary DID run); anything else = the notary itself failed.
-            if (e.status !== 5) {
-                fail(
-                    `${name}: kicad-cli execution failed (exit ${e.status ?? '?'}) — ${String(e.stderr ?? e).slice(0, 200)}`,
-                );
-                continue;
-            }
-            // Exit 5 means kicad-cli found violations AND/OR unconnected items. Distinguish the three cases
-            // rather than printing one line for all of them: "0 error(s)" used to be shown both for a board
-            // whose only findings were unconnected nets AND for a run whose report never reached the host —
-            // and the second is a broken notary, not a nearly-clean board. That ambiguity is what made a CI
-            // failure impossible to diagnose from the log. Same posture as the production runner: no report
-            // file is not evidence of anything.
-            if (!existsSync(join(dir, 'drc.json'))) {
-                fail(
-                    `${name}: kicad-cli exited 5 but wrote NO report to the mounted dir — the notary did not actually report (mount/permission problem, not a board problem)`,
-                );
-                continue;
-            }
-            const report = JSON.parse(readFileSync(join(dir, 'drc.json'), 'utf8'));
-            const viols = report.violations ?? [];
-            const unconn = report.unconnected_items ?? [];
-            const byType = {};
-            for (const v of viols) byType[v.type] = (byType[v.type] ?? 0) + 1;
-            const detail =
-                [
-                    viols.length
-                        ? `${viols.length} violation(s): ${Object.entries(byType)
-                              .map(([t, n]) => `${t}×${n}`)
-                              .join(', ')}`
-                        : null,
-                    unconn.length ? `${unconn.length} unconnected item(s)` : null,
-                ]
-                    .filter(Boolean)
-                    .join(' + ') || 'exit 5 with an empty report (unexpected)';
-            console.log(`  ⚠ ${name}: stamp NOT clean — ${detail} (quality-router tier pending, Phase 2)`);
+            // The notary FAILED rather than judging. Distinct from a dirty board on purpose: the shared
+            // runner is fail-closed, so a missing or unreadable report arrives here and never as a verdict.
+            fail(`${name}: kicad-cli DRC did not report — ${String(e).slice(0, 200)}`);
+            continue;
         }
+        const warned = report.warnings.length ? ` (+${report.warnings.length} warning-severity finding(s), not gating)` : '';
+        if (report.clean) {
+            ok(`${name}: DRC CLEAN — manufacturable stamp ✔${warned}`);
+            continue;
+        }
+        const byType = {};
+        for (const v of report.violations) byType[v.type] = (byType[v.type] ?? 0) + 1;
+        const detail =
+            [
+                report.violations.length
+                    ? `${report.violations.length} blocking violation(s): ${Object.entries(byType)
+                          .map(([t, n]) => `${t}×${n}`)
+                          .join(', ')}`
+                    : null,
+                report.unconnected.length ? `${report.unconnected.length} unconnected item(s)` : null,
+            ]
+                .filter(Boolean)
+                .join(' + ') || 'not clean with an empty report (unexpected)';
+        console.log(`  ⚠ ${name}: stamp NOT clean — ${detail}${warned}`);
     }
 }
 
@@ -618,8 +595,12 @@ if (frOk) {
         // tool diameters, one coordinate. The wider one wins, so the finished annular ring is 0.10mm
         // against a 0.15mm rule — on a board stamped manufacturable.
         //
-        // KiCad does report it, as `holes_co_located`, but at WARNING severity, and the notary runs
-        // --severity-error. So this is checked structurally instead, on our own output, where it is exact.
+        // KiCad reports it too, as `holes_co_located` at WARNING severity — which the notary now collects
+        // and surfaces, where it used to be invisible because the DRC ran at --severity-error. This
+        // structural check is kept anyway and is not redundant: it reads OUR OWN output rather than KiCad's
+        // opinion of it, so it stays exact and stays independent of what severity a future KiCad assigns.
+        // A defect this expensive — a fab drilling one hole twice at two diameters, on a board stamped
+        // manufacturable — is worth being told about by two witnesses that cannot fail the same way.
         const viaRecords = [...q.outputs.kicadPcb.matchAll(/\(via[\s\S]{0,240}?\(at ([-\d.]+) ([-\d.]+)\)/g)].map(
             (m) => `${m[1]},${m[2]}`,
         );
@@ -650,58 +631,41 @@ if (frOk) {
             ok(`${name}: 3D bodies injected for all ${injectResult.injected} footprint(s)`);
         }
 
-        // DRC now EXPECTS clean — this is the stamp, not a report
+        // DRC now EXPECTS clean — this is the stamp, not a report. Same shared runner as the notary
+        // section above, so the harness and the product cannot reach different conclusions about the
+        // same board, and the warnings the product reports are visible here too.
         rmSync(join(dir, 'drc_quality.json'), { force: true });
+        let qReport;
         try {
-            execFileSync(
-                'docker',
-                [
-                    'run',
-                    '--rm',
-                    ...dockerUserArgs(),
-                    '-v',
-                    `${toDocker(dir)}:/work`,
-                    KICAD_IMAGE,
-                    'kicad-cli',
-                    'pcb',
-                    'drc',
-                    '--refill-zones',
-                    '--exit-code-violations',
-                    '--severity-error',
-                    '--format',
-                    'json',
-                    '--output',
-                    '/work/drc_quality.json',
-                    '/work/board_quality.kicad_pcb',
-                ],
-                { stdio: 'pipe', timeout: 300000, env: { ...process.env, MSYS_NO_PATHCONV: '1' } },
+            qReport = await drcReportRunner(
+                readFileSync(join(dir, 'board_quality.kicad_pcb'), 'utf8'),
+                readFileSync(join(dir, 'board_quality.kicad_pro'), 'utf8'),
             );
-            ok(`${name}: quality DRC CLEAN — manufacturable stamp ✔✔ (traces=${q.stats.traces} vias=${q.stats.vias})`);
         } catch (e) {
-            if (e.status !== 5) {
-                fail(
-                    `${name}: quality kicad-cli failed (exit ${e.status ?? '?'}) — ${String(e.stderr ?? e).slice(0, 200)}`,
-                );
-                continue;
-            }
-            // The stamp requires BOTH zero rule violations AND zero unconnected nets (an unrouted net is a
-            // real defect, reported separately from `violations` in the DRC JSON).
-            const report = existsSync(join(dir, 'drc_quality.json'))
-                ? JSON.parse(readFileSync(join(dir, 'drc_quality.json'), 'utf8'))
-                : null;
-            const viols = report?.violations ?? [];
-            const unconnected = report?.unconnected_items ?? [];
+            fail(`${name}: quality kicad-cli DRC did not report — ${String(e).slice(0, 200)}`);
+            continue;
+        }
+        const qWarned = qReport.warnings.length
+            ? ` (+${qReport.warnings.length} warning-severity finding(s), not gating)`
+            : '';
+        if (qReport.clean) {
+            ok(
+                `${name}: quality DRC CLEAN — manufacturable stamp ✔✔ (traces=${q.stats.traces} vias=${q.stats.vias})${qWarned}`,
+            );
+        } else {
+            // The stamp requires BOTH zero blocking violations AND zero unconnected nets (an unrouted net
+            // is a real defect, reported separately from `violations` in the DRC JSON).
             const byType = {};
-            for (const v of viols) byType[v.type] = (byType[v.type] ?? 0) + 1;
+            for (const v of qReport.violations) byType[v.type] = (byType[v.type] ?? 0) + 1;
             const parts = [];
-            if (viols.length)
+            if (qReport.violations.length)
                 parts.push(
-                    `${viols.length} violation(s): ${Object.entries(byType)
+                    `${qReport.violations.length} blocking violation(s): ${Object.entries(byType)
                         .map(([t, n]) => `${t}×${n}`)
                         .join(', ')}`,
                 );
-            if (unconnected.length) parts.push(`${unconnected.length} unrouted net(s)`);
-            fail(`${name}: quality DRC NOT clean — ${parts.join(' + ')}`);
+            if (qReport.unconnected.length) parts.push(`${qReport.unconnected.length} unrouted net(s)`);
+            fail(`${name}: quality DRC NOT clean — ${parts.join(' + ')}${qWarned}`);
         }
 
         // The DELIVERED fab bundle — the one artifact nothing downstream inspects. The manufacturability
