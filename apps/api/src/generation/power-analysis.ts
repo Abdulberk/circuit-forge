@@ -16,9 +16,11 @@
  * Each resistor's dissipation is compared to its rating — the part's declared `properties.powerRating`, else
  * the standard rating for its package size, else a conservative default — and flagged when exceeded.
  *
- * Deliberately INFORMATIONAL: an exceeded DEFAULT rating is a warning surfaced in the evidence pack,
- * not an automatic verdict failure — the default is a guess, and false-failing a design on a guessed
- * rating would be worse than surfacing it. (Active-device power is a follow-up.)
+ * WHAT GATES AND WHAT ONLY WARNS. An overload measured against a rating WE assumed — from the package code
+ * or the blanket default — is surfaced and never fails the verdict: that would be a verdict about our guess.
+ * An overload against the rating the PART ITSELF declares is a datasheet fact and does withhold the badge,
+ * provided the dissipation figure is a real steady or time-averaged one rather than a snapshot. See
+ * `declaredOverloads`. (Active-device power is a follow-up.)
  */
 import { sanitizeNodeName, parseSpiceValue, type CircuitJson } from '@circuit-forge/eda-core';
 
@@ -206,4 +208,38 @@ export function computeResistorPower(
     const basis: PowerReport['basis'] =
         analysisType === 'tran' || analysisType === 'ac' ? 'last-timestep' : 'operating-point';
     return { basis, components, anyOverRating: components.some((c) => c.overRating) };
+}
+
+/**
+ * The over-rating findings solid enough to REFUSE a design over, as opposed to warn about.
+ *
+ * Two conditions, and both are about not failing someone unfairly:
+ *
+ *   ratingSource 'declared' — the limit came from the part the designer chose, not from our reading of a
+ *     package code or a blanket 0.25W assumption. Failing a design against a rating WE guessed would be a
+ *     verdict about our guess. Package-derived and default-rated overloads still surface in the report; they
+ *     just do not withhold the badge.
+ *
+ *   basis 'operating-point' or 'rms' — a true steady value or a true time-averaged heating figure. The
+ *     'last-timestep' basis is a SNAPSHOT: for a floating transient resistor or an AC sweep it is whatever
+ *     the waveform happened to be doing at the final timepoint, which can read arbitrarily high or low. A
+ *     snapshot is enough to raise a flag and not enough to fail a board.
+ *
+ * Everything else about the finding is unchanged and still reported — this only selects what may gate.
+ */
+export function declaredOverloads(report: PowerReport | undefined): PowerFinding[] {
+    return (report?.components ?? []).filter(
+        (c) => c.overRating && c.ratingSource === 'declared' && (c.basis === 'operating-point' || c.basis === 'rms'),
+    );
+}
+
+/** One line naming the parts and how far over they are — the reason a user is shown. */
+export function describeOverloads(findings: readonly PowerFinding[]): string {
+    return findings
+        .map(
+            (c) =>
+                `${c.designator} dissipates ${c.dissipationW}W against its declared ${c.ratingW}W rating ` +
+                `(${Math.round((c.dissipationW / c.ratingW) * 100)}% of limit)`,
+        )
+        .join('; ');
 }

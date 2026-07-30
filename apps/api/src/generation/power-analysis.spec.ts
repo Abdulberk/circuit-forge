@@ -1,7 +1,13 @@
 import { sanitizeNodeName, type CircuitJson } from '@circuit-forge/eda-core';
 
 import type { SimMeasurement } from './circuit-simulator.service';
-import { computeResistorPower } from './power-analysis';
+import {
+    computeResistorPower,
+    declaredOverloads,
+    describeOverloads,
+    type PowerFinding,
+    type PowerReport,
+} from './power-analysis';
 
 /** Build a node-voltage measurement keyed the way the simulator reports it: v(<sanitized node>). */
 const v = (netId: string, final: number): SimMeasurement => ({
@@ -190,5 +196,54 @@ describe('computeResistorPower', () => {
             ],
         };
         expect(computeResistorPower(noR, [v('a', 5)])).toBeUndefined();
+    });
+});
+
+describe('declaredOverloads — what is solid enough to REFUSE a design over', () => {
+    const finding = (over: Partial<PowerFinding>): PowerFinding => ({
+        designator: 'R1',
+        dissipationW: 0.5,
+        basis: 'operating-point',
+        ratingW: 0.25,
+        ratingSource: 'declared',
+        overRating: true,
+        ...over,
+    });
+    const report = (components: PowerFinding[]): PowerReport => ({
+        basis: 'operating-point',
+        components,
+        anyOverRating: components.some((c) => c.overRating),
+    });
+
+    it('gates on a DECLARED rating exceeded at a steady or time-averaged figure', () => {
+        expect(declaredOverloads(report([finding({})]))).toHaveLength(1);
+        expect(declaredOverloads(report([finding({ basis: 'rms' })]))).toHaveLength(1);
+    });
+
+    it('never gates on a rating WE assumed — that would be a verdict about our own guess', () => {
+        // The package table and the 0.25W default are good enough to warn a designer and not good enough to
+        // refuse to certify their board. Both still appear in the report; they just do not withhold it.
+        expect(declaredOverloads(report([finding({ ratingSource: 'footprint' })]))).toHaveLength(0);
+        expect(declaredOverloads(report([finding({ ratingSource: 'default' })]))).toHaveLength(0);
+    });
+
+    it('never gates on a SNAPSHOT dissipation, however far over it looks', () => {
+        // 'last-timestep' is whatever the waveform was doing at the final timepoint of an AC sweep or a
+        // floating transient. It can read arbitrarily high or low, so it is enough to raise a flag and not
+        // enough to fail a board — failing someone on the sample we happened to stop at would be luck.
+        expect(declaredOverloads(report([finding({ basis: 'last-timestep', dissipationW: 99 })]))).toHaveLength(0);
+    });
+
+    it('ignores parts that are within their rating, and an absent report', () => {
+        expect(declaredOverloads(report([finding({ overRating: false, dissipationW: 0.1 })]))).toHaveLength(0);
+        expect(declaredOverloads(undefined)).toHaveLength(0);
+    });
+
+    it('names the part and how far over it is — the reason a user is shown', () => {
+        const msg = describeOverloads([finding({ designator: 'R7', dissipationW: 0.5, ratingW: 0.25 })]);
+        expect(msg).toContain('R7');
+        expect(msg).toContain('0.5W');
+        expect(msg).toContain('0.25W');
+        expect(msg).toContain('200% of limit');
     });
 });

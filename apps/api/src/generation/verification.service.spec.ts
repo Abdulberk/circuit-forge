@@ -1107,3 +1107,103 @@ describe('VerificationService — supply corner is INFORMATIONAL (never gates)',
         expect(rob?.detail).toContain('supply corners');
     });
 });
+
+describe('VerificationService — the component-stress gate', () => {
+    /** A divider whose R1 is run past whatever rating the test gives it: 10V in, 5V out, R1 = 1k → 25mW. */
+    const stressedCircuit = (r1: Record<string, unknown>): CircuitJson =>
+        ({
+            version: '1.0',
+            components: [
+                {
+                    id: 'v1',
+                    type: 'voltage_source',
+                    designator: 'V1',
+                    value: 'DC 10',
+                    pins: [
+                        { pinId: '+', netId: 'in' },
+                        { pinId: '-', netId: 'gnd' },
+                    ],
+                },
+                {
+                    id: 'r1',
+                    type: 'resistor',
+                    designator: 'R1',
+                    value: '1k',
+                    pins: [
+                        { pinId: '1', netId: 'in' },
+                        { pinId: '2', netId: 'out' },
+                    ],
+                    ...r1,
+                },
+                { id: 'gnd', type: 'ground', designator: 'GND1', pins: [{ pinId: '1', netId: 'gnd' }] },
+            ],
+            nets: [
+                { id: 'in', name: 'in' },
+                { id: 'out', name: 'out' },
+                { id: 'gnd', name: 'gnd', isGround: true },
+            ],
+        }) as unknown as CircuitJson;
+
+    /** op analysis so the dissipation basis is 'operating-point' — the gate-eligible one. */
+    const opSim = okSim({
+        analysisType: 'op',
+        measurements: [
+            { node: `v(${sanitizeNodeName('in')})`, min: 10, max: 10, final: 10, pp: 0, avg: 10, rms: 10 },
+            { node: `v(${sanitizeNodeName('out')})`, min: 5, max: 5, final: 5, pp: 0, avg: 5, rms: 5 },
+        ],
+    });
+
+    it('a part run past the limit its OWN datasheet declares is not a verified design', () => {
+        // Every assertion below passes and the sim is clean — and the board would still cook R1. A verdict
+        // that says "verified" here is the one the whole evidence pack exists to prevent.
+        const { svc } = makeService(opSim);
+        return svc
+            .verify(stressedCircuit({ properties: { powerRating: 0.01 } }), { type: 'op' }, [
+                A('out', 'final', 'approx', 5),
+            ])
+            .then((ev) => {
+                expect(ev.verdict).toBe('fail');
+                expect(ev.checks.failed).toBe(0); // NOT an assertion failure — the specs were all met
+                expect(ev.summary).toMatch(/R1 dissipates/);
+                expect(ev.summary).toMatch(/declared 0\.01W rating/);
+                const drc = ev.scope.checks.find((c) => c.id === 'stress.resistor-power')!;
+                expect(drc.detail).toMatch(/withheld the verdict/);
+            });
+    });
+
+    it('the SAME overload against a rating we merely assumed is reported, and passes', async () => {
+        // A 100Ω 01005 dropping 5V dissipates 250mW against the package's 31mW — eight times over, and
+        // still not a gate, because WE chose that 31mW from a package code, not the designer. Refusing to
+        // certify a board over our own guess would be a verdict about us. It is reported all the same.
+        const { svc } = makeService(opSim);
+        const ev = await svc.verify(stressedCircuit({ value: '100', footprint: '01005' }), { type: 'op' }, [
+            A('out', 'final', 'approx', 5),
+        ]);
+        expect(ev.power!.components[0]).toMatchObject({ ratingSource: 'footprint', overRating: true });
+        expect(ev.verdict).toBe('pass'); // surfaced in `power`, never withheld
+    });
+
+    it('a declared overload measured only as a SNAPSHOT is reported, and passes', async () => {
+        // AC sweep → basis 'last-timestep', which is whatever the waveform was doing at the final point.
+        // Failing a board on the sample we happened to stop at would be luck, not verification.
+        const { svc } = makeService(okSim({ analysisType: 'ac', measurements: opSim.measurements }));
+        const ev = await svc.verify(
+            stressedCircuit({ properties: { powerRating: 0.01 } }),
+            { type: 'ac', variation: 'dec', points: 10, startFreq: '1', stopFreq: '1meg' },
+            [A('out', 'final', 'approx', 5)],
+        );
+        expect(ev.power!.components[0]).toMatchObject({ basis: 'last-timestep', overRating: true });
+        expect(ev.verdict).toBe('pass');
+    });
+
+    it('a part inside its declared rating does not gate, and the manifest says the check ran', async () => {
+        const { svc } = makeService(opSim);
+        const ev = await svc.verify(stressedCircuit({ properties: { powerRating: 1 } }), { type: 'op' }, [
+            A('out', 'final', 'approx', 5),
+        ]);
+        expect(ev.verdict).toBe('pass');
+        const entry = ev.scope.checks.find((c) => c.id === 'stress.resistor-power')!;
+        expect(entry.status).toBe('run');
+        expect(entry.detail).toMatch(/only a declared-rating overload gates/);
+    });
+});
