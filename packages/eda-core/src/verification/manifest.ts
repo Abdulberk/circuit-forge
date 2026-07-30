@@ -283,6 +283,10 @@ export function buildLayoutScope(input: {
     routing?: RoutingDisclosure;
     drcClean: boolean;
     drcViolations: number;
+    /** Findings KiCad rated below error. They are REPORTED and never gated on — disclosed here so a clean
+     *  verdict cannot read as "the board had nothing to say". Omit only when the report could not carry
+     *  them (an older report produced at error severity), which is itself disclosed. */
+    drcWarnings?: number;
     manufacturable: boolean;
 }): ScopeManifest {
     return buildManifest(['routing', 'connectivity-parity', 'drc', 'manufacturability'], {
@@ -299,9 +303,18 @@ export function buildLayoutScope(input: {
         },
         drc: {
             status: 'run',
-            detail: input.drcClean
-                ? 'DRC-clean against the ordered fab rules'
-                : `${input.drcViolations} rule violation(s)`,
+            // The warning count rides on the SAME line as the verdict on purpose. Held separately it reads
+            // as a footnote; here a reader cannot take in "DRC-clean" without also taking in what that
+            // clean verdict was not deciding on.
+            detail:
+                (input.drcClean
+                    ? 'no blocking violation against the ordered fab rules'
+                    : `${input.drcViolations} blocking violation(s)`) +
+                (input.drcWarnings === undefined
+                    ? ' — warning-severity findings were not collected on this run'
+                    : input.drcWarnings === 0
+                      ? ' — and no warning-severity findings'
+                      : `; ${input.drcWarnings} warning-severity finding(s) reported, none of which gate delivery`),
         },
         manufacturability: {
             status: 'run',

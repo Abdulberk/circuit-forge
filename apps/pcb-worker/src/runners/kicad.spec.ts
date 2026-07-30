@@ -102,19 +102,30 @@ describe('notaryDrc — the accept/reject oracle the margin ladder runs on', () 
         await expect(kicad().notaryDrc('(board)', '(pro)')).resolves.toBe(true);
     });
 
-    it('exit 5 means DIRTY, not broken — it must REJECT the board, never throw', async () => {
-        // The margin ladder reads this as "try the next margin". If it threw instead, pcb-core would catch
-        // it upstream and silently fall back to the local fast route for every board.
-        kicadWrites(DIRTY, exit(5));
+    it('a dirty board REJECTS, never throws — a throw would degrade every board to the local route', async () => {
+        // The margin ladder reads false as "try the next margin". If a dirty board threw instead, pcb-core
+        // would catch it upstream as a tool fault and silently fall back to the local fast route for every
+        // board. Note the exit code is 0 here: the notary no longer passes --exit-code-violations, because
+        // at --severity-all kicad exits 5 on a mere warning, and trusting that would reject every board.
+        kicadWrites(DIRTY);
         await expect(kicad().notaryDrc('(board)')).resolves.toBe(false);
     });
 
-    it("reads the exit code from the ASYNC field — `status` is execFileSync's, and is not 5 here", async () => {
-        // The regression this pins: porting `e.code` to `e.status` (the sync sibling's field) would make an
-        // ordinary dirty board look like an infrastructure fault.
-        const wrongField = Object.assign(new Error('kicad-cli exited 5'), { status: 5 });
-        kicadWrites(DIRTY, wrongField as Error & { code?: number });
-        await expect(kicad().notaryDrc('(board)')).rejects.toThrow();
+    it('a WARNING-only board is ACCEPTED — severity decides, and warnings do not gate delivery', async () => {
+        // Measured on all eight gallery boards: each carries warning-severity findings (designators under
+        // the minimum text height we declare, silk off the edge). Those must be REPORTED, not withhold the
+        // fab bundle. Getting this backwards would refuse to build every board in the gallery.
+        kicadWrites({ violations: [{ type: 'text_height', severity: 'warning' }], unconnected_items: [] });
+        await expect(kicad().notaryDrc('(board)')).resolves.toBe(true);
+    });
+
+    it('asks kicad-cli for EVERY severity — a report that cannot hold warnings cannot report them', async () => {
+        kicadWrites(CLEAN);
+        await kicad().notaryDrc('(board)');
+        const args = execFileMock.mock.calls[0]![1] as string[];
+        expect(args).toContain('--severity-all');
+        expect(args).not.toContain('--severity-error');
+        expect(args).not.toContain('--exit-code-violations');
     });
 
     it('any other failure is a real fault and propagates', async () => {
@@ -148,11 +159,15 @@ describe('the notary memo — a second identical DRC is skipped, but only when i
         expect(execFileMock).toHaveBeenCalledTimes(2);
     });
 
-    it('never memoizes an unrecognised report — the cache must not smuggle one past the guard', async () => {
+    it('an unrecognised report is refused AT THE NOTARY — it never reaches the cache', async () => {
+        // Stronger than the guarantee this replaced. The notary used to accept such a report (exit 0 read as
+        // clean) and merely decline to cache it, so the board was ACCEPTED by the oracle on the strength of
+        // an exit code while the report it was supposedly based on was unreadable. Now the file is the
+        // verdict on both paths, so an unreadable file stops the board here.
         kicadWrites({ violations: 'lots' });
         const k = kicad();
-        await k.notaryDrc('(board)', '(pro)'); // exit 0 → the notary itself says clean
-        await expect(k.drcReport('(board)', '(pro)')).rejects.toThrow(/missing violations\/unconnected_items/i);
+        await expect(k.notaryDrc('(board)', '(pro)')).rejects.toThrow(/refusing to judge/i);
+        await expect(k.drcReport('(board)', '(pro)')).rejects.toThrow(/missing violations/i);
     });
 });
 

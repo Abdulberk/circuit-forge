@@ -237,6 +237,7 @@ export async function processLayoutJob(job: Job<LayoutJobPayload>): Promise<void
                 routing: q.delivery.routing,
                 drcClean: parsed.clean,
                 drcViolations: parsed.violations.length,
+                drcWarnings: parsed.warnings.length,
                 manufacturable: verdict.manufacturable,
             }) as unknown as Prisma.InputJsonValue,
         };
