@@ -266,3 +266,110 @@ describe('shapeLayoutResult — LayoutJob M1 contract shaper', () => {
         expect(g2.components.find((c) => c.designator === 'U1')!.id).toBe('U1');
     });
 });
+
+/**
+ * The freerouting splice: copper reconstructed from the SES. It carries `source_trace_id` (mergeSes passes
+ * the placed board as the converter's reference precisely so those remap onto the real nets) but NOT
+ * `connection_name`, and its via names the BASE trace id while the traces are emitted per segment.
+ */
+const SPLICED = [
+    { type: 'source_net', source_net_id: 'sn_dis', name: 'DIS' },
+    { type: 'source_net', source_net_id: 'sn_gnd', name: 'GND' },
+    {
+        type: 'source_trace',
+        source_trace_id: 'st_dis',
+        connected_source_port_ids: [],
+        connected_source_net_ids: ['sn_dis'],
+    },
+    {
+        type: 'source_trace',
+        source_trace_id: 'st_gnd',
+        connected_source_port_ids: [],
+        connected_source_net_ids: ['sn_gnd'],
+    },
+    {
+        type: 'pcb_trace',
+        pcb_trace_id: 'pcb_trace_DIS_source_net_4_0',
+        source_trace_id: 'st_dis',
+        route: [
+            { route_type: 'wire', x: -7.85, y: -9.365, width: 0.2, layer: 'top' },
+            { route_type: 'wire', x: -3, y: -9.365, width: 0.2, layer: 'top' },
+        ],
+    },
+    {
+        type: 'pcb_trace',
+        pcb_trace_id: 'pcb_trace_DIS_source_net_4_1',
+        source_trace_id: 'st_dis',
+        route: [
+            { route_type: 'wire', x: -3, y: -9.365, width: 0.2, layer: 'bottom' },
+            { route_type: 'wire', x: 2, y: -9.365, width: 0.2, layer: 'bottom' },
+        ],
+    },
+    {
+        type: 'pcb_via',
+        pcb_via_id: 'pcb_via_DIS_x',
+        pcb_trace_id: 'pcb_trace_DIS_source_net_4', // the BASE id — matches no trace exactly
+        x: -3,
+        y: -9.365,
+        hole_diameter: 0.3,
+        outer_diameter: 0.6,
+        from_layer: 'top',
+        to_layer: 'bottom',
+        layers: ['top', 'bottom'],
+    },
+] as unknown as TscElement[];
+
+describe('shapeLayoutResult — the copper we actually ship knows its net', () => {
+    it('resolves a spliced trace through source_trace_id when connection_name is absent', () => {
+        // The regression this pins, measured on a real quality-routed board before the fix: 0 of 31 traces
+        // carried a net. Not because the information was missing — every one of them carried a
+        // source_trace_id — but because the shaper only ever looked at connection_name, which the splice
+        // does not produce. A net-less trace cannot be highlighted or cross-probed by any consumer.
+        const geo = shapeLayoutResult(SPLICED);
+        expect(geo.traces).toHaveLength(2);
+        expect(geo.traces.every((t) => t.net === 'DIS')).toBe(true);
+    });
+
+    it('resolves a via by POSITION, not by parsing the id it points at', () => {
+        // The via names `pcb_trace_DIS_source_net_4` while the traces are `..._4_0` and `..._4_1`, so the
+        // reference resolves to nothing. Recovering the base by stripping the numeric suffix would work
+        // today and would tie the render contract to the converter's ID syntax — the exact assumption that
+        // breaks silently on an upstream bump. A via sits ON the copper it joins, so its coordinate is a
+        // point of that net's route; that stays true whatever the ids look like.
+        const geo = shapeLayoutResult(SPLICED);
+        expect(geo.vias).toHaveLength(1);
+        expect(geo.vias[0]!.net).toBe('DIS');
+    });
+
+    it('leaves a contested point UNRESOLVED rather than picking the first net read', () => {
+        // Two nets sharing a point is a short and DRC would reject the board — but if the soup ever says
+        // so, a via labelled with a neighbouring net is worse than one labelled with none, because nothing
+        // downstream can tell it is wrong.
+        const contested = [
+            ...SPLICED,
+            {
+                type: 'pcb_trace',
+                pcb_trace_id: 'pcb_trace_GND_0',
+                source_trace_id: 'st_gnd',
+                route: [
+                    { route_type: 'wire', x: -3, y: -9.365, width: 0.2, layer: 'top' },
+                    { route_type: 'wire', x: -3, y: -4, width: 0.2, layer: 'top' },
+                ],
+            },
+        ] as unknown as TscElement[];
+        const geo = shapeLayoutResult(contested);
+        expect(geo.vias[0]!.net).toBeNull();
+    });
+
+    it('still prefers connection_name when the fast route provides it', () => {
+        // The existing path must not regress: the local router's copper resolves exactly as before.
+        const geo = shapeLayoutResult(soup, { namesById: NAMES });
+        expect(geo.traces.find((t) => t.id === 'pt0')!.net).toBe('VIN');
+        expect(geo.vias.find((v) => v.id === 'v0')!.net).toBe('VIN');
+    });
+
+    it('a trace with neither signal is honestly net-less', () => {
+        const geo = shapeLayoutResult(soup, { namesById: NAMES });
+        expect(geo.traces.find((t) => t.id === 'pt1')!.net).toBeNull();
+    });
+});
