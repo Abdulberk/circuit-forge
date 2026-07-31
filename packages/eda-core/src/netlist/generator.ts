@@ -12,7 +12,7 @@ import {
 import type { AnalysisConfig } from '../types/analysis';
 import { analysisToSpice } from '../types/analysis';
 import type { CircuitJson, Component, Net, ModelDef } from '../types/circuit';
-import { SPICE_PREFIXES, COMPONENT_PINS, COMPONENT_TYPES, isDigitalType } from '../types/circuit';
+import { SPICE_PREFIXES, COMPONENT_PINS, COMPONENT_TYPES, isDigitalType, isSimulatable } from '../types/circuit';
 
 import { planMixedSignal, emitDigitalComponent, aInstanceName, type MixedSignalPlan } from './digital';
 import { sanitizeNodeName, validateIncludePaths } from './sanitizer';
@@ -173,7 +173,9 @@ export function generateNetlist(circuit: CircuitJson, analysis: AnalysisConfig, 
     // collision-avoiding rename is always safe. Empty / harmless for analog-only circuits.
     const reservedDeviceNames = new Set<string>();
     for (const c of circuit.components) {
-        if (c.type === 'ground' || c.type === 'generic') continue; // not emitted as devices
+        // `ground` is node 0, not a device. Everything else that has no electrical model is decided by the
+        // shared predicate, so a future non-simulatable type cannot be emitted here by accident.
+        if (c.type === 'ground' || !isSimulatable(c)) continue;
         const prefix = SPICE_PREFIXES[c.type];
         const name = isDigitalType(c.type)
             ? aInstanceName(c.designator)
@@ -840,7 +842,7 @@ function componentToSpice(
 
     // Not emitted to SPICE: `ground` is node 0, `generic` is a catalog-only part with no simulatable
     // model. Both are skipped (not an error) so a circuit can carry real parts that aren't simulatable.
-    if (type === 'ground' || type === 'generic') {
+    if (type === 'ground' || !isSimulatable(component)) {
         return null;
     }
 

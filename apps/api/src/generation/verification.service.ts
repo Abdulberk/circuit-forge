@@ -16,6 +16,7 @@ import {
     buildElectricalScope,
     criterionDimension,
     checkOrientationConsistency,
+    simulationCoverage,
     classifyRobustness,
     barsForProfile,
     DEFAULT_ROBUSTNESS_PROFILE,
@@ -26,6 +27,7 @@ import {
     type CornerSpec,
     type CircuitJson,
     type ScopeManifest,
+    type SimulationCoverage,
     type OrientationReport,
     type YieldSummary,
     type RobustnessTier,
@@ -102,6 +104,11 @@ export interface DesignEvidence {
     /** Orientation ROLE-consistency (informational): diode/zener/LED that do not declare anode + cathode.
      *  Not geometric; polarized caps/connectors not covered. Present when the circuit validated. */
     polarity?: OrientationReport;
+    /** What the SPICE deck actually contained. A catalog-only `generic` part (an op-amp, a 555, a shift
+     *  register) has no simulatable model, so the generator omits it — correctly, and until now silently.
+     *  Present whenever the circuit validated, INCLUDING when nothing was omitted: an absent field would
+     *  make "complete" and "never computed" look identical, which is the failure this reports. */
+    coverage?: SimulationCoverage;
     /** Monte-Carlo tolerance-yield robustness (present only when requested + the nominal verdict is 'pass').
      *  The tier (robust/marginal/at-risk) grades the Wilson-95% lower bound of the pass-rate; it is
      *  INFORMATIONAL and flips `verdict` to 'fail' ONLY when at-risk AND the tolerances were user-specified. */
@@ -381,6 +388,9 @@ export class VerificationService {
         const polarity = validCircuit.success
             ? checkOrientationConsistency(validCircuit.data as CircuitJson)
             : undefined;
+        // What the deck will actually contain. Computed from OUR validated circuit, alongside polarity, so a
+        // verdict can never be reported without stating whether the thing measured was the thing drawn.
+        const coverage = validCircuit.success ? simulationCoverage(validCircuit.data as CircuitJson) : undefined;
         // Branch-current assertions (i(R1)) need their probe UNIONed into the netlist — the voltage-only
         // defaults never save it, so without this a current assertion would always read "probe not found".
         const currentProbes = extraProbesForCriteria(assertions);
@@ -490,8 +500,10 @@ export class VerificationService {
                     : { status: 'not-run', detail: 'no resistor-power data (sim not ok / no resistors)' },
                 robustness: robustnessManifest,
                 polarity: polarity?.manifestEntry,
+                coverage,
             }),
             ...(polarity ? { polarity } : {}),
+            ...(coverage ? { coverage } : {}),
         };
     }
 

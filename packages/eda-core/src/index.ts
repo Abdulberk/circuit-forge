@@ -119,6 +119,15 @@ export {
     type NetlistOptions,
 } from './netlist';
 
+// What the deck actually contained — tells "the circuit does not do that" apart from "the part that
+// would have done it has no simulatable model and was never in the deck".
+export {
+    simulationCoverage,
+    describeCoverage,
+    type SimulationCoverage,
+    type OmittedComponent,
+} from './netlist';
+
 // Netlist sanitization
 export {
     sanitizeNodeName,
