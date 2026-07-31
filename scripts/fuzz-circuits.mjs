@@ -4,7 +4,11 @@
 // (b) a LOUD, diagnosable failure (clean generateNetlist throw / captured ngspice error). The bug classes:
 //   SILENT-EMPTY   ngspice exit 0, no output, no error captured anywhere — the caller sees nothing.
 //   NON-FINITE     parsed series contain NaN/Inf presented as data.
-//   UGLY-THROW     generateNetlist crashed with a non-engineered error (TypeError / "undefined" internals).
+//   UGLY-THROW           generateNetlist threw something that is NOT a declared DeckRefusal — an internal
+//                       fault (TypeError / "undefined" internals), however loud it looked.
+//   UNDECLARED-REFUSAL  the same, on a circuit ERC declared clean: the pre-simulation gate let through
+//                       something nothing had a considered answer for. This is the invariant that needs no
+//                       list of failure classes, so it catches the ones nobody has thought of yet.
 //
 //   node scripts/fuzz-circuits.mjs [seed] [count]     (defaults: seed=12345, count=150; deterministic)
 import {
@@ -13,6 +17,7 @@ import {
     resolveGenericModels,
     extractProbes,
     runErc,
+    isDeckRefusal,
 } from '../packages/eda-core/dist/index.js';
 import { spawnSync } from 'node:child_process';
 import { mkdtempSync, writeFileSync, readFileSync, rmSync } from 'node:fs';
@@ -314,9 +319,11 @@ function randomCircuit(i) {
     return { circuit, analysis, probes };
 }
 
-// Clean, engineered throw messages (fail-loud is a PASS); anything else thrown is an UGLY-THROW bug.
-const CLEAN_THROW =
-    /Unknown component type|collision|Duplicate device|Conflicting definitions|Net not found|AC analysis requires|None of the requested probes|Subckt '|declares \d+ port/i;
+// A deliberate refusal is a PASS (fail-loud); anything else escaping the generator is an internal fault.
+// This used to be a regex over error MESSAGES — so the list of intentional refusals lived HERE, in the
+// test, rather than with the code that raises them, and rewording a message silently reclassified a
+// deliberate refusal as a bug (or a bug as fine). eda-core types them now, and a type cannot drift from
+// the throw that carries it.
 
 let okData = 0,
     okLoud = 0,
@@ -327,8 +334,9 @@ const t0 = Date.now();
 for (let i = 0; i < COUNT; i++) {
     const { circuit, analysis, probes } = randomCircuit(i);
     const c = JSON.parse(JSON.stringify(circuit));
+    let ercErrors;
     try {
-        runErc(c);
+        ercErrors = runErc(c).issues.filter((x) => x.severity === 'error');
     } catch (e) {
         bugs.push({ i, kind: 'ERC-CRASH', detail: String((e && e.message) || e) });
         continue;
@@ -349,11 +357,22 @@ for (let i = 0; i < COUNT; i++) {
         netlist = generateNetlist(c, analysis, { probes });
     } catch (e) {
         const msg = e instanceof Error ? e.message : String(e);
-        if (CLEAN_THROW.test(msg)) {
-            okLoud++;
+        // The invariant, and it does not need to know the failure CLASS — which is what makes it a
+        // guarantee rather than a list: it catches the refusal nobody has thought of yet.
+        //
+        // An UNDECLARED refusal is the bug. A DeckRefusal is a considered statement about the input and
+        // carries its reason, so a caller — the design loop, a user — can act on it immediately; that is
+        // acceptable even when ERC did not predict it, because nothing is left unexplained. Anything else
+        // escaping the generator is a statement about OUR code, and is a fault however loud it is.
+        if (!isDeckRefusal(e)) {
+            bugs.push({
+                i,
+                kind: ercErrors.length === 0 ? 'UNDECLARED-REFUSAL' : 'UGLY-THROW',
+                detail: msg.slice(0, 200),
+            });
             continue;
         }
-        bugs.push({ i, kind: 'UGLY-THROW', detail: msg.slice(0, 200) });
+        okLoud++;
         continue;
     }
 

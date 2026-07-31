@@ -329,13 +329,27 @@ describe('active devices', () => {
             expect(issues.some((i) => i.code === ErcCode.PIN_COUNT_MISMATCH)).toBe(true);
         });
 
-        it('warns UNRESOLVED_MODEL when a device references a model not defined in the circuit', () => {
-            // Q1.model = 'Q2N2222' but circuit.models only defines QGENNPN -> the name is dangling.
+        it('FAILS on a model name nothing will define — ngspice refuses the whole deck, not one device', () => {
+            // Q1.model = 'Q2N2222', which neither circuit.models nor the generic library supplies. The
+            // consequence is not a skipped transistor: ngspice reports "could not find a valid modelname"
+            // and produces NO output at all. This was a warning only because the check could not tell it
+            // apart from a generic the generator supplies; now that it shares that resolver, everything
+            // left in this bucket is fatal and is reported as such.
             const c = npnCircuit('Q2N2222');
             const issues = runErc(c).issues;
             const u = issues.find((i) => i.code === ErcCode.UNRESOLVED_MODEL);
             expect(u).toBeTruthy();
-            expect(u!.severity).toBe('warning');
+            expect(u!.severity).toBe('error');
+        });
+
+        it('says NOTHING about a vetted generic the generator supplies itself', () => {
+            // The false positive this removes. QGENNPN is absent from circuit.models and the circuit
+            // simulates perfectly, because generateNetlist resolves it. Reporting it alongside a genuinely
+            // dangling name is what forced both into a severity neither deserved.
+            const c = npnCircuit('QGENNPN');
+            c.models = []; // declared nowhere — only the generic library knows it
+            const issues = runErc(c).issues.filter((i) => i.code === ErcCode.UNRESOLVED_MODEL);
+            expect(issues).toEqual([]);
         });
 
         it('does NOT warn UNRESOLVED_MODEL when the referenced model is defined (or built-in)', () => {

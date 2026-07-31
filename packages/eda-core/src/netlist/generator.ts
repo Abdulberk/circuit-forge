@@ -7,6 +7,7 @@ import {
     normalizeControlledSourceGain,
     parseTransformerParams,
     parseTransmissionLineParams,
+    resolveGenericModels,
 } from '../models/library';
 import type { AnalysisConfig } from '../types/analysis';
 import { analysisToSpice } from '../types/analysis';
@@ -55,6 +56,65 @@ export interface NetlistOptions {
 /**
  * Default diode model for circuits without explicit model
  */
+/**
+ * A deliberate refusal to build a deck: something about THIS circuit or THIS analysis makes a runnable
+ * netlist impossible, and the message says what.
+ *
+ * The type is the classification. It used to be done by regex over error MESSAGES in the fuzz harness —
+ * so the list of intentional refusals lived in a test script rather than with the code that raises them,
+ * and rewording a message silently reclassified a deliberate refusal as a bug (or a bug as fine). With a
+ * type, "was this on purpose?" has one answer and it cannot drift from the throw.
+ *
+ * The distinction it encodes is the one that matters to a caller: a DeckRefusal is a statement about the
+ * INPUT and is actionable by whoever supplied it. Anything else escaping the generator is a statement
+ * about US — an internal fault — and is a bug however loud it is.
+ */
+export class DeckRefusal extends Error {
+    /**
+     * A stable marker, checked by `isDeckRefusal` instead of `instanceof`.
+     *
+     * `instanceof` compares prototype identity, which silently stops matching whenever the package is
+     * loaded twice — a dual CJS/ESM resolution, two copies under different hoisting, a consumer bundling
+     * its own. The failure is the worst kind for this particular class: a deliberate, explained refusal
+     * would be reclassified as an internal fault, which is exactly the confusion the type exists to end.
+     */
+    readonly isDeckRefusal = true as const;
+
+    constructor(message: string) {
+        super(message);
+        this.name = 'DeckRefusal';
+    }
+}
+
+/** True for a deliberate refusal to build a deck — see DeckRefusal.isDeckRefusal for why not `instanceof`. */
+export function isDeckRefusal(e: unknown): e is DeckRefusal {
+    return typeof e === 'object' && e !== null && (e as { isDeckRefusal?: unknown }).isDeckRefusal === true;
+}
+
+/**
+ * Ask whether a deck can be built, WITHOUT building one: the refusal that generateNetlist would raise, or
+ * null.
+ *
+ * Implemented by attempting generation rather than by re-listing the checks. A separate list of "reasons
+ * we would refuse" is a second copy of the rules, and the two drift — which is the failure this whole
+ * change is about. Here the question and the enforcement are literally the same code, so they cannot
+ * disagree, and a caller can spend nothing to find out (the design loop can fix a circuit before paying
+ * for a simulation round instead of after).
+ */
+export function validateDeck(
+    circuit: CircuitJson,
+    analysis: AnalysisConfig,
+    options: NetlistOptions = {},
+): DeckRefusal | null {
+    try {
+        generateNetlist(circuit, analysis, options);
+        return null;
+    } catch (e) {
+        if (isDeckRefusal(e)) return e;
+        throw e; // an internal fault is not an answer to "is this deck buildable?"
+    }
+}
+
 const DEFAULT_DIODE_MODEL = `.model DDEFAULT D(IS=1e-14 N=1.05 RS=10 BV=100 IBV=1e-10)`;
 
 /**
@@ -82,7 +142,7 @@ export function generateNetlist(circuit: CircuitJson, analysis: AnalysisConfig, 
         const key = node.toLowerCase();
         const prev = nodeOwner.get(key);
         if (prev !== undefined) {
-            throw new Error(
+            throw new DeckRefusal(
                 `Net node-name collision: nets '${prev}' and '${netId}' both map to SPICE node '${node}' (ngspice node names are case-insensitive). Rename one so they don't differ only by case.`,
             );
         }
@@ -100,7 +160,7 @@ export function generateNetlist(circuit: CircuitJson, analysis: AnalysisConfig, 
                 /\bac\b/i.test(c.value),
         );
         if (!hasAcSource) {
-            throw new Error(
+            throw new DeckRefusal(
                 `AC analysis requires at least one source with an AC magnitude (e.g. value "AC 1"); none found — ` +
                     `every probe would be identically zero across the sweep.`,
             );
@@ -127,6 +187,22 @@ export function generateNetlist(circuit: CircuitJson, analysis: AnalysisConfig, 
     // synthesize bridge/rail devices + their models. A no-op (empty) for analog-only circuits.
     const ms = planMixedSignal(circuit, nodeMap, reservedDeviceNames, options.logicVoltage);
 
+    /**
+     * The models this deck will actually carry: what the circuit declares, PLUS the vetted generic bodies
+     * its components reference by name.
+     *
+     * Resolved HERE rather than by the caller. It used to be the caller's job and five of them did it —
+     * the design loop, two API services and two harnesses — each with the same three lines. That made
+     * "will this model exist at simulation time?" a question with as many answers as there were callers,
+     * and left ERC unable to be right about it: a reference the generator would satisfy and one that would
+     * abort the whole run looked identical to the gate, so it could only warn about both. A step that must
+     * always happen is not the caller's to remember.
+     *
+     * Idempotent: resolveGenericModels skips anything already declared, so a caller that still injects
+     * gets exactly the same deck.
+     */
+    const models: ModelDef[] = [...(circuit.models ?? []), ...resolveGenericModels(circuit)];
+
     // Track every emitted .model/.subckt name -> body so we (a) dedup identical definitions and
     // (b) refuse to SILENTLY drop a conflicting body that reuses a name (which would emit only the
     // first and simulate the wrong device). The reserved default diode model seeds the map so a
@@ -145,13 +221,13 @@ export function generateNetlist(circuit: CircuitJson, analysis: AnalysisConfig, 
     // Circuit-level model/subckt definitions (active devices reference these by name). Emitted once,
     // before the component lines that reference them. A repeated name with an identical body is a
     // harmless duplicate (dropped); a repeated name with a DIFFERENT body is a hard error.
-    if (circuit.models && circuit.models.length > 0) {
+    if (models.length > 0) {
         const modelLines: string[] = [];
-        for (const m of circuit.models) {
+        for (const m of models) {
             const existing = emittedModels.get(m.name);
             if (existing !== undefined) {
                 if (existing !== m.body) {
-                    throw new Error(
+                    throw new DeckRefusal(
                         `Conflicting definitions for model '${m.name}': the same name is defined with two different bodies.`,
                     );
                 }
@@ -177,7 +253,7 @@ export function generateNetlist(circuit: CircuitJson, analysis: AnalysisConfig, 
         const existing = emittedModels.get(zm.name);
         if (existing !== undefined) {
             if (existing !== zm.body) {
-                throw new Error(
+                throw new DeckRefusal(
                     `Conflicting definitions for model '${zm.name}': the same name is defined with two different bodies.`,
                 );
             }
@@ -201,7 +277,7 @@ export function generateNetlist(circuit: CircuitJson, analysis: AnalysisConfig, 
             const existing = emittedModels.get(name);
             if (existing !== undefined) {
                 if (existing !== card) {
-                    throw new Error(
+                    throw new DeckRefusal(
                         `Conflicting definitions for model '${name}': the same name is defined with two different bodies.`,
                     );
                 }
@@ -232,7 +308,7 @@ export function generateNetlist(circuit: CircuitJson, analysis: AnalysisConfig, 
     // Components. A model lookup lets subckt instances bind their nodes by pinId (the macromodel's
     // declared port order) instead of trusting the authored pin-array order.
     const modelMap = new Map<string, ModelDef>();
-    for (const m of circuit.models ?? []) {
+    for (const m of models) {
         if (!modelMap.has(m.name)) modelMap.set(m.name, m);
     }
     const componentLines: string[] = [];
@@ -267,7 +343,7 @@ export function generateNetlist(circuit: CircuitJson, analysis: AnalysisConfig, 
                     : t === 'igbt'
                       ? ` Use type:'subckt' with model:'IGBTGEN' (ports c,g,e) for an IGBT.`
                       : '';
-            throw new Error(
+            throw new DeckRefusal(
                 `Unknown component type '${component.type}' for ${component.designator || component.id}. ` +
                     `Valid types are COMPONENT_TYPES; validate with safeValidateCircuitJson before generating.${hint}`,
             );
@@ -302,7 +378,7 @@ export function generateNetlist(circuit: CircuitJson, analysis: AnalysisConfig, 
                 const key = mid.toLowerCase();
                 const prev = nodeOwner.get(key);
                 if (prev !== undefined) {
-                    throw new Error(
+                    throw new DeckRefusal(
                         `Node-name collision: transformer '${component.designator}' internal node '${mid}' clashes with net '${prev}' (ngspice node names are case-insensitive). Rename the net or the transformer.`,
                     );
                 }
@@ -323,7 +399,7 @@ export function generateNetlist(circuit: CircuitJson, analysis: AnalysisConfig, 
         const rawName = cl.split(/\s+/)[0] ?? '';
         const name = rawName.toLowerCase();
         if (seenDevices.has(name)) {
-            throw new Error(
+            throw new DeckRefusal(
                 `Duplicate device name '${rawName}' in the netlist — a designator or transformer sub-element collides with another component (ngspice device names are case-insensitive).`,
             );
         }
@@ -422,7 +498,7 @@ export function generateNetlist(circuit: CircuitJson, analysis: AnalysisConfig, 
     // result. Fail loud with the specific probes that aren't observable so the caller can pick a real one
     // (a diode/transistor terminal current is read via a series sense resistor; ground has no voltage vector).
     if (options.probes && options.probes.length > 0 && probes.length === 0) {
-        throw new Error(
+        throw new DeckRefusal(
             `None of the requested probes are observable in ngspice batch mode: ${options.probes.join(', ')}. ` +
                 `A diode/transistor terminal current (i(D…)/i(Q…)/i(M…)) has no branch-current vector — probe a ` +
                 `series resistor's current i(R…) instead; ground v(0) has no vector — probe a non-ground node.`,
@@ -838,7 +914,7 @@ function componentToSpice(
     const nodes = pins.map((pin) => {
         const node = nodeMap.get(pin.netId);
         if (!node) {
-            throw new Error(`Net not found: ${pin.netId} for component ${designator}`);
+            throw new DeckRefusal(`Net not found: ${pin.netId} for component ${designator}`);
         }
         return node;
     });
@@ -933,7 +1009,7 @@ function componentToSpice(
                             (tok) => tok.length > 0 && !tok.includes('=') && tok.toLowerCase() !== 'params:',
                         ).length;
                     if (portCount > 0 && portCount !== nodes.length) {
-                        throw new Error(
+                        throw new DeckRefusal(
                             `Subckt '${model}' (${inst}) is wired with ${nodes.length} pin(s) but its .subckt body declares ${portCount} port(s) — ` +
                                 `list exactly those ports, in the .subckt header order.`,
                         );
@@ -965,11 +1041,11 @@ function nodesForPinOrder(component: Component, nodeMap: Map<string, string>, pi
     return pinIds.map((pinId) => {
         const pin = component.pins.find((p) => p.pinId === pinId);
         if (!pin) {
-            throw new Error(`Component ${component.designator} (${component.type}) is missing pin '${pinId}'`);
+            throw new DeckRefusal(`Component ${component.designator} (${component.type}) is missing pin '${pinId}'`);
         }
         const node = nodeMap.get(pin.netId);
         if (!node) {
-            throw new Error(`Net not found: ${pin.netId} for component ${component.designator}`);
+            throw new DeckRefusal(`Net not found: ${pin.netId} for component ${component.designator}`);
         }
         return node;
     });

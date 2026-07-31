@@ -1,7 +1,16 @@
 /**
  * Netlist Module Exports
  */
-export { generateNetlist, getNodeNames, validateNetlist, buildNodeMap, type NetlistOptions } from './generator';
+export {
+    generateNetlist,
+    getNodeNames,
+    validateNetlist,
+    buildNodeMap,
+    validateDeck,
+    DeckRefusal,
+    isDeckRefusal,
+    type NetlistOptions,
+} from './generator';
 export {
     sanitizeNodeName,
     validateIncludePaths,
