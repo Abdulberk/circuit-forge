@@ -1,0 +1,19 @@
+{
+    // Typechecking-only view of the package: everything the build compiles, PLUS the integration tests.
+    //
+    // `tsconfig.json` includes src/** alone, because that is what `nest build` should emit — correct for
+    // the build, and it left __tests__/ typechecked by nothing. `eslint src` did not reach it either, so
+    // the only thing that ever compiled those files was a full jest run, which on a loaded machine takes
+    // ~17 minutes and times out its DB-backed suites. In practice that meant the suites exercising the
+    // HTTP contract were the least statically-checked code in the package.
+    //
+    // It cost a red CI: renaming a field on SearchResult passed typecheck, lint and `jest src/`, and only
+    // surfaced as "test suite failed to run" in CI. A rename is exactly the edit static checking is for.
+    //
+    // noEmit so this config can never contribute to dist.
+    "extends": "./tsconfig.json",
+    "compilerOptions": {
+        "noEmit": true
+    },
+    "include": ["src/**/*", "__tests__/**/*", "prisma/**/*"]
+}
