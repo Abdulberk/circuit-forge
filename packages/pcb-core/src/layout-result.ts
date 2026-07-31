@@ -58,7 +58,8 @@ export interface LayoutPad {
 
 export interface LayoutTrace {
     id: string;
-    /** emitted net name when the soup carries it (fast route / connection_name), else null (quality splice). */
+    /** Emitted net name. Resolved from the soup's `connection_name` (fast route) or, when the freerouting
+     *  splice replaced the copper, from `source_trace_id`. Null only when the soup carries neither. */
     net: string | null;
     /** copper polylines split per layer (a trace can change layer via a via). */
     segments: Array<{ layer: string; widthMm: number; points: Pt[] }>;
@@ -162,6 +163,36 @@ export function shapeLayoutResult(evaluated: TscElement[], opts: ShapeOptions = 
         if (!netName) continue;
         for (const p of ports) if (typeof p === 'string') netBySrcPort.set(p, netName);
     }
+    /**
+     * source_trace_id -> net name. The SECOND way a piece of copper knows its net, and the only one that
+     * works on the boards we actually ship.
+     *
+     * `connection_name` is present on the local fast route and ABSENT after the freerouting splice, so
+     * resolving through it alone left every delivered trace and via net-less — measured on a real quality
+     * board: 0 of 31 traces and 0 of 1 vias carried a net, while the same circuit on the fast route carried
+     * all of them. The information was never missing: mergeSes passes the placed board as the converter's
+     * reference precisely so the reconstructed copper's source_trace_ids remap onto the real nets, and they
+     * do (31/31 carry one). It simply was not followed.
+     *
+     * The cost of not following it is not cosmetic. A net-less trace cannot be highlighted, cross-probed,
+     * or told apart from its neighbours by any consumer of the render contract — on exactly the boards a
+     * customer receives.
+     */
+    const netBySrcTrace = new Map<string, string>();
+    for (const e of of('source_trace')) {
+        const id = str(e.source_trace_id);
+        const nets = Array.isArray(e.connected_source_net_ids) ? (e.connected_source_net_ids as unknown[]) : [];
+        const netName = nets.length ? netNameBySrcNet.get(String(nets[0])) : undefined;
+        if (id && netName) netBySrcTrace.set(id, netName);
+    }
+    /** A trace's net by either route: the fast path's connection_name, else the splice's source_trace_id. */
+    const netOfTrace = (e: Record<string, unknown>): string | null => {
+        const connSrcNet = str(e.connection_name);
+        if (connSrcNet) return netNameBySrcNet.get(connSrcNet) ?? null;
+        const srcTrace = str(e.source_trace_id);
+        return srcTrace ? (netBySrcTrace.get(srcTrace) ?? null) : null;
+    };
+
     // pin reference (source_port name/hint) for cross-probe
     const pinBySrcPort = new Map<string, string>();
     for (const e of of('source_port')) {
@@ -297,8 +328,7 @@ export function shapeLayoutResult(evaluated: TscElement[], opts: ShapeOptions = 
 
     // ---- traces: split the route into per-layer polylines (a trace can change layer through a via)
     const traces: LayoutTrace[] = of('pcb_trace').map((e) => {
-        const connSrcNet = str(e.connection_name); // present on the fast route; absent after freerouting splice
-        const net = connSrcNet ? (netNameBySrcNet.get(connSrcNet) ?? null) : null;
+        const net = netOfTrace(e);
         const route = Array.isArray(e.route) ? (e.route as Array<Record<string, unknown>>) : [];
         const segments: LayoutTrace['segments'] = [];
         let cur: LayoutTrace['segments'][number] | null = null;
@@ -329,8 +359,44 @@ export function shapeLayoutResult(evaluated: TscElement[], opts: ShapeOptions = 
     const netByTraceId = new Map<string, string | null>();
     for (const t of of('pcb_trace')) {
         const id = str(t.pcb_trace_id);
-        const cn = str(t.connection_name);
-        if (id) netByTraceId.set(id, cn ? (netNameBySrcNet.get(cn) ?? null) : null);
+        if (id) netByTraceId.set(id, netOfTrace(t));
+    }
+    /**
+     * A via's net, found the way the board itself relates the two: BY POSITION.
+     *
+     * The via records a `pcb_trace_id`, but after the freerouting splice it names the base trace while the
+     * traces are emitted per segment (`..._4` vs `..._4_0`), so an exact lookup misses and every delivered
+     * via came back net-less. Deriving the base by stripping the id's numeric suffix would work today and
+     * is the wrong mechanism: it makes a render contract depend on the converter's ID SYNTAX, which is
+     * exactly the kind of assumption that breaks silently on an upstream bump.
+     *
+     * A via sits ON the copper it joins, so its coordinate is also a point of that net's route — measured
+     * 16/16 on a real quality-routed board. That is geometric fact rather than naming convention, and it
+     * survives dropDuplicateViaWaypoints removing the redundant `route_type:'via'` waypoint, because the
+     * wire points on either side of the layer change remain at the same coordinate. Same rounding as that
+     * function, so the two agree on what "the same point" means.
+     *
+     * Two different nets cannot legitimately share a point (that is a short, and DRC would reject the
+     * board), but if the soup ever says so the point is left unresolved rather than assigned to whichever
+     * trace happened to be read first.
+     */
+    const at = (x: unknown, y: unknown): string => `${Number(x).toFixed(4)},${Number(y).toFixed(4)}`;
+    const netByPoint = new Map<string, string | null>();
+    const contested = new Set<string>();
+    for (const t of of('pcb_trace')) {
+        const net = netOfTrace(t);
+        const route = Array.isArray(t.route) ? (t.route as Array<Record<string, unknown>>) : [];
+        for (const p of route) {
+            const k = at(p.x, p.y);
+            if (contested.has(k)) continue;
+            const seen = netByPoint.get(k);
+            if (seen !== undefined && seen !== net) {
+                netByPoint.delete(k);
+                contested.add(k);
+                continue;
+            }
+            netByPoint.set(k, net);
+        }
     }
     const vias: LayoutVia[] = of('pcb_via').map((e, i) => ({
         id: str(e.pcb_via_id) ?? `via_${i}`,
@@ -340,7 +406,7 @@ export function shapeLayoutResult(evaluated: TscElement[], opts: ShapeOptions = 
         outerMm: r3(num(e.outer_diameter) ?? 0),
         fromLayer: str(e.from_layer) ?? 'top',
         toLayer: str(e.to_layer) ?? 'bottom',
-        net: netByTraceId.get(str(e.pcb_trace_id) ?? '') ?? null,
+        net: netByTraceId.get(str(e.pcb_trace_id) ?? '') ?? netByPoint.get(at(e.x, e.y)) ?? null,
     }));
 
     return {
