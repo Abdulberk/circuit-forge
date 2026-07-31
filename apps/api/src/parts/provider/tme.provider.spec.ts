@@ -44,9 +44,12 @@ describe('TmeProvider.getManufacturers', () => {
     });
 });
 
+/** One routed endpoint: a literal response body, or a thunk (so a route can reject on demand). */
+type Route = Record<string, unknown> | (() => Promise<unknown>);
+
 /** A client that records the queries it was asked for and answers each endpoint from a table. */
 function makeRoutedClient(
-    routes: Record<string, unknown | (() => Promise<unknown>)>,
+    routes: Record<string, Route>,
     maxManufacturers = 5000,
 ): { client: TmeClient; calls: Array<{ path: string; query: Record<string, unknown> }> } {
     const calls: Array<{ path: string; query: Record<string, unknown> }> = [];
