@@ -203,3 +203,56 @@ export const galleryCases = [
     ['ne555-blinker', ne555Blinker],
     ['chaser-4017', chaser4017],
 ];
+
+/**
+ * How each board is meant to be EXCITED, so a simulation of it shows what the circuit actually does.
+ *
+ * Kept beside the fixtures and separate from `galleryCases`: a board's layout and its stimulus are
+ * different facts, and a board with no entry here is honestly reported as having no declared stimulus
+ * rather than silently simulated on a guessed timebase. Each window is derived from the circuit's OWN
+ * excitation — a 50 Hz rectifier and a 1 kHz amplifier do not share a timebase, and inferring one would be
+ * a heuristic whose output we would then animate.
+ *
+ * `note` records what the simulation is expected to SHOW, including when the honest answer is "nothing
+ * moves". A board sitting at steady state and a board we failed to simulate look identical in a waveform
+ * viewer and are completely different facts.
+ */
+export const gallerySimPlan = {
+    'astable-flasher': {
+        analysis: { type: 'tran', stopTime: '2', stepTime: '2m' },
+        // 47k x 10u gives a ~0.65 s period, so 2 s is three cycles — but an IDEAL astable is perfectly
+        // symmetric and sits in its unstable equilibrium forever. A real one starts from noise; SPICE needs
+        // an initial condition it is not given here, so this correctly reports a circuit that never starts.
+        note: 'idealised astable: symmetric, so it rests at equilibrium and does not oscillate without an initial condition',
+    },
+    'opamp-amp': {
+        analysis: { type: 'tran', stopTime: '5m', stepTime: '5u' },
+        note: 'SIN(0 0.2 1k) input — five cycles of the amplified waveform',
+    },
+    'bridge-rectifier': {
+        analysis: { type: 'tran', stopTime: '100m', stepTime: '100u' },
+        note: 'SIN(0 12 50) mains-frequency input — five cycles of rectification and filtering',
+    },
+    'shift-register': {
+        analysis: { type: 'tran', stopTime: '100m', stepTime: '100u' },
+        note: '10 ms clock period — ten shifts of the data pattern through the register',
+    },
+    'regulator-5v': {
+        analysis: { type: 'tran', stopTime: '20m', stepTime: '20u' },
+        // ngspice solves the operating point first and starts the transient from it, so the startup ramp
+        // has already happened: a regulated DC rail correctly shows as flat.
+        note: 'DC supply: the rail is regulated and steady — a flat trace is the right answer, not a missing one',
+    },
+    'ne555-blinker': {
+        analysis: { type: 'tran', stopTime: '2', stepTime: '2m' },
+        note: '10u timing capacitor — expected to blink if the 555 macromodel oscillates',
+    },
+    'chaser-4017': {
+        analysis: { type: 'tran', stopTime: '2', stepTime: '2m' },
+        note: '4017 is a catalog-only part with no simulation model — expected to be unsimulatable',
+    },
+    'mosfet-switch': {
+        analysis: { type: 'tran', stopTime: '50m', stepTime: '50u' },
+        note: '10 ms gate pulse — expected to fail: the MOSFET is drawn with 3 pins and ERC rejects it',
+    },
+};

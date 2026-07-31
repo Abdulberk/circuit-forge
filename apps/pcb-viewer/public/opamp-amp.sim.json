@@ -1,0 +1,1 @@
+{"available":false,"reason":"ngspice produced no output (exit 0): Error: no such vector nout2","coverage":{"omitted":[{"designator":"U1","type":"generic","netIds":["out","inm","in","gnd","out2","vcc"],"loadBearing":true}],"loadBearing":[{"designator":"U1","type":"generic","netIds":["out","inm","in","gnd","out2","vcc"],"loadBearing":true}],"complete":false}}

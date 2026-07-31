@@ -13,15 +13,22 @@ import { fileURLToPath } from 'node:url';
 import { execFileSync } from 'node:child_process';
 import { makeFreeroutingRunner } from './lib/freerouting.mjs';
 import { makeKicadDrcRunner, makeKicadDrcReportRunner } from './lib/kicad-drc.mjs';
-import { galleryCases } from './lib/gallery-circuits.mjs';
+import { galleryCases, gallerySimPlan } from './lib/gallery-circuits.mjs';
+import { makeNgspiceRunner } from './lib/ngspice.mjs';
 import { KICAD_IMAGE, assertImagesMatchProduction } from './lib/eda-images.mjs';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const pkgRoot = join(__dirname, '..', 'packages', 'pcb-core');
 const outRoot = join(pkgRoot, '.gallery');
 const publicDir = join(__dirname, '..', 'apps', 'pcb-viewer', 'public');
-const { layoutCircuit, injectModels } = await import(
+const simulate = makeNgspiceRunner({ timeoutMs: 120_000 });
+const { layoutCircuit, injectModels, shapeLayoutResult } = await import(
     new URL(`file://${join(pkgRoot, 'dist', 'index.js').replace(/\\/g, '/')}`).href
+);
+const { simulationCoverage } = await import(
+    new URL(
+        `file://${join(__dirname, '..', 'packages', 'eda-core', 'dist', 'index.js').replace(/\\/g, '/')}`,
+    ).href
 );
 
 /**
@@ -103,6 +110,48 @@ for (const [name, circuit] of cases) {
         );
         console.log(`  · body align: ${[...new Set(s)].join(' ')}`);
     }
+    // The viewer's data pair: the copper, and how it joins to a simulation of the same circuit.
+    // shapeLayoutResult is the SAME shaper the worker delivers from — the gallery must not be a picture of
+    // a different contract than the product returns.
+    const geometry = shapeLayoutResult(q.evaluated, { namesById: q.namesById });
+    writeFileSync(
+        join(publicDir, `${name}.layout.json`),
+        JSON.stringify({
+            geometry,
+            netIdentity: { nameById: q.netNameById, spiceNodeById: q.spiceNodeByNetId },
+        }),
+    );
+
+    // The simulation, if this circuit has one. A board with no waveform must be able to say WHY — a viewer
+    // that just shows nothing moving is indistinguishable from a circuit sitting at steady state, and those
+    // are different facts.
+    const plan = gallerySimPlan[name];
+    // What the deck will hold. Several gallery boards are built around a catalog-only IC (a 555, a 4017, an
+    // op-amp) that has no SPICE model, so their "waveforms" describe a passive network and not the board.
+    // The viewer needs that fact, not a still animation it would have to interpret.
+    const coverage = simulationCoverage(circuit);
+    let sim;
+    if (!plan) {
+        sim = { available: false, reason: 'no simulation stimulus is declared for this board', coverage };
+    } else {
+        try {
+            const { result } = simulate(circuit, plan.analysis);
+            sim = { available: true, analysis: plan.analysis, note: plan.note, result, coverage };
+            const moving = result.series.filter((se) => {
+                const y = se.points.map((pt) => pt.y);
+                return Math.max(...y) - Math.min(...y) > 0.05;
+            }).length;
+            console.log(`  ✓ sim: ${result.meta.pointsCount} rows, ${moving}/${result.series.length} signal(s) moving`);
+        } catch (e) {
+            sim = { available: false, reason: String(e.message ?? e).slice(0, 300), coverage };
+            console.log(`  ⚠ sim unavailable — ${sim.reason.slice(0, 90)}`);
+        }
+    }
+    if (!coverage.complete) {
+        console.log(`  ⚠ deck omits ${coverage.loadBearing.map((o) => `${o.designator} (${o.type})`).join(', ')} — no simulatable model`);
+    }
+    writeFileSync(join(publicDir, `${name}.sim.json`), JSON.stringify(sim));
+
     writeFileSync(join(dir, 'board.kicad_pcb'), inj.kicadPcb);
     writeFileSync(join(dir, 'board.kicad_pro'), q.outputs.kicadPro);
 

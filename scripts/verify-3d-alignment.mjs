@@ -16,6 +16,8 @@ import { fileURLToPath } from 'node:url';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const galleryRoot = join(__dirname, '..', 'packages', 'pcb-core', '.gallery');
+/** Where gen-gallery publishes the viewer's companions — `<board>.layout.json` lives here, not in .gallery. */
+const viewerPublic = join(__dirname, '..', 'apps', 'pcb-viewer', 'public');
 const TOL_MM = 1.0;
 
 // ---------------------------------------------------------------- kicad_pcb expectations
@@ -232,6 +234,56 @@ for (const name of boards) {
         for (const p of r.pairs.filter((p) => p.d > TOL_MM).slice(0, 6))
             console.log(`    ✗ ${p.e.id} (${p.e.model}) off by ${p.d.toFixed(2)}mm — node "${p.node.name}"`);
     }
+
+    failures += verifyLayoutFrame(name, readFileSync(pcbPath, "utf8"));
+}
+
+/**
+ * The OTHER frame hop, and the one nothing used to watch.
+ *
+ * The bodies checked above are verified .kicad_pcb → GLB. But the simulation overlay in apps/pcb-viewer
+ * draws copper from `<board>.layout.json`, which is pcb-core's LayoutGeometry — a DIFFERENT frame: the
+ * .kicad_pcb writer negates Y. Compose the two hops and LayoutGeometry +Y lands on GLB −Z, which is the
+ * constant the overlay is built on.
+ *
+ * If that writer ever stops negating Y, the bodies above still verify perfectly and the overlay silently
+ * mirrors — every trace still on the laminate, every net the wrong one. So the relationship is asserted
+ * here: the two component sets must differ by a PURE TRANSLATION under negated Y (spread ≈ 0), and must
+ * NOT under an identity Y.
+ */
+function verifyLayoutFrame(name, pcbText) {
+    const layoutPath = join(viewerPublic, `${name}.layout.json`);
+    if (!existsSync(layoutPath)) {
+        // Said out loud. A check that skips itself when its input moves is worse than no check: the gate
+        // still reports ✅ and nobody learns the frame stopped being verified.
+        console.log(`    ── ${name}: no ${name}.layout.json in apps/pcb-viewer/public — overlay frame NOT verified`);
+        return 0;
+    }
+    const geometry = JSON.parse(readFileSync(layoutPath, 'utf8')).geometry;
+    const byRef = new Map(
+        [
+            ...pcbText.matchAll(
+                /\(footprint[\s\S]{0,400}?\(at ([-\d.]+) ([-\d.]+)(?: ([-\d.]+))?\)[\s\S]{0,900}?\(property "Reference" "([^"]+)"/g,
+            ),
+        ].map((m) => [m[4], { x: Number(m[1]), y: Number(m[2]) }]),
+    );
+    const pairs = (geometry.components ?? []).filter((c) => byRef.has(c.designator));
+    if (pairs.length < 2) {
+        console.log(`    ── ${name}: layout.json ↔ kicad_pcb frame not checked (only ${pairs.length} matched part)`);
+        return 0;
+    }
+    const spread = (vals) => Math.max(...vals) - Math.min(...vals);
+    const dx = spread(pairs.map((c) => byRef.get(c.designator).x - c.x));
+    const dyNegated = spread(pairs.map((c) => byRef.get(c.designator).y + c.y));
+    const dyIdentity = spread(pairs.map((c) => byRef.get(c.designator).y - c.y));
+    // A pure translation has zero spread. Same tolerance as the body check — these are the same millimetres.
+    if (dx <= TOL_MM && dyNegated <= TOL_MM && dyIdentity > TOL_MM) return 0;
+    console.log(
+        `    ✗ ${name}: layout.json → kicad_pcb is no longer (x, −y) — dx spread ${dx.toFixed(3)}mm, ` +
+            `−y ${dyNegated.toFixed(3)}mm, +y ${dyIdentity.toFixed(3)}mm. The pcb-viewer simulation overlay ` +
+            `assumes LayoutGeometry +Y → GLB −Z and would mirror.`,
+    );
+    return 1;
 }
 
 console.log(
