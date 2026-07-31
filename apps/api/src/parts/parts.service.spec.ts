@@ -57,3 +57,39 @@ describe('PartsService product caching', () => {
         expect(provider.getProduct).not.toHaveBeenCalled();
     });
 });
+
+describe('PartsService — a gap is cached far more briefly than a fact', () => {
+    /** Config with short, easily-crossed TTLs so the test measures the CHOICE, not the clock. */
+    function shortConfig(): ConfigService {
+        const v: Record<string, string> = { TME_PRODUCT_TTL_MS: '60000', TME_PRODUCT_DEGRADED_TTL_MS: '20' };
+        return { get: (k: string) => v[k] } as unknown as ConfigService;
+    }
+    function setup(part: CatalogPart) {
+        const provider = { getProduct: jest.fn().mockResolvedValue(part) } as unknown as PartProvider;
+        const mapper = { toComponent: jest.fn() } as unknown as ComponentMapper;
+        return { svc: new PartsService(provider, new TtlCache(), shortConfig(), mapper), provider };
+    }
+    const wait = (ms: number) => new Promise((r) => setTimeout(r, ms));
+
+    it('a complete part is held for the full TTL', async () => {
+        const { svc, provider } = setup(PART);
+        await svc.getProduct('WR06X1002FTL');
+        await wait(40);
+        await svc.getProduct('WR06X1002FTL');
+        expect(provider.getProduct).toHaveBeenCalledTimes(1); // still cached
+    });
+
+    it('a part with a failed lookup expires quickly, so one blip is not minutes of wrong answers', async () => {
+        // The amplifier this fixes: at the full TTL, a single transient supplier failure became five
+        // minutes of "this part has no price" — or, worse because nothing downstream would notice, five
+        // minutes of a part with no tolerance quietly narrowing the Monte-Carlo spread.
+        const { svc, provider } = setup({ ...PART, unavailable: ['pricing'] });
+        await svc.getProduct('WR06X1002FTL');
+        await svc.getProduct('WR06X1002FTL');
+        expect(provider.getProduct).toHaveBeenCalledTimes(1); // still absorbs the burst
+
+        await wait(40);
+        await svc.getProduct('WR06X1002FTL');
+        expect(provider.getProduct).toHaveBeenCalledTimes(2); // and re-asks once the gap is stale
+    });
+});

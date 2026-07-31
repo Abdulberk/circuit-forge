@@ -79,11 +79,23 @@ export class CatalogGroundingService {
                     description: m.catalog.description,
                     footprint: m.catalog.footprint,
                     stock: m.catalog.stock,
-                    inStock: (m.catalog.stock ?? 0) > 0,
+                    // UNKNOWN is not FALSE. When the pricing lookup did not answer, stock is undefined —
+                    // and `(undefined ?? 0) > 0` told the model the part was OUT OF STOCK, which is a
+                    // statement we had no basis for. The model then designs around a part that is very
+                    // probably available. An omitted field it can ask about again; a wrong one it believes.
+                    inStock: m.catalog.stock === undefined ? undefined : m.catalog.stock > 0,
                     unitCost: m.catalog.unitCost,
                     currency: m.catalog.currency,
                     datasheetUrl: m.catalog.datasheetUrl,
                     parameters: m.catalog.parameters.slice(0, 20),
+                    // Say it in words too: this consumer is a language model, and a missing key is a much
+                    // weaker signal to it than a sentence naming what could not be looked up.
+                    ...(m.catalog.unavailable?.length
+                        ? {
+                              lookupFailed: m.catalog.unavailable,
+                              note: `The catalog could not answer for: ${m.catalog.unavailable.join(', ')}. The fields those supply are UNKNOWN for this part, not absent — do not treat them as zero or missing.`,
+                          }
+                        : {}),
                 };
             }
             return { error: `Unknown tool: ${name}` };
@@ -108,9 +120,15 @@ export class CatalogGroundingService {
                 if (hit) {
                     c.sourcing = hit.sourcing;
                     if (!c.footprint && hit.footprint) c.footprint = hit.footprint;
-                    if ((hit.sourcing.stock ?? 0) <= 0) {
+                    // Same distinction one layer down: an unknown stock is not an out-of-stock part, and
+                    // logging it as one would put a false fact in the operational record.
+                    if (hit.sourcing.stock === undefined) {
                         this.logger.warn(
-                            `Component ${c.designator || c.id} sourced to ${mpn} which is OUT OF STOCK (stock ${hit.sourcing.stock ?? 0}).`,
+                            `Component ${c.designator || c.id} sourced to ${mpn}, but its stock could not be looked up — availability is UNKNOWN, not zero.`,
+                        );
+                    } else if (hit.sourcing.stock <= 0) {
+                        this.logger.warn(
+                            `Component ${c.designator || c.id} sourced to ${mpn} which is OUT OF STOCK (stock ${hit.sourcing.stock}).`,
                         );
                     }
                 }
