@@ -58,7 +58,11 @@ export const ERC_SEVERITIES: Record<ErcCode, ErcSeverity> = {
     [ErcCode.MODEL_REQUIRED]: 'error',
     // A present-but-undefined model name may still be satisfied by a `.include`d library at sim time,
     // so this is a warning (observable), not a hard error.
-    [ErcCode.UNRESOLVED_MODEL]: 'warning',
+    // ERROR, not warning: everything left in this bucket makes ngspice refuse the ENTIRE deck — no
+    // output at all, not a skipped device. It was a warning only because the check could not tell a
+    // generic the generator supplies from a name nobody defines; now that it consults the same resolver,
+    // the bucket contains only the fatal case. See checkModelResolution.
+    [ErcCode.UNRESOLVED_MODEL]: 'error',
     [ErcCode.NON_STANDARD_VALUE]: 'info', // advisory: still simulates fine; just not a buyable preferred value
     [ErcCode.DUPLICATE_DESIGNATOR]: 'error', // a real collision — generation would otherwise abort; surface it cleanly first
     [ErcCode.WRONG_VALUE_UNIT]: 'warning', // ngspice uses only the NUMBER, so "4.7uF" on a resistor silently means 4.7uΩ

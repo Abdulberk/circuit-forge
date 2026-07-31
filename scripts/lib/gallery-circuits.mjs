@@ -19,8 +19,8 @@ const astableFlasher = {
         { id: 'r3', type: 'resistor', designator: 'R3', value: '47k', pins: [{ pinId: '1', netId: 'vcc' }, { pinId: '2', netId: 'b2' }] },
         { id: 'c1', type: 'capacitor', designator: 'C1', value: '10u', pins: [{ pinId: '1', netId: 'c1' }, { pinId: '2', netId: 'b2' }] },
         { id: 'c2', type: 'capacitor', designator: 'C2', value: '10u', pins: [{ pinId: '1', netId: 'c2' }, { pinId: '2', netId: 'b1' }] },
-        { id: 'd1', type: 'diode', designator: 'LED1', model: 'led_red', pins: [{ pinId: 'anode', netId: 'la1' }, { pinId: 'cathode', netId: 'c1' }] },
-        { id: 'd2', type: 'diode', designator: 'LED2', model: 'led_red', pins: [{ pinId: 'anode', netId: 'la2' }, { pinId: 'cathode', netId: 'c2' }] },
+        { id: 'd1', type: 'diode', designator: 'LED1', model: 'LEDRED', pins: [{ pinId: 'anode', netId: 'la1' }, { pinId: 'cathode', netId: 'c1' }] },
+        { id: 'd2', type: 'diode', designator: 'LED2', model: 'LEDRED', pins: [{ pinId: 'anode', netId: 'la2' }, { pinId: 'cathode', netId: 'c2' }] },
         gnd(),
     ],
     nets: [
@@ -41,7 +41,7 @@ const opampAmp = {
         { id: 'r1', type: 'resistor', designator: 'R1', value: '100k', pins: [{ pinId: '1', netId: 'out' }, { pinId: '2', netId: 'inm' }] },
         { id: 'r2', type: 'resistor', designator: 'R2', value: '10k', pins: [{ pinId: '1', netId: 'inm' }, { pinId: '2', netId: 'gnd' }] },
         { id: 'r3', type: 'resistor', designator: 'R3', value: '1k', pins: [{ pinId: '1', netId: 'out' }, { pinId: '2', netId: 'ledk' }] },
-        { id: 'd1', type: 'diode', designator: 'LED1', model: 'led_red', pins: [{ pinId: 'anode', netId: 'ledk' }, { pinId: 'cathode', netId: 'gnd' }] },
+        { id: 'd1', type: 'diode', designator: 'LED1', model: 'LEDRED', pins: [{ pinId: 'anode', netId: 'ledk' }, { pinId: 'cathode', netId: 'gnd' }] },
         { id: 'vin', type: 'voltage_source', designator: 'V1', value: 'SIN(0 0.2 1k)', pins: [{ pinId: '+', netId: 'in' }, { pinId: '-', netId: 'gnd' }] },
         { id: 'vcc', type: 'voltage_source', designator: 'V2', value: 'DC 9', pins: [{ pinId: '+', netId: 'vcc' }, { pinId: '-', netId: 'gnd' }] },
         gnd(),
@@ -63,7 +63,7 @@ const bridgeRectifier = {
         { id: 'd4', type: 'diode', designator: 'D4', pins: [{ pinId: 'anode', netId: 'gnd' }, { pinId: 'cathode', netId: 'ac2' }] },
         { id: 'c1', type: 'capacitor', designator: 'C1', value: '100u', pins: [{ pinId: '1', netId: 'vplus' }, { pinId: '2', netId: 'gnd' }] },
         { id: 'r1', type: 'resistor', designator: 'R1', value: '1k', pins: [{ pinId: '1', netId: 'vplus' }, { pinId: '2', netId: 'ledk' }] },
-        { id: 'led1', type: 'diode', designator: 'LED1', model: 'led_red', pins: [{ pinId: 'anode', netId: 'ledk' }, { pinId: 'cathode', netId: 'gnd' }] },
+        { id: 'led1', type: 'diode', designator: 'LED1', model: 'LEDRED', pins: [{ pinId: 'anode', netId: 'ledk' }, { pinId: 'cathode', netId: 'gnd' }] },
         { id: 'r2', type: 'resistor', designator: 'R2', value: '2.2k', pins: [{ pinId: '1', netId: 'vplus' }, { pinId: '2', netId: 'gnd' }] },
         gnd(),
     ],
@@ -95,7 +95,7 @@ const shiftRegister = (() => {
     ];
     for (let i = 0; i < 8; i++) {
         comps.push({ id: `r${i}`, type: 'resistor', designator: `R${i + 1}`, value: '330', pins: [{ pinId: '1', netId: `q${i}` }, { pinId: '2', netId: `lk${i}` }] });
-        comps.push({ id: `led${i}`, type: 'diode', designator: `LED${i + 1}`, model: 'led_red', pins: [{ pinId: 'anode', netId: `lk${i}` }, { pinId: 'cathode', netId: 'gnd' }] });
+        comps.push({ id: `led${i}`, type: 'diode', designator: `LED${i + 1}`, model: 'LEDRED', pins: [{ pinId: 'anode', netId: `lk${i}` }, { pinId: 'cathode', netId: 'gnd' }] });
         nets.push({ id: `q${i}`, name: `Q${i}` }, { id: `lk${i}`, name: `LK${i}` });
     }
     return { version: '1.0', components: comps, nets };
@@ -110,7 +110,7 @@ const regulator5v = {
         { id: 'c1', type: 'capacitor', designator: 'C1', value: '330n', pins: [{ pinId: '1', netId: 'vin' }, { pinId: '2', netId: 'gnd' }] },
         { id: 'c2', type: 'capacitor', designator: 'C2', value: '100u', pins: [{ pinId: '1', netId: 'vout' }, { pinId: '2', netId: 'gnd' }] },
         { id: 'r1', type: 'resistor', designator: 'R1', value: '1k', pins: [{ pinId: '1', netId: 'vout' }, { pinId: '2', netId: 'ledk' }] },
-        { id: 'led1', type: 'diode', designator: 'LED1', model: 'led_red', pins: [{ pinId: 'anode', netId: 'ledk' }, { pinId: 'cathode', netId: 'gnd' }] },
+        { id: 'led1', type: 'diode', designator: 'LED1', model: 'LEDRED', pins: [{ pinId: 'anode', netId: 'ledk' }, { pinId: 'cathode', netId: 'gnd' }] },
         { id: 'r2', type: 'resistor', designator: 'R2', value: '1k', pins: [{ pinId: '1', netId: 'vout' }, { pinId: '2', netId: 'gnd' }] },
         gnd(),
     ],
@@ -125,13 +125,13 @@ const mosfetSwitch = {
     components: [
         { id: 'v1', type: 'voltage_source', designator: 'V1', value: 'DC 12', pins: [{ pinId: '+', netId: 'vcc' }, { pinId: '-', netId: 'gnd' }] },
         { id: 'v2', type: 'voltage_source', designator: 'V2', value: 'PULSE(0 5 0 1u 1u 5m 10m)', pins: [{ pinId: '+', netId: 'gatein' }, { pinId: '-', netId: 'gnd' }] },
-        { id: 'q1', type: 'mosfet', designator: 'Q1', model: 'NMOSGEN', pins: [{ pinId: 'd', netId: 'd' }, { pinId: 'g', netId: 'g' }, { pinId: 's', netId: 'gnd' }] },
+        { id: 'q1', type: 'mosfet', designator: 'Q1', model: 'MGENNMOS', pins: [{ pinId: 'd', netId: 'd' }, { pinId: 'g', netId: 'g' }, { pinId: 's', netId: 'gnd' }] },
         { id: 'r1', type: 'resistor', designator: 'R1', value: '100', pins: [{ pinId: '1', netId: 'gatein' }, { pinId: '2', netId: 'g' }] },
         { id: 'r2', type: 'resistor', designator: 'R2', value: '10k', pins: [{ pinId: '1', netId: 'g' }, { pinId: '2', netId: 'gnd' }] },
         { id: 'l1', type: 'inductor', designator: 'L1', value: '1m', pins: [{ pinId: '1', netId: 'vcc' }, { pinId: '2', netId: 'd' }] },
         { id: 'd1', type: 'diode', designator: 'D1', pins: [{ pinId: 'anode', netId: 'd' }, { pinId: 'cathode', netId: 'vcc' }] },
         { id: 'r3', type: 'resistor', designator: 'R3', value: '1k', pins: [{ pinId: '1', netId: 'vcc' }, { pinId: '2', netId: 'ledk' }] },
-        { id: 'led1', type: 'diode', designator: 'LED1', model: 'led_red', pins: [{ pinId: 'anode', netId: 'ledk' }, { pinId: 'cathode', netId: 'd' }] },
+        { id: 'led1', type: 'diode', designator: 'LED1', model: 'LEDRED', pins: [{ pinId: 'anode', netId: 'ledk' }, { pinId: 'cathode', netId: 'd' }] },
         gnd(),
     ],
     nets: [
@@ -152,7 +152,7 @@ const ne555Blinker = {
         { id: 'rb', type: 'resistor', designator: 'R2', value: '47k', pins: [{ pinId: '1', netId: 'dis' }, { pinId: '2', netId: 'thr' }] },
         { id: 'c1', type: 'capacitor', designator: 'C1', value: '10u', pins: [{ pinId: '1', netId: 'thr' }, { pinId: '2', netId: 'gnd' }] },
         { id: 'r3', type: 'resistor', designator: 'R3', value: '470', pins: [{ pinId: '1', netId: 'out' }, { pinId: '2', netId: 'ledk' }] },
-        { id: 'led1', type: 'diode', designator: 'LED1', model: 'led_red', pins: [{ pinId: 'anode', netId: 'ledk' }, { pinId: 'cathode', netId: 'gnd' }] },
+        { id: 'led1', type: 'diode', designator: 'LED1', model: 'LEDRED', pins: [{ pinId: 'anode', netId: 'ledk' }, { pinId: 'cathode', netId: 'gnd' }] },
         { id: 'v1', type: 'voltage_source', designator: 'V1', value: 'DC 9', pins: [{ pinId: '+', netId: 'vcc' }, { pinId: '-', netId: 'gnd' }] },
         gnd(),
     ],
@@ -187,7 +187,7 @@ const chaser4017 = (() => {
     ];
     for (let i = 0; i < 10; i++) {
         comps.push({ id: `r${i}`, type: 'resistor', designator: `R${i + 1}`, value: '330', pins: [{ pinId: '1', netId: `q${i}` }, { pinId: '2', netId: `lk${i}` }] });
-        comps.push({ id: `led${i}`, type: 'diode', designator: `LED${i + 1}`, model: 'led_red', pins: [{ pinId: 'anode', netId: `lk${i}` }, { pinId: 'cathode', netId: 'gnd' }] });
+        comps.push({ id: `led${i}`, type: 'diode', designator: `LED${i + 1}`, model: 'LEDRED', pins: [{ pinId: 'anode', netId: `lk${i}` }, { pinId: 'cathode', netId: 'gnd' }] });
         nets.push({ id: `q${i}`, name: `Q${i}` }, { id: `lk${i}`, name: `LK${i}` });
     }
     return { version: '1.0', components: comps, nets };

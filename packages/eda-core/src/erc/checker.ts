@@ -7,6 +7,7 @@ import {
     normalizeControlledSourceGain,
     parseTransformerParams,
     parseTransmissionLineParams,
+    resolveGenericModels,
 } from '../models/library';
 import { sourceHighLevel, sourceLowLevel } from '../netlist/digital';
 import type { CircuitJson, Component } from '../types/circuit';
@@ -676,16 +677,30 @@ const BUILTIN_MODEL_NAMES = new Set(['DDEFAULT']);
  * Check that every model NAME a component references is actually defined.
  *
  * A component can carry a `model` name (diode/bjt/mosfet) that must resolve to a `.model`/`.subckt`
- * body in `circuit.models` (or a built-in like DDEFAULT). The generator emits the device line trusting
- * the name — a missing definition produces a netlist ngspice rejects ("unable to find definition of
- * model X"). MODEL_REQUIRED only catches an ABSENT name; this catches a PRESENT-but-undefined one.
- * Warning (not error): an included model library could still satisfy it at simulation time.
+ * "Defined" is asked of THE SAME RESOLVER THE GENERATOR USES, which is the whole point of this check.
+ *
+ * It used to compare against `circuit.models` alone, and so could not tell two opposite situations apart:
+ * a component referencing a vetted generic (`QGENNPN`), which the generator supplies and which simulates
+ * perfectly, and one referencing a name nobody defines (`led_red`), which makes ngspice refuse the ENTIRE
+ * deck — no output, no partial result, "could not find a valid modelname". Both looked undefined, so the
+ * check could only warn about both, and the fatal one walked through the gate to die later as what reads
+ * like an infrastructure failure. Measured on a real fixture: 4 warnings, 2 of them false and 2 of them
+ * fatal.
+ *
+ * Sharing the resolver removes the false ones, which is what earns this the severity its consequence
+ * deserves: everything still in this bucket genuinely kills the run, so it is an ERROR. It also means a
+ * generic added tomorrow is known here without anyone remembering to update a list.
+ *
+ * MODEL_REQUIRED only catches an ABSENT name; this catches a PRESENT-but-undefined one.
  */
 function checkModelResolution(circuit: CircuitJson): ErcIssue[] {
     const issues: ErcIssue[] = [];
 
     const defined = new Set<string>(BUILTIN_MODEL_NAMES);
     for (const m of circuit.models ?? []) {
+        defined.add(m.name);
+    }
+    for (const m of resolveGenericModels(circuit)) {
         defined.add(m.name);
     }
 
