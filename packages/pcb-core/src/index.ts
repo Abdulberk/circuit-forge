@@ -6,7 +6,7 @@
  * PARITY against our own netlist (approval condition 1 — a DRC-clean but miswired board can never
  * pass silently) -> Gerber/.kicad_pcb/.kicad_pro/BOM/PnP (fab profile enforced downstream too).
  */
-import type { CircuitJson, UiJson } from '@circuit-forge/eda-core';
+import { buildNodeMap, type CircuitJson, type UiJson } from '@circuit-forge/eda-core';
 
 import { generateTscircuitCode, type AdapterResult } from './adapter';
 import { evaluateTscircuit } from './evaluate';
@@ -177,6 +177,19 @@ export interface LayoutResult {
      *  contract shaper (shapeLayoutResult) needs these to cross-probe geometry back to the design. */
     namesById: Record<string, string>;
     netNameById: Record<string, string>;
+    /**
+     * netId -> the SPICE node name a simulation of THIS circuit reports (`v(<node>)`), ground as `0`.
+     *
+     * Delivered beside `netNameById` because together they are the only honest way to say which simulation
+     * signal belongs to which piece of delivered copper. The geometry names a net (`VCC`); a simulation
+     * names a node (`x_vcc`); the two are related only through the net id, and neither artefact carries it.
+     * Without this pair, anything that colours a trace by its voltage is guessing which trace.
+     *
+     * Composed here rather than by the caller because this is the one place the circuit and the board it
+     * produced are both in hand — re-deriving it downstream would mean a second copy of eda-core's node
+     * naming rule, which must have exactly one.
+     */
+    spiceNodeByNetId: Record<string, string>;
 }
 
 /** The delivery record for a board that never reached the router — honest rather than absent. Consumers
@@ -196,6 +209,10 @@ const undelivered = (opts: LayoutOptions, why: string): LayoutResult['delivery']
 
 export async function layoutCircuit(circuit: CircuitJson, opts: LayoutOptions = {}): Promise<LayoutResult> {
     const started = Date.now();
+    // Computed up front so EVERY exit carries it, including the ones that give up before routing. A result
+    // that cannot say which simulation signal belongs to which net is missing the same thing whether or not
+    // it produced copper.
+    const spiceNodeByNetId = Object.fromEntries(buildNodeMap(circuit.nets ?? []));
     // Complete the caller's overrides against a real fab tier BEFORE anything reads them. A raw partial
     // object here leaves via geometry undefined, which propagates as NaN into the KiCad design rules the
     // DRC notary judges against — the board would be checked by a rulebook that is not a rulebook.
@@ -211,7 +228,7 @@ export async function layoutCircuit(circuit: CircuitJson, opts: LayoutOptions = 
     const layout = classifyCircuit(circuit, { allowPartial: opts.allowPartial });
     diagnostics.push(...layout.diagnostics);
     if (!layout.layoutable) {
-        return failed(layout, diagnostics, started, fab, opts);
+        return failed(layout, diagnostics, started, fab, opts, spiceNodeByNetId);
     }
 
     // 2) adapter -> tscircuit code (fab profile upstream)
@@ -271,6 +288,7 @@ export async function layoutCircuit(circuit: CircuitJson, opts: LayoutOptions = 
             delivery: undelivered(opts, 'the board failed connectivity parity or evaluation before routing'),
             namesById: adapted.namesById,
             netNameById: adapted.netNameById,
+            spiceNodeByNetId,
         };
     }
 
@@ -425,6 +443,7 @@ export async function layoutCircuit(circuit: CircuitJson, opts: LayoutOptions = 
         delivery,
         namesById: adapted.namesById,
         netNameById: adapted.netNameById,
+        spiceNodeByNetId,
     };
 }
 
@@ -1027,6 +1046,7 @@ function failed(
     started: number,
     fab: { tier: FabTierName; profile: FabProfile },
     opts: LayoutOptions,
+    spiceNodeByNetId: Record<string, string>,
 ): LayoutResult {
     return {
         ok: false,
@@ -1041,6 +1061,7 @@ function failed(
         delivery: undelivered(opts, 'the circuit was not layoutable — nothing was placed or routed'),
         namesById: {},
         netNameById: {},
+        spiceNodeByNetId,
     };
 }
 

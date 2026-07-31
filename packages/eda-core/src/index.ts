@@ -108,7 +108,7 @@ export {
 } from './schemas/analysis.schema';
 
 // Netlist generation
-export { generateNetlist, getNodeNames, validateNetlist, type NetlistOptions } from './netlist';
+export { generateNetlist, getNodeNames, validateNetlist, buildNodeMap, type NetlistOptions } from './netlist';
 
 // Netlist sanitization
 export {

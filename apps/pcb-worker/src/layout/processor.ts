@@ -233,6 +233,14 @@ export async function processLayoutJob(job: Job<LayoutJobPayload>): Promise<void
         // view, and notManufacturableReason is null exactly when manufacturable is true.
         const inspection = {
             layout: geo as unknown as Prisma.InputJsonValue,
+            // How the delivered copper joins to a simulation of the same circuit. LayoutGeometry names a
+            // net ("VCC"); a simulation names a node ("x_vcc"); the two meet only at the net id, which
+            // neither artefact carries. Shipping the pair is what lets a client show a measured value on
+            // the right piece of copper instead of on a plausible one.
+            netIdentity: {
+                nameById: q.netNameById,
+                spiceNodeById: q.spiceNodeByNetId,
+            } as unknown as Prisma.InputJsonValue,
             checks: checks as unknown as Prisma.InputJsonValue,
             airwires: airwires as unknown as Prisma.InputJsonValue,
             manufacturable: verdict.manufacturable,
