@@ -3,7 +3,7 @@
  * the quality pipeline in the background; the client polls GET until a terminal status, then reads the
  * shaped result + presigned GLB/manufacturing URLs.
  */
-import { Controller, Post, Get, Body, Param, Query, ParseUUIDPipe, HttpCode, UseGuards } from '@nestjs/common';
+import { Controller, Post, Get, Delete, Body, Param, Query, ParseUUIDPipe, HttpCode, UseGuards } from '@nestjs/common';
 import { ApiTags, ApiOperation, ApiBearerAuth } from '@nestjs/swagger';
 import { Throttle } from '@nestjs/throttler';
 
@@ -51,5 +51,16 @@ export class LayoutController {
     })
     async status(@Param('id', ParseUUIDPipe) id: string, @CurrentUser() user: { id: string }) {
         return this.layouts.getForUser(id, user.id);
+    }
+
+    @Delete(':id')
+    @ApiOperation({
+        summary: 'Cancel a layout job (QUEUED → canceled; RUNNING → cooperative abort).',
+        description:
+            'Idempotent. A job that already reached a terminal status is returned unchanged rather than ' +
+            'reported as an error — asking to stop something that has already stopped is not a failure.',
+    })
+    async cancel(@Param('id', ParseUUIDPipe) id: string, @CurrentUser() user: { id: string }) {
+        return this.layouts.requestCancel(id, user.id);
     }
 }

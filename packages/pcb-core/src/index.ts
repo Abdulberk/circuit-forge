@@ -74,6 +74,18 @@ export interface LayoutOptions {
     /** Out-of-process Rust placement runner. Required only for `placer:'rust'`; injected by the
      *  worker/harness so pcb-core remains child-process-free. */
     rustPlace?: PlacementRunner;
+    /**
+     * Cooperative cancellation, mirroring the design loop's `DesignDeps.isAborted` so the two
+     * long-running jobs cancel the same way rather than each inventing a story.
+     *
+     * Checked at the boundaries where the remaining work is LARGE and the work already done is
+     * discardable: before each routing-margin attempt (one attempt can run the router's full budget) and
+     * before each placement rung. Not checked more finely on purpose — a cancel that leaves a half-written
+     * board is worse than one that waits for the current attempt, and pcb-core owns no process to kill.
+     * The caller that DOES own the child process aborts it in parallel; the two together are what makes a
+     * cancel prompt AND leave nothing behind.
+     */
+    isAborted?: () => boolean | Promise<boolean>;
 }
 
 export interface LayoutStats {
@@ -305,6 +317,7 @@ export async function layoutCircuit(circuit: CircuitJson, opts: LayoutOptions = 
     let route: Awaited<ReturnType<typeof applyQualityRoute>> | null = null;
     if (canLadder) {
         for (const spacingMm of [undefined, 3.6] as Array<number | undefined>) {
+            await throwIfAborted(opts); // each rung is a full place+route+DRC cycle
             const auto = await attemptAutoPlacement(circuit, opts, layout, adapted, gridEvaluated, profile, spacingMm);
             diagnostics.push(...auto.diagnostics);
             if (!auto.adopted || !auto.code || !auto.evaluated || !auto.parity) {
@@ -908,6 +921,9 @@ async function routeBestMargin(
     const offered = margins.length;
     let tried = 0;
     for (const marginMm of margins) {
+        // Before the attempt, never during: one attempt is the router's whole budget, so this is where a
+        // cancel actually saves time, and stopping here leaves nothing half-built.
+        await throwIfAborted(opts);
         tried++;
         try {
             const routingBase = enlargeBoard(evaluated, marginMm);
@@ -1026,6 +1042,20 @@ function failed(
         namesById: {},
         netNameById: {},
     };
+}
+
+/** Thrown when `isAborted` reported a cancel. Distinct from a failure: nothing is wrong with the board,
+ *  the caller asked us to stop. Mirrors llm-core's DesignAbortedError. */
+export class LayoutAbortedError extends Error {
+    constructor() {
+        super('layout canceled');
+        this.name = 'LayoutAbortedError';
+    }
+}
+
+/** Throw if the caller asked to stop. */
+async function throwIfAborted(opts: LayoutOptions): Promise<void> {
+    if (opts.isAborted && (await opts.isAborted())) throw new LayoutAbortedError();
 }
 
 // ---------------------------------------------------------------- public surface

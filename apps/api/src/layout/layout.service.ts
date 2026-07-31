@@ -154,6 +154,37 @@ export class LayoutService {
         return { ...job, orgId };
     }
 
+    /**
+     * Cooperative cancel — the same contract the design queue already uses, deliberately, so a client does
+     * not have to learn two cancellation stories.
+     *
+     * QUEUED → CANCELED immediately: it has not started, and the worker's QUEUED→RUNNING claim will find it
+     * unclaimable and skip it. RUNNING → set abortRequested; the layout worker honours it at each stage
+     * boundary AND aborts the in-flight child process, so a cancel does not wait out a routing attempt.
+     * Terminal → no-op, reporting the status it already had rather than pretending to act.
+     */
+    async requestCancel(jobId: string, userId: string): Promise<{ id: string; status: LayoutJobStatus }> {
+        const job = await this.prisma.layoutJob.findUnique({
+            where: { id: jobId },
+            select: { id: true, orgId: true, status: true },
+        });
+        if (!job) throw new NotFoundException('Layout job not found');
+        await this.orgs.checkMembership(job.orgId, userId);
+
+        if (job.status === 'QUEUED') {
+            await this.prisma.layoutJob.update({
+                where: { id: jobId },
+                data: { status: 'CANCELED', abortRequested: true, finishedAt: new Date() },
+            });
+            return { id: jobId, status: 'CANCELED' };
+        }
+        if (job.status === 'RUNNING') {
+            await this.prisma.layoutJob.update({ where: { id: jobId }, data: { abortRequested: true } });
+            return { id: jobId, status: 'RUNNING' };
+        }
+        return { id: jobId, status: job.status };
+    }
+
     /** Status + (when finished) the shaped result + presigned URLs for the GLB / manufacturing bundle. */
     async getForUser(jobId: string, userId: string) {
         const job = await this.prisma.layoutJob.findUnique({
