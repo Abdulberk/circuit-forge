@@ -15,14 +15,18 @@ import type { BoardLayout, Playback } from '../lib/simulation';
 // Real, DRC-clean board GLBs our pipeline produced (served from /public). Every one is genuine
 // pcb-core output: CircuitJson → tscircuit eval → freerouting → KiCad DRC ✔ → 3D bodies whose
 // placement is numerically verified (scripts/verify-3d-alignment.mjs, 0.000mm worst offset).
+// Bridge-rectifier leads because it is the only board whose deck is electrically COMPLETE and whose
+// signals move: every other one is built around an IC with no SPICE model (a 555, a 4017, a 7805), so
+// pressing Simulate on it lands on the disclosure rather than on an animation. Ordering the gallery so
+// the first click demonstrates the feature is not hiding that — each board still states its own case.
 const BOARDS = [
+    { id: 'bridge-rectifier.glb', title: 'Köprü doğrultucu + filtre', cat: 'güç' },
+    { id: 'astable-flasher.glb', title: '2-transistör astable flaşör', cat: 'discrete' },
     { id: 'chaser-4017.glb', title: '555+4017 · 10-LED şelale', cat: 'dijital' },
     { id: 'shift-register.glb', title: '74HC595 · 8-LED shift register', cat: 'dijital' },
     { id: 'opamp-amp.glb', title: 'LM358 · op-amp yükselteç', cat: 'analog' },
     { id: 'ne555-blinker.glb', title: 'NE555 · blinker', cat: 'analog' },
-    { id: 'astable-flasher.glb', title: '2-transistör astable flaşör', cat: 'discrete' },
     { id: 'mosfet-switch.glb', title: 'MOSFET anahtar + flyback', cat: 'anahtarlama' },
-    { id: 'bridge-rectifier.glb', title: 'Köprü doğrultucu + filtre', cat: 'güç' },
     { id: 'regulator-5v.glb', title: '7805 · 5V regülatör', cat: 'güç' },
 ];
 
