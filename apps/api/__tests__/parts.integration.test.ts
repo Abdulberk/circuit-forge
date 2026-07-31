@@ -69,7 +69,7 @@ describe('Parts (integration, TME mocked)', () => {
                 },
             ],
             page: 1,
-            pageSize: 1,
+            returned: 1,
         });
         const res = await request(app.getHttpServer()).get('/parts/search?q=NE555-unique-1').expect(200);
         expect(res.body.items[0].mpn).toBe('NE555P');
