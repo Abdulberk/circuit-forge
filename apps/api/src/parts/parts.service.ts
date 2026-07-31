@@ -52,7 +52,7 @@ export class PartsService {
             // The upstream WAF rejects some phrases (e.g. "<script>", SQLi) with a non-JSON 403.
             // For a search, that just means "no such parts" — return empty rather than erroring out.
             if (err instanceof TmeApiError && err.code === 'E_HTTP_403') {
-                return { items: [], page, pageSize: 0 };
+                return { items: [], page, returned: 0 };
             }
             throw this.mapError(err);
         }
@@ -83,8 +83,20 @@ export class PartsService {
         try {
             // Cache product detail: an AI design session (and sourcing enrichment) looks up the same
             // symbol repeatedly — dedupe those so we don't hammer (and get rate-limited by) TME.
-            return await this.cache.getOrLoad(`product:${symbol}`, this.ttl('TME_PRODUCT_TTL_MS', 300_000), () =>
-                this.provider.getProduct(symbol),
+            //
+            // A part whose enrichment lookups did not all answer is cached FAR more briefly. The full TTL
+            // is the right price for a fact; it is the wrong price for a gap. At five minutes, one
+            // transient supplier blip becomes five minutes of "this part has no price" or — worse, because
+            // nothing downstream would notice — five minutes of a part with no tolerance quietly narrowing
+            // the Monte-Carlo spread. Short enough to recover on its own, long enough to still absorb the
+            // burst of repeat lookups a single design session makes.
+            return await this.cache.getOrLoadWith(
+                `product:${symbol}`,
+                (part) =>
+                    part.unavailable?.length
+                        ? this.ttl('TME_PRODUCT_DEGRADED_TTL_MS', 15_000)
+                        : this.ttl('TME_PRODUCT_TTL_MS', 300_000),
+                () => this.provider.getProduct(symbol),
             );
         } catch (err) {
             throw this.mapError(err);

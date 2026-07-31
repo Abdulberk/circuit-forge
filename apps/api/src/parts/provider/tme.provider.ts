@@ -24,11 +24,15 @@ import { TmeClient } from '../tme/tme-client';
 import {
     type CatalogPart,
     type CategoryNode,
+    type EnrichmentSource,
     type ManufacturerRef,
     type PartProvider,
     type SearchParams,
     type SearchResult,
 } from './part-provider.interface';
+
+/** Response-size guard on the category tree — see getCategories. */
+const MAX_TOP_LEVEL_CATEGORIES = 1000;
 
 @Injectable()
 export class TmeProvider implements PartProvider {
@@ -39,7 +43,10 @@ export class TmeProvider implements PartProvider {
 
     async search(params: SearchParams): Promise<SearchResult> {
         const { country, language } = this.client.defaults;
-        const page = params.page && params.page > 0 ? params.page : 1;
+        // Normalize once and send the SAME number upstream. The two used to diverge — the response
+        // reported the clamped page while the raw one went to TME — which is safe today only because the
+        // DTO refuses anything below 1. A service is not safe because its caller happens to be careful.
+        const page = params.page && params.page > 0 ? Math.floor(params.page) : 1;
         const data = await this.client.get<{ products?: { elements?: TmeSearchElement[]; amount?: number } }>(
             '/products/search',
             {
@@ -49,12 +56,15 @@ export class TmeProvider implements PartProvider {
                 scope: ['products'],
                 manufacturer_id: params.manufacturerId,
                 category_id: params.categoryId,
-                page: params.page, // TME supports server-side paging (~20/page); undefined => page 1
+                page, // TME supports server-side paging (~20/page)
             },
         );
         const elements = data.products?.elements ?? [];
         const items = elements.map(mapSearchElementToPart);
-        return { items, page, pageSize: items.length, total: data.products?.amount };
+        // `returned` is the count on THIS page, which is what the field always actually held — the old name
+        // `pageSize` promised the page CAPACITY, so a short final page read as a shrinking page size and a
+        // caller paging on it would stop early.
+        return { items, page, returned: items.length, total: data.products?.amount };
     }
 
     async getManufacturers(): Promise<ManufacturerRef[]> {
@@ -89,8 +99,16 @@ export class TmeProvider implements PartProvider {
             this.logger.warn('TME /products/categories/tree returned no root element');
             return [];
         }
-        // Return the top-level categories (the root is the synthetic catalog root).
-        return (root.children ?? []).slice(0, 1000).map((c) => mapCategoryNode(c, 0));
+        // Return the top-level categories (the root is the synthetic catalog root). The cap is a response
+        // -size guard, not a business rule: TME publishes a few dozen top-level categories, so hitting it
+        // means the shape changed under us and is worth saying out loud rather than silently truncating.
+        const top = root.children ?? [];
+        if (top.length > MAX_TOP_LEVEL_CATEGORIES) {
+            this.logger.warn(
+                `TME returned ${top.length} top-level categories (expected a few dozen) — truncating to ${MAX_TOP_LEVEL_CATEGORIES}; the category tree shape may have changed`,
+            );
+        }
+        return top.slice(0, MAX_TOP_LEVEL_CATEGORIES).map((c) => mapCategoryNode(c, 0));
     }
 
     async getProduct(symbol: string): Promise<CatalogPart> {
@@ -99,7 +117,19 @@ export class TmeProvider implements PartProvider {
 
         // `base` (search) is the primary lookup — let its failure surface (502). The parameters/data/
         // files calls are best-effort enrichment: a transient failure there must not fail the whole
-        // request, so they degrade to empty.
+        // request, so they degrade to empty — but the degradation is RECORDED, never swallowed. A part
+        // returned with no price because the pricing call timed out must not read like a part the supplier
+        // does not price; see CatalogPart.unavailable for what that silence would cost downstream.
+        const unavailable: EnrichmentSource[] = [];
+        const bestEffort = <T>(promise: Promise<T>, source: EnrichmentSource, empty: T): Promise<T> =>
+            promise.catch((err: unknown) => {
+                unavailable.push(source);
+                this.logger.warn(
+                    `TME ${source} lookup failed for ${symbol} — part returned without it: ${String(err).slice(0, 160)}`,
+                );
+                return empty;
+            });
+
         const [base, paramRes, dataRes, filesRes] = await Promise.all([
             this.client.get<{ products?: { elements?: TmeSearchElement[] } }>('/products/search', {
                 country,
@@ -107,20 +137,30 @@ export class TmeProvider implements PartProvider {
                 phrase: symbol,
                 scope: ['products'],
             }),
-            this.client
-                .get<{ elements?: TmeParametersElement[] }>('/products/parameters', { country, language, symbols })
-                .catch(() => ({ elements: [] as TmeParametersElement[] })),
-            this.client
-                .get<{ elements?: TmeDataElement[] }>('/products/data', {
+            bestEffort(
+                this.client.get<{ elements?: TmeParametersElement[] }>('/products/parameters', {
+                    country,
+                    language,
+                    symbols,
+                }),
+                'parameters',
+                { elements: [] as TmeParametersElement[] },
+            ),
+            bestEffort(
+                this.client.get<{ elements?: TmeDataElement[] }>('/products/data', {
                     country,
                     currency,
                     scope: ['prices', 'stock'],
                     symbols,
-                })
-                .catch(() => ({ elements: [] as TmeDataElement[] })),
-            this.client
-                .get<{ elements?: TmeFilesElement[] }>('/products/files', { country, language, symbols })
-                .catch(() => ({ elements: [] as TmeFilesElement[] })),
+                }),
+                'pricing',
+                { elements: [] as TmeDataElement[] },
+            ),
+            bestEffort(
+                this.client.get<{ elements?: TmeFilesElement[] }>('/products/files', { country, language, symbols }),
+                'documents',
+                { elements: [] as TmeFilesElement[] },
+            ),
         ]);
 
         // Exact-symbol match only: never fall back to a fuzzy search hit, and never trust the
@@ -157,6 +197,7 @@ export class TmeProvider implements PartProvider {
             currency: priceCurrency,
             supplier: this.name,
             supplierId: symbol,
+            ...(unavailable.length > 0 ? { unavailable } : {}),
         };
     }
 }

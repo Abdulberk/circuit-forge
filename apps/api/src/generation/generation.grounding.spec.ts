@@ -103,7 +103,7 @@ function makeParts() {
                 },
             ],
             page: 1,
-            pageSize: 1,
+            returned: 1,
         })),
         getComponent: jest.fn(async (_symbol: string) => ({
             simulatable: true,
@@ -309,7 +309,7 @@ describe('GenerationService grounding (tool-use + sourcing enrichment)', () => {
                     { supplierId: 'SYM-OTHER', mpn: 'SOME-OTHER-PART', manufacturer: 'X', description: 'unrelated' },
                 ],
                 page: 1,
-                pageSize: 1,
+                returned: 1,
             })),
             getComponent: jest.fn(),
             getProduct: jest.fn(),

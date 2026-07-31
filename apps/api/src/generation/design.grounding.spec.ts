@@ -84,7 +84,7 @@ function makeParts() {
         supplierId: 'SYM-RES-1',
     };
     return {
-        search: jest.fn(async () => ({ items: [part], page: 1, pageSize: 1 })),
+        search: jest.fn(async () => ({ items: [part], page: 1, returned: 1 })),
         getProduct: jest.fn(async () => part),
         getComponent: jest.fn(async () => ({
             simulatable: true,
