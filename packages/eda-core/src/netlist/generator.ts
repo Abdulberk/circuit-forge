@@ -580,9 +580,18 @@ export function generateNetlist(circuit: CircuitJson, analysis: AnalysisConfig, 
 }
 
 /**
- * Build a map from net IDs to SPICE node names
+ * net id -> the SPICE node name a simulation of this circuit will report.
+ *
+ * EXPORTED because it is the only correct answer to "which simulation signal is this piece of copper?".
+ * The rule is not obvious — a net id is lower-cased, non-word characters collapse, SPICE reserved words
+ * take an `x_` prefix, everything else takes an `n` prefix, and a result that collides with an ngspice
+ * operator token escapes again — so any consumer that re-derived it would be a second implementation of a
+ * naming rule that must have exactly one. This is the same function generateNetlist emits against, so a
+ * caller joining on it is joining on what the simulator actually saw.
+ *
+ * Ground is `0`, per SPICE.
  */
-function buildNodeMap(nets: Net[]): Map<string, string> {
+export function buildNodeMap(nets: Net[]): Map<string, string> {
     const nodeMap = new Map<string, string>();
 
     for (const net of nets) {
