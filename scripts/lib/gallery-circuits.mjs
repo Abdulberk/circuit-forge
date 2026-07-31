@@ -2,6 +2,49 @@
  * Gallery circuit definitions (OUR CircuitJson) — shared by gen-gallery.mjs and placement-ab.mjs
  * so the A/B measurement runs EXACTLY the boards the gallery ships. Netlists only — no coordinates.
  */
+import { join, dirname } from 'node:path';
+import { fileURLToPath } from 'node:url';
+
+// The vetted single-op-amp macromodel, REFERENCED rather than copied. Restating its body here would fork
+// a model the product ships and tests, and the two copies would drift silently. Every consumer of this
+// module already loads a built workspace package, so the import costs nothing new.
+const { GENERIC_MODELS } = await import(
+    new URL(
+        `file://${join(dirname(fileURLToPath(import.meta.url)), '..', '..', 'packages', 'eda-core', 'dist', 'index.js').replace(/\\/g, '/')}`,
+    ).href
+);
+const OPAMPGEN = GENERIC_MODELS.opamp;
+
+/**
+ * A generic DUAL op-amp at the PACKAGE level: two OPAMPGEN cores in the industry-standard SOIC-8 dual
+ * pinout (LM358 / LM2904 / TL072 all share it).
+ *
+ * WHY THE PORTS ARE PAD NUMBERS. Two independent consumers read `ports`, and they must agree:
+ * `generateNetlist` binds a subckt's pins to them BY NAME, and pcb-core's `chipPinOrder` uses the very
+ * same array to decide which PAD each pin lands on (adapter.ts). Naming the ports "out"/"in+"/… would
+ * bind SPICE correctly and then assign pad 1 to the output of whatever the port order happened to be —
+ * a board that no longer matches the package. Naming them for the pads makes both readings identical,
+ * which is also how vendor SPICE decks have always been written (`.SUBCKT LM358 1 2 3 4 5 6 7 8`).
+ *
+ * NOT called LM358GEN. It is not a model OF an LM358 — it is a generic op-amp topology in that package's
+ * pinout, with generic-tier fidelity (first-order gain/pole/clamp, no datasheet Vos, Ib, slew or GBW).
+ * Naming it after a real part would claim a fidelity it does not have.
+ */
+const OPAMP2GEN = {
+    name: 'OPAMP2GEN',
+    device: 'subckt',
+    tier: 'generic',
+    ports: ['1', '2', '3', '4', '5', '6', '7', '8'],
+    body: [
+        '* Generic dual op-amp, SOIC-8 dual pinout.',
+        '* pads: 1=OUT_A 2=IN_A- 3=IN_A+ 4=V- 5=IN_B+ 6=IN_B- 7=OUT_B 8=V+',
+        '.subckt OPAMP2GEN 1 2 3 4 5 6 7 8',
+        'XA 1 3 2 8 4 OPAMPGEN',
+        'XB 7 5 6 8 4 OPAMPGEN',
+        '.ends',
+    ].join('\n'),
+};
+
 const gnd = () => ({ id: 'gnd1', type: 'ground', designator: 'GND1', pins: [{ pinId: '1', netId: 'gnd' }] });
 
 // ---------------------------------------------------------------- circuits (OUR CircuitJson)
@@ -30,11 +73,24 @@ const astableFlasher = {
     ],
 };
 
-/** LM358 non-inverting amplifier (op-amp A) + LED indicator; op-amp B wired as a clean unity follower. */
+/**
+ * Non-inverting amplifier (op-amp A, gain 1 + 100k/10k = 11) + LED indicator; op-amp B wired as a unity
+ * follower with its input at ground.
+ *
+ * U1 used to be a `generic` catalog part, which meant the deck contained NO op-amp: the board "simulated"
+ * as three resistors and an LED, and `v(OUT2)` did not exist because nothing drove that net. It now carries
+ * the OPAMP2GEN macromodel, so both amplifiers in the package are actually in the deck. The FOOTPRINT and
+ * the eight pins are unchanged — pcb-core routes `subckt` through the same chip-fallback path as `generic`
+ * — so the board is the same board.
+ */
 const opampAmp = {
     version: '1.0',
+    // Both models are listed because the resolver attaches only what a COMPONENT references: OPAMP2GEN's
+    // body calls OPAMPGEN, and a body reference is not followed. Omitting it yields a deck missing the
+    // .subckt it instantiates, which nothing catches until ngspice exits 1 with no output.
+    models: [OPAMPGEN, OPAMP2GEN],
     components: [
-        { id: 'u1', type: 'generic', designator: 'U1', footprint: 'soic8', pins: [
+        { id: 'u1', type: 'subckt', designator: 'U1', model: 'OPAMP2GEN', footprint: 'soic8', pins: [
             { pinId: '1', netId: 'out' }, { pinId: '2', netId: 'inm' }, { pinId: '3', netId: 'in' }, { pinId: '4', netId: 'gnd' },
             { pinId: '5', netId: 'gnd' }, { pinId: '6', netId: 'out2' }, { pinId: '7', netId: 'out2' }, { pinId: '8', netId: 'vcc' },
         ] },
@@ -227,7 +283,10 @@ export const gallerySimPlan = {
     },
     'opamp-amp': {
         analysis: { type: 'tran', stopTime: '5m', stepTime: '5u' },
-        note: 'SIN(0 0.2 1k) input — five cycles of the amplified waveform',
+        // Measured, not assumed: ±0.2 V in, +2.20 V out on the positive half (exactly the 11× the resistors
+        // set) and only −0.49 V on the negative one, because the supply is single-ended (V− is tied to
+        // ground) and the output cannot swing below it. The asymmetry is the circuit, not a defect.
+        note: 'SIN(0 0.2 1k) input, gain 11 — five cycles; single supply, so the negative half clips near ground',
     },
     'bridge-rectifier': {
         analysis: { type: 'tran', stopTime: '100m', stepTime: '100u' },
@@ -239,13 +298,16 @@ export const gallerySimPlan = {
     },
     'regulator-5v': {
         analysis: { type: 'tran', stopTime: '20m', stepTime: '20u' },
-        // ngspice solves the operating point first and starts the transient from it, so the startup ramp
-        // has already happened: a regulated DC rail correctly shows as flat.
-        note: 'DC supply: the rail is regulated and steady — a flat trace is the right answer, not a missing one',
+        // This note used to read "the rail is regulated and steady — a flat trace is the right answer".
+        // That was wrong, and wrong in the most flattering direction: the 7805 is a catalog-only part with
+        // no SPICE model, so it is not in the deck at all. The trace is flat because there is no regulator,
+        // not because the regulator is doing its job. `simulationCoverage` now states this per board.
+        note: 'the 7805 is a catalog-only part with no simulation model — the deck has an open where it belongs, so this is NOT a picture of regulation',
     },
     'ne555-blinker': {
         analysis: { type: 'tran', stopTime: '2', stepTime: '2m' },
-        note: '10u timing capacitor — expected to blink if the 555 macromodel oscillates',
+        // Likewise: there is no 555 macromodel to oscillate. What simulates is the RC timing network alone.
+        note: 'the NE555 is a catalog-only part with no simulation model — only its RC timing network is in the deck, so nothing can blink',
     },
     'chaser-4017': {
         analysis: { type: 'tran', stopTime: '2', stepTime: '2m' },
