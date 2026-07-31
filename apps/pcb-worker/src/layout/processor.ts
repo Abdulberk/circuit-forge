@@ -116,6 +116,9 @@ async function finish(
 
 /** Exported for the delivery-gate spec: the withhold branch below is the only thing between a board KiCad
  *  rejected and a downloadable fab bundle, so it is tested directly rather than through BullMQ. */
+/** How often the worker re-reads the cancel flag while a layout runs. */
+const ABORT_POLL_MS = 3_000;
+
 export async function processLayoutJob(job: Job<LayoutJobPayload>): Promise<void> {
     const { jobId } = job.data;
     const t0 = Date.now();
@@ -131,6 +134,9 @@ export async function processLayoutJob(job: Job<LayoutJobPayload>): Promise<void
         return;
     }
 
+    // Hoisted so the catch can tell a cancel from a fault: the FLAG is the authority, not whatever the
+    // aborted child happened to say on its way down.
+    let abortSeen = false;
     try {
         const row = await prisma.layoutJob.findUnique({
             where: { id: jobId },
@@ -147,8 +153,32 @@ export async function processLayoutJob(job: Job<LayoutJobPayload>): Promise<void
         // a field name compile into a silently-ignored option.
         const options = (row.options ?? {}) as Pick<LayoutOptions, 'placer' | 'fabProfile' | 'netCurrentsA'>;
 
-        const freeroute = makeNativeFreeroutingRunner();
-        const kicad = makeNativeKicad({ log: logger });
+        // CANCELLATION — two mechanisms, because one alone is a lie.
+        //
+        // The DB flag is the durable request (the API sets it; a restarted worker still sees it). pcb-core
+        // checks it between routing attempts, which is where the time actually is. But between attempts can
+        // be five minutes away, so the same decision ALSO aborts the in-flight child: a user who presses
+        // cancel must not watch freerouting keep burning a worker slot on a job nobody wants.
+        //
+        // The flag is read on a short interval rather than per-check so a cancel costs at most one extra
+        // query per few seconds, never one per checkpoint.
+        const canceller = new AbortController();
+        let lastPoll = 0;
+        const isAborted = async (): Promise<boolean> => {
+            if (abortSeen) return true;
+            if (Date.now() - lastPoll < ABORT_POLL_MS) return false;
+            lastPoll = Date.now();
+            const row = await prisma.layoutJob
+                .findUnique({ where: { id: jobId }, select: { abortRequested: true } })
+                .catch(() => null); // a DB blip must never look like a cancel
+            if (!row?.abortRequested) return false;
+            abortSeen = true;
+            canceller.abort();
+            return true;
+        };
+
+        const freeroute = makeNativeFreeroutingRunner({ signal: canceller.signal });
+        const kicad = makeNativeKicad({ log: logger, signal: canceller.signal });
         // The PRODUCT default is connectivity-aware placement; pcb-core keeps 'grid' as its library default
         // because that is a published npm contract. The two differ on purpose: a library must not change what
         // an existing caller gets on an upgrade, but a customer whose request says nothing about placement is
@@ -173,6 +203,7 @@ export async function processLayoutJob(job: Job<LayoutJobPayload>): Promise<void
             placer,
             rustPlace,
             routingMarginMm: config.PCB_ROUTING_MARGIN_MM,
+            isAborted,
         });
 
         if (!q.ok || !q.outputs) {
@@ -319,6 +350,16 @@ export async function processLayoutJob(job: Job<LayoutJobPayload>): Promise<void
             'Layout job succeeded (manufacturable)',
         );
     } catch (e) {
+        // A CANCEL IS NOT A FAILURE. pcb-core throws LayoutAbortedError at a checkpoint, and aborting the
+        // child makes its own runner throw too — both mean "you asked us to stop", and recording either as
+        // FAILED would put a fault in the operational record for a job the user ended deliberately. The
+        // flag is the authority, not the error text: whatever the child happened to say on the way down,
+        // if we asked for the abort then this is a cancel.
+        if (abortSeen) {
+            logger.info({ jobId }, 'Layout job canceled on request');
+            await finish(jobId, { status: 'CANCELED' });
+            return;
+        }
         logger.error({ jobId, error: e instanceof Error ? e.message : String(e) }, 'Layout job threw');
         await finish(jobId, {
             status: 'FAILED',

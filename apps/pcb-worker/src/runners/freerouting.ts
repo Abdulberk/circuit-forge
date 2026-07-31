@@ -17,6 +17,13 @@ const execFileAsync = promisify(execFile);
 const MAX_BUFFER = 64 * 1024 * 1024;
 
 export interface FreeroutingOpts {
+    /**
+     * Aborts the java child when the caller cancels. Node's own execFile signal — the route a cancel has
+     * to take, because pcb-core's cooperative checkpoint only fires BETWEEN attempts and one attempt is
+     * the router's entire budget. Without this, "cancel" would leave freerouting running for up to five
+     * more minutes on a job nobody wants, holding a worker slot the whole time.
+     */
+    signal?: AbortSignal;
     jar?: string;
     java?: string;
     passes?: number;
@@ -47,6 +54,7 @@ export function makeNativeFreeroutingRunner(opts: FreeroutingOpts = {}): (dsn: s
                     {
                         timeout: timeoutMs,
                         maxBuffer: MAX_BUFFER,
+                        signal: opts.signal,
                     },
                 );
             } catch (e) {

@@ -23,6 +23,9 @@ const execFileAsync = promisify(execFile);
 const MAX_BUFFER = 64 * 1024 * 1024;
 
 export interface KicadOpts {
+    /** Aborts the kicad-cli child when the caller cancels — see FreeroutingOpts.signal for why a
+     *  cooperative checkpoint alone is not enough. */
+    signal?: AbortSignal;
     cli?: string;
     /** Path to the pcbnew zone-fill helper. Baked into the runtime image; overridable for tests. */
     fillZonesScript?: string;
@@ -154,7 +157,7 @@ export function makeNativeKicad(opts: KicadOpts = {}): NativeKicad {
                     out,
                     join(dir, 'b.kicad_pcb'),
                 ],
-                { timeout: timeoutMs, maxBuffer: MAX_BUFFER },
+                { timeout: timeoutMs, maxBuffer: MAX_BUFFER, signal: opts.signal },
             );
             // FAIL-CLOSED, same reasoning as drcReport: without --exit-code-violations a clean exit carries no
             // verdict at all, so a missing or unrecognisable report must throw rather than read as a board
@@ -193,6 +196,7 @@ export function makeNativeKicad(opts: KicadOpts = {}): NativeKicad {
                 {
                     timeout: timeoutMs,
                     maxBuffer: MAX_BUFFER,
+                    signal: opts.signal,
                 },
             );
             // FAIL-CLOSED: this report is the manufacturability gate's sole authority (drcReport runs WITHOUT
@@ -231,6 +235,7 @@ export function makeNativeKicad(opts: KicadOpts = {}): NativeKicad {
                 cwd: dir,
                 timeout: timeoutMs,
                 maxBuffer: MAX_BUFFER,
+                signal: opts.signal,
             });
         } catch (e) {
             // A pour that cannot be filled is a worse-looking preview, never a wrong verdict — DRC and the
@@ -263,7 +268,7 @@ export function makeNativeKicad(opts: KicadOpts = {}): NativeKicad {
                     out,
                     join(dir, 'b.kicad_pcb'),
                 ],
-                { timeout: timeoutMs, maxBuffer: MAX_BUFFER },
+                { timeout: timeoutMs, maxBuffer: MAX_BUFFER, signal: opts.signal },
             );
             return readFileSync(out);
         });
@@ -281,11 +286,12 @@ export function makeNativeKicad(opts: KicadOpts = {}): NativeKicad {
             await execFileAsync(
                 cli,
                 ['pcb', 'export', 'gerbers', '--check-zones', '--output', out, join(dir, 'b.kicad_pcb')],
-                { timeout: timeoutMs, maxBuffer: MAX_BUFFER },
+                { timeout: timeoutMs, maxBuffer: MAX_BUFFER, signal: opts.signal },
             );
             await execFileAsync(cli, ['pcb', 'export', 'drill', '--output', `${out}/`, join(dir, 'b.kicad_pcb')], {
                 timeout: timeoutMs,
                 maxBuffer: MAX_BUFFER,
+                signal: opts.signal,
             });
             const layers: Record<string, string> = {};
             let drill = '';

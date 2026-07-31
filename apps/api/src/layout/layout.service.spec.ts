@@ -184,3 +184,63 @@ describe('create — the org is stated or verified, never silently assumed witho
         ).rejects.toThrow(/conflicts with the version/i);
     });
 });
+
+describe('LayoutService.requestCancel — the same contract the design queue already uses', () => {
+    const findUnique = jest.fn();
+    const update = jest.fn();
+    const checkMembership = jest.fn().mockResolvedValue(undefined);
+
+    const cancelService = (): LayoutService =>
+        new LayoutService(
+            { layoutJob: { findUnique, update } } as never,
+            { checkMembership } as never,
+            {} as never,
+            { get: jest.fn() } as never,
+        );
+
+    beforeEach(() => {
+        findUnique.mockReset();
+        update.mockReset();
+        checkMembership.mockClear();
+    });
+
+    it('a QUEUED job is canceled outright — it has not started, so there is nothing to wind down', async () => {
+        findUnique.mockResolvedValue({ id: 'j1', orgId: 'org-1', status: 'QUEUED' });
+        await expect(cancelService().requestCancel('j1', 'u1')).resolves.toEqual({ id: 'j1', status: 'CANCELED' });
+        expect(update).toHaveBeenCalledWith(
+            expect.objectContaining({
+                data: expect.objectContaining({ status: 'CANCELED', abortRequested: true }),
+            }),
+        );
+    });
+
+    it('a RUNNING job only gets the flag — the worker owns when it actually stops', async () => {
+        // Reporting CANCELED here would be a lie for as long as the worker keeps going, and the status is
+        // what a client polls. The flag is the request; the worker writes the terminal status.
+        findUnique.mockResolvedValue({ id: 'j2', orgId: 'org-1', status: 'RUNNING' });
+        await expect(cancelService().requestCancel('j2', 'u1')).resolves.toEqual({ id: 'j2', status: 'RUNNING' });
+        expect(update).toHaveBeenCalledWith(expect.objectContaining({ data: { abortRequested: true } }));
+    });
+
+    it.each(['SUCCEEDED', 'FAILED', 'CANCELED'])('a %s job is returned unchanged, not an error', async (status) => {
+        // Idempotent on purpose: asking to stop something that has already stopped is not a failure, and a
+        // client retrying a cancel after a dropped response must not get a 4xx for being careful.
+        findUnique.mockResolvedValue({ id: 'j3', orgId: 'org-1', status });
+        await expect(cancelService().requestCancel('j3', 'u1')).resolves.toEqual({ id: 'j3', status });
+        expect(update).not.toHaveBeenCalled();
+    });
+
+    it('checks org membership before touching anything', async () => {
+        // Cancelling someone else's job is a write. The membership check must gate it, not decorate it.
+        findUnique.mockResolvedValue({ id: 'j4', orgId: 'org-9', status: 'QUEUED' });
+        checkMembership.mockRejectedValueOnce(new Error('not a member'));
+        await expect(cancelService().requestCancel('j4', 'intruder')).rejects.toThrow('not a member');
+        expect(update).not.toHaveBeenCalled();
+    });
+
+    it('a missing job is a 404, never a silent success', async () => {
+        findUnique.mockResolvedValue(null);
+        await expect(cancelService().requestCancel('nope', 'u1')).rejects.toThrow(/not found/i);
+        expect(checkMembership).not.toHaveBeenCalled();
+    });
+});

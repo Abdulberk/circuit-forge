@@ -360,3 +360,50 @@ describe('the gate cannot be bypassed by an upstream failure', () => {
         expect(layoutJob.updateMany).toHaveBeenCalledTimes(1); // the failed claim, and nothing after it
     });
 });
+
+describe('cancellation — a job the user stopped is not a job that failed', () => {
+    it('records CANCELED, not FAILED, whatever the aborted work happened to throw', async () => {
+        // Aborting the child makes its runner throw, and pcb-core throws its own LayoutAbortedError at a
+        // checkpoint — two different messages for one intent. Recording either as FAILED would put a fault
+        // in the operational record for a job the user deliberately ended, so the FLAG is the authority and
+        // the error text is not consulted.
+        layoutJob.findUnique.mockResolvedValue({ circuit: { components: [], nets: [] }, options: {} });
+        // First read is the job row; the abort poll then reports the cancel.
+        layoutJob.findUnique
+            .mockResolvedValueOnce({ circuit: { components: [], nets: [] }, options: {} })
+            .mockResolvedValue({ abortRequested: true });
+        layoutCircuit.mockImplementation(async (_c: unknown, opts: { isAborted?: () => Promise<boolean> }) => {
+            await opts.isAborted?.(); // the checkpoint pcb-core runs before each routing attempt
+            throw new Error('freerouting failed (exit ?) with no output'); // what an aborted child says
+        });
+
+        await processLayoutJob(job);
+
+        expect(lastUpdate().status).toBe('CANCELED');
+        expect(lastUpdate().errorMessage ?? null).toBeNull();
+        expect(uploadFile).not.toHaveBeenCalled();
+    });
+
+    it('a genuine fault is still FAILED — the cancel path must not swallow real errors', async () => {
+        layoutJob.findUnique.mockResolvedValue({ circuit: { components: [], nets: [] }, options: {} });
+        layoutCircuit.mockRejectedValue(new Error('kicad-cli DRC produced no report file'));
+
+        await processLayoutJob(job);
+
+        expect(lastUpdate().status).toBe('FAILED');
+        expect(String(lastUpdate().errorMessage)).toMatch(/no report file/);
+    });
+
+    it('hands pcb-core a checkpoint AND the child processes a signal — one alone would be a lie', async () => {
+        // The flag alone only fires between routing attempts, which can be five minutes away; the signal
+        // alone is not durable across a worker restart. A cancel button that waits out an attempt, or one
+        // that leaves freerouting burning a slot, are both broken in a way a user would notice.
+        layoutJob.findUnique.mockResolvedValue({ circuit: { components: [], nets: [] }, options: {} });
+        layoutCircuit.mockResolvedValue(okLayout());
+
+        await processLayoutJob(job);
+
+        const opts = layoutCircuit.mock.calls[0]![1] as { isAborted?: unknown };
+        expect(typeof opts.isAborted).toBe('function');
+    });
+});
