@@ -16,6 +16,7 @@ export {
     type Version,
     type VersionSummary,
     type WorkingCopy,
+    type WorkingCopySaved,
 } from './resources';
 
 /**

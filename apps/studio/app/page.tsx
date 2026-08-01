@@ -11,10 +11,13 @@
 import type { TreeNode } from '@circuit-forge/editor-core';
 import { useMemo, useState } from 'react';
 
+import { Inspector } from '../components/Inspector';
 import { ObjectTreePanel } from '../components/ObjectTreePanel';
+import { SaveStatus } from '../components/SaveStatus';
 import { SignIn } from '../components/SignIn';
 import { API_BASE_URL, type ApiError, type OpenedProject } from '../lib/api';
 import { useAsync } from '../lib/useAsync';
+import { useDocument } from '../lib/useDocument';
 
 import { useSession } from './providers';
 
@@ -108,8 +111,10 @@ function Workspace() {
         activeProject !== null,
     );
 
-    const doc = opened.data;
-    const circuit = doc && doc.source !== 'empty' ? doc.circuitJson : null;
+    // The loader fetches; the document OWNS what is on screen and writes it back. Splitting them is what
+    // keeps a local edit instant while the save is debounced, refusable and one-at-a-time.
+    const doc = useDocument(api, activeProject, opened.data);
+    const circuit = doc.circuit;
     const counts = useMemo(
         () => ({
             // Counted the way the TREE counts, which means net markers are not parts. The raw array length
@@ -184,12 +189,13 @@ function Workspace() {
                         {projects.error && <Failure error={projects.error} />}
                         {opened.error && <Failure error={opened.error} />}
                         {opened.loading && <p className="empty">Opening…</p>}
-                        {doc?.source === 'empty' && (
+                        {doc.source === 'empty' && (
                             // Ordinary, not broken: a project created but never saved. Said plainly so it does
                             // not read as a failed load.
                             <p className="empty">This project has no circuit yet — no draft and no saved version.</p>
                         )}
-                        <Provenance doc={doc} />
+                        <SaveStatus doc={doc} />
+                        <Provenance doc={opened.data} />
                         {circuit && (
                             // Keyed by project so React REMOUNTS it on a switch. The panel's selection and
                             // collapse state are its own `useState`; unkeyed, they survived a project change
@@ -213,34 +219,7 @@ function Workspace() {
                 <aside className="pane">
                     <div className="pane-head">Inspector</div>
                     <div className="pane-body">
-                        {selected ? (
-                            <dl>
-                                <div className="field">
-                                    <dt>Name</dt>
-                                    <dd>{selected.label}</dd>
-                                </div>
-                                <div className="field">
-                                    <dt>Kind</dt>
-                                    <dd>{selected.ref.kind}</dd>
-                                </div>
-                                <div className="field">
-                                    <dt>Id</dt>
-                                    <dd>{selected.ref.id}</dd>
-                                </div>
-                                {selected.detail && (
-                                    <div className="field">
-                                        <dt>Detail</dt>
-                                        <dd>{selected.detail}</dd>
-                                    </div>
-                                )}
-                                <div className="field">
-                                    <dt>Path</dt>
-                                    <dd style={{ color: 'var(--text-faint)' }}>{selected.ref.path.join(' / ')}</dd>
-                                </div>
-                            </dl>
-                        ) : (
-                            <p className="empty">Select an object.</p>
-                        )}
+                        <Inspector selected={selected} circuit={circuit} doc={doc} />
                     </div>
                 </aside>
             </div>
@@ -249,9 +228,15 @@ function Workspace() {
                 <span>{API_BASE_URL}</span>
                 <span>{counts.components} components</span>
                 <span>{counts.nets} nets</span>
-                {doc && doc.source !== 'empty' && (
-                    <span>{doc.source === 'working-copy' ? 'draft' : `v${doc.version.versionNumber} (read-only)`}</span>
+                {opened.data && opened.data.source !== 'empty' && (
+                    <span>
+                        {opened.data.source === 'working-copy'
+                            ? 'draft'
+                            : `v${opened.data.version.versionNumber} (read-only)`}
+                    </span>
                 )}
+                <span className="spacer" />
+                <SaveStatus doc={doc} />
             </footer>
         </div>
     );

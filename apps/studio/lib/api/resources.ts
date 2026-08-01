@@ -56,17 +56,28 @@ export interface Project {
 }
 
 /**
- * The draft. `updatedAt` is not decoration — it is the concurrency token: send it back as
- * `expectedUpdatedAt` and the API refuses the write if anyone else saved in between.
+ * What a SAVE answers with — the server-owned fields only, deliberately not the blobs.
+ *
+ * PUT is the app's highest-frequency write and the client already holds the circuit it just uploaded, so the
+ * API returns `select: {projectId, baseVersionId, updatedByUserId, updatedAt}` and nothing else. This was
+ * typed as the full row, which made `saved.circuitJson` compile and be `undefined` forever — the same
+ * silent-drift failure as the phantom `Org.slug`, on the one call an editor makes most.
+ *
+ * `updatedAt` is not decoration: it is the concurrency token. Send it back as `expectedUpdatedAt` and the
+ * API refuses the next write if anyone else saved in between.
  */
-export interface WorkingCopy {
+export interface WorkingCopySaved {
     projectId: string;
-    circuitJson: CircuitJson;
-    uiJson: unknown;
     baseVersionId: string | null;
     updatedByUserId: string;
-    createdAt: string;
     updatedAt: string;
+}
+
+/** What a LOAD answers with — the full row, blobs included. GET is not on the hot path. */
+export interface WorkingCopy extends WorkingCopySaved {
+    circuitJson: CircuitJson;
+    uiJson: unknown;
+    createdAt: string;
 }
 
 /**
@@ -232,8 +243,8 @@ export class Api {
             expectedUpdatedAt?: string;
         },
         signal?: AbortSignal,
-    ): Promise<WorkingCopy> {
-        return this.http.request<WorkingCopy>(`/projects/${projectId}/working-copy`, {
+    ): Promise<WorkingCopySaved> {
+        return this.http.request<WorkingCopySaved>(`/projects/${projectId}/working-copy`, {
             method: 'PUT',
             body: draft,
             signal,

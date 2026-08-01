@@ -12,7 +12,7 @@
  * quietly passes when it did not run is worse than no test.
  */
 import type { CircuitJson } from '@circuit-forge/eda-core';
-import { buildObjectTree } from '@circuit-forge/editor-core';
+import { buildObjectTree, setValue } from '@circuit-forge/editor-core';
 
 import { ApiClient } from './client';
 import { ApiError } from './errors';
@@ -403,6 +403,52 @@ describe('the transcribed contracts, against the server that defines them', () =
         expect(row).not.toHaveProperty('result');
         expect(row).not.toHaveProperty('glbUrl');
         expect(row).toHaveProperty('manufacturable');
+    });
+
+    it('an edit made through the kernel survives a save and a reload', async () => {
+        // The whole step-one loop, end to end and with nothing stubbed: open the document, change it with the
+        // same function the Inspector calls, save it with the concurrency token, load it back from the
+        // server, and confirm the change is there and nothing else moved.
+        await api.saveWorkingCopy(projectId, { circuitJson: DIVIDER, uiJson: {} });
+        const opened = await api.openProject(projectId);
+        if (opened.source !== 'working-copy') throw new Error(`expected a draft, got ${opened.source}`);
+
+        const edited = setValue(opened.circuitJson, 'r1', '4k7');
+        expect(edited.ok).toBe(true);
+        if (!edited.ok) return;
+
+        const saved = await api.saveWorkingCopy(projectId, {
+            circuitJson: edited.circuit,
+            uiJson: {},
+            expectedUpdatedAt: opened.updatedAt,
+        });
+        // The save answers with the server-owned fields only — this is the shape the client was mistyping.
+        expect(Object.keys(saved).sort()).toEqual(['baseVersionId', 'projectId', 'updatedAt', 'updatedByUserId']);
+
+        const reloaded = await api.workingCopy(projectId);
+        const r1 = (reloaded!.circuitJson.components ?? []).find((c) => c.id === 'r1')!;
+        expect(r1.value).toBe('4k7');
+        // Everything else is byte-identical — an edit that quietly reordered or dropped a field would corrupt
+        // the netlist three stages later.
+        expect({ ...reloaded!.circuitJson, components: undefined }).toEqual({ ...DIVIDER, components: undefined });
+        expect((reloaded!.circuitJson.components ?? []).map((c) => c.id)).toEqual(
+            (DIVIDER.components ?? []).map((c) => c.id),
+        );
+    });
+
+    it('refuses a save whose token the editor has already spent', async () => {
+        // Exactly what a second tab does. The client must be TOLD, not silently overwrite.
+        const first = await api.workingCopy(projectId);
+        const token = first!.updatedAt;
+
+        await api.saveWorkingCopy(projectId, { circuitJson: DIVIDER, uiJson: {}, expectedUpdatedAt: token });
+        const err = (await api
+            .saveWorkingCopy(projectId, { circuitJson: DIVIDER, uiJson: {}, expectedUpdatedAt: token })
+            .catch((e: unknown) => e)) as ApiError;
+
+        expect(err.kind).toBe('conflict');
+        // The body carries the server's current timestamp, which is what the conflict UI shows the user.
+        expect(typeof (err.body as { currentUpdatedAt?: unknown })?.currentUpdatedAt).toBe('string');
     });
 
     it('classifies a genuinely missing project as not-found', async () => {
