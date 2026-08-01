@@ -21,6 +21,28 @@ export { setDesignator, setNetName, setValue } from './document/edits';
 export type { EditResult, EditRefusal } from './document/edits';
 
 /**
+ * The commit kernel: transactions, undo, redo, and the record of what each revision touched.
+ *
+ * A commit is all-or-nothing, so a compound edit is safe to interrupt. `touched` names the objects that
+ * changed by IDENTITY rather than by id — the input an incremental checker needs, recorded now because
+ * adding it later would touch every edit.
+ */
+export {
+    HISTORY_LIMIT,
+    adopt,
+    beginHistory,
+    canRedo,
+    canUndo,
+    commit,
+    commitUi,
+    isEmptyTouch,
+    redo,
+    touchedBetween,
+    undo,
+} from './document/history';
+export type { CommitResult, EditorDocument, History, Revision, Touched } from './document/history';
+
+/**
  * Schematic symbol geometry, in unitless local coordinates. `basis` says whether the symbol is a
  * conventional drawing or one derived from the part's own pins — which is the difference between knowledge
  * and a guess, and it is stated rather than left to be inferred.

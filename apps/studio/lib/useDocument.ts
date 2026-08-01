@@ -31,7 +31,16 @@
  */
 
 import type { CircuitJson } from '@circuit-forge/eda-core';
-import type { EditResult } from '@circuit-forge/editor-core';
+import {
+    adopt as adoptDocument,
+    canRedo as canRedoRevision,
+    canUndo as canUndoRevision,
+    commit,
+    redo as redoRevision,
+    undo as undoRevision,
+    type EditResult,
+    type History,
+} from '@circuit-forge/editor-core';
 import { useCallback, useEffect, useRef, useState } from 'react';
 
 import { ApiError, isAbort, type Api, type OpenedProject } from './api';
@@ -64,6 +73,12 @@ export interface DocumentState {
      * hook never has to know what a designator is.
      */
     apply: (edit: (circuit: CircuitJson) => EditResult) => void;
+    /** Apply several edits as ONE revision — one undo step, and impossible to half-apply. */
+    applyMany: (label: string, edits: ReadonlyArray<(circuit: CircuitJson) => EditResult>) => void;
+    undo: () => void;
+    redo: () => void;
+    canUndo: boolean;
+    canRedo: boolean;
     /** Save now — for a blur, a keyboard shortcut, or a tab that is closing. */
     flush: () => void;
     /**
@@ -83,7 +98,7 @@ export function useDocument(
     /** Re-fetch the project. Required, because "load theirs" is meaningless without asking the server. */
     reloadOpened: () => void,
 ): DocumentState {
-    const [circuit, setCircuit] = useState<CircuitJson | null>(null);
+    const [history, setHistory] = useState<History | null>(null);
     const [source, setSource] = useState<OpenedProject['source'] | null>(null);
     const [save, setSave] = useState<SaveState>({ status: 'clean', savedAt: null });
     const [refusal, setRefusal] = useState<DocumentState['refusal']>(null);
@@ -157,7 +172,9 @@ export function useDocument(
                   ? opened.version.id
                   : null;
 
-        setCircuit(opened.source === 'empty' ? null : opened.circuitJson);
+        // ADOPT, not commit: a document from the server, a project switch or a reload is work this history
+        // did not witness, and undoing across it would resurrect what the other author had replaced.
+        setHistory(opened.source === 'empty' ? null : adoptDocument({ circuit: opened.circuitJson, ui: {} }));
         setSource(opened.source);
         setSave({ status: 'clean', savedAt: opened.source === 'working-copy' ? opened.updatedAt : null });
         setRefusal(null);
@@ -283,25 +300,64 @@ export function useDocument(
 
     // ---- Editing --------------------------------------------------------------------------------------
 
-    const apply = useCallback(
-        (edit: (c: CircuitJson) => EditResult) => {
-            setCircuit((current) => {
+    /**
+     * Apply one or more edits as ONE revision.
+     *
+     * A list rather than a single edit, because that is what makes a compound operation — delete a part and
+     * every wire on it — a single undo step and impossible to half-apply. The kernel refuses the whole commit
+     * if any member is refused, so there is no partial state for this hook to clean up.
+     */
+    const applyMany = useCallback(
+        (label: string, edits: ReadonlyArray<(c: CircuitJson) => EditResult>) => {
+            setHistory((current) => {
                 if (!current) return current;
-                const result = edit(current);
+                const result = commit(current, label, edits);
                 if (!result.ok) {
                     setRefusal({ reason: result.reason, message: result.message });
                     return current;
                 }
                 setRefusal(null);
-                // An edit that changed nothing is not a save and not an undo step — re-typing the same value
-                // must not mint a new revision that then conflicts with another tab for no reason.
+                // A commit that changed nothing is not a save and not an undo step — re-typing the same value
+                // must not mint a revision that then conflicts with another tab for no reason.
                 if (!result.changed) return current;
-                schedule(result.circuit);
-                return result.circuit;
+                schedule(result.history.present.circuit);
+                return result.history;
             });
         },
         [schedule],
     );
+
+    const apply = useCallback((edit: (c: CircuitJson) => EditResult) => applyMany('Edit', [edit]), [applyMany]);
+
+    /**
+     * Undo and redo, which SAVE.
+     *
+     * An undone document is the document now — leaving it local would mean the user pressed Ctrl+Z, saw the
+     * change reverse, closed the tab, and got the un-undone version back. That is the same class of surprise
+     * as a dropped keystroke, so undo goes through exactly the same debounce, token and conflict path as a
+     * keystroke does.
+     */
+    const undoOne = useCallback(() => {
+        setHistory((current) => {
+            if (!current) return current;
+            const next = undoRevision(current);
+            if (next === current) return current; // nothing to undo — not a save either
+            setRefusal(null);
+            schedule(next.present.circuit);
+            return next;
+        });
+    }, [schedule]);
+
+    const redoOne = useCallback(() => {
+        setHistory((current) => {
+            if (!current) return current;
+            const next = redoRevision(current);
+            if (next === current) return current;
+            setRefusal(null);
+            schedule(next.present.circuit);
+            return next;
+        });
+    }, [schedule]);
 
     // ---- Getting out of a conflict --------------------------------------------------------------------
 
@@ -315,11 +371,11 @@ export function useDocument(
      */
     const overwriteWithMine = useCallback(() => {
         const state = w.current;
-        const doc = state.pending ?? state.inFlight ?? circuit;
+        const doc = state.pending ?? state.inFlight ?? history?.present.circuit ?? null;
         if (!doc || !state.projectId || state.inFlight) return;
         state.pending = null;
         void sendFor(state.projectId, doc, null, state.baseVersionId);
-    }, [sendFor, circuit]);
+    }, [sendFor, history]);
 
     /**
      * Take theirs: ask the SERVER what it holds and adopt that.
@@ -339,5 +395,19 @@ export function useDocument(
         reloadOpened();
     }, [reloadOpened]);
 
-    return { circuit, source, save, refusal, apply, flush, overwriteWithMine, takeTheirs };
+    return {
+        circuit: history?.present.circuit ?? null,
+        source,
+        save,
+        refusal,
+        apply,
+        applyMany,
+        undo: undoOne,
+        redo: redoOne,
+        canUndo: history !== null && canUndoRevision(history),
+        canRedo: history !== null && canRedoRevision(history),
+        flush,
+        overwriteWithMine,
+        takeTheirs,
+    };
 }
