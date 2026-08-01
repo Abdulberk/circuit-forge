@@ -103,7 +103,18 @@ export class WorkingCopyService {
     async get(projectId: string, userId: string) {
         await this.projectsService.findOne(projectId, userId);
         const wc = await this.prisma.projectWorkingCopy.findUnique({ where: { projectId } });
-        if (!wc) throw new NotFoundException('No working copy for this project');
+        if (!wc) {
+            // Carries a machine-readable code for the same reason the 409 above does. This route can answer
+            // 404 for TWO different reasons — the project does not exist (or is not yours), thrown by
+            // `findOne` a line earlier, and the project exists but has no draft, thrown here. Both arrive as
+            // a bare 404, so a client that wants to render "no working copy yet" for the second while
+            // reporting a genuine error for the first has nothing to branch on but the English message. That
+            // is not a contract; it is prose that a rewording silently breaks.
+            throw new NotFoundException({
+                message: 'No working copy for this project',
+                code: 'NO_WORKING_COPY',
+            });
+        }
         return wc;
     }
 
