@@ -154,7 +154,7 @@ const DRAWN: Record<string, (pins: string[]) => SymbolGeometry> = {
                     [-12, 0],
                 ],
             },
-            // Four arcs approximated as a polyline: a renderer that wants真 arcs can, but the shape reads.
+            // Four arcs approximated as a polyline: a renderer that wants true arcs can draw them instead, but the shape reads.
             {
                 points: [
                     [-12, 0],
