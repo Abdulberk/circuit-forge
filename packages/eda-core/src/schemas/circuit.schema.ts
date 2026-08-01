@@ -34,12 +34,24 @@ export const ComponentSourcingSchema = z.object({
     datasheetUrl: z.string().url().max(2000).optional(),
 });
 
+/**
+ * The ONE rule for what a reference designator may look like.
+ *
+ * Exported because it is not only a schema concern: an editor has to refuse a bad designator at the moment
+ * it is typed, and the only thing worse than no check there is a DIFFERENT check. A second pattern in the
+ * editor accepted `C_IN`, `X$1` and `J1-2` — all rejected here — so the working copy (which validates shape
+ * only) stored them happily and the failure surfaced later as a 400 from POST /layouts, about a part the user
+ * had renamed minutes earlier. One exported constant, imported by whoever needs it, cannot drift from itself.
+ *
+ * Letter prefix + number, with an OPTIONAL trailing section letter so multi-section refdes (op-amp sections
+ * "U1A"/"U1B", relay contacts "K1A") are accepted — previously they were wrongly rejected.
+ */
+export const DESIGNATOR_PATTERN = /^[A-Z][A-Z0-9]*[0-9]+[A-Z]?$/i;
+
 export const ComponentSchema = z.object({
     id: z.string().min(1).max(100),
     type: ComponentTypeSchema,
-    // Letter prefix + number, with an OPTIONAL trailing section letter so multi-section refdes (op-amp
-    // sections "U1A"/"U1B", relay contacts "K1A") are accepted — previously they were wrongly rejected.
-    designator: z.string().regex(/^[A-Z][A-Z0-9]*[0-9]+[A-Z]?$/i, 'Invalid designator format'),
+    designator: z.string().regex(DESIGNATOR_PATTERN, 'Invalid designator format'),
     value: z.string().max(100).optional(),
     model: z.string().max(100).optional(),
     /** Fractional manufacturing tolerance (e.g. 0.05 = ±5%) for Monte-Carlo yield analysis. */

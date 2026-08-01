@@ -4,9 +4,15 @@
 /**
  * The write path, under the conditions that lose work.
  *
- * Every case here is one a user reaches by ordinary typing and cannot reproduce on request: an edit landing
- * while a save is in flight, a tab closing one second after the last keystroke, a second tab having saved
- * first. None of them shows up in a click-through, and each one is a lost design.
+ * THE FAKE SERVER ENFORCES THE TOKEN. The first version of this file did not, and that one shortcut made the
+ * two most important tests unable to fail: "force the save through" passed against a server that would have
+ * accepted anything, so it certified a button that in reality re-sent a token the server had already refused
+ * and looped on 409 forever. A fake more permissive than the real thing is not a test of the client; it is a
+ * test of the fake.
+ *
+ * `conditionalSave` below implements the API's actual rule (working-copy.service.ts): a save carrying
+ * `expectedUpdatedAt` succeeds only if it matches the current row, a save omitting it always succeeds, and
+ * every accepted write moves the token. Every conflict case runs against that.
  */
 import type { CircuitJson } from '@circuit-forge/eda-core';
 import { setValue } from '@circuit-forge/editor-core';
@@ -22,47 +28,83 @@ const CIRCUIT: CircuitJson = {
     nets: [{ id: 'n1', name: 'N1' }],
 };
 
-const asDraft = (updatedAt: string): OpenedProject => ({
+const asDraft = (updatedAt: string, baseVersionId: string | null = null): OpenedProject => ({
     source: 'working-copy',
     circuitJson: CIRCUIT,
     updatedAt,
-    baseVersionId: null,
+    baseVersionId,
 });
 
-/** A recording server: what was sent, in order, with the token each save carried. */
-function fakeApi(
-    behaviour: (
-        call: number,
-        body: { circuitJson: CircuitJson; expectedUpdatedAt?: string },
-    ) => Promise<{ updatedAt: string }>,
-) {
-    const sent: Array<{ value: string | undefined; token: string | undefined }> = [];
-    let calls = 0;
-    const api = {
-        saveWorkingCopy: (
-            _projectId: string,
-            body: { circuitJson: CircuitJson; uiJson: Record<string, unknown>; expectedUpdatedAt?: string },
-        ) => {
-            calls += 1;
-            sent.push({
-                value: (body.circuitJson.components ?? [])[0]?.value,
-                token: body.expectedUpdatedAt,
-            });
-            return behaviour(calls, body).then((r) => ({
-                projectId: 'p',
-                baseVersionId: null,
-                updatedByUserId: 'u',
-                updatedAt: r.updatedAt,
-            }));
-        },
-    } as unknown as Api;
-    return { api, sent, calls: () => calls };
+interface SaveCall {
+    projectId: string;
+    value: string | undefined;
+    token: string | undefined;
+    baseVersionId: string | undefined;
 }
 
-/** Renders the hook and gives the test a handle to edit and read it. */
-function Harness({ api, opened }: { api: Api; opened: OpenedProject }) {
+/** A server that behaves like the real one: it holds a row, enforces the precondition, and moves the token. */
+function conditionalSave(initialUpdatedAt: string) {
+    const sent: SaveCall[] = [];
+    let current = initialUpdatedAt;
+    let issued = 0;
+
+    /** Another tab writes — the row moves without this client knowing. */
+    const somebodyElseSaves = () => {
+        current = `X${++issued}`;
+    };
+
+    const api = {
+        saveWorkingCopy: (
+            projectId: string,
+            body: {
+                circuitJson: CircuitJson;
+                uiJson: Record<string, unknown>;
+                baseVersionId?: string;
+                expectedUpdatedAt?: string;
+            },
+        ) => {
+            sent.push({
+                projectId,
+                value: (body.circuitJson.components ?? [])[0]?.value,
+                token: body.expectedUpdatedAt,
+                baseVersionId: body.baseVersionId,
+            });
+            if (body.expectedUpdatedAt !== undefined && body.expectedUpdatedAt !== current) {
+                // Exactly the API's 409: the conditional update matched zero rows.
+                return Promise.reject(
+                    new ApiError('conflict', 'The working copy changed since you loaded it', {
+                        status: 409,
+                        code: 'WORKING_COPY_CONFLICT',
+                        body: { currentUpdatedAt: current },
+                    }),
+                );
+            }
+            current = `T${++issued}`;
+            return Promise.resolve({
+                projectId,
+                baseVersionId: body.baseVersionId ?? null,
+                updatedByUserId: 'u',
+                updatedAt: current,
+            });
+        },
+    } as unknown as Api;
+
+    return { api, sent, somebodyElseSaves, currentToken: () => current };
+}
+
+function Harness({
+    api,
+    opened,
+    projectId = 'project-1',
+    onReload,
+}: {
+    api: Api;
+    opened: OpenedProject;
+    projectId?: string;
+    onReload?: () => void;
+}) {
     const [n, setN] = useState(0);
-    const doc = useDocument(api, 'project-1', opened);
+    const doc = useDocument(api, projectId, opened, onReload ?? (() => {}));
     return (
         <div>
             <output data-testid="value">{(doc.circuit?.components ?? [])[0]?.value ?? '—'}</output>
@@ -78,7 +120,8 @@ function Harness({ api, opened }: { api: Api; opened: OpenedProject }) {
             </button>
             <button onClick={() => doc.apply((c) => setValue(c, 'r1', ''))}>bad-edit</button>
             <button onClick={doc.flush}>flush</button>
-            <button onClick={doc.discardLocalAndReload}>discard</button>
+            <button onClick={doc.overwriteWithMine}>overwrite</button>
+            <button onClick={doc.takeTheirs}>take-theirs</button>
         </div>
     );
 }
@@ -94,13 +137,14 @@ const settle = async (ms = 2_000) => {
     await act(async () => {
         jest.advanceTimersByTime(ms);
         await Promise.resolve();
+        await Promise.resolve();
     });
 };
 
 describe('an edit is instant and the save follows', () => {
     it('shows the change immediately and saves after the user stops typing', async () => {
-        const { api, sent } = fakeApi(() => Promise.resolve({ updatedAt: 'T2' }));
-        render(<Harness api={api} opened={asDraft('T1')} />);
+        const { api, sent } = conditionalSave('T0');
+        render(<Harness api={api} opened={asDraft('T0')} />);
 
         click('edit');
         expect(value()).toBe('2k'); // no round trip
@@ -109,69 +153,76 @@ describe('an edit is instant and the save follows', () => {
 
         await settle();
         await waitFor(() => expect(status()).toBe('clean'));
-        expect(sent).toEqual([{ value: '2k', token: 'T1' }]);
+        expect(sent).toEqual([{ projectId: 'project-1', value: '2k', token: 'T0', baseVersionId: undefined }]);
     });
 
-    it('carries expectedUpdatedAt on EVERY save, using the token the last save returned', async () => {
-        // The whole optimistic-concurrency guarantee. Omitting the token is silently opting into
-        // last-writer-wins; carrying a STALE one is refusing our own writes.
-        let issued = 1;
-        const { api, sent } = fakeApi(() => Promise.resolve({ updatedAt: `T${++issued}` }));
-        render(<Harness api={api} opened={asDraft('T1')} />);
+    it('carries the token the LAST save returned, so consecutive saves are accepted', async () => {
+        // Against a token-enforcing server this IS the guarantee: carry a stale one and the second save is
+        // refused by the first save's own success.
+        const { api, sent } = conditionalSave('T0');
+        render(<Harness api={api} opened={asDraft('T0')} />);
 
         click('edit');
         await settle();
         await waitFor(() => expect(status()).toBe('clean'));
-
         click('edit');
         await settle();
         await waitFor(() => expect(status()).toBe('clean'));
 
-        expect(sent.map((s) => s.token)).toEqual(['T1', 'T2']);
+        expect(sent.map((s) => s.token)).toEqual(['T0', 'T1']);
+    });
+
+    it('carries baseVersionId, so a draft branched from a version keeps its ancestry', async () => {
+        // The API models "N unsaved changes since v3" from this field, and it used never to be sent — so the
+        // provenance was lost on the first keystroke after opening.
+        const { api, sent } = conditionalSave('T0');
+        render(<Harness api={api} opened={asDraft('T0', 'version-7')} />);
+
+        click('edit');
+        await settle();
+        await waitFor(() => expect(status()).toBe('clean'));
+        expect(sent[0]!.baseVersionId).toBe('version-7');
     });
 
     it('coalesces typing during an in-flight save instead of racing it', async () => {
-        // Two saves in flight would carry the SAME token, so the second would be refused by the first's own
-        // success — a conflict the user caused by typing quickly. One at a time; the rest is queued.
+        const { api, sent } = conditionalSave('T0');
         let release: (() => void) | undefined;
-        const { api, sent } = fakeApi((call) =>
-            call === 1
-                ? new Promise<{ updatedAt: string }>((r) => (release = () => r({ updatedAt: 'T2' })))
-                : Promise.resolve({ updatedAt: 'T3' }),
-        );
-        render(<Harness api={api} opened={asDraft('T1')} />);
+        let first = true;
+        const slow = {
+            saveWorkingCopy: (p: string, b: Parameters<Api['saveWorkingCopy']>[1]) => {
+                if (first) {
+                    first = false;
+                    return new Promise<void>((r) => (release = r)).then(() => api.saveWorkingCopy(p, b));
+                }
+                return api.saveWorkingCopy(p, b);
+            },
+        } as unknown as Api;
 
+        render(<Harness api={slow} opened={asDraft('T0')} />);
         click('edit');
         await settle();
         await waitFor(() => expect(status()).toBe('saving'));
 
-        // Two more edits land while the first save is still open.
         click('edit');
         click('edit');
         await settle();
-        expect(sent).toHaveLength(1); // still only one request
+        expect(sent).toHaveLength(0); // the first request has not reached the server yet
 
         act(() => release!());
+        await settle();
         await waitFor(() => expect(status()).toBe('clean'));
 
-        // The second request carries the LATEST document and the NEW token — not the intermediate edit.
         expect(sent).toHaveLength(2);
-        expect(sent[1]).toEqual({ value: '4k', token: 'T2' });
+        expect(sent[1]!.value).toBe('4k'); // the LATEST document, not the intermediate edit
+        expect(sent[1]!.token).toBe('T1'); // …carrying the token the first save returned
     });
 
     it('does not save an edit that changed nothing', async () => {
-        // Re-typing the same value must not mint a revision — a new `updatedAt` would conflict with another
-        // tab for no reason at all.
-        const { api, sent } = fakeApi(() => Promise.resolve({ updatedAt: 'T2' }));
-        render(<Harness api={api} opened={asDraft('T1')} />);
-
-        act(() => {
-            screen.getByText('edit').click();
-        });
+        const { api, sent } = conditionalSave('T0');
+        render(<Harness api={api} opened={asDraft('T0')} />);
+        click('edit');
         await settle();
         await waitFor(() => expect(sent).toHaveLength(1));
-
-        // Applying the identical value again.
         await settle();
         expect(sent).toHaveLength(1);
     });
@@ -179,81 +230,137 @@ describe('an edit is instant and the save follows', () => {
 
 describe('a refused edit keeps the document', () => {
     it('reports the refusal and changes nothing', async () => {
-        const { api, sent } = fakeApi(() => Promise.resolve({ updatedAt: 'T2' }));
-        render(<Harness api={api} opened={asDraft('T1')} />);
+        const { api, sent } = conditionalSave('T0');
+        render(<Harness api={api} opened={asDraft('T0')} />);
 
         click('bad-edit');
         expect(screen.getByTestId('refusal').textContent).toBe('empty');
-        expect(value()).toBe('1k'); // untouched
+        expect(value()).toBe('1k');
         await settle();
-        expect(sent).toHaveLength(0); // and never sent
+        expect(sent).toHaveLength(0);
     });
 });
 
-describe('someone else saved first', () => {
-    it('holds the local document and offers both ways out', async () => {
-        // The moment the user's work matters most. A conflict that cleared the document to "reload and try
-        // again" would convert a PREVENTED silent loss into a loud one.
-        const { api } = fakeApi(() =>
-            Promise.reject(
-                new ApiError('conflict', 'changed', {
-                    status: 409,
-                    code: 'WORKING_COPY_CONFLICT',
-                    body: { currentUpdatedAt: 'T9' },
-                }),
-            ),
-        );
-        render(<Harness api={api} opened={asDraft('T1')} />);
+describe('getting out of a conflict — against a server that really enforces the token', () => {
+    it('reaches conflict and keeps the local document on screen', async () => {
+        const { api, somebodyElseSaves } = conditionalSave('T0');
+        render(<Harness api={api} opened={asDraft('T0')} />);
 
+        somebodyElseSaves(); // another tab writes; our token is now stale
         click('edit');
         await settle();
+
         await waitFor(() => expect(status()).toBe('conflict'));
-        expect(value()).toBe('2k'); // the user's edit is STILL on screen
+        expect(value()).toBe('2k'); // the user's edit is STILL there
     });
 
-    it('can force the save through', async () => {
-        let calls = 0;
-        const { api, sent } = fakeApi(() => {
-            calls += 1;
-            return calls === 1
-                ? Promise.reject(new ApiError('conflict', 'changed', { status: 409, body: {} }))
-                : Promise.resolve({ updatedAt: 'T9' });
-        });
-        render(<Harness api={api} opened={asDraft('T1')} />);
+    it('"save mine" succeeds by DROPPING the precondition — retrying the same token never could', async () => {
+        // The defect this replaces: the button called `flush`, which had nothing queued (the failing save had
+        // already cleared it) and would have re-sent the refused token anyway. A no-op wrapped around an
+        // impossibility — and the old test passed because its fake ignored tokens entirely.
+        const { api, sent, somebodyElseSaves } = conditionalSave('T0');
+        render(<Harness api={api} opened={asDraft('T0')} />);
 
+        somebodyElseSaves();
         click('edit');
         await settle();
         await waitFor(() => expect(status()).toBe('conflict'));
 
-        // Editing again re-queues, and flush sends it.
-        click('edit');
-        click('flush');
+        click('overwrite');
         await settle();
         await waitFor(() => expect(status()).toBe('clean'));
-        expect(sent.length).toBeGreaterThanOrEqual(2);
+
+        // The forcing save carried NO token — that is what makes it able to succeed at all.
+        expect(sent[sent.length - 1]).toMatchObject({ value: '2k', token: undefined });
     });
 
-    it('can throw the local document away and take theirs', async () => {
-        const { api } = fakeApi(() => Promise.reject(new ApiError('conflict', 'changed', { status: 409, body: {} })));
-        const { rerender } = render(<Harness api={api} opened={asDraft('T1')} />);
+    it('a plain retry after a conflict does NOT silently succeed — the token is still stale', async () => {
+        // Guards the distinction the fix rests on. If `flush` ever starts dropping the precondition, this
+        // goes red — a deliberate overwrite must stay a deliberate, separate action.
+        const { api, somebodyElseSaves } = conditionalSave('T0');
+        render(<Harness api={api} opened={asDraft('T0')} />);
 
+        somebodyElseSaves();
         click('edit');
         await settle();
         await waitFor(() => expect(status()).toBe('conflict'));
 
-        click('discard');
-        // Re-adopting the loader's document is what "load theirs" means.
-        rerender(<Harness api={api} opened={asDraft('T1')} />);
+        click('flush');
+        await settle();
+        expect(status()).toBe('conflict'); // still refused, correctly
+    });
+
+    it('"take theirs" ASKS THE SERVER — it does not re-adopt the cached document', async () => {
+        // The old version bumped a local counter, re-adopting the same cached circuit and re-installing the
+        // token the server had already rejected — so the project became permanently unsaveable and the user
+        // had lost their work for nothing.
+        const reload = jest.fn();
+        const { api, somebodyElseSaves } = conditionalSave('T0');
+        render(<Harness api={api} opened={asDraft('T0')} onReload={reload} />);
+
+        somebodyElseSaves();
+        click('edit');
+        await settle();
+        await waitFor(() => expect(status()).toBe('conflict'));
+
+        click('take-theirs');
+        expect(reload).toHaveBeenCalledTimes(1);
+    });
+
+    it('adopting the server document afterwards leaves a SAVEABLE project', async () => {
+        // The end state that matters: after taking theirs, the very next edit must save cleanly.
+        const { api, somebodyElseSaves, currentToken } = conditionalSave('T0');
+        const { rerender } = render(<Harness api={api} opened={asDraft('T0')} />);
+
+        somebodyElseSaves();
+        click('edit');
+        await settle();
+        await waitFor(() => expect(status()).toBe('conflict'));
+
+        // What `reloadOpened` produces: the server's current document and its current token.
+        rerender(<Harness api={api} opened={asDraft(currentToken())} />);
         await waitFor(() => expect(value()).toBe('1k'));
+
+        click('edit');
+        await settle();
+        await waitFor(() => expect(status()).toBe('clean'));
+    });
+});
+
+describe('switching projects', () => {
+    it('never writes one project’s circuit into another project’s draft', async () => {
+        // The refs used not to be scoped, so a save landing after a switch wrote into the wrong project,
+        // poisoned the new token, and reported "saved" for a document that was never sent.
+        const { api, sent } = conditionalSave('T0');
+        const { rerender } = render(<Harness api={api} opened={asDraft('T0')} projectId="project-1" />);
+
+        click('edit');
+        rerender(<Harness api={api} opened={asDraft('S0')} projectId="project-2" />);
+        await settle();
+
+        for (const call of sent) {
+            expect(call.projectId).toBe('project-1'); // whatever went out, went where it was typed
+        }
+    });
+
+    it('flushes unsent edits on the way out instead of dropping them', async () => {
+        const { api, sent } = conditionalSave('T0');
+        const { rerender } = render(<Harness api={api} opened={asDraft('T0')} projectId="project-1" />);
+
+        click('edit');
+        expect(sent).toHaveLength(0);
+        rerender(<Harness api={api} opened={asDraft('S0')} projectId="project-2" />);
+        await settle();
+
+        expect(sent).toHaveLength(1);
+        expect(sent[0]).toMatchObject({ projectId: 'project-1', value: '2k' });
     });
 });
 
 describe('leaving the page', () => {
     it('sends the last edit rather than dropping it with the debounce', async () => {
-        // A debounce cancelled by unmount silently loses whatever was typed in the final second, which the
-        // user experiences as the editor forgetting.
-        const { api, sent } = fakeApi(() => Promise.resolve({ updatedAt: 'T2' }));
-        const { unmount } = render(<Harness api={api} opened={asDraft('T1')} />);
+        const { api, sent } = conditionalSave('T0');
+        const { unmount } = render(<Harness api={api} opened={asDraft('T0')} />);
 
         click('edit');
         expect(sent).toHaveLength(0); // still inside the debounce window
@@ -262,6 +369,6 @@ describe('leaving the page', () => {
             unmount();
             await Promise.resolve();
         });
-        expect(sent).toEqual([{ value: '2k', token: 'T1' }]);
+        expect(sent).toEqual([{ projectId: 'project-1', value: '2k', token: 'T0', baseVersionId: undefined }]);
     });
 });

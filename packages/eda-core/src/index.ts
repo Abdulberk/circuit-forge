@@ -80,6 +80,7 @@ export {
     PositionSchema,
     WireSchema,
     UiJsonSchema,
+    DESIGNATOR_PATTERN,
     validateCircuitJson,
     safeValidateCircuitJson,
     validateUiJson,

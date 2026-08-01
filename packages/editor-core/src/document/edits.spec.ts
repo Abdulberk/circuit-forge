@@ -9,7 +9,7 @@ import { execFileSync } from 'node:child_process';
 import { join } from 'node:path';
 import { pathToFileURL } from 'node:url';
 
-import type { CircuitJson } from '@circuit-forge/eda-core';
+import { DESIGNATOR_PATTERN, safeValidateCircuitJson, type CircuitJson } from '@circuit-forge/eda-core';
 
 import { setDesignator, setNetName, setValue } from './edits';
 
@@ -177,22 +177,39 @@ describe('the edit primitives hold on every gallery circuit', () => {
         });
     });
 
-    it('accepts the designator shapes real parts actually use', () => {
-        // Asserted as "never refused for its CHARACTERS", not "always accepted". `R1` is a legal shape and is
-        // also already taken in astable-flasher, so a blanket `ok: true` would be a test that only passes on
-        // circuits that happen not to contain the name — which is exactly the accidental-fixture dependence
-        // this whole file exists to avoid. Uniqueness is a different rule, tested above.
+    it('accepts exactly the designator shapes the CANONICAL schema accepts', () => {
+        // This test used to assert that `C_IN`, `X$1`, `J1-2` and `TP.3` were fine — because the editor had
+        // invented its own looser grammar, and the test pinned the invention in place. Every one of them is
+        // rejected by `ComponentSchema`, so the editor was cheerfully accepting renames that the working copy
+        // stored (it validates shape only) and POST /layouts then refused, minutes later, about a part the
+        // user had already forgotten renaming.
+        //
+        // Compared against the schema's own exported pattern rather than a second list here, so this cannot
+        // drift from it either — the point of the fix was to stop having two answers to one question.
         forEachCircuit((name, circuit) => {
             const first = componentsOf(circuit)[0]!;
-            for (const good of ['R1', 'U12', 'LED3', 'C_IN', 'Q1A', 'X$1', 'J1-2', 'TP.3']) {
-                const result = setDesignator(circuit, first.id, good);
-                const verdict = result.ok ? 'accepted' : result.reason;
-                expect({ name, good, grammarRefused: verdict === 'invalid-characters' }).toEqual({
+            for (const candidate of ['R1', 'U12', 'LED3', 'Q1A', 'C_IN', 'X$1', 'J1-2', 'TP.3', 'R', 'U1B']) {
+                const result = setDesignator(circuit, first.id, candidate);
+                const grammarRefused = !result.ok && result.reason === 'invalid-characters';
+                expect({ name, candidate, grammarRefused }).toEqual({
                     name,
-                    good,
-                    grammarRefused: false,
+                    candidate,
+                    grammarRefused: !DESIGNATOR_PATTERN.test(candidate),
                 });
             }
+        });
+    });
+
+    it('an accepted rename produces a document the canonical schema still validates', () => {
+        // The end-to-end property that matters: whatever the editor lets through must survive the pipeline.
+        // Checked against the real validator, not a re-reading of the same regex.
+        forEachCircuit((name, circuit) => {
+            const first = componentsOf(circuit)[0]!;
+            const result = setDesignator(circuit, first.id, 'ZZ99');
+            expect({ name, ok: result.ok }).toEqual({ name, ok: true });
+            if (!result.ok) return;
+            const parsed = safeValidateCircuitJson(result.circuit);
+            expect({ name, valid: parsed.success }).toEqual({ name, valid: true });
         });
     });
 
