@@ -1,0 +1,31 @@
+{
+    "name": "@circuit-forge/pcb-contract",
+    "version": "0.1.0",
+    "description": "The shape of a laid-out board — types only, zero dependencies, browser-safe. The seam that keeps the PCB toolchain on the server.",
+    "license": "MIT",
+    "publishConfig": {
+        "access": "public"
+    },
+    "main": "dist/index.js",
+    "types": "dist/index.d.ts",
+    "files": [
+        "dist"
+    ],
+    "scripts": {
+        "build": "tsc",
+        "prepublishOnly": "npm run build",
+        "dev": "tsc --watch",
+        "lint": "eslint src --ext .ts",
+        "lint:fix": "eslint src --ext .ts --fix",
+        "clean": "rm -rf dist",
+        "typecheck": "tsc --noEmit",
+        "test": "jest"
+    },
+    "devDependencies": {
+        "@types/jest": "^29.5.12",
+        "@types/node": "^22.7.5",
+        "jest": "^29.7.0",
+        "ts-jest": "^29.2.5",
+        "typescript": "^5.9.3"
+    }
+}

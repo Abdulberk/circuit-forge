@@ -15,7 +15,7 @@
  * coordinates (matched by designator+pad, with designator+net as fallback), never the raw DRC pos —
  * frame-mismatch-proof.
  */
-import type { LayoutGeometry, Pt } from './layout-result';
+import type { Airwire, DrcCheck, LayoutGeometry, Pt } from '@circuit-forge/pcb-contract';
 
 export interface DrcItem {
     description: string;
@@ -38,22 +38,9 @@ export interface ParsedDrc {
     warnings: DrcEntry[];
     unconnected: DrcEntry[];
 }
-export interface DrcCheck {
-    /** coarse group (Flux "Reviews" panel sections); KiCad's exact type kept in `type`. */
-    category: string;
-    type: string;
-    severity: string;
-    message: string;
-    /** first item position (KiCad page frame) if any, for a "jump to" affordance. */
-    location: { x: number; y: number } | null;
-    /** component designators referenced by the entry (parsed from item descriptions). */
-    refs: string[];
-}
-export interface Airwire {
-    net: string;
-    from: Pt;
-    to: Pt;
-}
+/** Declared in `@circuit-forge/pcb-contract` (types only, browser-safe); re-exported so this file stays
+ *  the one place that produces them. */
+export type { DrcCheck, Airwire } from '@circuit-forge/pcb-contract';
 
 /**
  * Severities KiCad rates below "error". A finding at one of these is real but does not withhold the fab
