@@ -72,11 +72,7 @@ export interface CopperFlow {
  * the overlay's job is to say which net this copper is and what is moving through it — a hairline notch on
  * the outside of a corner does not change that answer.
  */
-export function buildCopperMesh(
-    traces: Trace[],
-    netIndexByName: Map<string, number>,
-    flow?: CopperFlow,
-): CopperMesh {
+export function buildCopperMesh(traces: Trace[], netIndexByName: Map<string, number>, flow?: CopperFlow): CopperMesh {
     const pos: number[] = [];
     const idx: number[] = [];
     const net: number[] = [];
@@ -114,10 +110,18 @@ export function buildCopperMesh(
 
                 const base = pos.length / 3;
                 pos.push(
-                    a.x + nx * halfMm, a.y + ny * halfMm, z,
-                    a.x - nx * halfMm, a.y - ny * halfMm, z,
-                    b.x - nx * halfMm, b.y - ny * halfMm, z,
-                    b.x + nx * halfMm, b.y + ny * halfMm, z,
+                    a.x + nx * halfMm,
+                    a.y + ny * halfMm,
+                    z,
+                    a.x - nx * halfMm,
+                    a.y - ny * halfMm,
+                    z,
+                    b.x - nx * halfMm,
+                    b.y - ny * halfMm,
+                    z,
+                    b.x + nx * halfMm,
+                    b.y + ny * halfMm,
+                    z,
                 );
                 for (let k = 0; k < 4; k++) {
                     net.push(n);

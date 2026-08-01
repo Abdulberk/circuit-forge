@@ -216,7 +216,10 @@ function coverageEntry(c?: SimulationCoverage): DeterminedEntry {
     // No `gradation` here on purpose: this check is not a shallow version of itself when it finds a hole —
     // it ran fully and reported. The finding belongs in `detail`; the structured SimulationCoverage travels
     // with the simulation result for anything that needs to branch on it.
-    return { status: 'run', detail: describeCoverage(c) ?? 'every component with an electrical model was emitted to the deck' };
+    return {
+        status: 'run',
+        detail: describeCoverage(c) ?? 'every component with an electrical model was emitted to the deck',
+    };
 }
 
 /** What the routing stage reports about itself — mirrors LayoutResult.delivery.routing. */

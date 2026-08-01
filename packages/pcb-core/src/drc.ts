@@ -15,7 +15,7 @@
  * coordinates (matched by designator+pad, with designator+net as fallback), never the raw DRC pos —
  * frame-mismatch-proof.
  */
-import type { LayoutGeometry, Pt } from './layout-result';
+import type { Airwire, DrcCheck, LayoutGeometry, Pt } from '@circuit-forge/pcb-contract';
 
 export interface DrcItem {
     description: string;
@@ -38,22 +38,9 @@ export interface ParsedDrc {
     warnings: DrcEntry[];
     unconnected: DrcEntry[];
 }
-export interface DrcCheck {
-    /** coarse group (Flux "Reviews" panel sections); KiCad's exact type kept in `type`. */
-    category: string;
-    type: string;
-    severity: string;
-    message: string;
-    /** first item position (KiCad page frame) if any, for a "jump to" affordance. */
-    location: { x: number; y: number } | null;
-    /** component designators referenced by the entry (parsed from item descriptions). */
-    refs: string[];
-}
-export interface Airwire {
-    net: string;
-    from: Pt;
-    to: Pt;
-}
+/** Declared in `@circuit-forge/pcb-contract` (types only, browser-safe); re-exported so this file stays
+ *  the one place that produces them. */
+export type { DrcCheck, Airwire } from '@circuit-forge/pcb-contract';
 
 /**
  * Severities KiCad rates below "error". A finding at one of these is real but does not withhold the fab
@@ -145,22 +132,41 @@ function parseItemDesc(description: string): { pad?: string; net: string; design
  * severity split was made to end — a board reporting nothing to say about itself while its labels are
  * printed under the minimum height we declared.
  */
-export function drcToChecks(report: ParsedDrc): DrcCheck[] {
-    return [...report.violations, ...report.warnings].map((v) => ({
-        category: drcCategory(v.type),
-        type: v.type,
-        severity: v.severity,
-        message: v.description,
+export function drcToChecks(report: ParsedDrc, geo?: LayoutGeometry): DrcCheck[] {
+    // The SAME frame discipline airwires already follow, and for the same reason: a finding's raw `pos` is
+    // in KiCad page space while everything a client renders is board-centered. Measured on bridge-rectifier
+    // — a 26.2 mm board — the offset is +100 mm on both axes with Y additionally negated, so a marker drawn
+    // from the raw value lands almost four board-widths away. It is not an obviously-broken value either;
+    // it is a plausible number, which is why it would survive a demo.
+    //
+    // So the location is resolved to OUR pad coordinates through the designator+pad the finding names, and
+    // when it cannot be resolved it is NULL. A null location says "we know there is a problem, we cannot
+    // point at it"; a wrong location says "the problem is over there", and only one of those is true.
+    const pads = geo ? padIndexes(geo) : null;
+    return [...report.violations, ...report.warnings].map((v) => {
         // `items` is present on every real kicad-cli 10 entry, but an entry without it must still be
         // REPORTED as a violation with no location — losing the whole verdict to a missing detail field
         // would turn an honest "not manufacturable" into an opaque crash.
-        location: v.items?.[0]?.pos ?? null,
-        refs: [
-            ...new Set(
-                (v.items ?? []).map((it) => parseItemDesc(it.description)?.designator).filter((d): d is string => !!d),
-            ),
-        ],
-    }));
+        const parsed = (v.items ?? []).map((it) => parseItemDesc(it.description));
+        const located = pads
+            ? (parsed
+                  .map((p) =>
+                      p
+                          ? ((p.pad !== undefined ? pads.byDesigPin.get(`${p.designator}|${p.pad}`) : undefined) ??
+                            pads.byDesigNet.get(`${p.designator}|${p.net}`))
+                          : undefined,
+                  )
+                  .find(Boolean) ?? null)
+            : null;
+        return {
+            category: drcCategory(v.type),
+            type: v.type,
+            severity: v.severity,
+            message: v.description,
+            location: located,
+            refs: [...new Set(parsed.map((p) => p?.designator).filter((d): d is string => !!d))],
+        };
+    });
 }
 
 /**
@@ -170,19 +176,29 @@ export function drcToChecks(report: ParsedDrc): DrcCheck[] {
  * endpoints live in the same frame the FE already renders (never the raw DRC page coords).
  * Unmatched entries (rare designator/net ambiguity) are skipped, not faked.
  */
-export function airwiresFromDrc(report: ParsedDrc, geo: LayoutGeometry): { airwires: Airwire[]; unmatched: number } {
+/**
+ * Two indexes from OUR shaped geometry, shared by everything that has to turn a DRC finding into a point
+ * on the board a user can be shown.
+ *
+ * designator|pad uniquely identifies a pad (so a part with 2+ pads on ONE net resolves to the exact pad
+ * the DRC named); designator|net is the fallback — correct when the part has a single pad on that net, and
+ * it also covers pad-name↔pin mismatches (KiCad "Pad 1" against a semantic pin "anode").
+ */
+function padIndexes(geo: LayoutGeometry): { byDesigPin: Map<string, Pt>; byDesigNet: Map<string, Pt> } {
     const designatorByCompId = new Map(geo.components.map((c) => [c.id, c.designator]));
-    // Two indexes: designator|pad uniquely identifies a pad (so a part with 2+ pads on ONE net resolves to the
-    // exact pad the DRC named); designator|net is the fallback (correct when the part has a single pad on that
-    // net, and it also covers pad-name↔pin mismatches — e.g. KiCad "Pad 1" vs a semantic pin "anode").
-    const padByDesigPin = new Map<string, Pt>();
-    const padByDesigNet = new Map<string, Pt>();
+    const byDesigPin = new Map<string, Pt>();
+    const byDesigNet = new Map<string, Pt>();
     for (const p of geo.pads) {
         const d = designatorByCompId.get(p.componentId);
         if (!d) continue;
-        if (p.pin) padByDesigPin.set(`${d}|${p.pin}`, { x: p.x, y: p.y });
-        if (p.net) padByDesigNet.set(`${d}|${p.net}`, { x: p.x, y: p.y }); // last-wins — fallback only
+        if (p.pin) byDesigPin.set(`${d}|${p.pin}`, { x: p.x, y: p.y });
+        if (p.net) byDesigNet.set(`${d}|${p.net}`, { x: p.x, y: p.y }); // last-wins — fallback only
     }
+    return { byDesigPin, byDesigNet };
+}
+
+export function airwiresFromDrc(report: ParsedDrc, geo: LayoutGeometry): { airwires: Airwire[]; unmatched: number } {
+    const { byDesigPin: padByDesigPin, byDesigNet: padByDesigNet } = padIndexes(geo);
     // Prefer the exact pad the DRC names ("Pad N"); fall back to designator|net when the pad name doesn't match
     // a pin (or is absent). `net` is the entry's shared unconnected net (both endpoints are on it).
     const locate = (item: { pad?: string; designator: string }, net: string): Pt | undefined =>

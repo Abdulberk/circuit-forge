@@ -1,0 +1,16 @@
+{
+    "extends": "../../tsconfig.base.json",
+    "compilerOptions": {
+        "outDir": "./dist",
+        "rootDir": "./src",
+        "composite": true,
+        // No DOM and no Node. This package is imported by a browser bundle AND by the server, so the
+        // compiler is what stops a `document` or a `Buffer` from appearing here rather than a convention
+        // somebody remembers. An empty `types` also blocks @types/node from leaking in through the
+        // workspace root.
+        "lib": ["ES2022"],
+        "types": []
+    },
+    "include": ["src/**/*"],
+    "exclude": ["node_modules", "dist", "**/*.spec.ts", "**/*.test.ts"]
+}

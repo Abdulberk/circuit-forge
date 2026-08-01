@@ -178,6 +178,64 @@ describe('Project working copy (PUT/GET/DELETE /projects/:id/working-copy)', () 
         expect(rows).toBe(1);
     });
 
+    describe('optimistic concurrency — opt-in, so the old contract is untouched', () => {
+        /**
+         * The draft is one row per project and the save was an unconditional upsert. That is right for a
+         * single tab autosaving keystrokes, and it is silent DATA LOSS the moment two editors are open:
+         * two tabs of the same user overwrite each other, the loser's work is gone, and nobody is told.
+         *
+         * Sending the `updatedAt` the client last saw turns that into a 409 carrying the CURRENT value, so
+         * the client can reconcile. Omitting it keeps last-writer-wins exactly — proven by the test above,
+         * which still passes unchanged.
+         */
+        it('a save whose expectedUpdatedAt matches is applied', async () => {
+            const before = await wc(projectA, tokenA).expect(200);
+            const res = await put(projectA, tokenA, {
+                circuitJson: rev('cc-ok'),
+                uiJson: {},
+                expectedUpdatedAt: before.body.updatedAt,
+            }).expect(200);
+            expect(new Date(res.body.updatedAt).getTime()).toBeGreaterThanOrEqual(
+                new Date(before.body.updatedAt).getTime(),
+            );
+            const got = await wc(projectA, tokenA).expect(200);
+            expect(got.body.circuitJson).toEqual(rev('cc-ok'));
+        });
+
+        it('a STALE expectedUpdatedAt is refused with 409, and the draft is NOT overwritten', async () => {
+            const stale = await wc(projectA, tokenA).expect(200);
+            // Someone else (or another tab) saves in between.
+            await put(projectA, tokenA, { circuitJson: rev('cc-winner'), uiJson: {} }).expect(200);
+
+            const res = await put(projectA, tokenA, {
+                circuitJson: rev('cc-loser'),
+                uiJson: {},
+                expectedUpdatedAt: stale.body.updatedAt,
+            }).expect(409);
+            expect(res.body.code).toBe('WORKING_COPY_CONFLICT');
+            // The response carries what is actually there, so the client can reconcile instead of guessing.
+            expect(res.body.currentUpdatedAt).toBeTruthy();
+
+            const got = await wc(projectA, tokenA).expect(200);
+            expect(got.body.circuitJson).toEqual(rev('cc-winner')); // the loser did NOT clobber it
+        });
+
+        it('omitting expectedUpdatedAt keeps last-writer-wins — the old callers are unaffected', async () => {
+            await put(projectA, tokenA, { circuitJson: rev('cc-a'), uiJson: {} }).expect(200);
+            await put(projectA, tokenA, { circuitJson: rev('cc-b'), uiJson: {} }).expect(200);
+            const got = await wc(projectA, tokenA).expect(200);
+            expect(got.body.circuitJson).toEqual(rev('cc-b'));
+        });
+
+        it('a malformed expectedUpdatedAt is a 400, not a silent full overwrite', async () => {
+            await put(projectA, tokenA, {
+                circuitJson: rev('cc-bad'),
+                uiJson: {},
+                expectedUpdatedAt: 'yesterday',
+            }).expect(400);
+        });
+    });
+
     it('autosaving NEVER creates a version — only explicit "Save version" does (no history flood)', async () => {
         const before = (await versions(projectA).expect(200)).body.total; // just versionA1 so far
         await put(projectA, tokenA, { circuitJson: rev('c4'), uiJson: {} }).expect(200);

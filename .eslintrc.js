@@ -103,6 +103,22 @@ module.exports = {
     },
     overrides: [
         {
+            // React's own rules, scoped to the app that is React. `exhaustive-deps` is the single most
+            // valuable lint for an editor: a missing dependency produces a stale closure — a handler that
+            // keeps calling last render's `save` with last render's document — and the symptom is lost work,
+            // not a crash. `rules-of-hooks` catches the conditional hook that corrupts state silently.
+            //
+            // Scoped rather than global on purpose: apps/pcb-viewer predates this and would light up with
+            // findings that have nothing to do with the change being made. Widening it there is its own task,
+            // with its own review.
+            files: ['apps/studio/**/*.ts', 'apps/studio/**/*.tsx'],
+            plugins: ['react-hooks'],
+            rules: {
+                'react-hooks/rules-of-hooks': 'error',
+                'react-hooks/exhaustive-deps': 'warn',
+            },
+        },
+        {
             files: ['*.spec.ts', '*.test.ts', '**/__tests__/**/*.ts'],
             // A jest mock is `any` by construction: jest.fn() returns it, mock factories return it, and
             // it flows straight back into the code under test. These four were already off for that

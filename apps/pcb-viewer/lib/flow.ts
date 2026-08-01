@@ -172,7 +172,10 @@ function solveNet(
         if (v === null) return { perEdge: edges.map(() => null), reason: 'unknown-pad-current' };
     }
 
-    const adj: Array<Array<{ to: number; edge: number; forward: boolean }>> = Array.from({ length: nodeCount }, () => []);
+    const adj: Array<Array<{ to: number; edge: number; forward: boolean }>> = Array.from(
+        { length: nodeCount },
+        () => [],
+    );
     edges.forEach((e, i) => {
         adj[e.a]!.push({ to: e.b, edge: i, forward: true });
         adj[e.b]!.push({ to: e.a, edge: i, forward: false });

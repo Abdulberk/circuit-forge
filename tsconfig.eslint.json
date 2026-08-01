@@ -14,7 +14,18 @@
         // The build configs run these; ESLint has its own no-unused-vars rule and should not
         // duplicate (or double-report) tsc's diagnostics.
         "noUnusedLocals": false,
-        "noUnusedParameters": false
+        "noUnusedParameters": false,
+        // The include below covers `.tsx`, but the base config sets neither `jsx` nor the DOM lib —
+        // so every React file parsed FAILED to resolve its types and collapsed to `any`. The
+        // type-aware rules then reported the collapse instead of the code: `no-unsafe-member-access`
+        // on `error.message` where `error` is a perfectly well-typed `ApiError`. Worse, that is the
+        // quiet direction — rules that need real types (no-floating-promises, no-misused-promises)
+        // find nothing to complain about in an `any`, so a React file was effectively unlinted while
+        // appearing to be linted. `bundler` matches what the Next apps build with.
+        "jsx": "react-jsx",
+        "lib": ["ES2022", "DOM", "DOM.Iterable"],
+        "moduleResolution": "bundler",
+        "module": "esnext"
     },
     "include": ["apps/**/*.ts", "apps/**/*.tsx", "packages/**/*.ts"],
     "exclude": ["**/node_modules/**", "**/dist/**", "**/coverage/**", "**/.next/**"]

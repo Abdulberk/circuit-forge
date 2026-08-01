@@ -1,0 +1,4 @@
+node_modules/
+.next/
+# Rewritten by `next build` on every run; Next owns it, so a committed copy only ever goes stale.
+next-env.d.ts

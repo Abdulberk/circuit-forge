@@ -1,0 +1,31 @@
+{
+    "compilerOptions": {
+        "target": "ES2022",
+        "lib": ["ES2022", "DOM", "DOM.Iterable"],
+        "module": "esnext",
+        "moduleResolution": "bundler",
+        "jsx": "preserve",
+        "allowJs": true,
+        "noEmit": true,
+        "incremental": true,
+        "esModuleInterop": true,
+        "resolveJsonModule": true,
+        "isolatedModules": true,
+        "skipLibCheck": true,
+        "strict": true,
+        "noUnusedLocals": true,
+        "noUnusedParameters": true,
+        "noImplicitReturns": true,
+        "noFallthroughCasesInSwitch": true,
+        "noUncheckedIndexedAccess": true,
+        "forceConsistentCasingInFileNames": true,
+        "plugins": [{ "name": "next" }]
+        // No `@/*` alias, deliberately. Next resolves it, but the repo's ESLint project is at the root and
+        // does not — so every aliased import resolved to `any`, and the type-aware rules
+        // (no-floating-promises, no-misused-promises) had nothing left to inspect. A file can be unlinted
+        // while appearing linted, which is worse than a slightly longer import path. Relative specifiers are
+        // understood identically by tsc, ESLint, Next and jest.
+    },
+    "include": ["next-env.d.ts", "**/*.ts", "**/*.tsx", ".next/types/**/*.ts"],
+    "exclude": ["node_modules", ".next"]
+}

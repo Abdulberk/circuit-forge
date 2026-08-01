@@ -11,83 +11,35 @@
  *                 .kicad_pcb and only FILLED at export. `poursFromKicadPcb` (M1b) reads that separately.
  *   • glbUrl / manufacturing — produced by the kicad-cli export step in the worker (M2/M3), not the soup.
  */
+import type {
+    Pt,
+    LayoutComponent,
+    LayoutPad,
+    LayoutTrace,
+    LayoutVia,
+    LayoutGeometry,
+} from '@circuit-forge/pcb-contract';
+
 import type { PinExpectation } from './adapter';
 import type { TscElement } from './parity';
 
-export interface Pt {
-    x: number;
-    y: number;
-}
-
-export interface LayoutComponent {
-    /** OUR CircuitJson component id when resolvable (cross-probe back to the user's design), else the emitted name. */
-    id: string;
-    designator: string;
-    x: number;
-    y: number;
-    /** degrees */
-    rotation: number;
-    /** tscircuit footprinter string (e.g. "soic8"), or null if no cad_component. */
-    footprint: string | null;
-    /** body box (NOT the courtyard extent — use `courtyard` for collision/drag). */
-    bodyWmm: number;
-    bodyHmm: number;
-    /** 3D body height (mm) from cad_component.position.z, or null. */
-    heightMm: number | null;
-    /** courtyard polygon (normalized from pcb_courtyard_rect OR pcb_courtyard_outline). */
-    courtyard: Pt[];
-    layer: string;
-}
-
-export interface LayoutPad {
-    id: string;
-    componentId: string;
-    /** best-available pin reference for schematic cross-probe (source_port name / hint), or null. */
-    pin: string | null;
-    /** OUR authored pinId for this pad (1, +, anode, c…), or null when it could not be resolved.
-     *  This is the delivered join between the design and the copper — see ourPinBySrcPort. */
-    sourcePin: string | null;
-    /** emitted net name, or null for an unconnected / single-pin pad. */
-    net: string | null;
-    x: number;
-    y: number;
-    /** layers the pad sits on ("top" for SMD; ["top","bottom"] for a plated hole). */
-    layers: string[];
-    shape: string;
-    wMm: number;
-    hMm: number;
-    /** through-hole drill (mm) for plated holes; null for SMD. */
-    drillMm: number | null;
-}
-
-export interface LayoutTrace {
-    id: string;
-    /** Emitted net name. Resolved from the soup's `connection_name` (fast route) or, when the freerouting
-     *  splice replaced the copper, from `source_trace_id`. Null only when the soup carries neither. */
-    net: string | null;
-    /** copper polylines split per layer (a trace can change layer via a via). */
-    segments: Array<{ layer: string; widthMm: number; points: Pt[] }>;
-}
-
-export interface LayoutVia {
-    id: string;
-    x: number;
-    y: number;
-    drillMm: number;
-    outerMm: number;
-    fromLayer: string;
-    toLayer: string;
-    net: string | null;
-}
-
-export interface LayoutGeometry {
-    board: { widthMm: number; heightMm: number; outline: Pt[] };
-    layers: Array<{ name: string }>;
-    components: LayoutComponent[];
-    pads: LayoutPad[];
-    traces: LayoutTrace[];
-    vias: LayoutVia[];
-}
+/**
+ * The geometry types now live in `@circuit-forge/pcb-contract` — types only, zero dependencies, safe in a
+ * browser bundle. They are re-exported here so every existing import keeps resolving: this file remains
+ * the place that PRODUCES the geometry, it is simply no longer the place that declares its shape.
+ *
+ * The split exists because a client that wants to render a board should not have to depend on pcb-core,
+ * which pulls an evaluator, a footprint library and three format converters that only make sense on a
+ * server. Declaring the shapes separately makes that dependency impossible rather than merely discouraged.
+ */
+export type {
+    Pt,
+    LayoutComponent,
+    LayoutPad,
+    LayoutTrace,
+    LayoutVia,
+    LayoutGeometry,
+} from '@circuit-forge/pcb-contract';
 
 export interface ShapeOptions {
     /** OUR componentId -> emitted (sanitized) name, from AdapterResult. Enables cross-probe to the design. */
@@ -230,17 +182,28 @@ export function shapeLayoutResult(evaluated: TscElement[], opts: ShapeOptions = 
      * and silently mis-attributes for every other part in a hundred-thousand-part catalog — which is the
      * same class of gap `netIdentity` closed for nets, one level down.
      */
+    /**
+     * Composite-key separator for (component, port) lookups.
+     *
+     * NUL is deliberate: it cannot occur in a designator or a port name, so the two halves can never run
+     * together ambiguously — "R1" + "0" and "R10" + "" are distinct keys. It is written as an ESCAPE on
+     * purpose. A scripted patch once left the raw 0x00 byte here instead, which made the whole file read
+     * as BINARY to grep, diff and code review while compiling and passing every test, because the set and
+     * the get happened to use the same wrong byte.
+     */
+    const KEY_SEP = '\u0000';
+
     const ourPinBySrcPort = new Map<string, string>();
     if (opts.expectations?.length) {
         // (emitted component name, port label) -> our pinId
         const byNameAndPort = new Map<string, string>();
-        for (const x of opts.expectations) byNameAndPort.set(`${x.name} ${x.port}`, x.pinId);
+        for (const x of opts.expectations) byNameAndPort.set(`${x.name}${KEY_SEP}${x.port}`, x.pinId);
         for (const [sp, labels] of labelsBySrcPort) {
             const srcComp = srcCompBySrcPort.get(sp);
             const emitted = srcComp ? designatorBySrcComp.get(srcComp) : undefined;
             if (!emitted) continue;
             for (const label of labels) {
-                const hit = byNameAndPort.get(`${emitted} ${label}`);
+                const hit = byNameAndPort.get(`${emitted}${KEY_SEP}${label}`);
                 if (hit !== undefined) {
                     ourPinBySrcPort.set(sp, hit);
                     break;

@@ -21,12 +21,7 @@ export {
     hasShellMetacharacters,
     SecurityError,
 } from './sanitizer';
-export {
-    simulationCoverage,
-    describeCoverage,
-    type SimulationCoverage,
-    type OmittedComponent,
-} from './coverage';
+export { simulationCoverage, describeCoverage, type SimulationCoverage, type OmittedComponent } from './coverage';
 export { solverOptionTokens, applySolverOptions } from './solver-options';
 export {
     diagnoseConvergence,

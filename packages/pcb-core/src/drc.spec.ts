@@ -1,4 +1,4 @@
-import { parseDrcReport, drcCategory, drcToChecks, airwiresFromDrc } from './drc';
+import { parseDrcReport, drcCategory, drcToChecks, airwiresFromDrc, type ParsedDrc } from './drc';
 import type { LayoutGeometry } from './layout-result';
 
 // The REAL unconnected_items entry captured from kicad-cli 10 (7 Tem 2026) — net in "[A]", designators in "of LED1".
@@ -106,9 +106,13 @@ describe('drcToChecks — categorized checks for the contract', () => {
             category: 'clearance',
             type: 'clearance',
             severity: 'error',
-            location: { x: 90, y: 100 },
             refs: ['R2'],
         });
+        // This used to assert `location: {x: 90, y: 100}` — the raw KiCad PAGE coordinate, i.e. it encoded
+        // the bug as the expected answer. Measured on a real 26.2 mm board, page space sits +100 mm away on
+        // both axes with Y negated, so that point is nearly four board-widths off any copper. Without
+        // geometry to resolve it against, the honest answer is that we cannot point at it.
+        expect(checks[0]!.location).toBeNull();
     });
 });
 
@@ -293,5 +297,67 @@ describe('airwiresFromDrc — ratsnest from unconnected_items, drawn on OUR pad 
         expect(unmatched).toBe(0);
         // from = U1 pin 1 @ (0,0) — the EXACT named pad — NOT the last-inserted U1|GND pad (pin 4 @ (5,0)).
         expect(airwires).toEqual([{ net: 'GND', from: { x: 0, y: 0 }, to: { x: 10, y: 0 } }]);
+    });
+});
+
+describe('drcToChecks — a finding points at OUR board, or at nothing', () => {
+    /**
+     * DRC positions are in KiCad PAGE space; everything a client renders is board-centered. Measured on
+     * bridge-rectifier, a 26.2 mm board: the offset is +100 mm on both axes with Y additionally negated, so
+     * a marker drawn from the raw `pos` lands almost four board-widths away — and it is a plausible number,
+     * not an obviously broken one, which is exactly why it would survive a demo.
+     *
+     * `airwiresFromDrc` was fixed for this and says so in its own docstring. `drcToChecks` was not.
+     */
+    const geo = {
+        board: { widthMm: 26.2, heightMm: 24.1, outline: [] },
+        layers: [],
+        components: [{ id: 'd1', designator: 'D1' }],
+        pads: [
+            { componentId: 'd1', pin: '1', sourcePin: 'anode', net: 'AC1', x: -1.65, y: -10 },
+            { componentId: 'd1', pin: '2', sourcePin: 'cathode', net: 'VPLUS', x: 1.65, y: -10 },
+        ],
+        traces: [],
+        vias: [],
+    } as unknown as LayoutGeometry;
+
+    const report = {
+        violations: [
+            {
+                type: 'clearance',
+                severity: 'error',
+                description: 'Clearance violation',
+                // The raw page-space position KiCad reports — 100 mm away from any real copper.
+                items: [{ description: 'Pad 1 [AC1] of D1', pos: { x: 98.35, y: 110 } }],
+            },
+        ],
+        warnings: [],
+        unconnected: [],
+    } as unknown as ParsedDrc;
+
+    it('resolves the location onto the pad the finding names, not the page coordinate', () => {
+        const [check] = drcToChecks(report, geo);
+        expect(check!.location).toEqual({ x: -1.65, y: -10 });
+        expect(check!.refs).toEqual(['D1']);
+    });
+
+    it('without geometry the location is NULL — never the raw page coordinate', () => {
+        // A null location says "there is a problem, we cannot point at it". A wrong location says "the
+        // problem is over there". Only one of those is true.
+        const [check] = drcToChecks(report);
+        expect(check!.location).toBeNull();
+        expect(check!.message).toBe('Clearance violation'); // the finding itself is never lost
+    });
+
+    it('an unresolvable reference still reports the finding, with no location', () => {
+        const orphan = {
+            ...report,
+            violations: [
+                { ...report.violations[0]!, items: [{ description: 'Pad 9 [NOPE] of Q7', pos: { x: 1, y: 2 } }] },
+            ],
+        } as unknown as ParsedDrc;
+        const [check] = drcToChecks(orphan, geo);
+        expect(check!.location).toBeNull();
+        expect(check!.severity).toBe('error');
     });
 });
