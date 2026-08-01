@@ -18,6 +18,7 @@ import { SignIn } from '../components/SignIn';
 import { API_BASE_URL, type ApiError, type OpenedProject } from '../lib/api';
 import { useAsync } from '../lib/useAsync';
 import { useDocument } from '../lib/useDocument';
+import { useUndoShortcuts } from '../lib/useUndoShortcuts';
 
 import { useSession } from './providers';
 
@@ -123,6 +124,7 @@ function Workspace() {
     // The loader fetches; the document OWNS what is on screen and writes it back. Splitting them is what
     // keeps a local edit instant while the save is debounced, refusable and one-at-a-time.
     const doc = useDocument(api, activeProject, opened.data, opened.reload);
+    useUndoShortcuts({ undo: doc.undo, redo: doc.redo });
     const circuit = doc.circuit;
     const counts = useMemo(
         () => ({
@@ -182,6 +184,15 @@ function Workspace() {
                         <option disabled>…and {projects.data.total - projects.data.items.length} more not shown</option>
                     )}
                 </select>
+
+                {/* Titled with the shortcut, because a disabled button with no explanation reads as broken.
+                    Disabled is the truth here: there is genuinely nothing to undo. */}
+                <button onClick={doc.undo} disabled={!doc.canUndo} title="Undo (Ctrl+Z)">
+                    Undo
+                </button>
+                <button onClick={doc.redo} disabled={!doc.canRedo} title="Redo (Ctrl+Shift+Z)">
+                    Redo
+                </button>
 
                 <span className="spacer" />
                 <button

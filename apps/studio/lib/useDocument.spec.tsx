@@ -122,6 +122,26 @@ function Harness({
             <button onClick={doc.flush}>flush</button>
             <button onClick={doc.overwriteWithMine}>overwrite</button>
             <button onClick={doc.takeTheirs}>take-theirs</button>
+
+            <output data-testid="canUndo">{String(doc.canUndo)}</output>
+            <output data-testid="canRedo">{String(doc.canRedo)}</output>
+            <button onClick={doc.undo}>undo</button>
+            <button onClick={doc.redo}>redo</button>
+            {/* Two edits in one commit: one undo step, and all-or-nothing. */}
+            <button
+                onClick={() =>
+                    doc.applyMany('Compound', [(c) => setValue(c, 'r1', '5k'), (c) => setValue(c, 'r1', '9k')])
+                }
+            >
+                compound
+            </button>
+            <button
+                onClick={() =>
+                    doc.applyMany('Bad compound', [(c) => setValue(c, 'r1', '5k'), (c) => setValue(c, 'r1', '')])
+                }
+            >
+                bad-compound
+            </button>
         </div>
     );
 }
@@ -225,6 +245,112 @@ describe('an edit is instant and the save follows', () => {
         await waitFor(() => expect(sent).toHaveLength(1));
         await settle();
         expect(sent).toHaveLength(1);
+    });
+});
+
+describe('undo and redo are edits, and edits are saved', () => {
+    it('SAVES an undo — leaving it local would resurrect the change on reload', async () => {
+        // The surprise this prevents: press Ctrl+Z, watch the change reverse, close the tab, and get the
+        // un-undone version back. Same class of failure as a dropped keystroke.
+        const { api, sent } = conditionalSave('T0');
+        render(<Harness api={api} opened={asDraft('T0')} />);
+
+        click('edit');
+        await settle();
+        await waitFor(() => expect(status()).toBe('clean'));
+        expect(sent).toHaveLength(1);
+
+        click('undo');
+        expect(value()).toBe('1k'); // reversed on screen immediately
+        await settle();
+        await waitFor(() => expect(status()).toBe('clean'));
+
+        // …and the reversal went to the server, carrying the token the previous save returned.
+        expect(sent).toHaveLength(2);
+        expect(sent[1]).toMatchObject({ value: '1k', token: 'T1' });
+    });
+
+    it('does not save when there is nothing to undo', async () => {
+        const { api, sent } = conditionalSave('T0');
+        render(<Harness api={api} opened={asDraft('T0')} />);
+
+        click('undo');
+        await settle();
+        expect(sent).toHaveLength(0);
+        expect(status()).toBe('clean');
+    });
+
+    it('redo puts the change back, and saves that too', async () => {
+        const { api, sent } = conditionalSave('T0');
+        render(<Harness api={api} opened={asDraft('T0')} />);
+
+        click('edit');
+        await settle();
+        await waitFor(() => expect(status()).toBe('clean'));
+        click('undo');
+        await settle();
+        await waitFor(() => expect(status()).toBe('clean'));
+
+        click('redo');
+        expect(value()).toBe('2k');
+        await settle();
+        await waitFor(() => expect(status()).toBe('clean'));
+        expect(sent[sent.length - 1]).toMatchObject({ value: '2k' });
+    });
+
+    it('reports whether there is anything to undo, so a button can be honestly disabled', async () => {
+        const { api } = conditionalSave('T0');
+        render(<Harness api={api} opened={asDraft('T0')} />);
+
+        expect(screen.getByTestId('canUndo').textContent).toBe('false');
+        click('edit');
+        await settle();
+        expect(screen.getByTestId('canUndo').textContent).toBe('true');
+        expect(screen.getByTestId('canRedo').textContent).toBe('false');
+
+        click('undo');
+        await settle();
+        expect(screen.getByTestId('canRedo').textContent).toBe('true');
+    });
+
+    it('ADOPTING a server document clears the history — nothing can be undone across it', async () => {
+        // Undoing past a document this editor did not author would restore state predating whatever the
+        // other author saved, quietly resurrecting work they had already replaced.
+        const { api } = conditionalSave('T0');
+        const { rerender } = render(<Harness api={api} opened={asDraft('T0')} />);
+
+        click('edit');
+        await settle();
+        expect(screen.getByTestId('canUndo').textContent).toBe('true');
+
+        rerender(<Harness api={api} opened={asDraft('T5')} />);
+        await waitFor(() => expect(screen.getByTestId('canUndo').textContent).toBe('false'));
+    });
+
+    it('applies a compound edit as ONE undo step', async () => {
+        const { api } = conditionalSave('T0');
+        render(<Harness api={api} opened={asDraft('T0')} />);
+
+        click('compound'); // two edits in one commit
+        await settle();
+        expect(value()).toBe('9k');
+
+        click('undo');
+        expect(value()).toBe('1k'); // both reversed, by one press
+        await settle();
+        expect(screen.getByTestId('canUndo').textContent).toBe('false');
+    });
+
+    it('a refused member refuses the WHOLE compound edit', async () => {
+        const { api, sent } = conditionalSave('T0');
+        render(<Harness api={api} opened={asDraft('T0')} />);
+
+        click('bad-compound'); // second member is invalid
+        expect(value()).toBe('1k'); // nothing applied
+        expect(screen.getByTestId('refusal').textContent).toBe('empty');
+        await settle();
+        expect(sent).toHaveLength(0);
+        expect(screen.getByTestId('canUndo').textContent).toBe('false');
     });
 });
 
