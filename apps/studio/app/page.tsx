@@ -13,7 +13,7 @@ import { useMemo, useState } from 'react';
 
 import { ObjectTreePanel } from '../components/ObjectTreePanel';
 import { SignIn } from '../components/SignIn';
-import { API_BASE_URL, type ApiError } from '../lib/api';
+import { API_BASE_URL, type ApiError, type OpenedProject } from '../lib/api';
 import { useAsync } from '../lib/useAsync';
 
 import { useSession } from './providers';
@@ -64,6 +64,29 @@ function titleFor(error: ApiError): string {
     }
 }
 
+/**
+ * Which document is on screen, stated rather than implied.
+ *
+ * A draft and a saved version look identical once rendered, and they are not the same thing: one is the
+ * user's own unsaved work, the other is history that editing must fork from. Leaving that to be inferred is
+ * how someone types into what they believe is their draft and is in fact looking at v12.
+ */
+function Provenance({ doc }: { doc: OpenedProject | null }): React.JSX.Element | null {
+    if (!doc || doc.source === 'empty') return null;
+    if (doc.source === 'working-copy') {
+        return (
+            <p className="empty" style={{ color: 'var(--good)' }}>
+                Draft · saved {new Date(doc.updatedAt).toLocaleString()}
+            </p>
+        );
+    }
+    return (
+        <p className="empty" style={{ color: 'var(--warn)' }}>
+            No draft — showing saved v{doc.version.versionNumber} of {doc.totalVersions}
+        </p>
+    );
+}
+
 function Workspace() {
     const { api, client } = useSession();
     const [orgId, setOrgId] = useState<string | null>(null);
@@ -77,13 +100,16 @@ function Workspace() {
     const projects = useAsync((signal) => api.projects(activeOrg!, signal), [activeOrg], activeOrg !== null);
     const activeProject = projectId ?? projects.data?.items[0]?.id ?? null;
 
-    const draft = useAsync(
-        (signal) => api.workingCopy(activeProject!, signal),
+    // `openProject`, not `workingCopy`: a project with no draft still has its saved history, and the API's
+    // own contract says to open the newest version instead of showing nothing.
+    const opened = useAsync(
+        (signal) => api.openProject(activeProject!, signal),
         [activeProject],
         activeProject !== null,
     );
 
-    const circuit = draft.data?.circuitJson ?? null;
+    const doc = opened.data;
+    const circuit = doc && doc.source !== 'empty' ? doc.circuitJson : null;
     const counts = useMemo(
         () => ({
             components: circuit?.components?.length ?? 0,
@@ -151,13 +177,14 @@ function Workspace() {
                     <div className="pane-body">
                         {orgs.error && <Failure error={orgs.error} />}
                         {projects.error && <Failure error={projects.error} />}
-                        {draft.error && <Failure error={draft.error} />}
-                        {draft.loading && <p className="empty">Loading the draft…</p>}
-                        {!draft.loading && !draft.error && draft.data === null && activeProject && (
-                            // A project with no draft is ordinary, not broken — it has only saved versions,
-                            // or nothing at all yet. Said plainly so it does not read as a failed load.
-                            <p className="empty">This project has no working copy yet.</p>
+                        {opened.error && <Failure error={opened.error} />}
+                        {opened.loading && <p className="empty">Opening…</p>}
+                        {doc?.source === 'empty' && (
+                            // Ordinary, not broken: a project created but never saved. Said plainly so it does
+                            // not read as a failed load.
+                            <p className="empty">This project has no circuit yet — no draft and no saved version.</p>
                         )}
+                        <Provenance doc={doc} />
                         {circuit && <ObjectTreePanel circuit={circuit} onSelect={setSelected} />}
                     </div>
                 </aside>
@@ -209,7 +236,9 @@ function Workspace() {
                 <span>{API_BASE_URL}</span>
                 <span>{counts.components} components</span>
                 <span>{counts.nets} nets</span>
-                {draft.data && <span>draft saved {new Date(draft.data.updatedAt).toLocaleTimeString()}</span>}
+                {doc && doc.source !== 'empty' && (
+                    <span>{doc.source === 'working-copy' ? 'draft' : `v${doc.version.versionNumber} (read-only)`}</span>
+                )}
             </footer>
         </div>
     );

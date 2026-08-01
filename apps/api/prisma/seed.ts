@@ -21,6 +21,30 @@ try {
 
 const prisma = new PrismaClient();
 
+/**
+ * The demo organization's id — a fixed UUID so re-seeding is idempotent without accumulating orgs.
+ *
+ * It must be a real UUID. The /orgs/:orgId routes all validate with ParseUUIDPipe, so a readable id like
+ * 'demo-org-id' makes every one of them answer 400 for the demo account: it can sign in and list its orgs,
+ * and then nothing inside them can be opened.
+ *
+ * A database seeded BEFORE this change still carries the old row, and re-seeding will not repair it — it
+ * adds the new org alongside. Retiring the old one means re-pointing its children, because the id is a
+ * foreign key without ON UPDATE CASCADE:
+ *
+ *   INSERT INTO organizations (id, name, "createdAt", "updatedAt")
+ *     SELECT '00000000-0000-4000-8000-000000000001', name, "createdAt", now()
+ *     FROM organizations WHERE id = 'demo-org-id';
+ *   UPDATE projects        SET "orgId" = '00000000-0000-4000-8000-000000000001' WHERE "orgId" = 'demo-org-id';
+ *   UPDATE org_memberships SET "orgId" = '00000000-0000-4000-8000-000000000001' WHERE "orgId" = 'demo-org-id';
+ *   UPDATE templates       SET "orgId" = '00000000-0000-4000-8000-000000000001' WHERE "orgId" = 'demo-org-id';
+ *   DELETE FROM organizations WHERE id = 'demo-org-id';
+ *
+ * Deliberately NOT run by this script: a seed that silently rewrites primary keys in a database it did not
+ * create is a much worse thing to have than a stale demo org.
+ */
+const DEMO_ORG_ID = '00000000-0000-4000-8000-000000000001';
+
 // Demo circuit templates
 const templates = [
     {
@@ -973,12 +997,20 @@ async function main(): Promise<void> {
         }
     }
 
-    // Create demo organization
+    // Create demo organization.
+    //
+    // The id is a fixed UUID, not the readable 'demo-org-id' it used to be. Every /orgs/:orgId route —
+    // fourteen of them — validates with ParseUUIDPipe, so a non-UUID org id is not merely untidy: the
+    // seeded demo account could authenticate, list its organizations, and then get 400 "Validation failed
+    // (uuid is expected)" on every single thing it tried to open. The demo data was unreachable through the
+    // API that serves it, and the failure named a UUID rather than the seed, so it read as a client bug.
+    //
+    // Fixed rather than generated, so re-seeding stays idempotent instead of accumulating demo orgs.
     const org = await prisma.organization.upsert({
-        where: { id: 'demo-org-id' },
+        where: { id: DEMO_ORG_ID },
         update: {},
         create: {
-            id: 'demo-org-id',
+            id: DEMO_ORG_ID,
             name: 'Demo Organization',
         },
     });

@@ -11,8 +11,8 @@
  * runs it deliberately. It fails loudly rather than skipping when the API is unreachable — a live test that
  * quietly passes when it did not run is worse than no test.
  */
-import { buildObjectTree } from '@circuit-forge/editor-core';
 import type { CircuitJson } from '@circuit-forge/eda-core';
+import { buildObjectTree } from '@circuit-forge/editor-core';
 
 import { ApiClient } from './client';
 import { ApiError } from './errors';
@@ -100,8 +100,24 @@ describe('the transcribed contracts, against the server that defines them', () =
         const orgs = await api.orgs();
         expect(Array.isArray(orgs)).toBe(true);
         expect(orgs.length).toBeGreaterThan(0);
-        // Asserting the FIELDS, not just that something came back — a renamed field is the failure mode.
-        expect(orgs[0]).toMatchObject({ id: expect.any(String), name: expect.any(String) });
+
+        // The KEY SET, not a subset. `toMatchObject` on two fields is what let a fabricated `slug` sit in
+        // this interface undetected: the test passed, and every read of `org.slug` in the UI would have been
+        // `undefined` with nothing reporting it. Comparing the whole key set makes an invented field fail
+        // here and a newly added one impossible to ignore.
+        expect(Object.keys(orgs[0]!).sort()).toEqual(
+            ['createdAt', 'id', 'name', 'role', 'suspendReason', 'suspendedAt', 'updatedAt'].sort(),
+        );
+
+        // And the org id must be addressable by the routes that serve it — seeded demo data once was not,
+        // which made every project inside it unopenable while the org itself listed perfectly.
+        expect(orgs[0]!.id).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/);
+    });
+
+    it('answers list endpoints in the full pagination envelope, hasMore included', async () => {
+        const orgs = await api.orgs();
+        const page = await api.projects(orgs[0]!.id);
+        expect(Object.keys(page).sort()).toEqual(['hasMore', 'items', 'limit', 'offset', 'total']);
     });
 
     it('creates a project and lists it inside the pagination envelope', async () => {
@@ -176,6 +192,63 @@ describe('the transcribed contracts, against the server that defines them', () =
         // No layout was requested, so there is nothing to be unjoined about.
         expect(tree.unplaced).toEqual([]);
         expect(tree.ambiguous).toEqual([]);
+    });
+
+    it('opens a project through all three branches: empty, saved version, then draft', async () => {
+        // The rule the API states in prose — "404 if none yet (open the latest version instead)" — and then
+        // leaves to every client. Encoded once in `openProject`; this is what proves it against the server
+        // rather than against my reading of the docstring.
+        const orgs = await api.orgs();
+        const fresh = await client.request<{ id: string }>(`/orgs/${orgs[0]!.id}/projects`, {
+            method: 'POST',
+            body: { name: `studio-e2e-open-${stamp}` },
+        });
+
+        // 1. Nothing saved at all — neither a draft nor history.
+        await expect(api.openProject(fresh.id)).resolves.toEqual({ source: 'empty' });
+
+        // 2. A saved version and no draft: the version is opened, and the UI is told it is read-only history.
+        await client.request(`/projects/${fresh.id}/versions`, {
+            method: 'POST',
+            body: { circuitJson: DIVIDER, uiJson: {} },
+        });
+        const fromVersion = await api.openProject(fresh.id);
+        expect(fromVersion.source).toBe('version');
+        if (fromVersion.source !== 'version') throw new Error('unreachable');
+        expect(fromVersion.circuitJson).toEqual(DIVIDER);
+        expect(fromVersion.version.versionNumber).toBe(1);
+        expect(fromVersion.totalVersions).toBe(1);
+
+        // 3. A draft now exists: it WINS over the saved version, because it is the newer work.
+        const edited = {
+            ...DIVIDER,
+            nets: [...(DIVIDER as unknown as { nets: unknown[] }).nets, { id: 'extra', name: 'EXTRA' }],
+        } as unknown as CircuitJson;
+        await api.saveWorkingCopy(fresh.id, { circuitJson: edited, uiJson: {} });
+        const fromDraft = await api.openProject(fresh.id);
+        expect(fromDraft.source).toBe('working-copy');
+        if (fromDraft.source !== 'working-copy') throw new Error('unreachable');
+        expect(fromDraft.circuitJson).toEqual(edited);
+    });
+
+    it('takes the NEWEST version, not the first page in insertion order', async () => {
+        // `limit: 1` is only a constant-cost lookup if the server orders newest-first. If it did not, a
+        // project with a long history would silently open v1 — the oldest circuit — and look perfectly fine.
+        const orgs = await api.orgs();
+        const proj = await client.request<{ id: string }>(`/orgs/${orgs[0]!.id}/projects`, {
+            method: 'POST',
+            body: { name: `studio-e2e-newest-${stamp}` },
+        });
+        for (let i = 0; i < 3; i++) {
+            await client.request(`/projects/${proj.id}/versions`, {
+                method: 'POST',
+                body: { circuitJson: DIVIDER, uiJson: { n: i } },
+            });
+        }
+        const opened = await api.openProject(proj.id);
+        if (opened.source !== 'version') throw new Error(`expected a version, got ${opened.source}`);
+        expect(opened.version.versionNumber).toBe(3);
+        expect(opened.totalVersions).toBe(3);
     });
 
     it('classifies a genuinely missing project as not-found', async () => {

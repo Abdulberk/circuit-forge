@@ -23,12 +23,27 @@ export interface Paginated<T> {
     total: number;
     limit: number;
     offset: number;
+    /** Whether another page exists — cheaper for the caller than comparing offset + items.length to total. */
+    hasMore: boolean;
 }
 
+/**
+ * GET /orgs — the caller's organizations, each carrying THEIR role in it.
+ *
+ * There is no `slug`: an earlier version of this interface declared one, transcribed from nothing. The model
+ * has no such column, so every read of it would have been `undefined` — the exact silent-drift failure these
+ * types exist to avoid, and one my own e2e missed because it asserted `id` and `name` and stopped.
+ */
 export interface Org {
     id: string;
     name: string;
-    slug: string;
+    /** The signed-in user's role here — OWNER, ADMIN, MEMBER. Present because the list is user-scoped. */
+    role: string;
+    createdAt: string;
+    updatedAt: string;
+    /** Set when a platform admin has suspended the org; writes are refused while it is. */
+    suspendedAt: string | null;
+    suspendReason: string | null;
 }
 
 export interface Project {
@@ -75,6 +90,41 @@ export interface SimulationJob {
     status: string;
     errorMessage?: string | null;
 }
+
+/**
+ * A row from GET /projects/:id/versions.
+ *
+ * Deliberately blob-free — the list endpoint selects four columns and nothing else, so a project with a long
+ * history costs one small response instead of shipping every circuit that was ever saved. The blob comes from
+ * the detail route, for the one version actually being opened.
+ */
+export interface VersionSummary {
+    id: string;
+    versionNumber: number;
+    createdAt: string;
+    createdByUserId: string;
+}
+
+/** GET /versions/:id — the saved circuit itself. */
+export interface Version extends VersionSummary {
+    projectId: string;
+    circuitJson: CircuitJson;
+    uiJson: unknown;
+}
+
+/**
+ * What a project actually opens as.
+ *
+ * `source` is not decoration — it is the difference between a DRAFT the user owns and a SAVED VERSION that is
+ * already history, and the two demand different behaviour on the next keystroke. Editing a draft continues
+ * where they left off; editing what came from v12 starts a new draft descending from it. A screen that showed
+ * the circuit without saying which one it had is the silent-wrong-state failure: the user believes they are
+ * editing their draft, and they are looking at something else.
+ */
+export type OpenedProject =
+    | { source: 'working-copy'; circuitJson: CircuitJson; updatedAt: string; baseVersionId: string | null }
+    | { source: 'version'; circuitJson: CircuitJson; version: VersionSummary; totalVersions: number }
+    | { source: 'empty' };
 
 export class Api {
     constructor(private readonly http: ApiClient) {}
@@ -154,6 +204,57 @@ export class Api {
     /** DELETE /projects/:id/working-copy — revert to the last saved version. Idempotent. */
     discardWorkingCopy(projectId: string, signal?: AbortSignal): Promise<{ discarded: boolean }> {
         return this.http.request(`/projects/${projectId}/working-copy`, { method: 'DELETE', signal });
+    }
+
+    // ---- Versions -------------------------------------------------------------------------------------
+
+    /** GET /projects/:id/versions — newest first, blob-free rows. */
+    versions(
+        projectId: string,
+        page: { limit?: number; offset?: number } = {},
+        signal?: AbortSignal,
+    ): Promise<Paginated<VersionSummary>> {
+        return this.http.request<Paginated<VersionSummary>>(`/projects/${projectId}/versions`, {
+            query: page,
+            signal,
+        });
+    }
+
+    /** GET /versions/:id — the saved circuit itself. */
+    version(versionId: string, signal?: AbortSignal): Promise<Version> {
+        return this.http.request<Version>(`/versions/${versionId}`, { signal });
+    }
+
+    /**
+     * Open a project: the draft if there is one, otherwise the newest saved version, otherwise nothing.
+     *
+     * The API states this rule in its own docstring — "404 if none yet (open the latest version instead)" —
+     * and then leaves every client to implement it. That is the shape of bug this codebase keeps producing: a
+     * rule that lives in prose, re-derived at each call site, correct in the one place someone tested. Encoded
+     * once here, every consumer gets it, and `source` makes which branch ran visible instead of implied.
+     *
+     * The two-request path for a version is the API's blob isolation working as designed: the list returns
+     * four columns, so finding the newest costs a small response, and only the one being opened is fetched
+     * whole. Asking for `limit: 1` against a newest-first order is what makes that a constant-cost lookup
+     * rather than downloading a project's entire history to take the head of it.
+     */
+    async openProject(projectId: string, signal?: AbortSignal): Promise<OpenedProject> {
+        const draft = await this.workingCopy(projectId, signal);
+        if (draft) {
+            return {
+                source: 'working-copy',
+                circuitJson: draft.circuitJson,
+                updatedAt: draft.updatedAt,
+                baseVersionId: draft.baseVersionId,
+            };
+        }
+
+        const page = await this.versions(projectId, { limit: 1, offset: 0 }, signal);
+        const newest = page.items[0];
+        if (!newest) return { source: 'empty' };
+
+        const full = await this.version(newest.id, signal);
+        return { source: 'version', circuitJson: full.circuitJson, version: newest, totalVersions: page.total };
     }
 
     // ---- Layout, the long-running one -----------------------------------------------------------------

@@ -6,7 +6,17 @@ export { ApiClient, type ApiClientOptions } from './client';
 export { ApiError, isAbort, type FailureKind } from './errors';
 export { pollUntilSettled, isPending, type PollOptions } from './poll';
 export { browserTokenStore, memoryTokenStore, type TokenStore, type Tokens } from './tokens';
-export { Api, type LayoutJob, type Org, type Paginated, type Project, type WorkingCopy } from './resources';
+export {
+    Api,
+    type LayoutJob,
+    type OpenedProject,
+    type Org,
+    type Paginated,
+    type Project,
+    type Version,
+    type VersionSummary,
+    type WorkingCopy,
+} from './resources';
 
 /**
  * Where the API lives.
