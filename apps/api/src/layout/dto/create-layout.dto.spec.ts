@@ -100,3 +100,65 @@ describe('CreateLayoutDto.netCurrentsA — a current must be a current', () => {
         expect(JSON.stringify(err?.response?.message)).toMatch(/VBUS/);
     });
 });
+
+describe('circuit — validated at the edge, not at the sink', () => {
+    /**
+     * The field declared `Record<string, unknown>` with only `@IsObject()`, so the space this endpoint
+     * quantified over was "any JSON", not CircuitJson. Measured consequence: `{"components": null}` was
+     * accepted, queued, dispatched to a worker and died inside pcb-core as `circuit.nets is not iterable`
+     * — an internal TypeError persisted as the customer-visible errorMessage on a FAILED job, after a
+     * worker slot and a quota had already been spent.
+     *
+     * The schema existed all along (`CircuitJsonSchema`, with its own caps) and was simply never applied
+     * server-side; ERC runs client-side only.
+     */
+    const wellFormed = {
+        version: '1.0',
+        components: [
+            {
+                id: 'r1',
+                type: 'resistor',
+                designator: 'R1',
+                value: '1k',
+                pins: [
+                    { pinId: '1', netId: 'a' },
+                    { pinId: '2', netId: 'gnd' },
+                ],
+            },
+        ],
+        nets: [
+            { id: 'a', name: 'A' },
+            { id: 'gnd', name: 'GND', isGround: true },
+        ],
+    };
+
+    it('accepts a well-formed CircuitJson', async () => {
+        await expect(pipe.transform({ circuit: wellFormed }, meta)).resolves.toBeDefined();
+    });
+
+    it.each([
+        ['components: null — the measured crash', { components: null }],
+        ['a component with no pins array', { version: '1.0', components: [{ id: 'x', type: 'resistor', designator: 'R1' }], nets: [] }],
+        ['an unknown component type', { version: '1.0', components: [{ id: 'x', type: 'flux_capacitor', designator: 'U1', pins: [] }], nets: [] }],
+    ])('rejects %s before anything is queued', async (_label, bad) => {
+        await expect(pipe.transform({ circuit: bad }, meta)).rejects.toThrow();
+    });
+
+    /** The DETAIL is what makes this better than the crash it replaces, and it lives on the exception's
+     *  response body, not on `.message` (which Nest fixes to "Bad Request Exception"). */
+    const messagesFor = async (circuit: unknown): Promise<string> => {
+        try {
+            await pipe.transform({ circuit }, meta);
+            return '';
+        } catch (e) {
+            const body = (e as { getResponse: () => { message?: string[] | string } }).getResponse();
+            return Array.isArray(body.message) ? body.message.join(' ') : String(body.message ?? '');
+        }
+    };
+
+    it('names WHICH field failed — the whole reason this beats the crash it replaces', async () => {
+        const msg = await messagesFor({ components: null });
+        expect(msg).toMatch(/CircuitJson/);
+        expect(msg).toMatch(/components/);
+    });
+});

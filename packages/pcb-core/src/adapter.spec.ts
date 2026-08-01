@@ -86,8 +86,10 @@ describe('generateTscircuitCode', () => {
         expect(r.code).toContain('<trace from=".R1 > .pin1" to="net.VIN" />');
         expect(r.code).toContain('<trace from=".R1 > .pin2" to="net.GND" />');
         expect(r.expectations).toEqual([
-            { name: 'R1', pinId: '1', selector: '.R1 > .pin1', netName: 'VIN' },
-            { name: 'R1', pinId: '2', selector: '.R1 > .pin2', netName: 'GND' },
+            // `port` is carried alongside the selector so a consumer joining OUR pinId to a rendered pad
+            // never parses the selector string back apart — see PinExpectation.
+            { name: 'R1', pinId: '1', selector: '.R1 > .pin1', port: 'pin1', netName: 'VIN' },
+            { name: 'R1', pinId: '2', selector: '.R1 > .pin2', port: 'pin2', netName: 'GND' },
         ]);
     });
 

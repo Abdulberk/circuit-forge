@@ -25,6 +25,7 @@ on:
       - 'packages/pcb-core/**'
       - 'packages/eda-core/**'
       - 'scripts/layout-check.mjs'
+      - 'scripts/pcb-invariants.mjs'
       - 'scripts/lib/**'
       - 'docker/pcb-runtime/Dockerfile'
       - '.github/workflows/pcb-gate.yml'
@@ -34,6 +35,7 @@ on:
       - 'packages/pcb-core/**'
       - 'packages/eda-core/**'
       - 'scripts/layout-check.mjs'
+      - 'scripts/pcb-invariants.mjs'
       - 'scripts/lib/**'
       - 'docker/pcb-runtime/Dockerfile'
       - '.github/workflows/pcb-gate.yml'
@@ -67,6 +69,20 @@ jobs:
       # pcb-core imports @circuit-forge/eda-core at build AND runtime, so its dist must exist first.
       - name: Build eda-core (pcb-core dependency)
         run: pnpm --filter @circuit-forge/eda-core build
+
+      # The conservation gate runs BEFORE Docker on purpose: it needs neither, it finishes in ~20 ms, and
+      # the defects it locks are the ones no downstream gate can see. A three-legged transistor on a 2-pad
+      # footprint used to reach DRC as a four-pad board reporting unconnected=0 — a pin that never became
+      # a port cannot appear as an unconnected item, so KiCad was structurally blind to it.
+      #
+      # It also enumerates the whole (component type × footprint string) product and prints the tally, so
+      # a regression in the REPORTED half is visible in the log even while the LOCKED half is what fails
+      # the build.
+      - name: Conservation gate (pure — no Docker, no eval)
+        run: |
+          set -euo pipefail
+          pnpm --filter @circuit-forge/pcb-core build
+          node scripts/pcb-invariants.mjs
 
       # Pull the images BY DIGEST, taken from the same module the harness uses, which in turn refuses to
       # disagree with docker/pcb-runtime/Dockerfile. This job used to pull the bare `kicad/kicad:10.0-full`
