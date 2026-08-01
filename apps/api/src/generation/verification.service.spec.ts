@@ -1215,10 +1215,48 @@ describe('VerificationService — the deck ↔ schematic disclosure', () => {
         ({
             version: '1.0',
             components: [
-                { id: 'v1', type: 'voltage_source', designator: 'V1', value: 'DC 9', pins: [{ pinId: '+', netId: 'vcc' }, { pinId: '-', netId: 'gnd' }] },
-                { id: 'r1', type: 'resistor', designator: 'R1', value: '10k', pins: [{ pinId: '1', netId: 'in' }, { pinId: '2', netId: 'inm' }] },
-                { id: 'r2', type: 'resistor', designator: 'R2', value: '100k', pins: [{ pinId: '1', netId: 'inm' }, { pinId: '2', netId: 'out' }] },
-                { id: 'u1', type: 'generic', designator: 'U1', footprint: 'soic8', pins: [{ pinId: '1', netId: 'inm' }, { pinId: '2', netId: 'out' }, { pinId: '3', netId: 'vcc' }, { pinId: '4', netId: 'gnd' }] },
+                {
+                    id: 'v1',
+                    type: 'voltage_source',
+                    designator: 'V1',
+                    value: 'DC 9',
+                    pins: [
+                        { pinId: '+', netId: 'vcc' },
+                        { pinId: '-', netId: 'gnd' },
+                    ],
+                },
+                {
+                    id: 'r1',
+                    type: 'resistor',
+                    designator: 'R1',
+                    value: '10k',
+                    pins: [
+                        { pinId: '1', netId: 'in' },
+                        { pinId: '2', netId: 'inm' },
+                    ],
+                },
+                {
+                    id: 'r2',
+                    type: 'resistor',
+                    designator: 'R2',
+                    value: '100k',
+                    pins: [
+                        { pinId: '1', netId: 'inm' },
+                        { pinId: '2', netId: 'out' },
+                    ],
+                },
+                {
+                    id: 'u1',
+                    type: 'generic',
+                    designator: 'U1',
+                    footprint: 'soic8',
+                    pins: [
+                        { pinId: '1', netId: 'inm' },
+                        { pinId: '2', netId: 'out' },
+                        { pinId: '3', netId: 'vcc' },
+                        { pinId: '4', netId: 'gnd' },
+                    ],
+                },
             ],
             nets: [
                 { id: 'vcc', name: 'VCC' },
@@ -1249,10 +1287,31 @@ describe('VerificationService — the deck ↔ schematic disclosure', () => {
             {
                 version: '1.0',
                 components: [
-                    { id: 'v1', type: 'voltage_source', designator: 'V1', value: 'DC 5', pins: [{ pinId: '+', netId: 'vcc' }, { pinId: '-', netId: 'gnd' }] },
-                    { id: 'r1', type: 'resistor', designator: 'R1', value: '1k', pins: [{ pinId: '1', netId: 'vcc' }, { pinId: '2', netId: 'gnd' }] },
+                    {
+                        id: 'v1',
+                        type: 'voltage_source',
+                        designator: 'V1',
+                        value: 'DC 5',
+                        pins: [
+                            { pinId: '+', netId: 'vcc' },
+                            { pinId: '-', netId: 'gnd' },
+                        ],
+                    },
+                    {
+                        id: 'r1',
+                        type: 'resistor',
+                        designator: 'R1',
+                        value: '1k',
+                        pins: [
+                            { pinId: '1', netId: 'vcc' },
+                            { pinId: '2', netId: 'gnd' },
+                        ],
+                    },
                 ],
-                nets: [{ id: 'vcc', name: 'VCC' }, { id: 'gnd', name: 'GND' }],
+                nets: [
+                    { id: 'vcc', name: 'VCC' },
+                    { id: 'gnd', name: 'GND' },
+                ],
             } as unknown as CircuitJson,
             { type: 'op' },
             [A('out', 'final', 'approx', 5.0, 0.1)],

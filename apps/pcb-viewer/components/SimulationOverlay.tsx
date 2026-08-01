@@ -243,7 +243,8 @@ export function SimulationOverlay({
         if (playing) {
             // One pass through the whole table per `loopSeconds`, whatever the run's own span. Every
             // resampled frame is displayed; nothing is skipped and nothing aliases.
-            frameRef.current = (frameRef.current + (delta * playback.frames) / Math.max(loopSeconds, 0.1)) % playback.frames;
+            frameRef.current =
+                (frameRef.current + (delta * playback.frames) / Math.max(loopSeconds, 0.1)) % playback.frames;
         }
         const f = Math.floor(frameRef.current);
         // Paused, or a frame the display already shows: nothing changed, so nothing is uploaded. The old
@@ -275,10 +276,22 @@ export function SimulationOverlay({
     const matrix = useMemo(() => {
         const m = new THREE.Matrix4();
         m.set(
-            fit.scaleX, 0, 0, fit.originX,
-            0, 0, fit.scaleX, fit.surfaceY,
-            0, fit.scaleZ * fit.ySign, 0, fit.originZ,
-            0, 0, 0, 1,
+            fit.scaleX,
+            0,
+            0,
+            fit.originX,
+            0,
+            0,
+            fit.scaleX,
+            fit.surfaceY,
+            0,
+            fit.scaleZ * fit.ySign,
+            0,
+            fit.originZ,
+            0,
+            0,
+            0,
+            1,
         );
         return m;
     }, [fit]);

@@ -10,9 +10,21 @@ import { classifyCircuit } from './layoutability';
  * `scripts/pcb-invariants.mjs`, because jest transpiles to CommonJS and footprinter is ESM-only; that
  * split is this package's existing convention (see jest.config.js).
  */
-const STUB_PADS: Record<string, number> = { soic8: 8, soic14: 14, soic16: 16, soic20: 20, sot23: 3, to92: 3, sod123: 2, '0402': 2, '0603': 2, '0805': 2, '1206': 2, pinrow2: 2 };
+const STUB_PADS: Record<string, number> = {
+    soic8: 8,
+    soic14: 14,
+    soic16: 16,
+    soic20: 20,
+    sot23: 3,
+    to92: 3,
+    sod123: 2,
+    '0402': 2,
+    '0603': 2,
+    '0805': 2,
+    '1206': 2,
+    pinrow2: 2,
+};
 const padCount = (f: string): number | null => STUB_PADS[f] ?? null;
-
 
 const comp = (over: Partial<Component>): Component => ({
     id: over.designator ?? 'c',
@@ -36,7 +48,8 @@ const circuit = (components: Component[]): CircuitJson => ({
 
 describe('classifyCircuit — roles', () => {
     it('classifies the v1 palette into the right roles/elements', () => {
-        const r = classifyCircuit(circuit([
+        const r = classifyCircuit(
+            circuit([
                 comp({ designator: 'R1' }),
                 comp({
                     designator: 'D1',
@@ -90,7 +103,8 @@ describe('classifyCircuit — roles', () => {
 
     it('subckt -> chip-fallback with NC declaration (5 ports on soic8 -> 3 NC pins, condition 3)', () => {
         const pins5 = ['out', 'in+', 'in-', 'vcc', 'vee'].map((p) => ({ pinId: p, netId: 'n1' }));
-        const r = classifyCircuit(circuit([
+        const r = classifyCircuit(
+            circuit([
                 comp({ designator: 'U1', type: 'subckt', model: 'OPAMPGEN', pins: pins5 }),
                 comp({ designator: 'R1' }),
             ]),
@@ -99,7 +113,9 @@ describe('classifyCircuit — roles', () => {
         const u1 = r.plans.find((p) => p.component.designator === 'U1')!;
         expect(u1.role).toBe('chip-fallback');
         expect(u1.ncPinCount).toBe(3);
-        expect(r.diagnostics.some((d) => d.code === 'PCB006' && d.message.includes('3 footprint pin'), { padCount })).toBe(true);
+        expect(
+            r.diagnostics.some((d) => d.code === 'PCB006' && d.message.includes('3 footprint pin'), { padCount }),
+        ).toBe(true);
     });
 });
 
@@ -133,7 +149,8 @@ describe('classifyCircuit — honesty policy (approval condition 2)', () => {
     });
 
     it('our 4-pin CONTROLLED switch is a sim primitive, not a pushbutton — excluded', () => {
-        const r = classifyCircuit(circuit([
+        const r = classifyCircuit(
+            circuit([
                 comp({
                     designator: 'S1',
                     type: 'switch',
@@ -154,19 +171,23 @@ describe('classifyCircuit — honesty policy (approval condition 2)', () => {
         const g = comp({ designator: 'J1', type: 'generic', pins: [{ pinId: 'p1', netId: 'n1' }] });
         const without = classifyCircuit(circuit([g, comp({ designator: 'R1' })]), { padCount });
         expect(without.diagnostics.some((d) => d.code === 'PCB004')).toBe(true);
-        const withFp = classifyCircuit(circuit([{ ...g, footprint: 'SOIC-8' }, comp({ designator: 'R1' })]), { padCount });
+        const withFp = classifyCircuit(circuit([{ ...g, footprint: 'SOIC-8' }, comp({ designator: 'R1' })]), {
+            padCount,
+        });
         expect(withFp.plans.find((p) => p.component.designator === 'J1')!.role).toBe('chip-fallback');
     });
 
     it('a board with nothing layoutable fails (PCB001)', () => {
-        const r = classifyCircuit(circuit([comp({ designator: 'GND1', type: 'ground', pins: [{ pinId: '1', netId: 'n1' }] })]),
+        const r = classifyCircuit(
+            circuit([comp({ designator: 'GND1', type: 'ground', pins: [{ pinId: '1', netId: 'n1' }] })]),
         );
         expect(r.layoutable).toBe(false);
         expect(r.diagnostics.some((d) => d.code === 'PCB001')).toBe(true);
     });
 
     it('a ZERO-pin physical component is always an error (PCB011) — even with allowPartial', () => {
-        const r = classifyCircuit(circuit([
+        const r = classifyCircuit(
+            circuit([
                 comp({ designator: 'U1', type: 'generic', footprint: 'SOIC-8', pins: [] }),
                 comp({ designator: 'R1' }),
             ]),

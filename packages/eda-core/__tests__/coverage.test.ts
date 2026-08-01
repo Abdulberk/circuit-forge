@@ -21,7 +21,13 @@ const pin = (pinId: string, netId: string) => ({ pinId, netId });
 describe('simulationCoverage', () => {
     it('an all-simulatable circuit is complete and has nothing to disclose', () => {
         const c = circuit([
-            { id: 'v1', type: 'voltage_source', designator: 'V1', value: 'DC 5', pins: [pin('+', 'vcc'), pin('-', 'gnd')] },
+            {
+                id: 'v1',
+                type: 'voltage_source',
+                designator: 'V1',
+                value: 'DC 5',
+                pins: [pin('+', 'vcc'), pin('-', 'gnd')],
+            },
             { id: 'r1', type: 'resistor', designator: 'R1', value: '1k', pins: [pin('1', 'vcc'), pin('2', 'gnd')] },
         ] as CircuitJson['components']);
 
@@ -113,21 +119,40 @@ describe('simulationCoverage', () => {
 
 describe('the gap this closes, end to end', () => {
     // An inverting amplifier whose op-amp is a catalog part. This is the shape that shipped a lie.
-    const opampAmp = circuit([
-        { id: 'v1', type: 'voltage_source', designator: 'V1', value: 'SIN(0 0.2 1k)', pins: [pin('+', 'in'), pin('-', 'gnd')] },
-        { id: 'r1', type: 'resistor', designator: 'R1', value: '10k', pins: [pin('1', 'in'), pin('2', 'inm')] },
-        { id: 'r2', type: 'resistor', designator: 'R2', value: '100k', pins: [pin('1', 'inm'), pin('2', 'out')] },
-        { id: 'u1', type: 'generic', designator: 'U1', pins: [pin('1', 'inm'), pin('2', 'gnd'), pin('3', 'out'), pin('4', 'vcc')] },
-        { id: 'v2', type: 'voltage_source', designator: 'V2', value: 'DC 9', pins: [pin('+', 'vcc'), pin('-', 'gnd')] },
-        { id: 'g1', type: 'ground', designator: 'GND1', pins: [pin('1', 'gnd')] },
-    ] as CircuitJson['components'],
+    const opampAmp = circuit(
+        [
+            {
+                id: 'v1',
+                type: 'voltage_source',
+                designator: 'V1',
+                value: 'SIN(0 0.2 1k)',
+                pins: [pin('+', 'in'), pin('-', 'gnd')],
+            },
+            { id: 'r1', type: 'resistor', designator: 'R1', value: '10k', pins: [pin('1', 'in'), pin('2', 'inm')] },
+            { id: 'r2', type: 'resistor', designator: 'R2', value: '100k', pins: [pin('1', 'inm'), pin('2', 'out')] },
+            {
+                id: 'u1',
+                type: 'generic',
+                designator: 'U1',
+                pins: [pin('1', 'inm'), pin('2', 'gnd'), pin('3', 'out'), pin('4', 'vcc')],
+            },
+            {
+                id: 'v2',
+                type: 'voltage_source',
+                designator: 'V2',
+                value: 'DC 9',
+                pins: [pin('+', 'vcc'), pin('-', 'gnd')],
+            },
+            { id: 'g1', type: 'ground', designator: 'GND1', pins: [pin('1', 'gnd')] },
+        ] as CircuitJson['components'],
         [
             { id: 'in', name: 'IN' },
             { id: 'inm', name: 'INM' },
             { id: 'out', name: 'OUT' },
             { id: 'vcc', name: 'VCC' },
             { id: 'gnd', name: 'GND' },
-        ] as CircuitJson['nets']);
+        ] as CircuitJson['nets'],
+    );
 
     it('ERC passes and a deck generates — the two gates that were supposed to catch this cannot', () => {
         const erc = runErc(opampAmp);

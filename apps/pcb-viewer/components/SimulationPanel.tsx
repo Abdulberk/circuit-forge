@@ -131,8 +131,8 @@ export function SimulationPanel({
                         // Named, not counted. A net left uncoloured because we never had its voltage looks
                         // exactly like one sitting at 0 V, and the difference is the user's to know.
                         <div style={warn}>
-                            {state.unresolved.join(', ')} için simüle edilmiş gerilim yok — sıfır gibi boyanmak
-                            yerine renksiz bırakıldı
+                            {state.unresolved.join(', ')} için simüle edilmiş gerilim yok — sıfır gibi boyanmak yerine
+                            renksiz bırakıldı
                         </div>
                     )}
                     {/* The most important line on this panel. Everything above describes a smooth, confident
@@ -164,9 +164,9 @@ function CoverageNote({ coverage }: Readonly<{ coverage?: SimulationCoverage }>)
     const parts = coverage.loadBearing.map((o) => `${o.designator} (${o.type})`).join(', ');
     return (
         <div style={warn}>
-            ⚠ Deck {parts} içermiyor — simüle edilebilir modeli yok. Burada gördüğünüz, kartın geri kalan
-            pasif ağı; {coverage.loadBearing.length === 1 ? 'o parçanın' : 'o parçaların'} bulunduğu yerde
-            devrede bir açık var, dolayısıyla bu animasyon kartı çizildiği gibi tarif etmiyor.
+            ⚠ Deck {parts} içermiyor — simüle edilebilir modeli yok. Burada gördüğünüz, kartın geri kalan pasif ağı;{' '}
+            {coverage.loadBearing.length === 1 ? 'o parçanın' : 'o parçaların'} bulunduğu yerde devrede bir açık var,
+            dolayısıyla bu animasyon kartı çizildiği gibi tarif etmiyor.
         </div>
     );
 }

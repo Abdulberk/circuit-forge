@@ -303,8 +303,7 @@ function declareNc(
     // so bulk never reaches a pad in EITHER case — silently when it sits on the source, and via PCB010
     // (which allowPartial downgrades) when it does not. Re-reporting that here as a package-fit error
     // would state the same physical fact twice, at a severity the caller cannot opt out of.
-    const intentionallyUnmapped =
-        component.type === 'mosfet' && component.pins.some((x) => x.pinId === 'b') ? 1 : 0;
+    const intentionallyUnmapped = component.type === 'mosfet' && component.pins.some((x) => x.pinId === 'b') ? 1 : 0;
     const mappablePins = component.pins.length - intentionallyUnmapped;
     if (mappablePins > pads) {
         // ---- I-PIN-TOTALITY: more legs than the package has. The excess pins simply never become pads,

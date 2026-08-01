@@ -138,8 +138,14 @@ describe('circuit — validated at the edge, not at the sink', () => {
 
     it.each([
         ['components: null — the measured crash', { components: null }],
-        ['a component with no pins array', { version: '1.0', components: [{ id: 'x', type: 'resistor', designator: 'R1' }], nets: [] }],
-        ['an unknown component type', { version: '1.0', components: [{ id: 'x', type: 'flux_capacitor', designator: 'U1', pins: [] }], nets: [] }],
+        [
+            'a component with no pins array',
+            { version: '1.0', components: [{ id: 'x', type: 'resistor', designator: 'R1' }], nets: [] },
+        ],
+        [
+            'an unknown component type',
+            { version: '1.0', components: [{ id: 'x', type: 'flux_capacitor', designator: 'U1', pins: [] }], nets: [] },
+        ],
     ])('rejects %s before anything is queued', async (_label, bad) => {
         await expect(pipe.transform({ circuit: bad }, meta)).rejects.toThrow();
     });

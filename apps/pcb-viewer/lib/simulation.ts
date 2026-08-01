@@ -118,7 +118,13 @@ const SPICE_REFERENCE_NODE = '0';
  * Walks both sequences once (the source is time-ordered), so building the whole table is O(points + frames)
  * per net rather than a binary search per frame.
  */
-function resample(points: Array<{ x: number; y: number }>, times: Float32Array, out: Float32Array, stride: number, slot: number): void {
+function resample(
+    points: Array<{ x: number; y: number }>,
+    times: Float32Array,
+    out: Float32Array,
+    stride: number,
+    slot: number,
+): void {
     if (points.length === 0) return;
     let i = 0;
     for (let f = 0; f < times.length; f++) {

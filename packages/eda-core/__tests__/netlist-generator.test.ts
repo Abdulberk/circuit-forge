@@ -559,11 +559,14 @@ describe('NetlistGenerator', () => {
                         { pinId: '+', netId: 'in' },
                         { pinId: '-', netId: '0' },
                     ]),
-                    { ...createComponent('Q1', 'bjt', 'Q1', undefined, [
-                        { pinId: 'c', netId: 'in' },
-                        { pinId: 'b', netId: 'in' },
-                        { pinId: 'e', netId: '0' },
-                    ]), model: 'QGENNPN' },
+                    {
+                        ...createComponent('Q1', 'bjt', 'Q1', undefined, [
+                            { pinId: 'c', netId: 'in' },
+                            { pinId: 'b', netId: 'in' },
+                            { pinId: 'e', netId: '0' },
+                        ]),
+                        model: 'QGENNPN',
+                    },
                 ],
                 nets: [createNet('in', 'in'), createNet('0', '0', true)],
             };
@@ -1141,9 +1144,35 @@ describe('diode current probes — i(D…) is observable, and was wrongly refuse
     const rectifier = {
         version: '1.0',
         components: [
-            { id: 'v1', type: 'voltage_source', designator: 'V1', value: 'SIN(0 5 1k)', pins: [{ pinId: '+', netId: 'in' }, { pinId: '-', netId: 'gnd' }] },
-            { id: 'd1', type: 'diode', designator: 'D1', pins: [{ pinId: 'anode', netId: 'in' }, { pinId: 'cathode', netId: 'out' }] },
-            { id: 'led1', type: 'diode', designator: 'LED1', model: 'LEDRED', pins: [{ pinId: 'anode', netId: 'out' }, { pinId: 'cathode', netId: 'gnd' }] },
+            {
+                id: 'v1',
+                type: 'voltage_source',
+                designator: 'V1',
+                value: 'SIN(0 5 1k)',
+                pins: [
+                    { pinId: '+', netId: 'in' },
+                    { pinId: '-', netId: 'gnd' },
+                ],
+            },
+            {
+                id: 'd1',
+                type: 'diode',
+                designator: 'D1',
+                pins: [
+                    { pinId: 'anode', netId: 'in' },
+                    { pinId: 'cathode', netId: 'out' },
+                ],
+            },
+            {
+                id: 'led1',
+                type: 'diode',
+                designator: 'LED1',
+                model: 'LEDRED',
+                pins: [
+                    { pinId: 'anode', netId: 'out' },
+                    { pinId: 'cathode', netId: 'gnd' },
+                ],
+            },
             { id: 'g1', type: 'ground', designator: 'GND1', pins: [{ pinId: '1', netId: 'gnd' }] },
         ],
         nets: [
@@ -1168,17 +1197,25 @@ describe('diode current probes — i(D…) is observable, and was wrongly refuse
     it('a diode current probed ALONE still sets the flag — the bug this replaces was co-probe luck', () => {
         // The original verification passed only because the same deck also probed a resistor, which sets
         // savecurrents for its own reasons. Probe nothing but the diode and the flag must still appear.
-        const deck = generateNetlist(rectifier, { type: 'tran', stopTime: '2m', stepTime: '20u' }, {
-            probes: ['i(D1)'],
-        });
+        const deck = generateNetlist(
+            rectifier,
+            { type: 'tran', stopTime: '2m', stepTime: '20u' },
+            {
+                probes: ['i(D1)'],
+            },
+        );
         expect(deck).toMatch(/^\.options .*savecurrents/m);
     });
 
     it('resolves the SPICE instance name, not the designator — an LED emits a D card', () => {
         // LED1's device is DLED1, so a naive `@led1[id]` would fail with "no such device or model name".
-        const deck = generateNetlist(rectifier, { type: 'tran', stopTime: '2m', stepTime: '20u' }, {
-            probes: ['i(LED1)'],
-        });
+        const deck = generateNetlist(
+            rectifier,
+            { type: 'tran', stopTime: '2m', stepTime: '20u' },
+            {
+                probes: ['i(LED1)'],
+            },
+        );
         expect(deck).toMatch(/@dled1\[id\]/i);
     });
 
@@ -1205,7 +1242,17 @@ describe('diode current probes — i(D…) is observable, and was wrongly refuse
             ...rectifier,
             components: [
                 ...rectifier.components,
-                { id: 'q1', type: 'bjt', designator: 'Q1', model: 'QGENNPN', pins: [{ pinId: 'c', netId: 'out' }, { pinId: 'b', netId: 'in' }, { pinId: 'e', netId: 'gnd' }] },
+                {
+                    id: 'q1',
+                    type: 'bjt',
+                    designator: 'Q1',
+                    model: 'QGENNPN',
+                    pins: [
+                        { pinId: 'c', netId: 'out' },
+                        { pinId: 'b', netId: 'in' },
+                        { pinId: 'e', netId: 'gnd' },
+                    ],
+                },
             ],
         } as unknown as CircuitJson;
         expect(() =>
