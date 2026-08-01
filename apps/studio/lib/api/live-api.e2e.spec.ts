@@ -139,6 +139,31 @@ beforeAll(async () => {
     }
 }, 60_000);
 
+describe('the browser is allowed to talk to it at all', () => {
+    it('answers the studio origin with permission to call it', async () => {
+        // The one failure mode every other test in this file is blind to. These run in Node, which does not
+        // enforce CORS, so the whole suite can be green while the app is completely unusable in a browser —
+        // which is exactly what happened: the API's dev origin list still said 3000/5173 after the studio
+        // moved to 3200, so the browser blocked every request and the UI reported "could not reach the API"
+        // about a server that answered curl perfectly.
+        const origin = process.env.STUDIO_E2E_ORIGIN ?? 'http://localhost:3200';
+        const preflight = await fetch(`${BASE_URL}/auth/login`, {
+            method: 'OPTIONS',
+            headers: {
+                Origin: origin,
+                'Access-Control-Request-Method': 'POST',
+                'Access-Control-Request-Headers': 'content-type',
+            },
+        });
+
+        expect(preflight.status).toBeLessThan(400);
+        // The header's PRESENCE is the whole test: a preflight without it still returns 204, and the browser
+        // then quietly refuses the real request. Absence is the bug, not a non-2xx status.
+        expect(preflight.headers.get('access-control-allow-origin')).toBe(origin);
+        expect(preflight.headers.get('access-control-allow-headers')).toMatch(/authorization/i);
+    });
+});
+
 describe('the transcribed contracts, against the server that defines them', () => {
     it('an account has a usable session with an org already attached', async () => {
         const orgs = await api.orgs();

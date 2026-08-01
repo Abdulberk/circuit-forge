@@ -4,13 +4,13 @@
  * :projectId/versions, which snapshots the draft into an immutable version. All routes JWT-guarded; the
  * service does membership authz on the project.
  */
-import { Controller, Get, Put, Delete, Body, Param, ParseUUIDPipe, HttpCode, UseGuards } from '@nestjs/common';
+import { Controller, Get, Put, Delete, Body, Param, Query, ParseUUIDPipe, HttpCode, UseGuards } from '@nestjs/common';
 import { ApiTags, ApiOperation, ApiBearerAuth } from '@nestjs/swagger';
 
 import { CurrentUser } from '../auth/decorators/current-user.decorator';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 
-import { SaveWorkingCopyDto } from './dto';
+import { DiscardWorkingCopyQueryDto, SaveWorkingCopyDto } from './dto';
 import { WorkingCopyService } from './working-copy.service';
 
 @ApiTags('projects')
@@ -38,8 +38,17 @@ export class WorkingCopyController {
 
     @Delete('projects/:projectId/working-copy')
     @HttpCode(200)
-    @ApiOperation({ summary: 'Discard the working copy (revert to last saved). Idempotent.' })
-    async discard(@Param('projectId', ParseUUIDPipe) projectId: string, @CurrentUser() user: { id: string }) {
-        return this.workingCopy.discard(projectId, user.id);
+    @ApiOperation({
+        summary: 'Discard the working copy (revert to last saved). Idempotent.',
+        description:
+            'Pass ?expectedUpdatedAt= (the `updatedAt` you last saw) to be REFUSED with 409 if the draft ' +
+            'moved since — the same guarantee PUT offers. Omit it for the unconditional discard.',
+    })
+    async discard(
+        @Param('projectId', ParseUUIDPipe) projectId: string,
+        @Query() query: DiscardWorkingCopyQueryDto,
+        @CurrentUser() user: { id: string },
+    ) {
+        return this.workingCopy.discard(projectId, user.id, query.expectedUpdatedAt);
     }
 }

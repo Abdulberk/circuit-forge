@@ -93,3 +93,22 @@ export class SaveWorkingCopyDto {
     @IsISO8601()
     expectedUpdatedAt?: string;
 }
+
+/**
+ * The same concurrency token, for the operation that destroys the whole draft at once.
+ *
+ * DELETE used to take nothing and delete unconditionally, so the guarantee PUT offers — a stale client
+ * cannot overwrite work it never saw — was enforced on the write and absent on the erase. A second tab
+ * pressing "revert to last saved" would discard a draft the first tab was still typing into.
+ */
+export class DiscardWorkingCopyQueryDto {
+    @ApiPropertyOptional({
+        description:
+            'The `updatedAt` this client last saw. When sent, the discard is REFUSED with 409 if the draft ' +
+            'has moved since. Omit for the unconditional discard.',
+        format: 'date-time',
+    })
+    @IsOptional()
+    @IsISO8601()
+    expectedUpdatedAt?: string;
+}

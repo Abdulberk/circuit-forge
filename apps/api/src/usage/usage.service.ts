@@ -564,7 +564,12 @@ export class UsageService {
                 concurrent: layoutConcurrent,
                 limits: {
                     jobsPerMonth: this.limit('QUOTA_LAYOUT_JOBS_PER_MONTH'),
-                    concurrent: this.limit('QUOTA_LAYOUT_CONCURRENT_PER_ORG'),
+                    // `layoutConcurrentLimit()`, not the raw `limit()`. This quota is ON unless deliberately
+                    // switched off, so with nothing configured `limit()` returns null and the report said
+                    // "unlimited" while the enforcer — which uses the accessor — refused the third job with
+                    // "2 of 2 used this period". The number a client is SHOWN has to come from the same place
+                    // as the number it is JUDGED against, or the dashboard confidently contradicts the API.
+                    concurrent: this.layoutConcurrentLimit(),
                 },
             },
             storage: {
@@ -691,7 +696,12 @@ export class UsageService {
                 // additive-migration follow-up), so the admin snapshot shows the global QUOTA_LAYOUT_* values.
                 limits: {
                     jobsPerMonth: this.limit('QUOTA_LAYOUT_JOBS_PER_MONTH'),
-                    concurrent: this.limit('QUOTA_LAYOUT_CONCURRENT_PER_ORG'),
+                    // `layoutConcurrentLimit()`, not the raw `limit()`. This quota is ON unless deliberately
+                    // switched off, so with nothing configured `limit()` returns null and the report said
+                    // "unlimited" while the enforcer — which uses the accessor — refused the third job with
+                    // "2 of 2 used this period". The number a client is SHOWN has to come from the same place
+                    // as the number it is JUDGED against, or the dashboard confidently contradicts the API.
+                    concurrent: this.layoutConcurrentLimit(),
                 },
             },
             storage: {

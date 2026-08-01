@@ -62,8 +62,19 @@ async function bootstrap() {
         .split(',')
         .map((o) => o.trim())
         .filter(Boolean);
+    // The fallback lists the ports THIS repo's frontends actually run on. It had drifted to 3000/5173 while
+    // the studio moved to 3200 and pcb-viewer to 3100, and a missing origin does not fail like a
+    // configuration mistake: the browser blocks the response and hands JavaScript an opaque TypeError, so the
+    // client can only report "could not reach the API" — pointing at a server that is up and answering curl
+    // perfectly. The person debugging it checks the server, the port and the container, and all three are fine.
+    const devOrigins = [
+        'http://localhost:3200', // apps/studio
+        'http://localhost:3100', // apps/pcb-viewer
+        'http://localhost:3000', // a frontend on the Nest default
+        'http://localhost:5173', // vite
+    ];
     app.enableCors({
-        origin: allowedOrigins.length > 0 ? allowedOrigins : ['http://localhost:3000', 'http://localhost:5173'],
+        origin: allowedOrigins.length > 0 ? allowedOrigins : devOrigins,
         credentials: true,
         methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
         allowedHeaders: ['Content-Type', 'Authorization'],
