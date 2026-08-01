@@ -14,7 +14,7 @@
  *   that impossible rather than unlikely: A's controller is aborted the instant B starts, so A's `setState`
  *   never runs.
  */
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 
 import { ApiError, isAbort } from './api';
 
@@ -47,7 +47,26 @@ export function useAsync<T>(
     // eslint-disable-next-line react-hooks/exhaustive-deps
     const call = useCallback(run, deps);
 
+    // What the last effect run was FOR. `call` changes exactly when the caller's deps change, so it is the
+    // identity of the question being asked — distinct from `reload()`, which re-asks the same one.
+    const askedFor = useRef(call);
+
     useEffect(() => {
+        // THE STALE ANSWER. Aborting stops a late write; it does nothing about the value already in state.
+        // `data` was never cleared, so switching to an organisation with no projects left the previous
+        // project's document on screen: `enabled` went false, the effect returned early, and the pane went on
+        // rendering that design — its tree, its "Draft · saved <timestamp>", its component counts — under the
+        // new organisation's name, with no spinner and no error. It looked like a settled, correct screen.
+        // Not a flash: it persisted until something else happened to load.
+        //
+        // Cleared on a KEY change only. Doing it on `reload()` as well would blank the pane on every manual
+        // refresh, which is the opposite complaint.
+        if (askedFor.current !== call || !enabled) {
+            askedFor.current = call;
+            setData(null);
+            setError(null);
+        }
+
         if (!enabled) {
             setLoading(false);
             return;

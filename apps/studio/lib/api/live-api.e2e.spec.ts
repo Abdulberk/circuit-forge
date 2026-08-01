@@ -21,7 +21,16 @@ import { memoryTokenStore } from './tokens';
 
 const BASE_URL = process.env.STUDIO_E2E_API_URL ?? 'http://localhost:3001';
 
-/** A real, minimal design: a divider that our own ERC and netlist generator both accept. */
+/**
+ * A real, minimal design: a divider our ERC, netlist generator and layout DTO all accept.
+ *
+ * NOT cast. Earlier versions were written `as unknown as CircuitJson`, and that cast turned off the exact
+ * checking that would have caught three separate errors in this one literal: pins written `{id, name, netId}`
+ * when `PinConnection` is `{pinId, netId}`, and `value` given as a number when the schema wants a string
+ * (`'1k'`, `'DC 5'`). Two of them the working copy accepted, because that endpoint validates shape only —
+ * they were caught by POST /layouts, which runs the real schema. A fixture that lies about its own type
+ * cannot test a contract; it just moves the lie one file further from where it will hurt.
+ */
 const DIVIDER: CircuitJson = {
     version: '1.0',
     components: [
@@ -29,7 +38,7 @@ const DIVIDER: CircuitJson = {
             id: 'v1',
             type: 'voltage_source',
             designator: 'V1',
-            value: 5,
+            value: 'DC 5',
             pins: [
                 { pinId: '+', netId: 'vin' },
                 { pinId: '-', netId: 'gnd' },
@@ -39,7 +48,7 @@ const DIVIDER: CircuitJson = {
             id: 'r1',
             type: 'resistor',
             designator: 'R1',
-            value: 1000,
+            value: '1k',
             pins: [
                 { pinId: '1', netId: 'vin' },
                 { pinId: '2', netId: 'mid' },
@@ -49,7 +58,7 @@ const DIVIDER: CircuitJson = {
             id: 'r2',
             type: 'resistor',
             designator: 'R2',
-            value: 2000,
+            value: '2k',
             pins: [
                 { pinId: '1', netId: 'mid' },
                 { pinId: '2', netId: 'gnd' },
@@ -62,7 +71,7 @@ const DIVIDER: CircuitJson = {
         { id: 'mid', name: 'MID' },
         { id: 'gnd', name: 'GND', isGround: true },
     ],
-} as unknown as CircuitJson;
+};
 
 /**
  * ONE account, reused across runs; the PROJECTS are what carry the per-run stamp.
@@ -304,6 +313,71 @@ describe('the transcribed contracts, against the server that defines them', () =
         if (opened.source !== 'version') throw new Error(`expected a version, got ${opened.source}`);
         expect(opened.version.versionNumber).toBe(3);
         expect(opened.totalVersions).toBe(3);
+    });
+
+    it('POST /layouts accepts the body this client actually sends', async () => {
+        // The whole layout surface was transcribed wrong and NOTHING caught it, because this suite never
+        // called it: `circuitJson` + `projectId` against a DTO that declares `circuit` and runs
+        // `forbidNonWhitelisted`, so every request would have been a 400 the first time a PCB panel shipped.
+        // A contract test that only covers the endpoints already in use is a contract test for yesterday.
+        //
+        // Asserting on ACCEPTANCE, not on the board: routing takes 10-120s and needs the pcb-worker. A 202
+        // with a job id proves the body was accepted, which is exactly the claim that was false.
+        const started = await api.startLayout({ circuit: DIVIDER });
+        try {
+            expect(started).toMatchObject({ jobId: expect.any(String), status: expect.any(String) });
+
+            // And the shape of the row that comes back. `glbUrl`/`gerbersUrl` are absent rather than null on a job
+            // that has not finished — the service presigns nothing and `undefined` does not survive JSON — which
+            // is why the type marks them optional and why this checks the ALWAYS-present keys against the whole
+            // key set rather than listing twelve names and hoping.
+            const job = await api.layout(started.jobId);
+            const always = [
+                'createdAt',
+                'errorMessage',
+                'finishedAt',
+                'id',
+                'orgId',
+                'projectId',
+                'result',
+                'startedAt',
+                'status',
+                'versionId',
+            ];
+            expect(Object.keys(job).sort()).toEqual(expect.arrayContaining(always));
+            // …and nothing beyond what the type models. An unmodelled field means the contract has moved, and
+            // this is the assertion that says so — listing the allowed extras explicitly instead of ignoring
+            // whatever turns up.
+            const modelled = new Set([...always, 'glbUrl', 'gerbersUrl']);
+            expect(Object.keys(job).filter((k) => !modelled.has(k))).toEqual([]);
+        } finally {
+            // In a `finally`, because an assertion that throws before this line leaks a concurrency slot —
+            // and the org allows two. It happened while writing this test: two failed runs left two QUEUED
+            // jobs, and every subsequent run failed with "Quota exceeded for layout_concurrent: 2 of 2",
+            // which looks like a broken client rather than a test that did not clean up after itself.
+            await api.cancelLayout(started.jobId);
+        }
+    });
+
+    it('rejects the body this client USED to send — proof the fix was needed', async () => {
+        // Locks the defect itself. If the DTO ever silently widened to accept `circuitJson`, this goes red and
+        // the comment above stops being true.
+        const err = (await client
+            .request('/layouts', { method: 'POST', body: { circuitJson: DIVIDER, projectId } })
+            .catch((e: unknown) => e)) as ApiError;
+        expect(err.kind).toBe('invalid');
+        expect(err.details?.join(' ')).toContain('circuitJson should not exist');
+    });
+
+    it('GET /layouts returns LIGHT rows — no result blob, no presigned URLs', async () => {
+        // Typed as the full job, it would have made `row.result.layout` compile and be undefined forever, and
+        // a list view would have re-fetched tens of kilobytes per row to render one badge.
+        const page = await api.layoutsFor({ projectId });
+        if (page.items.length === 0) return; // nothing to inspect on a project with no layouts
+        const row = page.items[0]!;
+        expect(row).not.toHaveProperty('result');
+        expect(row).not.toHaveProperty('glbUrl');
+        expect(row).toHaveProperty('manufacturable');
     });
 
     it('classifies a genuinely missing project as not-found', async () => {

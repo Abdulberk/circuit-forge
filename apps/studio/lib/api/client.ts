@@ -144,15 +144,33 @@ export class ApiClient {
         }
 
         if (response.status === 401 && authenticated && !retried) {
-            const refreshed = await this.refreshSession();
-            if (refreshed) return this.request<T>(path, options, true);
+            const outcome = await this.refreshSession();
+            // `superseded` means another tab rotated the pair while we were asking; we now hold a valid token
+            // that was simply obtained by someone else, so retrying is exactly right.
+            if (outcome === 'refreshed' || outcome === 'superseded') return this.request<T>(path, options, true);
+            if (outcome === 'unavailable') {
+                // The token was never judged — the network dropped, timed out, or the server failed. Falling
+                // through to `interpret` would report the ORIGINAL 401 and end the session at the line below,
+                // which is how "it randomly signs me out" comes back in through the network path. Naming it a
+                // network failure keeps a still-valid session alive across a blip.
+                throw new ApiError('network', 'Could not renew the session — the server did not answer.');
+            }
         }
 
-        return this.interpret<T>(response);
+        return this.interpret<T>(response, authenticated);
     }
 
-    /** Read the response, turning any non-2xx into a classified `ApiError`. */
-    private async interpret<T>(response: Response): Promise<T> {
+    /**
+     * Read the response, turning any non-2xx into a classified `ApiError`.
+     *
+     * `carriedOurToken` decides whether a 401 may end the session, and the distinction is load-bearing. A 401
+     * from a request that presented OUR bearer token means that token is no good. A 401 from an
+     * unauthenticated endpoint means something else entirely: the password was wrong, or a refresh token was
+     * spent. Ending the session on those clears credentials the caller never offered — signing in as a
+     * different user with a typo would destroy the session you already had, and a refresh that merely lost a
+     * race to another tab would wipe the valid pair that tab had just installed.
+     */
+    private async interpret<T>(response: Response, carriedOurToken: boolean): Promise<T> {
         // 204, and any empty body, must not go through `json()` — it throws, and the resulting "Unexpected
         // end of JSON input" would be reported as a server fault on a call that in fact succeeded.
         const text = await response.text();
@@ -176,7 +194,7 @@ export class ApiClient {
         const { message, details } = describeBody(parsed, `Request failed (${response.status}).`);
         const retryAfter = Number(response.headers.get('retry-after'));
 
-        if (kind === 'unauthenticated') this.endSession();
+        if (kind === 'unauthenticated' && carriedOurToken) this.endSession();
 
         throw new ApiError(kind, message, {
             status: response.status,
@@ -193,12 +211,20 @@ export class ApiClient {
     /**
      * Exchange the refresh token for a new pair, at most once concurrently.
      *
-     * Returns false when there is nothing to refresh with or the refresh itself was rejected — the caller
-     * then lets the original 401 through, which is the truthful outcome.
+     * WHY AN OUTCOME AND NOT A BOOLEAN. `false` conflated three situations that need three different
+     * responses, and the conflation reintroduced the exact bug this class was written to prevent. A refresh
+     * can be REJECTED (the server judged the token and said no — the session really is over), it can be
+     * UNAVAILABLE (the network dropped, the request timed out, the server returned 500 — the token was never
+     * judged at all), or it can be SUPERSEDED (another tab rotated the pair while we were asking, so a valid
+     * token is now sitting in the store). Only the first is a reason to sign anyone out. Treating a network
+     * blip as a spent token is "it randomly signs me out" coming back in through a different door.
      */
-    private async refreshSession(): Promise<boolean> {
+    private async refreshSession(): Promise<'refreshed' | 'rejected' | 'unavailable' | 'superseded'> {
         const existing = this.store.read();
-        if (!existing) return false;
+        if (!existing) return 'rejected';
+
+        /** Is the store still holding the pair this refresh set out to replace? */
+        const stillOurs = (): boolean => this.store.read()?.refreshToken === existing.refreshToken;
 
         this.refreshing ??= (async () => {
             const tokens = await this.request<Tokens>(
@@ -206,19 +232,35 @@ export class ApiClient {
                 { method: 'POST', body: { refreshToken: existing.refreshToken }, authenticated: false },
                 true, // never let a refresh recurse into refreshing
             );
+            // Guarded, because a refresh outlives the session that started it. Sign out mid-flight and this
+            // line would write a fresh pair back into a store that was just cleared: `authenticated` returns
+            // true again, the access JWT is stateless and good for its full lifetime, and a reload drops the
+            // NEXT person at that machine into the previous user's workspace. Writing only when the store
+            // still holds what we set out to replace makes sign-out final.
+            if (!stillOurs()) throw new ApiError('unauthenticated', 'The session ended while it was renewing.');
             this.store.write(tokens);
             return tokens;
         })();
 
         try {
             await this.refreshing;
-            return true;
-        } catch {
-            // The refresh token is spent, revoked or expired: this session is over. Ended here as well as in
-            // `interpret`, because the refresh call is unauthenticated and never passes through that path —
-            // and `endSession` makes the overlap harmless.
-            this.endSession();
-            return false;
+            return 'refreshed';
+        } catch (err) {
+            // Another tab won the race and installed a valid pair. Adopting it is right; clearing the store
+            // here would sign that tab out too — `removeItem` propagates as a `storage` event everywhere.
+            if (!stillOurs()) return 'superseded';
+
+            // The server judged the token and refused it: spent, revoked or expired. Ended here as well as in
+            // `interpret`, because the refresh call is unauthenticated and never passes through that path.
+            if (err instanceof ApiError && err.kind === 'unauthenticated') {
+                this.endSession();
+                return 'rejected';
+            }
+
+            // Everything else — network, timeout, 5xx, 429 — left the token unjudged. The API rotates in a
+            // single transaction precisely so a transient failure does not cost a legitimate user their
+            // session; throwing that away here would undo it from the client side.
+            return 'unavailable';
         } finally {
             // Cleared unconditionally: leaving a settled promise in place would make every later 401 reuse a
             // token that has already been rotated away.
@@ -240,9 +282,16 @@ export class ApiClient {
 
     async signOut(signal?: AbortSignal): Promise<void> {
         const tokens = this.store.read();
-        // Cleared locally FIRST, and unconditionally. If the network call fails, the user has still signed
-        // out of this browser — a sign-out that silently leaves the session in place is the worse failure.
-        this.store.clear();
+        // `endSession`, not `store.clear()`. Clearing the store is invisible to React: the only route into
+        // `setSignedIn` is this callback, and the cross-tab `storage` event never fires in the tab that made
+        // the change. So sign-out cleared the tokens and left the departed user's workspace — their org, their
+        // projects, their design — rendered on screen, and it could not self-heal, because the next request
+        // throws `unauthenticated` before reaching the code that would have noticed. Only a reload recovered.
+        // A primary auth control that is a visible no-op is worse than one that fails loudly.
+        //
+        // Still FIRST and unconditional: if the network call below fails the user has nevertheless signed out
+        // of this browser, and a sign-out that quietly leaves the session in place is the worse failure.
+        this.endSession();
         if (!tokens) return;
         try {
             await this.request<void>('/auth/logout', {

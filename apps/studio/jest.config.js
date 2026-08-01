@@ -7,13 +7,16 @@ module.exports = {
     preset: 'ts-jest',
     testEnvironment: 'node',
     roots: ['<rootDir>/lib'],
-    testMatch: ['**/*.spec.ts'],
+    // `.tsx` too: the React hooks are as much a part of this layer as the client is, and a hook whose only
+    // proof is "it compiles" is the one that quietly renders the previous project's document. Those files
+    // opt into a DOM with a `@jest-environment jsdom` pragma rather than splitting the whole config for them.
+    testMatch: ['**/*.spec.ts', '**/*.spec.tsx'],
     // The live e2e needs the stack running, so it is not part of the default run — `pnpm test:e2e` invokes it
     // deliberately. It FAILS rather than skips when the API is unreachable: a live check that passes without
     // having run is a false green, and a false green is worse than a missing test.
     testPathIgnorePatterns: ['\\.e2e\\.spec\\.ts$'],
     transform: {
-        '^.+\\.ts$': [
+        '^.+\\.tsx?$': [
             'ts-jest',
             {
                 tsconfig: {
@@ -24,6 +27,8 @@ module.exports = {
                     strict: true,
                     skipLibCheck: true,
                     types: ['node', 'jest'],
+                    jsx: 'react-jsx',
+                    lib: ['ES2022', 'DOM'],
                 },
             },
         ],

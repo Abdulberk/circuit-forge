@@ -185,7 +185,15 @@ function Workspace() {
                             <p className="empty">This project has no circuit yet — no draft and no saved version.</p>
                         )}
                         <Provenance doc={doc} />
-                        {circuit && <ObjectTreePanel circuit={circuit} onSelect={setSelected} />}
+                        {circuit && (
+                            // Keyed by project so React REMOUNTS it on a switch. The panel's selection and
+                            // collapse state are its own `useState`; unkeyed, they survived a project change
+                            // and the tree painted a row as selected while the Inspector said "Select an
+                            // object." Not a coincidence either — the paths are `root/nets/<id>`, and `gnd`
+                            // appears in nearly every design, so the stale selection usually lands on a real
+                            // row belonging to a different circuit.
+                            <ObjectTreePanel key={activeProject ?? 'none'} circuit={circuit} onSelect={setSelected} />
+                        )}
                     </div>
                 </aside>
 

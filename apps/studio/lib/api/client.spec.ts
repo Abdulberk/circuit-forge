@@ -251,6 +251,134 @@ describe('reading a response', () => {
     });
 });
 
+describe('a refresh that outlives the session it started from', () => {
+    it('does not write tokens back after sign-out — the session stays ended', async () => {
+        // The window is one /auth/refresh round trip, which only opens when an access token has just expired.
+        // Miss the guard and the store is REPOPULATED after sign-out: `authenticated` is true again, the
+        // access JWT is stateless and good for its full life, and a reload drops the next person at that
+        // machine into the previous user's workspace.
+        const lost = jest.fn();
+        const { client, store } = clientWith(undefined, lost);
+        let releaseRefresh: (() => void) | undefined;
+        server(async (url) => {
+            if (url.pathname === '/auth/refresh') {
+                await new Promise<void>((r) => (releaseRefresh = r));
+                return json(200, { accessToken: 'access-2', refreshToken: 'refresh-2' });
+            }
+            if (url.pathname === '/auth/logout') return new Response(null, { status: 204 });
+            return json(401, { message: 'expired' });
+        });
+
+        const pending = client.request('/orgs').catch(() => 'failed');
+        await new Promise((r) => setImmediate(r)); // let the refresh reach the server
+        await client.signOut();
+        expect(store.read()).toBeNull();
+
+        releaseRefresh!();
+        await pending;
+
+        expect(store.read()).toBeNull(); // NOT resurrected
+        expect(client.authenticated).toBe(false);
+    });
+
+    it('reports sign-out through onSessionLost, so a UI can act on it', async () => {
+        // `store.clear()` is invisible to React: this callback is the only route into the shell's state, and
+        // the cross-tab `storage` event never fires in the tab that made the change. Without it, sign-out
+        // cleared the tokens and left the departed user's workspace rendered, unable to self-heal.
+        const lost = jest.fn();
+        const { client } = clientWith(undefined, lost);
+        server(() => new Response(null, { status: 204 }));
+
+        await client.signOut();
+        expect(lost).toHaveBeenCalledTimes(1);
+    });
+});
+
+describe('a refresh that could not be judged', () => {
+    it('keeps the session alive when the network drops mid-refresh', async () => {
+        // The bug the client's own header claims to have solved, re-entering through the network path. The
+        // API rotates in one transaction precisely so a transient failure does not cost a legitimate user
+        // their session; throwing it away here would undo that from the client side.
+        const lost = jest.fn();
+        const { client, store } = clientWith(undefined, lost);
+        server((url) => {
+            if (url.pathname === '/auth/refresh') throw new TypeError('offline');
+            return json(401, { message: 'expired' });
+        });
+
+        await expect(client.request('/orgs')).rejects.toMatchObject({ kind: 'network' });
+        expect(store.read()).not.toBeNull(); // still signed in
+        expect(lost).not.toHaveBeenCalled();
+    });
+
+    it('keeps the session alive when the refresh endpoint returns 500', async () => {
+        const lost = jest.fn();
+        const { client, store } = clientWith(undefined, lost);
+        server((url) => (url.pathname === '/auth/refresh' ? json(500, { message: 'boom' }) : json(401, {})));
+
+        await expect(client.request('/orgs')).rejects.toMatchObject({ kind: 'network' });
+        expect(store.read()).not.toBeNull();
+        expect(lost).not.toHaveBeenCalled();
+    });
+
+    it('ends it only when the server actually REJECTS the token', async () => {
+        // The one case that is a real verdict, and the only one that should sign anyone out.
+        const lost = jest.fn();
+        const { client, store } = clientWith(undefined, lost);
+        server((url) => (url.pathname === '/auth/refresh' ? json(401, { message: 'revoked' }) : json(401, {})));
+
+        await expect(client.request('/orgs')).rejects.toMatchObject({ kind: 'unauthenticated' });
+        expect(store.read()).toBeNull();
+        expect(lost).toHaveBeenCalledTimes(1);
+    });
+
+    it('adopts the pair another tab installed instead of wiping it', async () => {
+        // Two tabs restore at once; one loses. Clearing the store here would sign the WINNER out too, because
+        // `removeItem` propagates as a `storage` event to every tab.
+        const { client, store } = clientWith();
+        server(async (url, init) => {
+            if (url.pathname === '/auth/refresh') {
+                // While our refresh is in flight, "another tab" completes its own and installs a new pair.
+                store.write({ accessToken: 'access-9', refreshToken: 'refresh-9' });
+                return json(401, { message: 'token already used' }); // ours lost the race
+            }
+            return new Headers(init.headers).get('authorization') === 'Bearer access-9'
+                ? json(200, { ok: true })
+                : json(401, { message: 'expired' });
+        });
+
+        await expect(client.request<{ ok: boolean }>('/orgs')).resolves.toEqual({ ok: true });
+        expect(store.read()).toEqual({ accessToken: 'access-9', refreshToken: 'refresh-9' });
+    });
+});
+
+describe('an unauthenticated endpoint cannot end a session it never presented', () => {
+    it('a mistyped sign-in leaves the session you already had intact', async () => {
+        // `/auth/login` answering 401 means the password was wrong — it says nothing about the token already
+        // in the store. Ending the session on it meant that signing in as a colleague with a typo destroyed
+        // your own working session.
+        const lost = jest.fn();
+        const { client, store } = clientWith(undefined, lost);
+        server(() => json(401, { message: 'Invalid credentials' }));
+
+        await expect(client.signIn('someone@else.test', 'wrong')).rejects.toMatchObject({
+            kind: 'unauthenticated',
+        });
+        expect(store.read()).toEqual({ accessToken: 'access-1', refreshToken: 'refresh-1' });
+        expect(lost).not.toHaveBeenCalled();
+    });
+
+    it('but a 401 on a request that DID carry our token still ends it', async () => {
+        const lost = jest.fn();
+        const { client, store } = clientWith(undefined, lost);
+        server((url) => (url.pathname === '/auth/refresh' ? json(401, {}) : json(401, {})));
+
+        await expect(client.request('/orgs')).rejects.toMatchObject({ kind: 'unauthenticated' });
+        expect(store.read()).toBeNull();
+        expect(lost).toHaveBeenCalled();
+    });
+});
+
 describe('signing out', () => {
     it('clears the local session even when the server call fails', async () => {
         // The alternative leaves a user who pressed "sign out" still signed in, which is the worse failure.

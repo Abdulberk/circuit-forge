@@ -69,20 +69,59 @@ export interface WorkingCopy {
     updatedAt: string;
 }
 
-/** GET /layouts/:id — status while pending, plus the result and presigned artifacts once finished. */
-export interface LayoutJob {
+/**
+ * A row from GET /layouts — the LIGHT shape, and not the same type as the detail row.
+ *
+ * The list selects nine columns and derives one verdict; it carries no `result`, no `glbUrl` and no
+ * `gerbersUrl`, because a list view that had to fetch tens of kilobytes of geometry per row to render a badge
+ * would be unusable. Typed separately for the same reason `VersionSummary` is separate from `Version`:
+ * declaring the rich shape here would make `row.result.layout` compile and be `undefined` forever.
+ */
+export interface LayoutJobSummary {
     id: string;
     orgId: string;
     projectId: string | null;
     versionId: string | null;
     status: string;
-    result: { geometry?: LayoutGeometry } | null;
     errorMessage: string | null;
-    glbUrl?: string;
-    gerbersUrl?: string;
+    /**
+     * Whether KiCad certified the board. `null` while the question has no answer yet — a queued, running or
+     * failed job is not "unmanufacturable", it is unjudged, and rendering those the same way would tell a
+     * user their design failed when it has not been looked at.
+     */
+    manufacturable: boolean | null;
     createdAt: string;
     startedAt: string | null;
     finishedAt: string | null;
+}
+
+/**
+ * GET /layouts/:id — status while pending, plus the full result and presigned artifacts once finished.
+ *
+ * `result.layout` is the geometry, NOT `result.geometry`. An earlier version of this interface declared the
+ * latter, and it is worth being precise about why that was dangerous rather than merely wrong: the worker
+ * writes `{ layout: geo, checks, airwires, … }` (pcb-worker/src/layout/processor.ts:235) and the service
+ * passes the blob through verbatim, so `job.result?.geometry` COMPILES and is `undefined` on every real
+ * board, while `job.result?.layout` would have been a type error. The board panel would have rendered blank
+ * with nothing anywhere reporting a problem — exactly the failure this file's header warns about.
+ */
+export interface LayoutJob extends Omit<LayoutJobSummary, 'manufacturable'> {
+    result: {
+        layout?: LayoutGeometry;
+        /** Categorised DRC findings — the notary's verdict on the delivered copper. */
+        checks?: unknown[];
+        /** Connections the router could not complete. Non-empty means the board is not finished. */
+        airwires?: unknown[];
+        drcClean?: boolean;
+        manufacturing?: unknown;
+        completeness?: unknown;
+        parity?: unknown;
+        stats?: unknown;
+        bodies?: unknown;
+        render?: unknown;
+    } | null;
+    glbUrl?: string;
+    gerbersUrl?: string;
 }
 
 export interface SimulationJob {
@@ -259,9 +298,22 @@ export class Api {
 
     // ---- Layout, the long-running one -----------------------------------------------------------------
 
-    /** POST /layouts → 202. Returns the job id to poll; it does NOT wait. */
+    /**
+     * POST /layouts → 202. Returns the job id to poll; it does NOT wait.
+     *
+     * The field is `circuit`, and there is no `projectId`. This method used to send `circuitJson` and
+     * `projectId`, which the API rejects OUTRIGHT — `CreateLayoutDto` declares `circuit`, and the global pipe
+     * runs `forbidNonWhitelisted`, so every request would have failed with
+     * `["property circuitJson should not exist", "property projectId should not exist", "circuit is not a
+     * valid CircuitJson"]`. Nothing called it yet, so nothing was visibly broken; it was 100% broken the
+     * first time a PCB panel used it, and TypeScript could not catch it because the wrong shape WAS the
+     * declared shape.
+     *
+     * The project is derived from `versionId` server-side, which is why there is nothing to send: a layout
+     * tagged to a saved version inherits that version's project and org authoritatively.
+     */
     startLayout(
-        request: { circuitJson: CircuitJson; projectId?: string; versionId?: string; orgId?: string },
+        request: { circuit: CircuitJson; versionId?: string; orgId?: string },
         signal?: AbortSignal,
     ): Promise<{ jobId: string; status: string; orgId: string }> {
         return this.http.request('/layouts', { method: 'POST', body: request, signal });
@@ -281,8 +333,8 @@ export class Api {
     layoutsFor(
         filter: { versionId?: string; projectId?: string },
         signal?: AbortSignal,
-    ): Promise<Paginated<LayoutJob>> {
-        return this.http.request<Paginated<LayoutJob>>('/layouts', { query: filter, signal });
+    ): Promise<Paginated<LayoutJobSummary>> {
+        return this.http.request<Paginated<LayoutJobSummary>>('/layouts', { query: filter, signal });
     }
 
     /** DELETE /layouts/:id — QUEUED cancels outright, RUNNING requests a cooperative abort. Idempotent. */
@@ -297,7 +349,7 @@ export class Api {
      * make the routine case of "this board could not be routed" indistinguishable from the server being down.
      */
     async runLayout(
-        request: { circuitJson: CircuitJson; projectId?: string; versionId?: string; orgId?: string },
+        request: { circuit: CircuitJson; versionId?: string; orgId?: string },
         options: PollOptions = {},
     ): Promise<LayoutJob> {
         const { jobId } = await this.startLayout(request, options.signal);
@@ -306,12 +358,15 @@ export class Api {
 
     // ---- Simulation -----------------------------------------------------------------------------------
 
-    /** POST /versions/:versionId/simulations → the job to poll. */
-    startSimulation(
-        versionId: string,
-        body: unknown,
-        signal?: AbortSignal,
-    ): Promise<{ jobId: string; status: string }> {
+    /**
+     * POST /versions/:versionId/simulations → the job to poll.
+     *
+     * Returns `{ jobId }` and nothing more. A `status` was declared here too, transcribed by symmetry with
+     * the layout route (which does echo one) rather than from the simulation service, which returns the id
+     * alone. A caller rendering `status` would have shown "undefined" on the one screen the user is watching
+     * to find out whether their simulation started.
+     */
+    startSimulation(versionId: string, body: unknown, signal?: AbortSignal): Promise<{ jobId: string }> {
         return this.http.request(`/versions/${versionId}/simulations`, { method: 'POST', body, signal });
     }
 
