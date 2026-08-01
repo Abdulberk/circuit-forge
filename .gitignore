@@ -58,3 +58,7 @@ stdout.log
 # Unpacked copy of a published npm tarball, kept for diffing releases against the source tree
 eda-check/
 packages/pcb-core/.gallery-before/
+
+# stray ngspice output written when a harness runs with the repo root as cwd
+out.csv
+.review-tmp/

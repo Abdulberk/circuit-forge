@@ -17,7 +17,15 @@ const OPAMPGEN = GENERIC_MODELS.opamp;
 
 /**
  * A generic DUAL op-amp at the PACKAGE level: two OPAMPGEN cores in the industry-standard SOIC-8 dual
- * pinout (LM358 / LM2904 / TL072 all share it).
+ * pinout, which LM358 / LM2904 / TL07x / MCP600x all share.
+ *
+ * The PINOUT is portable; the WIRING of the board using it is not, and the model cannot tell you that.
+ * This fixture ties amp B's non-inverting input to V−, which only a part whose input common-mode range
+ * INCLUDES V− tolerates (the LM358 family's defining feature). A TL072 there would phase-invert.
+ * OPAMPGEN's input is `Rin inp inn 2Meg` — purely differential, with no common-mode limit at all — so it
+ * reports a clean 0 V and can never surface that. Same for supply current: `Gm`/`Ebuf` are referenced to
+ * node 0, so the rails deliver nothing (measured: max |i(V2)| = 2.0e-11 A while the output sources
+ * 4.2e-4 A). First-order voltage behaviour is what this tier is for; power and common-mode are not in it.
  *
  * WHY THE PORTS ARE PAD NUMBERS. Two independent consumers read `ports`, and they must agree:
  * `generateNetlist` binds a subckt's pins to them BY NAME, and pcb-core's `chipPinOrder` uses the very
@@ -283,10 +291,16 @@ export const gallerySimPlan = {
     },
     'opamp-amp': {
         analysis: { type: 'tran', stopTime: '5m', stepTime: '5u' },
-        // Measured, not assumed: ±0.2 V in, +2.20 V out on the positive half (exactly the 11× the resistors
-        // set) and only −0.49 V on the negative one, because the supply is single-ended (V− is tied to
-        // ground) and the output cannot swing below it. The asymmetry is the circuit, not a defect.
-        note: 'SIN(0 0.2 1k) input, gain 11 — five cycles; single supply, so the negative half clips near ground',
+        // The positive half is the circuit: +2.20 V out from ±0.2 V in is exactly the 11× the 100k/10k pair
+        // sets. The −0.49 V floor is NOT. It is OPAMPGEN's clamp diode (`Dlo vee n2 DCLMP`) conducting a
+        // forward drop BELOW the negative rail — measured, not inferred: moving V− from 0 V to −1 V moved
+        // the floor from −0.4876 to −1.4652, so it tracks the rail, not ground. No physical op-amp drives
+        // its output below its own V−; a real single-supply part stops a few millivolts above it.
+        //
+        // This note previously said "single supply, so the negative half clips near ground" — false in the
+        // same flattering direction as the two notes corrected alongside it, and by the same mechanism:
+        // attributing a macromodel artifact to the circuit.
+        note: 'SIN(0 0.2 1k) in, gain 11 — the positive half is the circuit; the −0.49 V floor is the generic macromodel’s rail clamp, not board behaviour (a real single-supply part stops at V−)',
     },
     'bridge-rectifier': {
         analysis: { type: 'tran', stopTime: '100m', stepTime: '100u' },

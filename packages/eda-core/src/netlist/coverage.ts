@@ -40,8 +40,20 @@ export interface SimulationCoverage {
     /** The subset whose absence the simulated result depends on. Empty means the deck is electrically
      *  complete even if `omitted` is not. */
     loadBearing: OmittedComponent[];
-    /** True when every component with an electrical model made it into the deck AND nothing load-bearing
-     *  was left out — i.e. the waveforms describe the schematic. */
+    /**
+     * True when nothing load-bearing was left out of the deck.
+     *
+     * PRESENCE, NOT FIDELITY — and the distinction is load-bearing itself. `complete` says every part that
+     * the result depends on is IN the deck; it says nothing about how well each is modelled. A generic-tier
+     * macromodel standing in for a real IC counts as present, and it can be first-order only: our own
+     * op-amp core has no supply current (measured: it sources 4.2e-4 A while drawing 2.0e-11 A from the
+     * rail), no input common-mode limit, no slew rate and no offset. So a `complete` deck can still be the
+     * wrong answer for a power budget or a common-mode question.
+     *
+     * Reading this as "the waveforms describe the schematic" over-claims, and this comment used to say
+     * exactly that. Model fidelity is a separate axis — `ModelDef.tier` already carries it — and reporting
+     * it belongs in a follow-up rather than being smuggled into this boolean.
+     */
     complete: boolean;
 }
 

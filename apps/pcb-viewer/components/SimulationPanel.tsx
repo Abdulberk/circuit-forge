@@ -16,10 +16,29 @@ import type { SimulationCoverage } from '../lib/simulation';
 export type SimState =
     | { kind: 'idle' }
     | { kind: 'running' }
-    | { kind: 'playing'; nets: number; unresolved: string[]; span: number; time: number; min: number; max: number }
+    | {
+          kind: 'playing';
+          nets: number;
+          unresolved: string[];
+          span: number;
+          time: number;
+          min: number;
+          max: number;
+          /** Wall-clock seconds for one pass, so the panel can state the slow-down instead of implying real time. */
+          loopSeconds: number;
+          /** Carried on the PLAYING state too, not just on failure. A board whose IC has no model still
+           *  animates — its passive network is real — and that is precisely when a viewer showing a smooth
+           *  waveform and saying nothing is at its most misleading. */
+          coverage?: SimulationCoverage;
+          /** What the run was expected to show, from the board's own plan. */
+          note?: string;
+      }
     | { kind: 'unavailable'; reason: string; coverage?: SimulationCoverage };
 
 const fmtV = (v: number): string => (Math.abs(v) >= 1 ? `${v.toFixed(2)} V` : `${(v * 1000).toFixed(0)} mV`);
+/** 1200 -> "1200×", 1.2e6 -> "1.2M×" — a slow-down factor a person can read at a glance. */
+const fmtRate = (r: number): string =>
+    r >= 1e6 ? `${(r / 1e6).toFixed(1)}M×` : r >= 1e3 ? `${(r / 1e3).toFixed(1)}k×` : `${r.toFixed(r < 10 ? 1 : 0)}×`;
 const fmtT = (s: number): string =>
     s >= 1 ? `${s.toFixed(3)} s` : s >= 1e-3 ? `${(s * 1e3).toFixed(2)} ms` : `${(s * 1e6).toFixed(1)} µs`;
 
@@ -80,6 +99,15 @@ export function SimulationPanel({
                         <span style={{ fontVariantNumeric: 'tabular-nums' }}>{fmtT(state.time)}</span>
                         <span style={dim}>/ {fmtT(state.span)}</span>
                     </div>
+                    {/* The animation is NOT real time, and the motion must not be left to imply that it is.
+                        A 5 ms transient shown over 6 s is a 1200× slow-down and the number is stated. */}
+                    <div style={line}>
+                        <span style={{ ...dim, width: 40 }}>hız</span>
+                        <span style={{ fontVariantNumeric: 'tabular-nums' }}>
+                            {state.span > 0 ? `${fmtRate(state.loopSeconds / state.span)} yavaş` : '—'}
+                        </span>
+                        <span style={dim}>({state.loopSeconds.toFixed(0)} sn'de bir tur)</span>
+                    </div>
                     <div style={line}>
                         <span style={{ ...dim, width: 40 }}>aralık</span>
                         <span style={{ fontVariantNumeric: 'tabular-nums' }}>
@@ -107,22 +135,38 @@ export function SimulationPanel({
                             yerine renksiz bırakıldı
                         </div>
                     )}
+                    {/* The most important line on this panel. Everything above describes a smooth, confident
+                        animation; this says whether it is an animation OF THE BOARD. */}
+                    <CoverageNote coverage={state.coverage} />
+                    {state.note && <div style={{ ...dim, fontSize: 11, lineHeight: 1.5 }}>{state.note}</div>}
                 </div>
             )}
 
             {state.kind === 'unavailable' && (
                 <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
                     <div style={warn}>{state.reason}</div>
-                    {state.coverage && !state.coverage.complete && (
-                        <div style={warn}>
-                            Deck{' '}
-                            {state.coverage.loadBearing.map((o) => `${o.designator} (${o.type})`).join(', ')}{' '}
-                            içermiyor — simüle edilebilir modeli yok, dolayısıyla burada gösterilecek hiçbir şey
-                            kartı çizildiği gibi tarif etmezdi.
-                        </div>
-                    )}
+                    <CoverageNote coverage={state.coverage} />
                 </div>
             )}
+        </div>
+    );
+}
+
+/**
+ * What the deck did NOT contain — rendered wherever a simulation is being reported, which is the whole
+ * point. This used to live only on the failure branch, so the three gallery boards that simulate happily
+ * WITHOUT their IC (a 7805, a 555, a '595) animated in silence: a smooth waveform, a net count, and not a
+ * word about the missing part. That is the exact silence the coverage check was built to end, reintroduced
+ * one layer above it.
+ */
+function CoverageNote({ coverage }: Readonly<{ coverage?: SimulationCoverage }>) {
+    if (!coverage || coverage.complete) return null;
+    const parts = coverage.loadBearing.map((o) => `${o.designator} (${o.type})`).join(', ');
+    return (
+        <div style={warn}>
+            ⚠ Deck {parts} içermiyor — simüle edilebilir modeli yok. Burada gördüğünüz, kartın geri kalan
+            pasif ağı; {coverage.loadBearing.length === 1 ? 'o parçanın' : 'o parçaların'} bulunduğu yerde
+            devrede bir açık var, dolayısıyla bu animasyon kartı çizildiği gibi tarif etmiyor.
         </div>
     );
 }

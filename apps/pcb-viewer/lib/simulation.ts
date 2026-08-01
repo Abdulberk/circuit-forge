@@ -56,7 +56,15 @@ export interface SimulationCoverage {
  *  simulate look the same in a waveform and are not the same fact. `coverage` answers a third case that
  *  looks identical to both: the run succeeded, but the part that would have made something happen has no
  *  simulatable model and was never in the deck. */
-export type BoardSim = { coverage?: SimulationCoverage } & (
+/** Per-device branch current the simulator could report, keyed by designator. Absent on a board whose
+ *  every device is multi-terminal (no single branch current exists) — the viewer then shows no flow. */
+export interface BranchCurrentRef {
+    series: string;
+    intoPin: string;
+    outOfPin: string;
+}
+
+export type BoardSim = { coverage?: SimulationCoverage; branchCurrents?: Record<string, BranchCurrentRef> } & (
     | { available: false; reason: string }
     | {
           available: true;
