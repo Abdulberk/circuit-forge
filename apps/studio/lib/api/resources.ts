@@ -186,9 +186,19 @@ export class Api {
         return this.http.request<Org[]>('/orgs', { signal });
     }
 
-    /** GET /orgs/:orgId/projects */
-    projects(orgId: string, signal?: AbortSignal): Promise<Paginated<Project>> {
-        return this.http.request<Paginated<Project>>(`/orgs/${orgId}/projects`, { signal });
+    /**
+     * GET /orgs/:orgId/projects — one PAGE, and the caller has to treat it as one.
+     *
+     * The envelope carries `total` and `hasMore` precisely because the array is not the whole set. A picker
+     * that renders `items` and says nothing else presents page one as the complete list, and the 51st project
+     * becomes unreachable with no indication anywhere.
+     */
+    projects(
+        orgId: string,
+        page: { limit?: number; offset?: number } = {},
+        signal?: AbortSignal,
+    ): Promise<Paginated<Project>> {
+        return this.http.request<Paginated<Project>>(`/orgs/${orgId}/projects`, { query: page, signal });
     }
 
     /** GET /projects/:id */

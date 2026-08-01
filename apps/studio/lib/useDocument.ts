@@ -3,23 +3,31 @@
 /**
  * The open document, and the only thing that writes it back.
  *
- * Four things have to be true at once, and each has a specific way of going wrong:
+ * WHAT THIS HAS TO GET RIGHT, and how each one went wrong the first time:
  *
  *   AN EDIT IS INSTANT, A SAVE IS NOT. Typing must not wait for a round trip, so the local document leads and
- *   the save follows on a debounce. The trap is the LAST edit: a naive debounce that is cancelled by unmount
- *   drops whatever was typed in the final second, and the user watches their change disappear on navigation.
+ *   the save follows on a debounce. The trap is the LAST edit: a debounce cancelled by unmount drops whatever
+ *   was typed in the final second, and the user watches their change disappear on navigation.
  *
  *   THE SAVE MUST BE REFUSABLE. Every save after the first carries `expectedUpdatedAt`, so a second tab
- *   cannot overwrite work it never saw — the API answers 409 instead. That guarantee already exists server
- *   side and has never been used; omitting the token is silently opting into last-writer-wins.
+ *   cannot overwrite work it never saw. Omitting the token is silently choosing last-writer-wins.
  *
  *   SAVES MUST NOT OVERLAP. The token is the row's `updatedAt`, so two saves in flight would both carry the
- *   same one and the second would be refused by the first's own success. One save at a time, and anything
- *   typed meanwhile is coalesced into the next one.
+ *   same one and the second would be refused by the first's own success.
  *
- *   A CONFLICT IS A STATE, NOT AN ERROR. Reaching it must not throw away the user's document. It is held
- *   intact and offered back, because the alternative — reload and lose it — converts a prevented silent loss
- *   into a loud one.
+ *   A CONFLICT MUST HAVE A WAY OUT THAT KEEPS THE WORK — and this is where the first version failed
+ *   completely. It offered two buttons and BOTH were no-ops. "Save mine anyway" called `flush`, which reads
+ *   `pending`, which the failing save had already cleared and the error path never restored; and even with a
+ *   document it re-sent the same stale token, which the server refuses by definition — a 409 loop forever.
+ *   "Discard mine, load theirs" never contacted the server at all: it re-adopted the cached document and
+ *   re-installed the same rejected token, leaving the project permanently unsaveable. The tests passed
+ *   because the fake server ignored the token and the test itself performed the reload the app never did.
+ *   A conflict is the one moment the user's work is genuinely at risk, and it had exactly zero real exits.
+ *
+ *   EVERYTHING IS SCOPED TO A PROJECT. The refs were not, so a save that landed after a project switch wrote
+ *   one project's circuit into another's draft, poisoned the new project's token, and reported "saved" for a
+ *   document that was never sent. Every async completion now checks it is still talking about the project it
+ *   started from.
  */
 
 import type { CircuitJson } from '@circuit-forge/eda-core';
@@ -37,8 +45,8 @@ export type SaveState =
     | { status: 'dirty' }
     | { status: 'saving' }
     /**
-     * Someone else saved first. The local document is UNTOUCHED and still on screen; `theirs` is what the
-     * server holds. Nothing is resolved automatically — a merge we invented could silently pick wrong.
+     * Someone else saved first. The local document is UNTOUCHED and still on screen; `theirUpdatedAt` is what
+     * the server holds. Nothing is resolved automatically — a merge we invented could silently pick wrong.
      */
     | { status: 'conflict'; theirUpdatedAt: string | null }
     | { status: 'error'; error: ApiError };
@@ -56,90 +64,166 @@ export interface DocumentState {
      * hook never has to know what a designator is.
      */
     apply: (edit: (circuit: CircuitJson) => EditResult) => void;
-    /** Force a save now — for a blur, a keyboard shortcut, or a tab that is closing. */
+    /** Save now — for a blur, a keyboard shortcut, or a tab that is closing. */
     flush: () => void;
-    /** Give up the local document and take the server's. The only way out of a conflict that loses work. */
-    discardLocalAndReload: () => void;
+    /**
+     * Resolve a conflict by keeping MINE: re-send the local document with no precondition, deliberately
+     * overwriting whatever is on the server. The only honest way to force a save — retrying with the token
+     * that was just refused can never succeed.
+     */
+    overwriteWithMine: () => void;
+    /** Resolve a conflict by taking THEIRS: fetch the server's document and adopt it, discarding local work. */
+    takeTheirs: () => void;
 }
 
-export function useDocument(api: Api, projectId: string | null, opened: OpenedProject | null): DocumentState {
+export function useDocument(
+    api: Api,
+    projectId: string | null,
+    opened: OpenedProject | null,
+    /** Re-fetch the project. Required, because "load theirs" is meaningless without asking the server. */
+    reloadOpened: () => void,
+): DocumentState {
     const [circuit, setCircuit] = useState<CircuitJson | null>(null);
     const [source, setSource] = useState<OpenedProject['source'] | null>(null);
     const [save, setSave] = useState<SaveState>({ status: 'clean', savedAt: null });
     const [refusal, setRefusal] = useState<DocumentState['refusal']>(null);
-    const [reloadNonce, setReloadNonce] = useState(0);
 
     /**
-     * The concurrency token: the `updatedAt` this client last saw. A ref rather than state because a save
-     * that has just completed must hand its new token to the NEXT save without waiting for a render — a
-     * render-delayed token would make the following save carry a stale one and be refused by our own write.
+     * Everything mutable, in one object keyed by the project it belongs to.
+     *
+     * Separate refs could not express "these all belong to project X": a save resolving after a switch would
+     * find the token ref already replaced by the new project's, write its own `updatedAt` into it, and the
+     * next save for the NEW project would carry a token minted for the old one. Bundling them means a
+     * completion can compare one field and know whether it is still relevant.
      */
-    const token = useRef<string | null>(null);
-    /** The document a save is currently sending, so a completed save knows whether more was typed meanwhile. */
-    const inFlight = useRef<CircuitJson | null>(null);
-    const pending = useRef<CircuitJson | null>(null);
-    const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
-    /** Set on unmount so a late save completion cannot call setState on a dead component. */
-    const alive = useRef(true);
+    const w = useRef<{
+        projectId: string | null;
+        /** The `updatedAt` this client last saw — the concurrency token. */
+        token: string | null;
+        /** Which saved version this draft descends from; must survive every circuit-only autosave. */
+        baseVersionId: string | null;
+        /** Typed but not yet sent. */
+        pending: CircuitJson | null;
+        /** Currently being sent. Non-null means a save is open and nothing else may start. */
+        inFlight: CircuitJson | null;
+        timer: ReturnType<typeof setTimeout> | null;
+        alive: boolean;
+    }>({
+        projectId: null,
+        token: null,
+        baseVersionId: null,
+        pending: null,
+        inFlight: null,
+        timer: null,
+        alive: true,
+    });
+
+    useEffect(() => {
+        const state = w.current;
+        state.alive = true;
+        return () => {
+            state.alive = false;
+        };
+    }, []);
 
     // ---- Adopt whatever the loader opened -------------------------------------------------------------
 
     useEffect(() => {
-        if (!opened) return;
-        setCircuit(opened.source === 'empty' ? null : opened.circuitJson);
-        setSource(opened.source);
+        if (!opened || !projectId) return;
+        const state = w.current;
+
+        // Switching projects with unsent edits: send them BEFORE dropping them on the floor. The alternative
+        // is that clicking another project in the picker silently discards the last second of typing.
+        if (state.projectId !== null && state.projectId !== projectId && state.pending && !state.inFlight) {
+            void sendFor(state.projectId, state.pending, state.token, state.baseVersionId);
+        }
+        if (state.timer) clearTimeout(state.timer);
+
+        state.projectId = projectId;
+        state.pending = null;
+        state.inFlight = null;
+        state.timer = null;
         // Only a working copy carries a token. Opening a saved VERSION means there is no draft row yet, so
         // the first save must create one — and creating it with a token would be refused, correctly, because
         // there is nothing there to match.
-        token.current = opened.source === 'working-copy' ? opened.updatedAt : null;
+        state.token = opened.source === 'working-copy' ? opened.updatedAt : null;
+        // Provenance the API models and this hook used to drop: a draft opened FROM a version descends from
+        // it, and every circuit-only autosave must carry that forward or the ancestry is lost on the first
+        // keystroke.
+        state.baseVersionId =
+            opened.source === 'working-copy'
+                ? opened.baseVersionId
+                : opened.source === 'version'
+                  ? opened.version.id
+                  : null;
+
+        setCircuit(opened.source === 'empty' ? null : opened.circuitJson);
+        setSource(opened.source);
         setSave({ status: 'clean', savedAt: opened.source === 'working-copy' ? opened.updatedAt : null });
         setRefusal(null);
-        pending.current = null;
-        inFlight.current = null;
-    }, [opened, reloadNonce]);
-
-    useEffect(() => {
-        alive.current = true;
-        return () => {
-            alive.current = false;
-        };
-    }, []);
+        // `sendFor` is stable for the life of the hook; including it would re-adopt on every render.
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [opened, projectId]);
 
     // ---- Saving ---------------------------------------------------------------------------------------
 
-    const send = useCallback(
-        async (doc: CircuitJson): Promise<void> => {
-            if (!projectId) return;
-            inFlight.current = doc;
-            setSave({ status: 'saving' });
+    /**
+     * Send one document for one project.
+     *
+     * Takes the project, the token and the provenance as ARGUMENTS rather than reading refs at completion
+     * time, so a save that resolves after a switch cannot write its result into the new project's state.
+     * `token === null` means "no precondition" — used for the first save of a new draft, and deliberately for
+     * the force-overwrite path.
+     */
+    const sendFor = useCallback(
+        async (
+            forProject: string,
+            doc: CircuitJson,
+            token: string | null,
+            baseVersionId: string | null,
+        ): Promise<void> => {
+            const state = w.current;
+            state.inFlight = doc;
+            if (state.projectId === forProject) setSave({ status: 'saving' });
+
             try {
-                const saved = await api.saveWorkingCopy(projectId, {
+                const saved = await api.saveWorkingCopy(forProject, {
                     circuitJson: doc,
-                    // Editor state is not modelled yet; `{}` is the truthful value for "there is none",
-                    // and it is sent explicitly because the API requires it and a default here would one day
-                    // erase a real one.
+                    // Editor state is not modelled yet; `{}` is the truthful value for "there is none".
                     uiJson: {},
-                    ...(token.current === null ? {} : { expectedUpdatedAt: token.current }),
+                    ...(baseVersionId === null ? {} : { baseVersionId }),
+                    ...(token === null ? {} : { expectedUpdatedAt: token }),
                 });
-                token.current = saved.updatedAt;
-                if (!alive.current) return;
+
+                // Anything that happens from here is only about the project this save was FOR. A completion
+                // for a project the user has already left updates nothing — it was a flush on the way out.
+                if (!state.alive || state.projectId !== forProject) {
+                    if (state.inFlight === doc) state.inFlight = null;
+                    return;
+                }
+
+                state.token = saved.updatedAt;
+                state.baseVersionId = saved.baseVersionId;
+                state.inFlight = null;
 
                 // Anything typed while this was in flight is now the document to send next; without this the
                 // last keystrokes of a fast typist would sit unsaved until they typed again.
-                const queued = pending.current;
-                pending.current = null;
-                inFlight.current = null;
+                const queued = state.pending;
+                state.pending = null;
                 if (queued && queued !== doc) {
-                    void send(queued);
+                    void sendFor(forProject, queued, state.token, state.baseVersionId);
                 } else {
                     setSave({ status: 'clean', savedAt: saved.updatedAt });
                 }
             } catch (err) {
-                inFlight.current = null;
-                if (!alive.current || isAbort(err)) return;
+                if (state.inFlight === doc) state.inFlight = null;
+                if (!state.alive || state.projectId !== forProject || isAbort(err)) return;
+
+                // The document that failed goes BACK in the queue. Without this the retry and force-overwrite
+                // paths have nothing to send — which is precisely how both conflict buttons became no-ops.
+                if (!state.pending) state.pending = doc;
+
                 const error = err instanceof ApiError ? err : new ApiError('unexpected', String(err));
-                // A conflict is its own state and must NOT clear the local document — the user's edits are
-                // the thing at risk, and this is the moment they matter most.
                 setSave(
                     error.kind === 'conflict'
                         ? {
@@ -153,55 +237,49 @@ export function useDocument(api: Api, projectId: string | null, opened: OpenedPr
                 );
             }
         },
-        [api, projectId],
+        [api],
     );
 
     const flush = useCallback(() => {
-        if (timer.current) {
-            clearTimeout(timer.current);
-            timer.current = null;
+        const state = w.current;
+        if (state.timer) {
+            clearTimeout(state.timer);
+            state.timer = null;
         }
-        const doc = pending.current;
-        if (!doc) return;
+        const doc = state.pending;
+        if (!doc || !state.projectId) return;
         // One save at a time: the token is the row's `updatedAt`, so a second concurrent save would carry the
         // same one and be refused by the first save's own success — a self-inflicted conflict.
-        if (inFlight.current) return;
-        pending.current = null;
-        void send(doc);
-    }, [send]);
+        if (state.inFlight) return;
+        state.pending = null;
+        void sendFor(state.projectId, doc, state.token, state.baseVersionId);
+    }, [sendFor]);
 
     const schedule = useCallback(
         (doc: CircuitJson) => {
-            pending.current = doc;
+            const state = w.current;
+            state.pending = doc;
             setSave((s) => (s.status === 'conflict' ? s : { status: 'dirty' }));
-            if (timer.current) clearTimeout(timer.current);
-            timer.current = setTimeout(() => {
-                timer.current = null;
+            if (state.timer) clearTimeout(state.timer);
+            state.timer = setTimeout(() => {
+                state.timer = null;
                 flush();
             }, AUTOSAVE_IDLE_MS);
         },
         [flush],
     );
 
-    /**
-     * A save in flight frees up: send whatever was typed meanwhile.
-     *
-     * `send` already chains directly, but a save that FAILED leaves `pending` set with no chain — this is the
-     * path that picks it up once the user edits again or presses save.
-     */
-    useEffect(() => {
-        if (save.status === 'clean' && pending.current && !inFlight.current) flush();
-    }, [save.status, flush]);
-
     // The last edit must survive leaving the page. A debounce cancelled by unmount silently drops whatever
     // was typed in the final second, which the user experiences as the editor forgetting.
     useEffect(() => {
+        const state = w.current;
         return () => {
-            if (timer.current) clearTimeout(timer.current);
-            const doc = pending.current;
-            if (doc && projectId && !inFlight.current) void send(doc);
+            if (state.timer) clearTimeout(state.timer);
+            if (state.pending && state.projectId && !state.inFlight) {
+                void sendFor(state.projectId, state.pending, state.token, state.baseVersionId);
+            }
         };
-    }, [send, projectId]);
+    }, [sendFor]);
 
     // ---- Editing --------------------------------------------------------------------------------------
 
@@ -225,12 +303,41 @@ export function useDocument(api: Api, projectId: string | null, opened: OpenedPr
         [schedule],
     );
 
-    const discardLocalAndReload = useCallback(() => {
-        pending.current = null;
-        inFlight.current = null;
-        if (timer.current) clearTimeout(timer.current);
-        setReloadNonce((n) => n + 1);
-    }, []);
+    // ---- Getting out of a conflict --------------------------------------------------------------------
 
-    return { circuit, source, save, refusal, apply, flush, discardLocalAndReload };
+    /**
+     * Keep mine: re-send WITHOUT a precondition.
+     *
+     * Retrying with the token the server just refused cannot ever succeed — that token is stale by
+     * definition, and the conditional update will match zero rows every time. Dropping the precondition is
+     * what "overwrite theirs, deliberately" actually means, and the API models exactly that: a save with no
+     * `expectedUpdatedAt` is last-writer-wins. It is destructive and it is the user's explicit choice.
+     */
+    const overwriteWithMine = useCallback(() => {
+        const state = w.current;
+        const doc = state.pending ?? state.inFlight ?? circuit;
+        if (!doc || !state.projectId || state.inFlight) return;
+        state.pending = null;
+        void sendFor(state.projectId, doc, null, state.baseVersionId);
+    }, [sendFor, circuit]);
+
+    /**
+     * Take theirs: ask the SERVER what it holds and adopt that.
+     *
+     * The first version of this only bumped a local counter, which re-adopted the cached document and
+     * re-installed the token the server had already rejected — so the project became permanently unsaveable
+     * and the user had lost their work for nothing. Discarding local work is only honest if what replaces it
+     * is genuinely the other version.
+     */
+    const takeTheirs = useCallback(() => {
+        const state = w.current;
+        if (state.timer) clearTimeout(state.timer);
+        state.timer = null;
+        state.pending = null;
+        // Not `inFlight`: a request already on the wire cannot be recalled, and its completion is guarded by
+        // the project check. The refetch below is what determines the final state.
+        reloadOpened();
+    }, [reloadOpened]);
+
+    return { circuit, source, save, refusal, apply, flush, overwriteWithMine, takeTheirs };
 }

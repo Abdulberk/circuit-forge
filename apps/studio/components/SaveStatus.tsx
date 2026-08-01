@@ -22,8 +22,12 @@ export function SaveStatus({ doc }: { doc: DocumentState }) {
                 Your changes are still here and have NOT been sent. The copy on the server was updated
                 {save.theirUpdatedAt ? ` at ${time(save.theirUpdatedAt)}` : ''} by another tab or another person.
                 <div style={{ display: 'flex', gap: 8, marginTop: 8 }}>
-                    <button onClick={doc.flush}>Save mine anyway</button>
-                    <button onClick={doc.discardLocalAndReload}>Discard mine, load theirs</button>
+                    {/* `overwriteWithMine`, NOT a retry. Re-sending with the token the server just refused
+                        can never succeed — it is stale by definition and the conditional update matches zero
+                        rows every time. Forcing the save means dropping the precondition, which is a
+                        deliberate overwrite of someone else's work and is labelled as one. */}
+                    <button onClick={doc.overwriteWithMine}>Save mine, overwrite theirs</button>
+                    <button onClick={doc.takeTheirs}>Discard mine, load theirs</button>
                 </div>
             </div>
         );

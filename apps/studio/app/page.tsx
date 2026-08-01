@@ -8,7 +8,7 @@
  * which is the only way this harness is worth building inside the product's own workspace.
  */
 
-import type { TreeNode } from '@circuit-forge/editor-core';
+import { isPlaceablePart, type TreeNode } from '@circuit-forge/editor-core';
 import { useMemo, useState } from 'react';
 
 import { Inspector } from '../components/Inspector';
@@ -85,7 +85,9 @@ function Provenance({ doc }: { doc: OpenedProject | null }): React.JSX.Element |
     }
     return (
         <p className="empty" style={{ color: 'var(--warn)' }}>
-            No draft — showing saved v{doc.version.versionNumber} of {doc.totalVersions}
+            {/* Not "read-only": editing this is allowed and the first keystroke creates a draft descending
+                from it. Saying otherwise was a lie the moment the write path landed. */}
+            Opened from saved v{doc.version.versionNumber} of {doc.totalVersions} — editing starts a new draft
         </p>
     );
 }
@@ -100,7 +102,14 @@ function Workspace() {
     // The first org is adopted only until the user picks one; `?? ''` keeps the <select> controlled.
     const activeOrg = orgId ?? orgs.data?.[0]?.id ?? null;
 
-    const projects = useAsync((signal) => api.projects(activeOrg!, signal), [activeOrg], activeOrg !== null);
+    // A page, not THE list. The default limit is 50 and the picker rendered whatever came back as though it
+    // were everything, so a 51st project was simply unreachable with no indication. Asking for the cap and
+    // disclosing the remainder is honest at any size; real paging belongs with a searchable picker.
+    const projects = useAsync(
+        (signal) => api.projects(activeOrg!, { limit: 100 }, signal),
+        [activeOrg],
+        activeOrg !== null,
+    );
     const activeProject = projectId ?? projects.data?.items[0]?.id ?? null;
 
     // `openProject`, not `workingCopy`: a project with no draft still has its saved history, and the API's
@@ -113,7 +122,7 @@ function Workspace() {
 
     // The loader fetches; the document OWNS what is on screen and writes it back. Splitting them is what
     // keeps a local edit instant while the save is debounced, refusable and one-at-a-time.
-    const doc = useDocument(api, activeProject, opened.data);
+    const doc = useDocument(api, activeProject, opened.data, opened.reload);
     const circuit = doc.circuit;
     const counts = useMemo(
         () => ({
@@ -122,7 +131,7 @@ function Workspace() {
             // beside 26 in the tree, on the same screen, for the same design. Two numbers for one fact is a
             // defect even when both are defensible: the reader has to work out which one answers their
             // question, and nothing on screen tells them.
-            components: (circuit?.components ?? []).filter((c) => c.type !== 'ground').length,
+            components: (circuit?.components ?? []).filter(isPlaceablePart).length,
             nets: circuit?.nets?.length ?? 0,
         }),
         [circuit],
@@ -169,6 +178,9 @@ function Workspace() {
                     ))}
                     {projects.loading && <option>Loading…</option>}
                     {projects.data?.items.length === 0 && <option value="">No projects</option>}
+                    {projects.data?.hasMore && (
+                        <option disabled>…and {projects.data.total - projects.data.items.length} more not shown</option>
+                    )}
                 </select>
 
                 <span className="spacer" />
@@ -230,9 +242,7 @@ function Workspace() {
                 <span>{counts.nets} nets</span>
                 {opened.data && opened.data.source !== 'empty' && (
                     <span>
-                        {opened.data.source === 'working-copy'
-                            ? 'draft'
-                            : `v${opened.data.version.versionNumber} (read-only)`}
+                        {opened.data.source === 'working-copy' ? 'draft' : `from v${opened.data.version.versionNumber}`}
                     </span>
                 )}
                 <span className="spacer" />

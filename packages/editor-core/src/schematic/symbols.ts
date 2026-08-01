@@ -59,6 +59,25 @@ export interface SymbolGeometry {
 
 const PIN_LEN = 8;
 
+/**
+ * Order a POLARISED part's terminals by NAME, not by array position.
+ *
+ * The bug this closes: `twoTerminal` put `pins[0]` on the left and `pins[1]` on the right, so a diode drew
+ * its anode wherever the author happened to list it first. Everything else in this system binds by `pinId` —
+ * the netlist generator, the layout adapter, `LayoutPad.sourcePin` — and a design that authors
+ * `[{pinId:'cathode'}, {pinId:'anode'}]` is perfectly legal and simulates identically. It would have drawn
+ * backwards, and a reversed diode on a schematic is read as fact.
+ *
+ * Returns null when the names are not the ones we know, and the caller then DERIVES a box instead. Drawing a
+ * polarised symbol whose polarity we cannot establish is the same unbacked claim as putting an arrow on a
+ * transistor whose type we cannot read — see UNDRAWN_BY_DESIGN.
+ */
+function orderedByName(pins: string[], first: readonly string[], second: readonly string[]): [string, string] | null {
+    const a = pins.find((p) => first.includes(p.toLowerCase()));
+    const b = pins.find((p) => second.includes(p.toLowerCase()));
+    return a !== undefined && b !== undefined && a !== b ? [a, b] : null;
+}
+
 /** A two-terminal part: one pin left, one right, body between. The shared frame for R, C, L, D, V. */
 function twoTerminal(pins: string[], body: SymbolStroke[], halfWidth: number, halfHeight: number): SymbolGeometry {
     return {
@@ -96,7 +115,7 @@ function twoTerminal(pins: string[], body: SymbolStroke[], halfWidth: number, ha
  * because the part is common. Everything absent from here is DERIVED, which is a correct answer, not a
  * degraded one.
  */
-const DRAWN: Record<string, (pins: string[]) => SymbolGeometry> = {
+const DRAWN: Record<string, (pins: string[]) => SymbolGeometry | null> = {
     resistor: (p) =>
         twoTerminal(
             p,
@@ -178,88 +197,100 @@ const DRAWN: Record<string, (pins: string[]) => SymbolGeometry> = {
         ],
     }),
 
-    diode: (p) => ({
-        ...twoTerminal(p, [], 7, 7),
-        strokes: [
-            {
-                points: [
-                    [-7 - PIN_LEN, 0],
-                    [-7, 0],
-                ],
-            },
-            {
-                points: [
-                    [-7, -7],
-                    [-7, 7],
-                    [5, 0],
-                ],
-                closed: true,
-            }, // anode triangle
-            {
-                points: [
-                    [5, -7],
-                    [5, 7],
-                ],
-            }, // cathode bar
-            {
-                points: [
-                    [5, 0],
-                    [5 + PIN_LEN, 0],
-                ],
-            },
-        ],
-    }),
+    diode: (raw) => {
+        // Anode LEFT, cathode RIGHT — by name. Taking them in array order drew the diode backwards for
+        // any design that listed cathode first, which is legal everywhere else in this system.
+        const p = orderedByName(raw, ['anode', 'a', '+'], ['cathode', 'k', 'c', '-']);
+        if (!p) return null;
+        return {
+            ...twoTerminal(p, [], 7, 7),
+            strokes: [
+                {
+                    points: [
+                        [-7 - PIN_LEN, 0],
+                        [-7, 0],
+                    ],
+                },
+                {
+                    points: [
+                        [-7, -7],
+                        [-7, 7],
+                        [5, 0],
+                    ],
+                    closed: true,
+                }, // anode triangle
+                {
+                    points: [
+                        [5, -7],
+                        [5, 7],
+                    ],
+                }, // cathode bar
+                {
+                    points: [
+                        [5, 0],
+                        [5 + PIN_LEN, 0],
+                    ],
+                },
+            ],
+        };
+    },
 
-    voltage_source: (p) => ({
-        basis: 'drawn',
-        width: (12 + PIN_LEN) * 2,
-        height: 24,
-        strokes: [
-            {
-                points: [
-                    [0, -12 - PIN_LEN],
-                    [0, -12],
-                ],
-            },
-            // A circle, as a polygon — the renderer needs no arc support to draw a source.
-            {
-                points: Array.from({ length: 24 }, (_, i) => {
-                    const a = (i / 24) * Math.PI * 2;
-                    return [Math.cos(a) * 12, Math.sin(a) * 12] as [number, number];
-                }),
-                closed: true,
-            },
-            {
-                points: [
-                    [-4, -5],
-                    [4, -5],
-                ],
-            }, // + bar
-            {
-                points: [
-                    [0, -9],
-                    [0, -1],
-                ],
-            }, // + stem
-            {
-                points: [
-                    [-4, 5],
-                    [4, 5],
-                ],
-            }, // −
-            {
-                points: [
-                    [0, 12],
-                    [0, 12 + PIN_LEN],
-                ],
-            },
-        ],
-        pins: [
-            { pinId: p[0] ?? '+', x: 0, y: -12 - PIN_LEN, side: 'top' },
-            { pinId: p[1] ?? '-', x: 0, y: 12 + PIN_LEN, side: 'bottom' },
-        ],
-        labelAnchor: { x: 16, y: 0 },
-    }),
+    voltage_source: (raw) => {
+        // + on TOP, - on the bottom — by name, for the same reason the diode is. A source drawn upside
+        // down inverts every polarity an engineer reads off the sheet.
+        const p = orderedByName(raw, ['+', 'p', 'pos', 'plus'], ['-', 'n', 'neg', 'minus']);
+        if (!p) return null;
+        return {
+            basis: 'drawn',
+            width: (12 + PIN_LEN) * 2,
+            height: 24,
+            strokes: [
+                {
+                    points: [
+                        [0, -12 - PIN_LEN],
+                        [0, -12],
+                    ],
+                },
+                // A circle, as a polygon — the renderer needs no arc support to draw a source.
+                {
+                    points: Array.from({ length: 24 }, (_, i) => {
+                        const a = (i / 24) * Math.PI * 2;
+                        return [Math.cos(a) * 12, Math.sin(a) * 12] as [number, number];
+                    }),
+                    closed: true,
+                },
+                {
+                    points: [
+                        [-4, -5],
+                        [4, -5],
+                    ],
+                }, // + bar
+                {
+                    points: [
+                        [0, -9],
+                        [0, -1],
+                    ],
+                }, // + stem
+                {
+                    points: [
+                        [-4, 5],
+                        [4, 5],
+                    ],
+                }, // −
+                {
+                    points: [
+                        [0, 12],
+                        [0, 12 + PIN_LEN],
+                    ],
+                },
+            ],
+            pins: [
+                { pinId: p[0] ?? '+', x: 0, y: -12 - PIN_LEN, side: 'top' },
+                { pinId: p[1] ?? '-', x: 0, y: 12 + PIN_LEN, side: 'bottom' },
+            ],
+            labelAnchor: { x: 16, y: 0 },
+        };
+    },
 
     ground: (p) => ({
         basis: 'drawn',
@@ -362,9 +393,13 @@ export function symbolFor(component: Pick<Component, 'type' | 'pins'>): SymbolGe
     if (!drawn) return derive(pinIds.length > 0 ? pinIds : ['1']);
 
     const geometry = drawn(pinIds);
-    // A drawn symbol assumes a pin count. A "resistor" that arrives with four pins is not the two-terminal
-    // part this shape describes, and forcing it would silently drop two connections — so it derives instead.
-    // Better an unfamiliar box that shows every pin than a familiar picture that hides two.
+    // A drawn symbol can DECLINE — a polarised part whose terminals are not named recognisably cannot be
+    // oriented, and drawing it anyway would be a claim about polarity we cannot back.
+    if (!geometry) return derive(pinIds.length > 0 ? pinIds : ['1']);
+
+    // A drawn symbol also assumes a pin count. A "resistor" that arrives with four pins is not the
+    // two-terminal part this shape describes, and forcing it would silently drop two connections — so it
+    // derives instead. Better an unfamiliar box that shows every pin than a familiar picture that hides two.
     return geometry.pins.length === pinIds.length ? geometry : derive(pinIds);
 }
 

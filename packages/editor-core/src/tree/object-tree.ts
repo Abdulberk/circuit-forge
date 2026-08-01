@@ -19,7 +19,7 @@
  *
  * PURE. No DOM, no Node, no framework. Types in, plain data out.
  */
-import type { CircuitJson } from '@circuit-forge/eda-core';
+import type { CircuitJson, Component } from '@circuit-forge/eda-core';
 import type { LayoutGeometry, LayoutPad } from '@circuit-forge/pcb-contract';
 
 /** What kind of thing a node addresses. Closed on purpose: a new kind is a compile error at every switch. */
@@ -82,6 +82,16 @@ export interface ObjectTree {
 }
 
 const ref = (kind: ObjectKind, id: string, parent: string[]): ObjectRef => ({ kind, id, path: [...parent, id] });
+
+/**
+ * Is this a PART — something an engineer places, buys and assembles — or a net annotation?
+ *
+ * A ground symbol is the second: it marks a net as the reference, it has no footprint, it appears on no BOM
+ * and nothing picks and places it. Exported because the answer has to be the same everywhere it is asked.
+ * It was being re-decided in a React component's footer, which is how the tree said 26 components while the
+ * status bar beside it said 27 — for the same design, on the same screen.
+ */
+export const isPlaceablePart = (component: Pick<Component, 'type'>): boolean => component.type !== 'ground';
 
 /**
  * Project the two documents into one tree.
@@ -149,7 +159,7 @@ export function buildObjectTree(circuit: CircuitJson, layout?: LayoutGeometry): 
     const layoutById = new Map((layout?.components ?? []).map((lc) => [lc.id, lc]));
 
     for (const c of circuit.components ?? []) {
-        if (c.type === 'ground') continue; // a net marker, not a part anyone places or inspects
+        if (!isPlaceablePart(c)) continue; // a net marker, not a part anyone places or inspects
 
         const lc = layoutById.get(c.id);
         const compRef = ref('component', c.id, componentsRef.path);

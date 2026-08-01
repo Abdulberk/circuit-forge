@@ -19,7 +19,11 @@
  * must match the macromodel's port order. No edit here reorders a pin array, and any future one must treat
  * that as a deliberate, checked operation rather than an incidental map().
  */
-import type { CircuitJson, Component } from '@circuit-forge/eda-core';
+import {
+    DESIGNATOR_PATTERN as CANONICAL_DESIGNATOR_PATTERN,
+    type CircuitJson,
+    type Component,
+} from '@circuit-forge/eda-core';
 
 /** The outcome of an edit: a new document, or a refusal a UI can put next to the offending field. */
 export type EditResult =
@@ -41,12 +45,15 @@ export type EditRefusal =
 const refuse = (reason: EditRefusal, message: string): EditResult => ({ ok: false, reason, message });
 
 /**
- * A designator is an identifier in three formats we do not control: the SPICE netlist, the BOM, and the
- * pick-and-place file. Whitespace and separators break the last two silently — a CSV field with a comma in
- * it shifts every column after it — so they are refused at the point of entry rather than escaped later by
- * whichever exporter remembered to.
+ * THE SAME rule the pipeline enforces — imported, not restated.
+ *
+ * This used to be its own pattern here, and being a second authority made it a wrong one: it accepted
+ * `C_IN`, `X$1`, `J1-2` and `TP.3`, every one of which `ComponentSchema` rejects. The working copy validates
+ * shape only, so those saved without complaint, and the user met the truth minutes later as a 400 from
+ * POST /layouts about a part they had renamed and forgotten. An editor's job is to refuse a bad value at the
+ * moment it is typed; the only thing worse than not checking is checking DIFFERENTLY from the authority.
  */
-const DESIGNATOR_PATTERN = /^[A-Za-z][A-Za-z0-9_$.-]*$/;
+const DESIGNATOR_PATTERN = CANONICAL_DESIGNATOR_PATTERN;
 
 /**
  * Rename a part.
@@ -65,7 +72,7 @@ export function setDesignator(circuit: CircuitJson, componentId: string, next: s
     if (!DESIGNATOR_PATTERN.test(trimmed)) {
         return refuse(
             'invalid-characters',
-            'A designator must start with a letter and contain only letters, digits, and _ $ . or -.',
+            'A designator must be a letter prefix followed by a number, optionally with a section letter — R1, U12, U1A.',
         );
     }
     if (trimmed === target.designator) return { ok: true, circuit, changed: false };
