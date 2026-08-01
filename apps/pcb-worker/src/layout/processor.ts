@@ -224,7 +224,7 @@ export async function processLayoutJob(job: Job<LayoutJobPayload>): Promise<void
         // authority (see outcome.ts): only a DRC-clean board earns the fab-ready bundle.
         const geo = shapeLayoutResult(q.evaluated, { namesById: q.namesById, expectations: q.expectations });
         const parsed = parseDrcReport(await kicad.drcReport(q.outputs.kicadPcb, q.outputs.kicadPro));
-        const checks = drcToChecks(parsed);
+        const checks = drcToChecks(parsed, geo);
         const { airwires } = airwiresFromDrc(parsed, geo);
         const verdict = assessManufacturability(parsed);
 
