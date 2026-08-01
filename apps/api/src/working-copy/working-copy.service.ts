@@ -118,10 +118,45 @@ export class WorkingCopyService {
         return wc;
     }
 
-    /** Discard the draft (e.g. "revert to last saved"). Idempotent — no error if there is nothing to drop. */
-    async discard(projectId: string, userId: string) {
+    /**
+     * Discard the draft ("revert to last saved"). Idempotent — no error if there is nothing to drop.
+     *
+     * Takes the SAME optimistic-concurrency token as `save`, and for the same reason. This was an
+     * unconditional `deleteMany` while its PUT sibling had a real compare-and-set: so the one guarantee the
+     * working copy offered — that a stale client cannot destroy work it never saw — was enforced on writes
+     * and silently absent on the one operation that destroys everything at once. A second tab pressing
+     * "revert" would delete a draft the first tab was still typing into, with no error anywhere.
+     *
+     * Omitting `expectedUpdatedAt` keeps the old unconditional behaviour, exactly as `save` does, so no
+     * existing caller changes and the guarantee is available to whoever asks for it.
+     */
+    async discard(projectId: string, userId: string, expectedUpdatedAt?: string) {
         await this.projectsService.findOne(projectId, userId);
-        await this.prisma.projectWorkingCopy.deleteMany({ where: { projectId } });
-        return { discarded: true };
+
+        if (expectedUpdatedAt === undefined) {
+            await this.prisma.projectWorkingCopy.deleteMany({ where: { projectId } });
+            return { discarded: true };
+        }
+
+        // The conditional delete IS the compare-and-set: it matches on (projectId, updatedAt) and reports how
+        // many rows it touched, so a row that moved since the client read it is simply not matched.
+        const { count } = await this.prisma.projectWorkingCopy.deleteMany({
+            where: { projectId, updatedAt: new Date(expectedUpdatedAt) },
+        });
+        if (count > 0) return { discarded: true };
+
+        const current = await this.prisma.projectWorkingCopy.findUnique({
+            where: { projectId },
+            select: { updatedAt: true, updatedByUserId: true },
+        });
+        // Nothing there at all is the goal state, not a conflict — discard is idempotent by contract.
+        if (!current) return { discarded: true };
+
+        throw new ConflictException({
+            message: 'The working copy changed since you loaded it — reload before discarding.',
+            code: 'WORKING_COPY_CONFLICT',
+            currentUpdatedAt: current.updatedAt,
+            currentUpdatedByUserId: current.updatedByUserId,
+        });
     }
 }

@@ -43,7 +43,20 @@ export class AllExceptionsFilter implements ExceptionFilter {
         const req = ctx.getRequest<Request>();
 
         const isHttp = exception instanceof HttpException;
-        const status = isHttp ? exception.getStatus() : HttpStatus.INTERNAL_SERVER_ERROR;
+        // body-parser rejects an oversized body with a plain Error carrying `status`/`statusCode` and
+        // `type: 'entity.too.large'` — it is not an HttpException, so everything below classified it as an
+        // internal fault. A client sending too much data was told the server had broken, forever: an editor
+        // autosaving a large design would fail with a 500 and nothing to act on, when the truthful answer is
+        // 413 and "your document exceeds the limit". Trusted only when the value is a real client-error
+        // status, so a genuine crash carrying a stray `status` field cannot disguise itself as a 4xx.
+        const raw = exception as { status?: unknown; statusCode?: unknown };
+        const declared =
+            typeof raw?.status === 'number' ? raw.status : typeof raw?.statusCode === 'number' ? raw.statusCode : null;
+        const status = isHttp
+            ? exception.getStatus()
+            : declared !== null && declared >= 400 && declared < 500
+              ? declared
+              : HttpStatus.INTERNAL_SERVER_ERROR;
 
         const envelope: Record<string, unknown> = {
             statusCode: status,
@@ -67,6 +80,12 @@ export class AllExceptionsFilter implements ExceptionFilter {
                     envelope.code = (rest as { code: string }).code;
                 if (rest.message === undefined && typeof error === 'string') envelope.message = error;
             }
+        } else if (status < 500) {
+            // A client error that arrived as a plain Error — body-parser's oversized-body rejection is the
+            // one that matters. Its own message ("request entity too large") is the useful thing to say, and
+            // saying it is not a leak: the client is being told about its OWN request, not about our
+            // internals. Not logged as an unhandled fault either, because it is not one.
+            envelope.message = exception instanceof Error ? exception.message : 'Request rejected.';
         } else {
             // Unexpected: log the real cause (with stack) server-side; the client gets only the generic body.
             this.logger.error(

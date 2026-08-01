@@ -71,13 +71,19 @@ describe('UsageService', () => {
         // and in-flight), same parity as design.
         expect(u.layout.jobs).toBe(2);
         expect(u.layout.concurrent).toBe(2);
-        // no env limits configured → everything unlimited (null)
+        // No env limits configured → unlimited (null) for every quota that is OFF unless configured.
         expect(u.sim.limits.jobsPerMonth).toBeNull();
         expect(u.design.limits.jobsPerMonth).toBeNull();
         expect(u.design.limits.concurrent).toBeNull();
         expect(u.layout.limits.jobsPerMonth).toBeNull();
-        expect(u.layout.limits.concurrent).toBeNull();
         expect(u.storage.limits.bytes).toBeNull();
+
+        // …EXCEPT layout concurrency, which is ON unless deliberately switched off — DEFAULT_LAYOUT_
+        // CONCURRENT_PER_ORG applies with nothing configured. This line used to assert `null`, and in doing
+        // so it locked in a real defect: the report said "unlimited" while the enforcer beside it refused the
+        // third job with "2 of 2 used this period", because the two read the limit from different places.
+        // A client shown one number and judged against another has no way to be right.
+        expect(u.layout.limits.concurrent).toBe(2);
     });
 
     it('quota gates are NO-OPS when no limits are configured (parts still metered via native upsert)', async () => {
