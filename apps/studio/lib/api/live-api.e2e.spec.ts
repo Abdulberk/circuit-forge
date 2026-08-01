@@ -31,8 +31,8 @@ const DIVIDER: CircuitJson = {
             designator: 'V1',
             value: 5,
             pins: [
-                { id: 'p', name: '+', netId: 'vin' },
-                { id: 'n', name: '-', netId: 'gnd' },
+                { pinId: '+', netId: 'vin' },
+                { pinId: '-', netId: 'gnd' },
             ],
         },
         {
@@ -41,8 +41,8 @@ const DIVIDER: CircuitJson = {
             designator: 'R1',
             value: 1000,
             pins: [
-                { id: 'a', name: 'pin1', netId: 'vin' },
-                { id: 'b', name: 'pin2', netId: 'mid' },
+                { pinId: '1', netId: 'vin' },
+                { pinId: '2', netId: 'mid' },
             ],
         },
         {
@@ -51,11 +51,11 @@ const DIVIDER: CircuitJson = {
             designator: 'R2',
             value: 2000,
             pins: [
-                { id: 'a', name: 'pin1', netId: 'mid' },
-                { id: 'b', name: 'pin2', netId: 'gnd' },
+                { pinId: '1', netId: 'mid' },
+                { pinId: '2', netId: 'gnd' },
             ],
         },
-        { id: 'gnd1', type: 'ground', designator: 'GND1', pins: [{ id: 'g', name: 'gnd', netId: 'gnd' }] },
+        { id: 'gnd1', type: 'ground', designator: 'GND1', pins: [{ pinId: '1', netId: 'gnd' }] },
     ],
     nets: [
         { id: 'vin', name: 'VIN' },
@@ -64,16 +64,28 @@ const DIVIDER: CircuitJson = {
     ],
 } as unknown as CircuitJson;
 
-// A fresh account per run: the API is a real database and a re-used email would collide on the second run.
+/**
+ * ONE account, reused across runs; the PROJECTS are what carry the per-run stamp.
+ *
+ * An earlier version registered a fresh account every time, which made the suite un-runnable more than
+ * twenty times an hour: `POST /auth/register` is capped at 20/hour/IP as anti-spam, and once that budget was
+ * gone every test failed with `ThrottlerException` — a red suite caused entirely by having run it. A live
+ * test that degrades the more you use it is a test people stop using.
+ *
+ * So it registers on first use and signs in afterwards, and the throttle it does consume is login's, which
+ * refills every minute. Projects still get a unique name per run, so nothing collides in the database.
+ */
 const stamp = `${Date.now()}-${Math.floor(Math.random() * 1e6)}`;
-const EMAIL = `studio-e2e-${stamp}@example.test`;
-const PASSWORD = 'studio-e2e-password-1';
+const EMAIL = process.env.STUDIO_E2E_EMAIL ?? 'studio-e2e@example.test';
+const PASSWORD = process.env.STUDIO_E2E_PASSWORD ?? 'studio-e2e-password-1';
 
 const store = memoryTokenStore();
 const client = new ApiClient({ baseUrl: BASE_URL, store, timeoutMs: 20_000 });
 const api = new Api(client);
 
 let projectId: string;
+/** Whether THIS run created the account — the registration assertions only mean something if it did. */
+let registered = false;
 
 beforeAll(async () => {
     const reachable = await fetch(`${BASE_URL}/health`, { signal: AbortSignal.timeout(4_000) })
@@ -87,19 +99,46 @@ beforeAll(async () => {
         );
     }
 
-    const tokens = await client.request<{ accessToken: string; refreshToken: string }>('/auth/register', {
-        method: 'POST',
-        body: { email: EMAIL, password: PASSWORD, name: 'Studio E2E' },
-        authenticated: false,
-    });
-    store.write(tokens);
+    // Register on first use; sign in on every run after that. A 409 means the account is already there,
+    // which is the ordinary steady state — anything else is a real failure and is rethrown.
+    try {
+        const tokens = await client.request<{ accessToken: string; refreshToken: string }>('/auth/register', {
+            method: 'POST',
+            body: { email: EMAIL, password: PASSWORD, name: 'Studio E2E' },
+            authenticated: false,
+        });
+        store.write(tokens);
+        registered = true;
+    } catch (err) {
+        if (!(err instanceof ApiError) || (err.kind !== 'conflict' && err.kind !== 'throttled')) throw err;
+        // 409 means the account is there — the ordinary steady state. 429 means we could not even ask, which
+        // is NOT the same thing: the account may or may not exist. Both are worth trying to sign in on, but
+        // when that fails after a 429 the cause is the exhausted register budget, and saying "Invalid
+        // credentials" would send a reader looking for a password bug that is not there.
+        try {
+            await client.signIn(EMAIL, PASSWORD);
+        } catch (signInErr) {
+            if (err.kind === 'throttled') {
+                throw new Error(
+                    `Could not create ${EMAIL}: POST /auth/register is rate-limited (20/hour/IP) and the ` +
+                        `budget is spent, so the account does not exist yet. Restarting the API clears the ` +
+                        `in-memory counters: \`API_HOST_PORT=3001 docker compose restart api\`.`,
+                );
+            }
+            throw signInErr;
+        }
+    }
 }, 60_000);
 
 describe('the transcribed contracts, against the server that defines them', () => {
-    it('registration produces a usable session with an org already attached', async () => {
+    it('an account has a usable session with an org already attached', async () => {
         const orgs = await api.orgs();
         expect(Array.isArray(orgs)).toBe(true);
         expect(orgs.length).toBeGreaterThan(0);
+        // Registration creates the org, so on the run that registered we know it came from that path rather
+        // than from something a previous run left behind. Stated in the output so a reader knows which
+        // happened, instead of the test silently meaning two different things on different days.
+        if (registered) expect(orgs).toHaveLength(1);
 
         // The KEY SET, not a subset. `toMatchObject` on two fields is what let a fabricated `slug` sit in
         // this interface undetected: the test passed, and every read of `org.slug` in the UI would have been
@@ -137,7 +176,12 @@ describe('the transcribed contracts, against the server that defines them', () =
             limit: expect.any(Number),
             offset: expect.any(Number),
         });
-        expect(page.items.map((p) => p.id)).toContain(projectId);
+        expect(page.total).toBeGreaterThan(0);
+
+        // Membership is checked by fetching the project, NOT by looking for it in page one. The account is
+        // reused across runs, so projects accumulate; against a default limit of 50 this assertion would
+        // start failing on the fifty-first run, for a reason that has nothing to do with what it tests.
+        await expect(api.project(projectId)).resolves.toMatchObject({ id: projectId, orgId: orgs[0]!.id });
     });
 
     it('reports a project with no draft as null — and a missing PROJECT as an error', async () => {
@@ -184,11 +228,22 @@ describe('the transcribed contracts, against the server that defines them', () =
         const loaded = await api.workingCopy(projectId);
         const tree = buildObjectTree(loaded!.circuitJson);
 
-        const netNames = tree.root.children
-            .find((c) => c.ref.kind === 'nets')!
-            .children.map((n) => n.label)
-            .sort();
-        expect(netNames).toEqual(['GND', 'MID', 'VIN']);
+        const branch = (kind: string) => tree.root.children.find((c) => c.ref.kind === kind)!;
+
+        expect(
+            branch('nets')
+                .children.map((n) => n.label)
+                .sort(),
+        ).toEqual(['GND', 'MID', 'VIN']);
+
+        // The components too — no layout has been run, and that must not make the parts vanish. This is the
+        // state an editor is in almost all the time, and the tree used to render it as nets and nothing else.
+        const parts = branch('components').children;
+        expect(parts.map((n) => n.label).sort()).toEqual(['R1', 'R2', 'V1']); // GND1 is a net marker, not a part
+        // …each with its own pins, read against the net NAME an engineer would recognise.
+        const r1Pins = parts.find((n) => n.label === 'R1')!.children.find((c) => c.ref.kind === 'pins')!;
+        expect(r1Pins.children.map((p) => `${p.label}→${p.detail!}`)).toEqual(['1→VIN', '2→MID']);
+
         // No layout was requested, so there is nothing to be unjoined about.
         expect(tree.unplaced).toEqual([]);
         expect(tree.ambiguous).toEqual([]);

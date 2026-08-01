@@ -17,48 +17,78 @@ const FIXTURES = join(__dirname, '..', '..', '..', '..', 'apps', 'pcb-viewer', '
 const layoutOf = (board: string): LayoutGeometry =>
     (JSON.parse(readFileSync(join(FIXTURES, `${board}.layout.json`), 'utf8')) as { geometry: LayoutGeometry }).geometry;
 
-/** A minimal design matching bridge-rectifier's real component ids, so the join has something to meet. */
-const circuitFor = (layout: LayoutGeometry): CircuitJson =>
-    ({
+/**
+ * A design matching the board's real ids, so the join has something to meet.
+ *
+ * The pins are derived from the board's own pads — `sourcePin` is the design-side name pcb-core recorded, so
+ * reusing it here produces the design that would have PRODUCED this board, rather than a plausible-looking
+ * one. Nets likewise: the pads carry the net each is on.
+ */
+const circuitFor = (layout: LayoutGeometry): CircuitJson => {
+    const nets = [...new Set(layout.pads.map((p) => p.net).filter((n): n is string => typeof n === 'string'))];
+    return {
         version: '1.0',
         components: layout.components.map((c) => ({
             id: c.id,
             type: c.designator.startsWith('D') || c.designator.startsWith('LED') ? 'diode' : 'resistor',
             designator: c.designator,
-            pins: [],
+            pins: layout.pads
+                .filter((p) => p.componentId === c.id)
+                .map((p) => ({ pinId: p.sourcePin ?? p.pin ?? p.id, netId: p.net ?? 'unconnected' })),
         })),
-        nets: [
-            { id: 'gnd', name: 'GND', isGround: true },
-            { id: 'vplus', name: 'VPLUS' },
-        ],
-    }) as unknown as CircuitJson;
+        nets: nets.map((n) => ({ id: n, name: n.toUpperCase(), isGround: /^gnd$/i.test(n) })),
+    } as unknown as CircuitJson;
+};
 
 const walk = (n: TreeNode, out: TreeNode[] = []): TreeNode[] => {
     out.push(n);
     for (const c of n.children) walk(c, out);
     return out;
 };
+const kinds = (tree: { root: TreeNode }, kind: string) => walk(tree.root).filter((n) => n.ref.kind === kind);
 
-describe('buildObjectTree — Root › Layout › Components › C › Pads › P', () => {
+describe('buildObjectTree — Root › Components › C › Pins / Footprint / Pads', () => {
     const layout = layoutOf('bridge-rectifier');
     const circuit = circuitFor(layout);
 
-    it('projects every component and every pad of a real board', () => {
-        const tree = buildObjectTree(circuit, layout);
-        const nodes = walk(tree.root);
-        expect(nodes.filter((n) => n.ref.kind === 'component')).toHaveLength(layout.components.length);
-        expect(nodes.filter((n) => n.ref.kind === 'pad')).toHaveLength(layout.pads.length);
+    it('shows the components of a design that has NO layout at all', () => {
+        // The regression this file exists for. Components used to hang under a Layout branch, so a circuit
+        // that had not been routed yet — which is what an editor looks at nearly all the time — rendered as
+        // its nets and nothing else. A 27-part design read as a design with no parts in it.
+        const tree = buildObjectTree(circuit);
+        expect(kinds(tree, 'component')).toHaveLength(layout.components.length);
+        expect(kinds(tree, 'pin').length).toBeGreaterThan(0);
+        // No board, so nothing claims to know about copper.
+        expect(kinds(tree, 'pad')).toHaveLength(0);
+        expect(kinds(tree, 'footprint')).toHaveLength(0);
+        // And nothing is reported as unplaced: with no layout, nothing was supposed to be placed.
+        expect(tree.unplaced).toEqual([]);
+    });
+
+    it('adds footprint and copper once a layout exists, without moving anything', () => {
+        const withBoard = buildObjectTree(circuit, layout);
+        const without = buildObjectTree(circuit);
+        // The SAME addresses either way — a selection made before layout still resolves after it.
+        expect(kinds(withBoard, 'component').map((n) => n.ref.path.join('/'))).toEqual(
+            kinds(without, 'component').map((n) => n.ref.path.join('/')),
+        );
+        expect(kinds(withBoard, 'pad')).toHaveLength(layout.pads.length);
     });
 
     it("labels a pad by OUR authored pin, not the renderer's name", () => {
         // The whole point of the sourcePin join: an engineer knows "anode", not "pin1".
-        const tree = buildObjectTree(circuit, layout);
-        const padLabels = walk(tree.root)
-            .filter((n) => n.ref.kind === 'pad')
-            .map((n) => n.label);
+        const padLabels = kinds(buildObjectTree(circuit, layout), 'pad').map((n) => n.label);
         expect(padLabels).toContain('anode');
         expect(padLabels).toContain('cathode');
         expect(padLabels).not.toContain('pin1');
+    });
+
+    it('shows each pin against its net NAME, not the net id', () => {
+        // 'GND' is what an engineer reads; 'gnd' is a key. A tree that showed the key would be readable only
+        // by someone who already knew the document.
+        const details = kinds(buildObjectTree(circuit), 'pin').map((n) => n.detail);
+        expect(details).toContain('GND');
+        expect(details).not.toContain('gnd');
     });
 
     it('addresses every node by a stable path that resolves in one lookup', () => {
@@ -67,26 +97,43 @@ describe('buildObjectTree — Root › Layout › Components › C › Pads › 
             expect(nodeAt(tree, node.ref.path)).toBe(node);
         }
         // A stale selection after a re-layout is ordinary, not an error.
-        expect(nodeAt(tree, ['root', 'layout', 'components', 'gone'])).toBeUndefined();
+        expect(nodeAt(tree, ['root', 'components', 'gone'])).toBeUndefined();
     });
 
-    it('reports what it could not place instead of dropping it', () => {
-        // A board carrying a part the design does not know about means the two documents have drifted —
-        // exactly what a user must be told before trusting either. A tree that silently omitted it would
-        // read as a board that does not have that part.
-        const partial = { ...circuit, components: circuit.components.slice(1) } as CircuitJson;
-        const tree = buildObjectTree(partial, layout);
-        expect(tree.unplaced.some((u) => u.reason === 'no-circuit-component')).toBe(true);
-        // …and it is still SHOWN, with an honest detail rather than a fabricated type.
-        const orphan = walk(tree.root).find((n) => n.detail === 'not in the design');
-        expect(orphan).toBeDefined();
+    it('reports drift in BOTH directions instead of dropping it', () => {
+        // A board carrying a part the design lacks means the two documents have drifted — exactly what a user
+        // must be told before trusting either.
+        const missingFirst = { ...circuit, components: circuit.components.slice(1) } as CircuitJson;
+        const orphanOnBoard = buildObjectTree(missingFirst, layout);
+        expect(orphanOnBoard.unplaced.some((u) => u.reason === 'no-circuit-component')).toBe(true);
+
+        // …and the reverse: a design part that never made it onto the board. It is still SHOWN — it exists in
+        // the design — but its row says so rather than looking like an ordinary placed part.
+        const extra = {
+            ...circuit,
+            components: [...circuit.components, { id: 'ghost', type: 'resistor', designator: 'R99', pins: [] }],
+        } as unknown as CircuitJson;
+        const notPlaced = buildObjectTree(extra, layout);
+        expect(notPlaced.unplaced.some((u) => u.reason === 'no-layout-component' && u.what === 'R99')).toBe(true);
+        expect(kinds(notPlaced, 'component').find((n) => n.label === 'R99')?.detail).toContain('not on the board');
     });
 
-    it('without a layout it shows the design alone — not an empty tree', () => {
-        // Before a board exists there is still a circuit to inspect. The Layout branch simply does not
-        // appear, which is the truthful rendering of "this has not been laid out yet".
-        const tree = buildObjectTree(circuit);
-        expect(tree.root.children.map((c) => c.ref.kind)).toEqual(['nets']);
+    it('says on the group row whether a board exists', () => {
+        // "12" and "12 · laid out" are different facts, and the difference decides whether Pads mean anything.
+        const group = (t: ReturnType<typeof buildObjectTree>) =>
+            t.root.children.find((c) => c.ref.kind === 'components')!.detail;
+        expect(group(buildObjectTree(circuit))).not.toContain('laid out');
+        expect(group(buildObjectTree(circuit, layout))).toContain('laid out');
+    });
+
+    it('omits ground markers — they are net annotations, not parts to place', () => {
+        const withGround = {
+            ...circuit,
+            components: [...circuit.components, { id: 'g1', type: 'ground', designator: 'GND1', pins: [] }],
+        } as unknown as CircuitJson;
+        const tree = buildObjectTree(withGround);
+        expect(kinds(tree, 'component').map((n) => n.label)).not.toContain('GND1');
+        // …and it is not reported as a gap either, because it was never supposed to be placed.
         expect(tree.unplaced).toEqual([]);
     });
 
@@ -94,26 +141,17 @@ describe('buildObjectTree — Root › Layout › Components › C › Pads › 
         // Reachable: a machine-generated design, two merged sub-sheets, an import. The failure it prevents is
         // the quiet one — clicking C3 and being shown C7 — so the duplicate is reported, and the FIRST claim
         // keeps the address so the lookup does not depend on array order.
-        const twinned: LayoutGeometry = {
-            ...layout,
-            components: [...layout.components, { ...layout.components[0]!, designator: 'IMPOSTOR' }],
-        };
-        const tree = buildObjectTree(circuitFor(layout), twinned);
-        const twin = layout.components[0]!;
-        // The whole subtree collides, and every colliding address is named — not just the component. The
-        // impostor's pads are equally unreachable, and a report that mentioned only the parent would leave a
-        // reader believing the pads beneath it were fine.
-        expect(tree.ambiguous.map((a) => a.path)).toEqual(
-            expect.arrayContaining([`root/layout/components/${twin.id}`, `root/layout/components/${twin.id}/pads`]),
-        );
-        const clashingPads = tree.ambiguous.filter((a) => a.path.includes('/pads/'));
-        expect(clashingPads).toHaveLength(layout.pads.filter((p) => p.componentId === twin.id).length);
+        const twin = circuit.components[0]!;
+        const twinned = {
+            ...circuit,
+            components: [...circuit.components, { ...twin, designator: 'IMPOSTOR' }],
+        } as CircuitJson;
+        const tree = buildObjectTree(twinned);
+
+        expect(tree.ambiguous.map((a) => a.path)).toContain(`root/components/${twin.id}`);
         // The address still resolves — to the original, not the impostor.
-        expect(nodeAt(tree, ['root', 'layout', 'components', layout.components[0]!.id])!.label).toBe(
-            layout.components[0]!.designator,
-        );
-        // …and a clean board reports nothing, so the field is not noise.
-        expect(buildObjectTree(circuitFor(layout), layout).ambiguous).toEqual([]);
+        expect(nodeAt(tree, ['root', 'components', twin.id])!.label).toBe(twin.designator);
+        expect(buildObjectTree(circuit).ambiguous).toEqual([]);
     });
 
     it('builds a 400-component board without a quadratic scan', () => {
@@ -126,10 +164,19 @@ describe('buildObjectTree — Root › Layout › Components › C › Pads › 
                 id: `c${i}`,
                 designator: `R${i}`,
             })),
+            // Four pads per component, each with a DISTINCT source pin. Spreading one real pad 1600 times
+            // gave every pad the same `sourcePin`, so all four pins of a component claimed one address — and
+            // the tree correctly reported 4802 collisions. The fixture was wrong, not the code; a component
+            // whose pins are all called the same thing is not a board anyone would fabricate.
             pads: Array.from({ length: 1600 }, (_, i) => ({
                 ...layout.pads[0]!,
                 id: `p${i}`,
                 componentId: `c${i % 400}`,
+                // The pad's index WITHIN its component, not `i % 4` — with 400 components that stride is a
+                // multiple of 4, so every pad of a component landed on the same name and the collision came
+                // straight back. Deriving it from the position in the group is what actually makes it unique.
+                pin: String(Math.floor(i / 400) + 1),
+                sourcePin: `pin${Math.floor(i / 400) + 1}`,
             })),
         };
         const started = performance.now();
@@ -142,8 +189,7 @@ describe('buildObjectTree — Root › Layout › Components › C › Pads › 
         for (const board of ['bridge-rectifier', 'opamp-amp', 'shift-register', 'chaser-4017']) {
             const g = layoutOf(board);
             const tree = buildObjectTree(circuitFor(g), g);
-            const pads = walk(tree.root).filter((n) => n.ref.kind === 'pad');
-            expect({ board, pads: pads.length }).toEqual({ board, pads: g.pads.length });
+            expect({ board, pads: kinds(tree, 'pad').length }).toEqual({ board, pads: g.pads.length });
             // Only NC footprint pads may lack an authored pin, and those are declared, never silent.
             const unnamed = tree.unplaced.filter((u) => u.reason === 'no-source-pin').length;
             expect(unnamed).toBe(g.pads.filter((p) => p.sourcePin === null).length);

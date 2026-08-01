@@ -1,5 +1,5 @@
 /**
- * The addressable object tree: Root › Layout › Components › C3 › Footprint / Pads › P1.
+ * The addressable object tree: Root › Components › C3 › Pins / Footprint / Pads › P1.
  *
  * WHY A TREE AT ALL. An inspector, a selection model and a rules cascade all need the same thing — a
  * stable way to NAME any part of a design, from the whole board down to one pad. Flux exposes exactly this
@@ -19,11 +19,23 @@
  *
  * PURE. No DOM, no Node, no framework. Types in, plain data out.
  */
-import type { CircuitJson, Component } from '@circuit-forge/eda-core';
+import type { CircuitJson } from '@circuit-forge/eda-core';
 import type { LayoutGeometry, LayoutPad } from '@circuit-forge/pcb-contract';
 
 /** What kind of thing a node addresses. Closed on purpose: a new kind is a compile error at every switch. */
-export type ObjectKind = 'root' | 'layout' | 'components' | 'component' | 'footprint' | 'pads' | 'pad' | 'nets' | 'net';
+export type ObjectKind =
+    | 'root'
+    | 'components'
+    | 'component'
+    /** The design's own pins — present before any board exists. */
+    | 'pins'
+    | 'pin'
+    | 'footprint'
+    /** Copper. Only meaningful once the component has been laid out. */
+    | 'pads'
+    | 'pad'
+    | 'nets'
+    | 'net';
 
 /**
  * A stable address for one object.
@@ -71,15 +83,13 @@ export interface ObjectTree {
 
 const ref = (kind: ObjectKind, id: string, parent: string[]): ObjectRef => ({ kind, id, path: [...parent, id] });
 
-/** A component's human label — the designator, which is what an engineer calls it. */
-const labelOf = (c: Component | undefined, fallback: string): string => c?.designator ?? fallback;
-
 /**
  * Project the two documents into one tree.
  *
- * `layout` is optional: before a board exists there is still a design to inspect, and the tree should show
- * it rather than nothing. The Layout branch simply does not appear, which is the truthful rendering of
- * "this design has not been laid out yet".
+ * `layout` is optional, and its absence is the COMMON case — an editor spends most of its life on a design
+ * that has not been routed yet. Without it the tree is the schematic: nets, components, and each component's
+ * pins. With it, every component additionally gains its footprint and its copper. Nothing disappears for want
+ * of a board.
  */
 export function buildObjectTree(circuit: CircuitJson, layout?: LayoutGeometry): ObjectTree {
     const unplaced: ObjectTree['unplaced'] = [];
@@ -96,6 +106,7 @@ export function buildObjectTree(circuit: CircuitJson, layout?: LayoutGeometry): 
     };
 
     const circuitById = new Map((circuit.components ?? []).map((c) => [c.id, c]));
+    const netNameById = new Map((circuit.nets ?? []).map((n) => [n.id, n.name]));
     const padsByComponent = new Map<string, LayoutPad[]>();
     for (const pad of layout?.pads ?? []) {
         const list = padsByComponent.get(pad.componentId) ?? [];
@@ -125,30 +136,58 @@ export function buildObjectTree(circuit: CircuitJson, layout?: LayoutGeometry): 
     });
     root.children.push(nets);
 
-    if (!layout) return { root, byPath, unplaced, ambiguous };
-
-    const layoutRef = ref('layout', 'layout', rootRef.path);
-    const componentsRef = ref('components', 'components', layoutRef.path);
+    // ---- Components come from the DESIGN, not the board.
+    //
+    // They used to hang under Layout, which made them disappear entirely for a circuit that had not been laid
+    // out yet — the overwhelmingly common case, and the one an editor spends most of its time in. A 27-part
+    // design opened as twenty-five nets and nothing else, which reads as a design with no parts in it.
+    //
+    // The design says WHICH parts exist; the layout only says where they ended up. So the component is the
+    // node, and footprint and pads are children that appear once there is a board to describe them.
+    const componentsRef = ref('components', 'components', rootRef.path);
     const componentNodes: TreeNode[] = [];
+    const layoutById = new Map((layout?.components ?? []).map((lc) => [lc.id, lc]));
 
-    for (const lc of layout.components) {
-        const circuitComponent = circuitById.get(lc.id);
-        if (!circuitComponent) {
-            // The board carries a part the design does not. Reported, not hidden — it means the two
-            // documents have drifted, which is exactly what a user needs to know before trusting either.
-            unplaced.push({ what: lc.designator, reason: 'no-circuit-component' });
-        }
+    for (const c of circuit.components ?? []) {
+        if (c.type === 'ground') continue; // a net marker, not a part anyone places or inspects
 
-        const compRef = ref('component', lc.id, componentsRef.path);
+        const lc = layoutById.get(c.id);
+        const compRef = ref('component', c.id, componentsRef.path);
         const children: TreeNode[] = [];
 
-        if (lc.footprint) {
+        // The design's own pins, always — this is the schematic side, and it exists before any board does.
+        if (c.pins && c.pins.length > 0) {
+            const pinsRef = ref('pins', 'pins', compRef.path);
+            children.push(
+                add({
+                    ref: pinsRef,
+                    label: 'Pins',
+                    detail: String(c.pins.length),
+                    children: c.pins.map((p, i) =>
+                        add({
+                            // `pinId` is the design's own name for the terminal — '1', '+', 'anode', 'base'.
+                            // The index is the fallback for a design that left it blank, so two unnamed pins
+                            // stay addressable apart instead of collapsing onto one path.
+                            ref: ref('pin', p.pinId || String(i), pinsRef.path),
+                            label: p.pinId || `pin${i + 1}`,
+                            // The net's NAME, not its id: 'GND' is what an engineer reads, 'gnd' is a key.
+                            // Falls back to the id when the pin references a net the design does not declare
+                            // — which is itself worth seeing rather than rendering as blank.
+                            detail: netNameById.get(p.netId) ?? p.netId,
+                            children: [],
+                        }),
+                    ),
+                }),
+            );
+        }
+
+        if (lc?.footprint) {
             children.push(
                 add({ ref: ref('footprint', lc.footprint, compRef.path), label: lc.footprint, children: [] }),
             );
         }
 
-        const pads = padsByComponent.get(lc.id) ?? [];
+        const pads = padsByComponent.get(c.id) ?? [];
         if (pads.length > 0) {
             const padsRef = ref('pads', 'pads', compRef.path);
             children.push(
@@ -160,7 +199,7 @@ export function buildObjectTree(circuit: CircuitJson, layout?: LayoutGeometry): 
                         if (p.sourcePin === null) {
                             // An NC footprint pad, or one pcb-core could not identify. Shown either way —
                             // undeclared copper is precisely the thing a reviewer must be able to see.
-                            unplaced.push({ what: `${lc.designator}.${p.pin ?? p.id}`, reason: 'no-source-pin' });
+                            unplaced.push({ what: `${c.designator}.${p.pin ?? p.id}`, reason: 'no-source-pin' });
                         }
                         return add({
                             ref: ref('pad', p.id, padsRef.path),
@@ -175,33 +214,37 @@ export function buildObjectTree(circuit: CircuitJson, layout?: LayoutGeometry): 
             );
         }
 
+        // A design part the board does not carry: excluded, refused, or the layout predates it. Only
+        // meaningful once a layout EXISTS — before that, nothing is placed and the whole list would be noise.
+        if (layout && !lc) unplaced.push({ what: c.designator, reason: 'no-layout-component' });
+
         componentNodes.push(
             add({
                 ref: compRef,
-                label: labelOf(circuitComponent, lc.designator),
-                detail: circuitComponent?.type ?? 'not in the design',
+                label: c.designator,
+                detail: layout && !lc ? `${c.type} · not on the board` : c.type,
                 children,
             }),
         );
     }
 
-    // A design component with no board component: it was excluded, refused, or the layout predates it.
-    // Membership through a Set, not `.some()` per component — the nested scan is quadratic, and the tree is
-    // rebuilt on every document change, so on a 200-part board it would burn 40k comparisons per keystroke.
-    const placedIds = new Set(layout.components.map((lc) => lc.id));
-    for (const c of circuit.components ?? []) {
-        if (c.type === 'ground') continue; // a net marker, never placed — not a gap
-        if (!placedIds.has(c.id)) unplaced.push({ what: c.designator, reason: 'no-layout-component' });
+    // The reverse gap: the board carries a part the design does not. Reported, not hidden — it means the two
+    // documents have drifted, which is what a user needs to know before trusting either. These get no node,
+    // because the tree is a projection of the DESIGN and inventing one would assert a part the design lacks.
+    for (const lc of layout?.components ?? []) {
+        if (!circuitById.has(lc.id)) unplaced.push({ what: lc.designator, reason: 'no-circuit-component' });
     }
 
-    const components = add({
-        ref: componentsRef,
-        label: 'Components',
-        detail: String(componentNodes.length),
-        children: componentNodes,
-    });
-    const layoutNode = add({ ref: layoutRef, label: 'Layout', children: [components] });
-    root.children.push(layoutNode);
+    root.children.push(
+        add({
+            ref: componentsRef,
+            label: 'Components',
+            // Says whether a board exists, on the row a reader is already looking at. "12 · laid out" and
+            // "12" are different facts, and the difference decides whether Pads mean anything.
+            detail: layout ? `${componentNodes.length} · laid out` : String(componentNodes.length),
+            children: componentNodes,
+        }),
+    );
 
     return { root, byPath, unplaced, ambiguous };
 }
