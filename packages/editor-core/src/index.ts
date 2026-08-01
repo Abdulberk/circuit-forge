@@ -12,3 +12,18 @@
  */
 export { buildObjectTree, nodeAt } from './tree/object-tree';
 export type { ObjectKind, ObjectRef, TreeNode, ObjectTree } from './tree/object-tree';
+
+/**
+ * Editing. Pure, total, immutable — every one returns the new document or a refusal that names the field and
+ * the reason, so a caller can put the message beside the input rather than showing "something went wrong".
+ */
+export { setDesignator, setNetName, setValue } from './document/edits';
+export type { EditResult, EditRefusal } from './document/edits';
+
+/**
+ * Schematic symbol geometry, in unitless local coordinates. `basis` says whether the symbol is a
+ * conventional drawing or one derived from the part's own pins — which is the difference between knowledge
+ * and a guess, and it is stated rather than left to be inferred.
+ */
+export { symbolFor, DRAWN_TYPES, UNDRAWN_BY_DESIGN } from './schematic/symbols';
+export type { SymbolGeometry, SymbolPin, SymbolStroke } from './schematic/symbols';

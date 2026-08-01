@@ -69,10 +69,30 @@ describe('the kernel stays liftable', () => {
 
     it('names no DOM or Node global — the compiler already refuses them', () => {
         for (const file of sourceFiles(join(ROOT, 'src'))) {
-            const src = readFileSync(file, 'utf8').replace(/\/\*[\s\S]*?\*\/|\/\/.*$/gm, '');
+            // Comments AND string literals are stripped before the search. Comments were always excluded;
+            // strings had to join them the day a module was named `./document/edits`, which is the correct
+            // domain word for what it holds and which this gate reported as a use of the DOM's `document`.
+            //
+            // Bending the code to satisfy a text search would have been the wrong repair — the rule is "no
+            // DOM or Node IDENTIFIER", and a path is not an identifier. The compiler is the real enforcement
+            // here (`lib:["ES2022"]`, `types:[]` make these unresolvable); this stays as the statement of
+            // intent a reader finds if someone widens the tsconfig, so making it precise costs nothing.
+            const src = readFileSync(file, 'utf8')
+                .replace(/\/\*[\s\S]*?\*\/|\/\/.*$/gm, '')
+                .replace(/'(?:[^'\\]|\\.)*'|"(?:[^"\\]|\\.)*"|`(?:[^`\\]|\\.)*`/g, "''");
             const hit = /\b(document|window|navigator|Buffer|process|__dirname|require)\b/.exec(src)?.[0] ?? null;
             expect({ file, hit }).toEqual({ file, hit: null });
         }
+    });
+
+    it('still catches a real DOM reference — otherwise the strip above would have gutted the gate', () => {
+        // A guard on the guard. Loosening a check is exactly where a check quietly stops checking, so this
+        // asserts the SAME predicate against source that genuinely violates it.
+        const violating = "const el = document.getElementById('x');";
+        const stripped = violating
+            .replace(/\/\*[\s\S]*?\*\/|\/\/.*$/gm, '')
+            .replace(/'(?:[^'\\]|\\.)*'|"(?:[^"\\]|\\.)*"|`(?:[^`\\]|\\.)*`/g, "''");
+        expect(/\b(document|window|navigator|Buffer|process|__dirname|require)\b/.exec(stripped)?.[0]).toBe('document');
     });
 
     it('publishes a resolvable entry point: exports map, types, and files limited to dist', () => {
