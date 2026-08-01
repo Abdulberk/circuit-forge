@@ -548,8 +548,10 @@ describe('NetlistGenerator', () => {
         });
 
         it('throws a clear error when every caller-supplied probe is unobservable (would emit no wrdata)', () => {
-            // A sole un-probeable probe (i(D1)/i(Q1) alone, or v(0)) would yield a wrdata-less deck → ngspice
+            // A sole un-probeable probe (i(Q1) alone, or v(0)) would yield a wrdata-less deck → ngspice
             // exits 0 with no output.csv (opaque empty result). Fail loud naming the bad probes instead.
+            // i(D1) is NOT an example of this any more: the diode's @<dev>[id] vector was re-measured on
+            // ngspice-41 and resolves in op/dc/tran, so it is emitted rather than dropped.
             const circuit: CircuitJson = {
                 version: '1.0',
                 components: [
@@ -557,18 +559,19 @@ describe('NetlistGenerator', () => {
                         { pinId: '+', netId: 'in' },
                         { pinId: '-', netId: '0' },
                     ]),
-                    createComponent('D1', 'diode', 'D1', undefined, [
-                        { pinId: 'anode', netId: 'in' },
-                        { pinId: 'cathode', netId: '0' },
-                    ]),
+                    { ...createComponent('Q1', 'bjt', 'Q1', undefined, [
+                        { pinId: 'c', netId: 'in' },
+                        { pinId: 'b', netId: 'in' },
+                        { pinId: 'e', netId: '0' },
+                    ]), model: 'QGENNPN' },
                 ],
                 nets: [createNet('in', 'in'), createNet('0', '0', true)],
             };
-            expect(() => generateNetlist(circuit, { type: 'op' }, { probes: ['i(D1)'] })).toThrow(
-                /not observable|i\(D1\)/,
+            expect(() => generateNetlist(circuit, { type: 'op' }, { probes: ['i(Q1)'] })).toThrow(
+                /not observable|i\(Q1\)/,
             );
-            // A voltage co-probe rescues it (only the diode current is dropped).
-            expect(() => generateNetlist(circuit, { type: 'op' }, { probes: ['v(in)', 'i(D1)'] })).not.toThrow();
+            // A voltage co-probe rescues it (only the transistor current is dropped).
+            expect(() => generateNetlist(circuit, { type: 'op' }, { probes: ['v(in)', 'i(Q1)'] })).not.toThrow();
         });
 
         it('emits .ic cards for tran initialConditions but does NOT force uic (passes the flag through)', () => {
@@ -691,12 +694,13 @@ describe('NetlistGenerator', () => {
             expect(netlist).toMatch(/v\(na\)/); // node probe v(a) remapped to its sanitized node "na"
         });
 
-        it('rewrites R/C current probes to @dev[i] + savecurrents, keeps native i(V), drops i(diode)', () => {
+        it('rewrites R/C current probes to @dev[i] + savecurrents, keeps native i(V), and emits the diode vector', () => {
             // ngspice -b has NO branch-current vector for a resistor/capacitor, so a verbatim i(R1) errors
             // "no such function as i," and aborts the ENTIRE wrdata line — silently killing every co-probe
             // (total data loss). The generator rewrites i(R/C) to the device-current vector @<dev>[i] and
-            // emits `.options savecurrents`, leaves native i(V1) untouched, and DROPS i(D1) (the diode's
-            // @<dev>[id] vector is mode-finicky — dropping it keeps co-probes alive rather than risk the abort).
+            // emits `.options savecurrents`, leaves native i(V1) untouched, and rewrites i(D1) to the diode's
+            // own vector @<dev>[id] — re-measured on ngspice-41 as resolving in op/dc/tran (it was previously
+            // dropped on the recorded belief that it errors in op, which cost every diode branch current).
             const circuit: CircuitJson = {
                 version: '1.0',
                 components: [
@@ -732,11 +736,14 @@ describe('NetlistGenerator', () => {
             expect(wr).toMatch(/@C1\[i\]/); // capacitor current
             expect(wr).toMatch(/i\(V1\)/); // voltage source keeps its NATIVE branch current
             expect(wr).toMatch(/v\(nmid\)/); // the voltage co-probe survives on the same line
-            // No bare i(R1)/i(C1) survives to abort the line; the diode current probe is dropped entirely.
+            // The diode's own vector, re-measured on ngspice-41 as resolving in op/dc/tran. It used to be
+            // dropped on the recorded belief that it errors under op, which cost every diode branch current
+            // in the product — a rectifier, an LED, a clamp, a freewheel path.
+            expect(wr).toMatch(/@D1\[id\]/i);
+            // No bare i(R1)/i(C1)/i(D1) survives to abort the line — every one was rewritten.
             expect(wr).not.toMatch(/\bi\(R1\)/);
             expect(wr).not.toMatch(/\bi\(C1\)/);
             expect(wr).not.toMatch(/\bi\(D1\)/);
-            expect(wr).not.toMatch(/@D1\[/); // diode dropped, NOT rewritten (its @-vector is mode-finicky)
         });
 
         it('drops a current probe on a multi-terminal device instead of aborting the wrdata line', () => {
@@ -1124,5 +1131,85 @@ V1 in 0 DC 5
             expect(result.valid).toBe(false);
             expect(result.errors.some((e) => e.includes('analysis'))).toBe(true);
         });
+    });
+});
+
+describe('diode current probes — i(D…) is observable, and was wrongly refused', () => {
+    /** A diode's current vector is `@<dev>[id]`, not `@<dev>[i]`. It was excluded entirely on the recorded
+     *  grounds that it "errors in op"; re-measured on ngspice-41 that is false (op/dc/tran all resolve, ac
+     *  does not), and the exclusion silently cost every rectifier, LED and clamp branch in the product. */
+    const rectifier = {
+        version: '1.0',
+        components: [
+            { id: 'v1', type: 'voltage_source', designator: 'V1', value: 'SIN(0 5 1k)', pins: [{ pinId: '+', netId: 'in' }, { pinId: '-', netId: 'gnd' }] },
+            { id: 'd1', type: 'diode', designator: 'D1', pins: [{ pinId: 'anode', netId: 'in' }, { pinId: 'cathode', netId: 'out' }] },
+            { id: 'led1', type: 'diode', designator: 'LED1', model: 'LEDRED', pins: [{ pinId: 'anode', netId: 'out' }, { pinId: 'cathode', netId: 'gnd' }] },
+            { id: 'g1', type: 'ground', designator: 'GND1', pins: [{ pinId: '1', netId: 'gnd' }] },
+        ],
+        nets: [
+            { id: 'in', name: 'IN' },
+            { id: 'out', name: 'OUT' },
+            { id: 'gnd', name: 'GND', isGround: true },
+        ],
+    } as unknown as CircuitJson;
+
+    it.each([
+        ['tran', { type: 'tran', stopTime: '2m', stepTime: '20u' }],
+        ['op', { type: 'op' }],
+    ])('%s: i(D1) becomes the device-current vector, WITH savecurrents', (_label, analysis) => {
+        const deck = generateNetlist(rectifier, analysis as never, { probes: ['v(out)', 'i(D1)'] });
+        expect(deck).toMatch(/@d1\[id\]/i);
+        // Measured on ngspice-41: without the flag the vector writes ONE frozen value for the whole run,
+        // in a CSV that looks entirely valid. The flag is not an optimisation — it is the difference
+        // between a measurement and a constant.
+        expect(deck).toMatch(/^\.options .*savecurrents/m);
+    });
+
+    it('a diode current probed ALONE still sets the flag — the bug this replaces was co-probe luck', () => {
+        // The original verification passed only because the same deck also probed a resistor, which sets
+        // savecurrents for its own reasons. Probe nothing but the diode and the flag must still appear.
+        const deck = generateNetlist(rectifier, { type: 'tran', stopTime: '2m', stepTime: '20u' }, {
+            probes: ['i(D1)'],
+        });
+        expect(deck).toMatch(/^\.options .*savecurrents/m);
+    });
+
+    it('resolves the SPICE instance name, not the designator — an LED emits a D card', () => {
+        // LED1's device is DLED1, so a naive `@led1[id]` would fail with "no such device or model name".
+        const deck = generateNetlist(rectifier, { type: 'tran', stopTime: '2m', stepTime: '20u' }, {
+            probes: ['i(LED1)'],
+        });
+        expect(deck).toMatch(/@dled1\[id\]/i);
+    });
+
+    it('is dropped in AC, where no small-signal device-current vector exists', () => {
+        // An AC run needs a source with an AC magnitude, or the generator refuses before probes matter.
+        const acDriven = {
+            ...rectifier,
+            components: (rectifier.components as Array<{ designator: string }>).map((c) =>
+                c.designator === 'V1' ? { ...c, value: 'DC 0 AC 1' } : c,
+            ),
+        } as unknown as CircuitJson;
+        const deck = generateNetlist(
+            acDriven,
+            { type: 'ac', variation: 'dec', points: 10, startFreq: '1', stopFreq: '100k' } as never,
+            { probes: ['v(out)', 'i(D1)'] },
+        );
+        expect(deck).not.toMatch(/@d1\[id\]/i);
+        // "out" is a reserved word, so its node is x_out — the co-probe on the same wrdata line survives.
+        expect(deck).toMatch(/v\(x_out\)/);
+    });
+
+    it('a TRANSISTOR current is still refused — 3 terminals have no single branch current', () => {
+        const withQ = {
+            ...rectifier,
+            components: [
+                ...rectifier.components,
+                { id: 'q1', type: 'bjt', designator: 'Q1', model: 'QGENNPN', pins: [{ pinId: 'c', netId: 'out' }, { pinId: 'b', netId: 'in' }, { pinId: 'e', netId: 'gnd' }] },
+            ],
+        } as unknown as CircuitJson;
+        expect(() =>
+            generateNetlist(withQ, { type: 'tran', stopTime: '2m', stepTime: '20u' }, { probes: ['i(Q1)'] }),
+        ).toThrow(/ambiguous/i);
     });
 });
