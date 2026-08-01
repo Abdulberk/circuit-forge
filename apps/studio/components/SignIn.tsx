@@ -3,7 +3,7 @@
 import { useRef, useState } from 'react';
 
 import { useSession } from '../app/providers';
-import { API_BASE_URL, ApiError, isAbort } from '../lib/api';
+import { ApiError, isAbort } from '../lib/api';
 
 /**
  * Sign in against the real API.
@@ -40,7 +40,12 @@ export function SignIn() {
                     ? err.kind === 'unauthenticated'
                         ? 'That email and password do not match an account.'
                         : err.kind === 'network'
-                          ? `Could not reach the API at ${API_BASE_URL}.`
+                          ? // The client already composes the precise sentence, including the CORS
+                            // possibility when the API is on another origin. Replacing it here with a
+                            // shorter one threw that away — and the shorter one asserted the server was
+                            // unreachable, which is exactly the wrong thing to tell someone whose server is
+                            // running fine and is simply not allowing their page.
+                            err.message
                           : err.message
                     : 'Sign-in failed.',
             );

@@ -92,6 +92,21 @@ export class ApiClient {
      * says "this happened" when it did not is how a UI ends up with three toasts and a doubled navigation.
      * Clearing an already-empty store is the signal that this is a repeat.
      */
+    /**
+     * What to say when `fetch` rejected and it was not a timeout.
+     *
+     * Cross-origin is the common case for this app — the studio is served from one port and the API listens
+     * on another — and it is the case where "could not reach the server" is actively misleading, because the
+     * server is up and answering. The message names both possibilities rather than asserting the wrong one.
+     */
+    private unreachableMessage(): string {
+        const pageOrigin = typeof window === 'undefined' ? null : window.location.origin;
+        const crossOrigin = pageOrigin !== null && !this.baseUrl.startsWith(pageOrigin);
+        return crossOrigin
+            ? `Could not reach ${this.baseUrl}. It is either down, or it has not allowed requests from ${pageOrigin} — a browser reports both the same way. Check the API's CORS origins.`
+            : `Could not reach ${this.baseUrl}.`;
+    }
+
     private endSession(): void {
         if (this.store.read() === null) return;
         this.store.clear();
@@ -138,7 +153,12 @@ export class ApiClient {
             // for a request the app itself cancelled.
             if (signal?.aborted) throw new ApiError('aborted', 'Request cancelled.');
             if (timeout.aborted) throw new ApiError('network', `Timed out after ${this.timeoutMs} ms.`);
-            throw new ApiError('network', 'Could not reach the server.', { body: cause });
+            // A `fetch` that rejects without timing out is either an unreachable server or a CORS block, and
+            // the browser deliberately refuses to tell JavaScript which — the response exists, it is simply
+            // withheld. Naming the second possibility when the API is on a DIFFERENT ORIGIN is the whole
+            // difference between "the server is down" (it is not; curl works) and "the server did not
+            // authorise this page", which is where the fix actually is.
+            throw new ApiError('network', this.unreachableMessage(), { body: cause });
         } finally {
             release();
         }

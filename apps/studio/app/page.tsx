@@ -112,7 +112,12 @@ function Workspace() {
     const circuit = doc && doc.source !== 'empty' ? doc.circuitJson : null;
     const counts = useMemo(
         () => ({
-            components: circuit?.components?.length ?? 0,
+            // Counted the way the TREE counts, which means net markers are not parts. The raw array length
+            // disagreed with the Components row by exactly the number of ground symbols — 27 in the footer
+            // beside 26 in the tree, on the same screen, for the same design. Two numbers for one fact is a
+            // defect even when both are defensible: the reader has to work out which one answers their
+            // question, and nothing on screen tells them.
+            components: (circuit?.components ?? []).filter((c) => c.type !== 'ground').length,
             nets: circuit?.nets?.length ?? 0,
         }),
         [circuit],
