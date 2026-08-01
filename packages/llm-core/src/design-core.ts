@@ -25,6 +25,7 @@ import {
     currentKey,
     classifyRobustness,
     buildElectricalScope,
+    simulationCoverage,
     ROBUSTNESS_PROFILES,
     type RobustnessTier,
     type RobustnessBars,
@@ -397,7 +398,7 @@ export async function runDesignLoop(input: DesignLoopInput, deps: DesignDeps): P
                 simulation: { jobId, status: status.status, metrics: status.metrics, result: result.result },
                 ...(yieldReport ? { yield: yieldReport } : {}),
                 robustness,
-                scope: designScope({ simHealthy, criteria, robustness }),
+                scope: designScope({ simHealthy, criteria, robustness, circuit }),
                 ...(freqCaveat ? { caveats: freqCaveat } : {}),
             };
         }
@@ -475,7 +476,7 @@ export async function runDesignLoop(input: DesignLoopInput, deps: DesignDeps): P
               : coverageMiss
                 ? `The circuit simulates and meets its stated criteria, but you specified a ${lastUncovered.join('/')} target that no acceptance criterion verifies — treat it as unverified for that quantity.`
                 : 'Could not produce a successful simulation within the round budget.',
-        scope: designScope({ simHealthy: lastRoundHealthy, criteria }),
+        scope: designScope({ simHealthy: lastRoundHealthy, criteria, circuit }),
         ...(freqCaveat ? { caveats: freqCaveat } : {}),
     };
 }
@@ -561,9 +562,14 @@ function designScope(input: {
     simHealthy: boolean;
     criteria: readonly AcceptanceCriterion[];
     robustness?: RobustnessVerdict;
+    /** The circuit this verdict is about, so the manifest can state whether the deck held all of it. */
+    circuit: CircuitJson;
 }): ScopeManifest {
     return buildElectricalScope({
         simRan: input.simHealthy,
+        // Independent of whether the sim was healthy: a run that produced no data still has a schematic, and
+        // "the amplifier has no simulatable model" is often WHY the round produced nothing worth reporting.
+        coverage: simulationCoverage(input.circuit),
         // Coverage is claimed ONLY when a simulation produced usable data. A criterion that names a voltage
         // target proves nothing on a run that never simulated — on an inconclusive or failed-sim exit the
         // dimensions collapse to none, so no quantity is reported as covered by a check that never executed.
@@ -599,7 +605,7 @@ async function inconclusive(
         // Inconclusive means no simulation produced usable data on any round, so nothing was checked. The
         // manifest still ships: a caller must be able to read "these are the things that did not run" off
         // the same field on every exit, rather than inferring it from the field being absent.
-        scope: designScope({ simHealthy: false, criteria: [] }),
+        scope: designScope({ simHealthy: false, criteria: [], circuit }),
     };
 }
 

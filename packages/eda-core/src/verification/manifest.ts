@@ -18,12 +18,18 @@
  * layout-time concern). Every other scope nuance rides in the free-text `detail`.
  */
 import type { SpecDimension } from '../analysis/assertions';
+import { describeCoverage, type SimulationCoverage } from '../netlist/coverage';
 
 /** The single frozen registry of nameable checks. A CheckId typo cannot compile (it is a closed union),
  *  so a producer can never invent a check that isn't disclosed elsewhere. */
 export const CHECK_IDS = [
     // electrical (POST /verify-design)
     'sim',
+    // Whether the deck contained the whole schematic. Separate from `sim` on purpose: `sim` answers "did a
+    // simulation run", and a run over a circuit whose op-amp was silently absent answers it with a
+    // confident yes. Only this entry can tell a flat waveform that means "regulated" from one that means
+    // "the part that would have moved it was never in the deck".
+    'sim.coverage',
     'erc',
     'assertion.voltage',
     'assertion.current',
@@ -71,6 +77,7 @@ export interface ScopeManifest {
  *  here too — Record over the union). */
 export const CHECK_LABELS: Record<CheckId, string> = {
     sim: 'Simulation ran',
+    'sim.coverage': 'Simulated circuit matches the schematic',
     erc: 'Electrical rule check',
     'assertion.voltage': 'Voltage spec asserted',
     'assertion.current': 'Current spec asserted',
@@ -139,6 +146,9 @@ export function buildElectricalScope(input: {
     robustness?: DeterminedEntry;
     decoupling?: DeterminedEntry;
     polarity?: DeterminedEntry;
+    /** Deck ↔ schematic comparison. Omit only if the producer genuinely did not perform it — it is cheap
+     *  and available wherever a circuit is, so 'not-run' here should be rare. */
+    coverage?: SimulationCoverage;
 }): ScopeManifest {
     const covered = new Set(input.coveredDimensions);
     const dim = (d: SpecDimension): DeterminedEntry =>
@@ -146,6 +156,7 @@ export function buildElectricalScope(input: {
     return buildManifest(
         [
             'sim',
+            'sim.coverage',
             'erc',
             'assertion.voltage',
             'assertion.current',
@@ -163,6 +174,7 @@ export function buildElectricalScope(input: {
         ],
         {
             sim: { status: input.simRan ? 'run' : 'not-run' },
+            'sim.coverage': coverageEntry(input.coverage),
             erc: { status: 'run' }, // ERC is a hard gate that always executes on this path
             'assertion.voltage': dim('voltage'),
             'assertion.current': dim('current'),
@@ -190,6 +202,21 @@ export function buildElectricalScope(input: {
             ...excludedEntries('thermal', 'emi', 'compliance'),
         },
     );
+}
+
+/**
+ * How the deck ↔ schematic comparison discloses itself.
+ *
+ * 'run' means we compared and can say what the deck held — including when the answer is bad news. The
+ * finding rides in `detail` rather than in the status, because the status answers "did anyone look", and
+ * conflating the two is how a check that FOUND something ends up reading like one that never happened.
+ */
+function coverageEntry(c?: SimulationCoverage): DeterminedEntry {
+    if (!c) return { status: 'not-run', detail: 'the deck was not compared against the schematic' };
+    // No `gradation` here on purpose: this check is not a shallow version of itself when it finds a hole —
+    // it ran fully and reported. The finding belongs in `detail`; the structured SimulationCoverage travels
+    // with the simulation result for anything that needs to branch on it.
+    return { status: 'run', detail: describeCoverage(c) ?? 'every component with an electrical model was emitted to the deck' };
 }
 
 /** What the routing stage reports about itself — mirrors LayoutResult.delivery.routing. */

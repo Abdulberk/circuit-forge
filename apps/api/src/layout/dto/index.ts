@@ -1,3 +1,4 @@
+import { safeValidateCircuitJson } from '@circuit-forge/eda-core';
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import { Type } from 'class-transformer';
 import {
@@ -125,6 +126,44 @@ export class FabProfileDto {
 }
 
 /**
+ * The circuit really is OUR CircuitJson — checked, not asserted by the type annotation.
+ *
+ * `@IsObject()` accepts any JSON, so the space this endpoint quantified over was "any object", not
+ * CircuitJson. The consequence was measured: `{"components": null}` reached pcb-core and died as
+ * `circuit.nets is not iterable`, and that internal TypeError became the customer-visible `errorMessage`
+ * on a FAILED job — a job that was queued, dispatched to a worker and charged against a quota before
+ * anyone looked at the payload.
+ *
+ * The schema already existed (`CircuitJsonSchema`, with its own caps: ≤1000 components, 1..64 pins,
+ * footprint ≤50 chars) and simply was not applied anywhere server-side — ERC runs client-side only. This
+ * applies it at the edge, where a bad payload costs a 400 instead of a worker slot.
+ */
+@ValidatorConstraint({ name: 'isCircuitJson', async: false })
+export class IsCircuitJson implements ValidatorConstraintInterface {
+    validate(value: unknown): boolean {
+        return safeValidateCircuitJson(value).success;
+    }
+
+    /**
+     * STATELESS, like PositiveNumberRecord beside it. class-validator reuses one constraint instance
+     * across every request, so stashing the last failure on `this` would let two concurrent callers see
+     * each other's field names. Re-validating here costs one parse on the error path only.
+     */
+    defaultMessage(args: ValidationArguments): string {
+        const parsed = safeValidateCircuitJson(args.value);
+        const issues = parsed.success
+            ? ''
+            : parsed.error.issues
+                  .slice(0, 5)
+                  .map((i) => `${i.path.join('.') || '(root)'}: ${i.message}`)
+                  .join('; ');
+        // Naming the field is the whole reason this beats the crash it replaces: the old failure mode was
+        // an internal TypeError persisted as the customer's errorMessage.
+        return `circuit is not a valid CircuitJson${issues ? ` — ${issues}` : ''}`;
+    }
+}
+
+/**
  * Start a PCB layout job. `circuit` is OUR CircuitJson (topology: components + nets) — the same shape
  * pcb-core's layoutCircuit consumes. Layout options are optional and default to pcb-core's own defaults.
  */
@@ -135,6 +174,7 @@ export class CreateLayoutDto {
         additionalProperties: true,
     })
     @IsObject()
+    @Validate(IsCircuitJson)
     circuit!: Record<string, unknown>;
 
     @ApiPropertyOptional({

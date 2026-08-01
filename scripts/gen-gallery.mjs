@@ -13,15 +13,22 @@ import { fileURLToPath } from 'node:url';
 import { execFileSync } from 'node:child_process';
 import { makeFreeroutingRunner } from './lib/freerouting.mjs';
 import { makeKicadDrcRunner, makeKicadDrcReportRunner } from './lib/kicad-drc.mjs';
-import { galleryCases } from './lib/gallery-circuits.mjs';
+import { galleryCases, gallerySimPlan } from './lib/gallery-circuits.mjs';
+import { makeNgspiceRunner } from './lib/ngspice.mjs';
 import { KICAD_IMAGE, assertImagesMatchProduction } from './lib/eda-images.mjs';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const pkgRoot = join(__dirname, '..', 'packages', 'pcb-core');
 const outRoot = join(pkgRoot, '.gallery');
 const publicDir = join(__dirname, '..', 'apps', 'pcb-viewer', 'public');
-const { layoutCircuit, injectModels } = await import(
+const simulate = makeNgspiceRunner({ timeoutMs: 120_000 });
+const { layoutCircuit, injectModels, shapeLayoutResult } = await import(
     new URL(`file://${join(pkgRoot, 'dist', 'index.js').replace(/\\/g, '/')}`).href
+);
+const { simulationCoverage } = await import(
+    new URL(
+        `file://${join(__dirname, '..', 'packages', 'eda-core', 'dist', 'index.js').replace(/\\/g, '/')}`,
+    ).href
 );
 
 /**
@@ -55,6 +62,118 @@ if (wanted.length && cases.length !== wanted.length) {
 }
 /** Renders are for docs/artifacts, not for the pipeline — opt in with --render. */
 const RENDER = process.argv.includes('--render');
+/** Regenerate only `<board>.sim.json`, skipping layout entirely. See writeSim for why that is sound. */
+const SIM_ONLY = process.argv.includes('--sim-only');
+
+/**
+ * Write `<board>.sim.json` — the simulation half, which depends on the CIRCUIT and nothing else.
+ *
+ * Deliberately separable from the layout. A board's stimulus, its waveform and the sentence explaining it
+ * have no dependency on where the copper runs, so correcting an explanation should not re-route a board:
+ * freerouting is non-deterministic and the 3D export restamps its timestamp, so a full re-run rewrites a
+ * ~600 KB binary and can move traces for no reason. `--sim-only` regenerates exactly this.
+ *
+ * A board with no waveform must still say WHY — a viewer showing nothing moving is indistinguishable from
+ * a circuit sitting at steady state, and those are different facts. `coverage` answers the third case that
+ * looks like both: the run succeeded but the part that would have made something happen was never in the
+ * deck (several gallery boards are built around a catalog-only 555 / 4017 / 7805 / '595).
+ */
+/**
+ * Devices with a single, unambiguous branch current ngspice can report.
+ *
+ * Not a taste list — a limit of the simulator, and of physics. Two-terminal devices have one current:
+ * V/L carry a native `i(<dev>)` vector, R/C come through `@<dev>[i]`, and diodes/zeners/LEDs through
+ * `@<dev>[id]`. A BJT, MOSFET or multi-port subckt has THREE OR MORE terminal currents and no single
+ * branch current, so its pads inject an unknown and the viewer must show no flow there rather than
+ * invent one. eda-core does the rewriting; this list only says which components have a current to ask for.
+ */
+const CURRENT_PROBEABLE = new Set([
+    'resistor',
+    'capacitor',
+    'inductor',
+    'voltage_source',
+    'current_source',
+    'diode',
+    'zener',
+]);
+
+/**
+ * The series name ngspice ACTUALLY emits for a device's current, which is not one form but two: `i(v1)`
+ * for sources and inductors, `@r1[i]` for resistors and capacitors (eda-core rewrites the latter because
+ * `i(R…)` has no vector). Shipping this map beside the data is the same discipline as `netIdentity`: the
+ * consumer must never have to re-derive a naming rule that lives in the generator.
+ */
+function currentSeriesName(component) {
+    const d = component.designator.toLowerCase();
+    if (component.type === 'resistor' || component.type === 'capacitor') return `@${d}[i]`;
+    if (component.type === 'diode' || component.type === 'zener') {
+        // A diode's SPICE instance is its designator prefixed with D — LED1 becomes DLED1 — and the
+        // vector is keyed on the INSTANCE. `@led1[id]` fails with "no such device or model name".
+        return `@${d.startsWith('d') ? d : 'd' + d}[id]`;
+    }
+    return `i(${d})`;
+}
+
+function writeSim(name, circuit) {
+    const plan = gallerySimPlan[name];
+    const coverage = simulationCoverage(circuit);
+    let sim;
+    if (!plan) {
+        sim = { available: false, reason: 'no simulation stimulus is declared for this board', coverage };
+    } else {
+        try {
+            const probeable = circuit.components.filter((c) => CURRENT_PROBEABLE.has(c.type));
+            const nonGround = (circuit.nets ?? []).filter((n) => !n.isGround);
+            const { result } = simulate(circuit, plan.analysis, [
+                ...nonGround.map((n) => `v(${n.id})`),
+                ...probeable.map((c) => `i(${c.designator})`),
+            ]);
+            // designator -> the series carrying its current, and which of ITS OWN pins the positive
+            // direction enters. The pins are OUR authored pinIds, and every rendered pad now carries the
+            // same id in `sourcePin` (pcb-core delivers that join), so the consumer never has to
+            // reconstruct a pad-naming convention — which is the only form of this that survives a
+            // hundred-thousand-part catalog.
+            //
+            // SPICE reports a two-terminal device's current as flowing INTO its first node, so a positive
+            // reading enters `intoPin` and leaves `outOfPin`.
+            const branchCurrents = Object.fromEntries(
+                probeable
+                    .filter((c) => c.pins.length === 2)
+                    .map((c) => [
+                        c.designator,
+                        {
+                            series: currentSeriesName(c),
+                            intoPin: c.pins[0].pinId,
+                            outOfPin: c.pins[1].pinId,
+                        },
+                    ]),
+            );
+            const unprobed = circuit.components
+                .filter((c) => !CURRENT_PROBEABLE.has(c.type) && c.type !== 'ground')
+                .map((c) => ({ designator: c.designator, type: c.type }));
+            sim = { available: true, analysis: plan.analysis, note: plan.note, result, coverage, branchCurrents, unprobed };
+            if (unprobed.length) {
+                console.log(
+                    `  · no branch-current vector for ${unprobed.map((u) => `${u.designator} (${u.type})`).join(', ')} — those pads carry no measured flow`,
+                );
+            }
+            const moving = result.series.filter((se) => {
+                const y = se.points.map((pt) => pt.y);
+                return Math.max(...y) - Math.min(...y) > 0.05;
+            }).length;
+            console.log(`  ✓ sim: ${result.meta.pointsCount} rows, ${moving}/${result.series.length} signal(s) moving`);
+        } catch (e) {
+            sim = { available: false, reason: String(e.message ?? e).slice(0, 300), coverage };
+            console.log(`  ⚠ sim unavailable — ${sim.reason.slice(0, 90)}`);
+        }
+    }
+    if (!coverage.complete) {
+        console.log(
+            `  ⚠ deck omits ${coverage.loadBearing.map((o) => `${o.designator} (${o.type})`).join(', ')} — no simulatable model`,
+        );
+    }
+    writeFileSync(join(publicDir, `${name}.sim.json`), JSON.stringify(sim));
+}
 
 // ---------------------------------------------------------------- run
 
@@ -65,6 +184,15 @@ const notaryDrc = makeKicadDrcRunner({ workDir: outRoot });
 // The same runner the ladder uses, in report form — one verdict, one severity policy.
 const drcReportRunner = makeKicadDrcReportRunner({ workDir: outRoot });
 const summary = [];
+
+if (SIM_ONLY) {
+    for (const [name, circuit] of cases) {
+        console.log(`\n────────── ${name} (sim only)`);
+        writeSim(name, circuit);
+    }
+    console.log(`\ndone: ${cases.length} sim.json regenerated → apps/pcb-viewer/public/ (layout untouched)`);
+    process.exit(0);
+}
 
 for (const [name, circuit] of cases) {
     console.log(`\n────────── ${name}`);
@@ -103,6 +231,20 @@ for (const [name, circuit] of cases) {
         );
         console.log(`  · body align: ${[...new Set(s)].join(' ')}`);
     }
+    // The viewer's data pair: the copper, and how it joins to a simulation of the same circuit.
+    // shapeLayoutResult is the SAME shaper the worker delivers from — the gallery must not be a picture of
+    // a different contract than the product returns.
+    const geometry = shapeLayoutResult(q.evaluated, { namesById: q.namesById, expectations: q.expectations });
+    writeFileSync(
+        join(publicDir, `${name}.layout.json`),
+        JSON.stringify({
+            geometry,
+            netIdentity: { nameById: q.netNameById, spiceNodeById: q.spiceNodeByNetId },
+        }),
+    );
+
+    writeSim(name, circuit);
+
     writeFileSync(join(dir, 'board.kicad_pcb'), inj.kicadPcb);
     writeFileSync(join(dir, 'board.kicad_pro'), q.outputs.kicadPro);
 

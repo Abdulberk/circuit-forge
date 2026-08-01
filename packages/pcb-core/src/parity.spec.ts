@@ -56,10 +56,10 @@ function board(opts: {
 }
 
 const EXPECT: PinExpectation[] = [
-    { name: 'R1', pinId: '1', selector: '.R1 > .pin1', netName: 'VIN' },
-    { name: 'R1', pinId: '2', selector: '.R1 > .pin2', netName: 'GND' },
-    { name: 'D1', pinId: 'anode', selector: '.D1 > .anode', netName: 'VIN' },
-    { name: 'D1', pinId: 'cathode', selector: '.D1 > .cathode', netName: 'GND' },
+    { name: 'R1', pinId: '1', selector: '.R1 > .pin1', port: 'pin1', netName: 'VIN' },
+    { name: 'R1', pinId: '2', selector: '.R1 > .pin2', port: 'pin2', netName: 'GND' },
+    { name: 'D1', pinId: 'anode', selector: '.D1 > .anode', port: 'anode', netName: 'VIN' },
+    { name: 'D1', pinId: 'cathode', selector: '.D1 > .cathode', port: 'cathode', netName: 'GND' },
 ];
 
 describe('checkConnectivityParity (approval condition 1)', () => {
@@ -122,7 +122,7 @@ describe('checkConnectivityParity (approval condition 1)', () => {
         const els = board({ traces: [['p_R1_1', 'net_VIN']] }).filter((e) => e.source_port_id !== 'p_D1_a');
         const r = checkConnectivityParity(els, [
             ...EXPECT,
-            { name: 'R1', pinId: '2', selector: '.R1 > .pin2', netName: 'VOUT' }, // no such net
+            { name: 'R1', pinId: '2', selector: '.R1 > .pin2', port: 'pin2', netName: 'VOUT' }, // no such net
         ]);
         expect(r.diagnostics.some((d) => d.code === 'PCB020')).toBe(true);
         expect(r.diagnostics.some((d) => d.code === 'PCB021')).toBe(true);

@@ -12,7 +12,7 @@ import {
 import type { AnalysisConfig } from '../types/analysis';
 import { analysisToSpice } from '../types/analysis';
 import type { CircuitJson, Component, Net, ModelDef } from '../types/circuit';
-import { SPICE_PREFIXES, COMPONENT_PINS, COMPONENT_TYPES, isDigitalType } from '../types/circuit';
+import { SPICE_PREFIXES, COMPONENT_PINS, COMPONENT_TYPES, isDigitalType, isSimulatable } from '../types/circuit';
 
 import { planMixedSignal, emitDigitalComponent, aInstanceName, type MixedSignalPlan } from './digital';
 import { sanitizeNodeName, validateIncludePaths } from './sanitizer';
@@ -173,7 +173,9 @@ export function generateNetlist(circuit: CircuitJson, analysis: AnalysisConfig, 
     // collision-avoiding rename is always safe. Empty / harmless for analog-only circuits.
     const reservedDeviceNames = new Set<string>();
     for (const c of circuit.components) {
-        if (c.type === 'ground' || c.type === 'generic') continue; // not emitted as devices
+        // `ground` is node 0, not a device. Everything else that has no electrical model is decided by the
+        // shared predicate, so a future non-simulatable type cannot be emitted here by accident.
+        if (c.type === 'ground' || !isSimulatable(c)) continue;
         const prefix = SPICE_PREFIXES[c.type];
         const name = isDigitalType(c.type)
             ? aInstanceName(c.designator)
@@ -500,8 +502,10 @@ export function generateNetlist(circuit: CircuitJson, analysis: AnalysisConfig, 
     if (options.probes && options.probes.length > 0 && probes.length === 0) {
         throw new DeckRefusal(
             `None of the requested probes are observable in ngspice batch mode: ${options.probes.join(', ')}. ` +
-                `A diode/transistor terminal current (i(D…)/i(Q…)/i(M…)) has no branch-current vector — probe a ` +
-                `series resistor's current i(R…) instead; ground v(0) has no vector — probe a non-ground node.`,
+                `A TRANSISTOR terminal current (i(Q…)/i(M…)) is ambiguous — a 3- or 4-terminal device has no ` +
+                `single branch current, so probe a series resistor's current i(R…) instead. Diode currents ` +
+                `(i(D…)) ARE available in op/dc/tran but not in ac. Ground v(0) has no vector — probe a ` +
+                `non-ground node.`,
         );
     }
 
@@ -729,12 +733,26 @@ function isDigitalCurrentProbe(probe: string, digitalRefs: Set<string>): boolean
 const NATIVE_CURRENT_DEVICES = new Set(['V', 'L', 'E', 'H']); // voltage sources, inductors, vcvs, ccvs
 /**
  * Two-terminal elements whose current is reliably reachable via `.options savecurrents` + the `@<dev>[i]`
- * vector form, in EVERY analysis mode. Verified on ngspice-41: `@r1[i]`/`@c1[i]` resolve in both op and
- * tran, case-insensitively. Diodes are deliberately EXCLUDED — their current vector is `@<dev>[id]` (a
- * different parameter) and it only resolves in tran (it errors in op), so emitting it would re-introduce
- * the line-abort bug under op; a diode current probe is dropped instead.
+ * vector form. Verified on ngspice-41: `@r1[i]`/`@c1[i]` resolve in op, dc and tran, case-insensitively,
+ * but NOT in ac (no small-signal device-current vector), where the bad token would abort the shared
+ * wrdata line.
  */
 const SAVECURRENTS_DEVICES = new Set(['R', 'C']); // resistor, capacitor
+
+/**
+ * Devices whose current lives under a DIFFERENT `@<dev>[…]` parameter than plain `i`.
+ *
+ * A diode's is `id`, and it needs no `savecurrents`. This used to be excluded outright, on the recorded
+ * grounds that "it only resolves in tran (it errors in op)" — RE-MEASURED on ngspice-41 and that is not
+ * true: `.op` ✓, `.dc` ✓, `.tran` ✓, `.ac` ✗ (the same one mode R/C also fails in). The exclusion cost
+ * every diode current in the product, which on a real board is most of the interesting branches — a
+ * rectifier, an LED, a clamp, a freewheel path.
+ *
+ * NOT extended to BJT/MOSFET here: those have three or four terminal currents (`ic`/`ib`/`ie`,
+ * `id`/`is`/`ig`/`ib`) and `i(Q1)` does not say which one is meant. Guessing a terminal would be worse
+ * than refusing, so they keep refusing until the probe language can name a terminal.
+ */
+const PARAM_CURRENT_DEVICES: Record<string, string> = { D: 'id' }; // diode / zener / LED all emit a D card
 
 /**
  * Make a current probe `i(<inst>)` actually outputtable by ngspice `-b`, keyed on the emitted device letter:
@@ -764,6 +782,20 @@ function rewriteCurrentProbeVector(
         // abort the whole shared wrdata line, losing every co-probe. So DROP R/C current probes in AC.
         if (analysisType === 'ac') return { token: '', savecurrents: false };
         return { token: `@${name}[i]`, savecurrents: true };
+    }
+    const param = PARAM_CURRENT_DEVICES[letter];
+    if (param) {
+        // Same one exclusion as R/C: no small-signal device-current vector in ac.
+        if (analysisType === 'ac') return { token: '', savecurrents: false };
+        // savecurrents is REQUIRED, exactly as it is for R/C. Measured on ngspice-41: without it,
+        // `@d1[id]` writes 108 rows carrying ONE distinct value — a frozen constant, with no warning and
+        // a valid-looking CSV. With it, 67 distinct values that agree with the series resistor's own
+        // current to 3.5e-5.
+        //
+        // This shipped wrong for a day because the deck that verified it also probed a resistor, which
+        // sets the flag for its own reasons — so the diode's number was correct by coincidence. A
+        // cross-check that only holds when an unrelated probe happens to be present is not a cross-check.
+        return { token: `@${name}[${param}]`, savecurrents: true };
     }
     return { token: '', savecurrents: false }; // multi-terminal / exotic → drop (can't probe a single current)
 }
@@ -840,7 +872,7 @@ function componentToSpice(
 
     // Not emitted to SPICE: `ground` is node 0, `generic` is a catalog-only part with no simulatable
     // model. Both are skipped (not an error) so a circuit can carry real parts that aren't simulatable.
-    if (type === 'ground' || type === 'generic') {
+    if (type === 'ground' || !isSimulatable(component)) {
         return null;
     }
 

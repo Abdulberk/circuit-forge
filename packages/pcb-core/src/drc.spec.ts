@@ -148,6 +148,7 @@ describe('airwiresFromDrc — ratsnest from unconnected_items, drawn on OUR pad 
             {
                 id: 'p1',
                 componentId: 'led1',
+                sourcePin: '1',
                 pin: 'anode',
                 net: 'A',
                 x: -0.8,
@@ -161,6 +162,7 @@ describe('airwiresFromDrc — ratsnest from unconnected_items, drawn on OUR pad 
             {
                 id: 'p2',
                 componentId: 'r1',
+                sourcePin: '1',
                 pin: '1',
                 net: 'A',
                 x: 7.2,
@@ -235,6 +237,7 @@ describe('airwiresFromDrc — ratsnest from unconnected_items, drawn on OUR pad 
                 {
                     id: 'u1p1',
                     componentId: 'u1',
+                    sourcePin: '1',
                     pin: '1',
                     net: 'GND',
                     x: 0,
@@ -248,6 +251,7 @@ describe('airwiresFromDrc — ratsnest from unconnected_items, drawn on OUR pad 
                 {
                     id: 'u1p4',
                     componentId: 'u1',
+                    sourcePin: '1',
                     pin: '4',
                     net: 'GND',
                     x: 5,
@@ -261,6 +265,7 @@ describe('airwiresFromDrc — ratsnest from unconnected_items, drawn on OUR pad 
                 {
                     id: 'r1p1',
                     componentId: 'r1',
+                    sourcePin: '1',
                     pin: '1',
                     net: 'GND',
                     x: 10,

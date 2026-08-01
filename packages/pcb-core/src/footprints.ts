@@ -54,27 +54,50 @@ export function soicForPinCount(pinCount: number): string | null {
     return null; // beyond the v1 curated ladder — requires an explicit footprint override
 }
 
-/** Fixed pad counts for the non-numbered curated packages. */
-const FIXED_PAD_COUNTS: Record<string, number> = {
-    sot23: 3,
-    to92: 3,
-    sod123: 2,
-    '0402': 2,
-    '0603': 2,
-    '0805': 2,
-    '1206': 2,
-};
+/**
+ * How many pads a footprint really has, and whether it can be built at all.
+ *
+ * `null` means the renderer REFUSES the string — a distinct answer from any number, and the one that
+ * predicts a job dying downstream with a tool-internal message.
+ */
+export type PadCountOracle = (footprint: string) => number | null;
 
 /**
- * Physical pad count of a (normalized) footprint, when knowable: numbered families (soic8/dip14/
- * tssop20/pinrow2/...) parse their trailing number; curated fixed packages use the table. Returns
- * null for an unknown footprint — the caller must treat that as "NC unknowable" and say so, never
- * silently assume zero (approval condition 3).
+ * Load the real oracle: footprinter, the same library the evaluator builds packages with.
+ *
+ * INJECTED, not imported, for the reason freerouting and the DRC notary are injected — pcb-core stays a
+ * pure, synchronous, dependency-light core and the heavy tool is handed in. Here there is a second,
+ * harder reason: footprinter is ESM-only and pcb-core is CommonJS, so a static import does not compile.
+ * `layoutCircuit` awaits this once and threads the result through.
+ *
+ * WHY IT REPLACED A PATTERN. Pad count used to come from a nine-family regex plus a seven-entry table,
+ * and it was wrong in the direction that hurts: `null` for most of the real vocabulary (sot23, sot363,
+ * sma, melf…), which callers read as "unknowable" and skipped accounting for entirely — and a confident
+ * number for strings footprinter refuses (sop14, msop20), so a board could be pad-accounted against a
+ * package that will never exist. A count inferred from a name is a guess about someone else's library.
  */
-export function footprintPadCount(footprint: string): number | null {
-    const numbered = /^(?:soic|dip|tssop|ssop|qfp|qfn|pinrow|msop|sop)(\d+)$/.exec(footprint);
-    if (numbered) return Number(numbered[1]);
-    return FIXED_PAD_COUNTS[footprint] ?? null;
+export async function loadPadCountOracle(): Promise<PadCountOracle> {
+    const { fp } = (await import('@tscircuit/footprinter')) as {
+        fp: { string: (s: string) => { circuitJson: () => Array<{ type?: string }> } };
+    };
+    // Memoised: footprinter builds real geometry per call, and a board reuses a handful of strings.
+    const cache = new Map<string, number | null>();
+    return (footprint: string): number | null => {
+        const hit = cache.get(footprint);
+        if (hit !== undefined) return hit;
+        let n: number | null = null;
+        try {
+            const pads = fp
+                .string(footprint)
+                .circuitJson()
+                .filter((e) => e.type === 'pcb_smtpad' || e.type === 'pcb_plated_hole').length;
+            n = pads > 0 ? pads : null; // a "footprint" with no copper is not one a pin can land on
+        } catch {
+            n = null; // footprinter refuses this string
+        }
+        cache.set(footprint, n);
+        return n;
+    };
 }
 
 /**

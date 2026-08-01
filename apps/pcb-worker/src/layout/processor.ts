@@ -222,7 +222,7 @@ export async function processLayoutJob(job: Job<LayoutJobPayload>): Promise<void
 
         // Clean frontend contract + DRC-derived airwires/checks. The final DRC report is the manufacturability
         // authority (see outcome.ts): only a DRC-clean board earns the fab-ready bundle.
-        const geo = shapeLayoutResult(q.evaluated, { namesById: q.namesById });
+        const geo = shapeLayoutResult(q.evaluated, { namesById: q.namesById, expectations: q.expectations });
         const parsed = parseDrcReport(await kicad.drcReport(q.outputs.kicadPcb, q.outputs.kicadPro));
         const checks = drcToChecks(parsed);
         const { airwires } = airwiresFromDrc(parsed, geo);

@@ -24,6 +24,9 @@ export interface PinExpectation {
     pinId: string;
     /** tscircuit port selector for this pin (e.g. ".Q1 > .collector"). */
     selector: string;
+    /** Just the port half of the selector (e.g. "collector", "pin1"). Carried separately so a consumer
+     *  joining OUR pinId to a rendered pad never has to parse the selector string back apart. */
+    port: string;
     /** OUR (sanitized) net name this pin must land on. */
     netName: string;
 }
@@ -282,7 +285,7 @@ export function generateTscircuitCode(
             }
             const selector = `.${name} > .${port}`;
             traceLines.push(`    <trace from="${selector}" to="net.${netName}" />`);
-            expectations.push({ name, pinId: pin.pinId, selector, netName });
+            expectations.push({ name, pinId: pin.pinId, selector, port, netName });
         }
     }
 

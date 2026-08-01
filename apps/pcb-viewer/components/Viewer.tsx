@@ -1,5 +1,5 @@
 'use client';
-import { Component, Suspense, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from 'react';
+import { Component, Suspense, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import * as THREE from 'three';
 import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
 import { Canvas, useThree } from '@react-three/fiber';
@@ -7,26 +7,40 @@ import { ContactShadows, OrbitControls, useGLTF, Html } from '@react-three/drei'
 import { EffectComposer, Bloom, N8AO, SMAA, ToneMapping } from '@react-three/postprocessing';
 import { ToneMappingMode, SMAAPreset } from 'postprocessing';
 
+import { SimulationOverlay, type BoardFit } from './SimulationOverlay';
+import { SimulationPanel, type SimState } from './SimulationPanel';
+import { useBoardSimulation } from '../lib/useBoardSimulation';
+import type { FlowTable } from '../lib/flow';
+import type { BoardLayout, Playback } from '../lib/simulation';
+
 // Real, DRC-clean board GLBs our pipeline produced (served from /public). Every one is genuine
 // pcb-core output: CircuitJson → tscircuit eval → freerouting → KiCad DRC ✔ → 3D bodies whose
 // placement is numerically verified (scripts/verify-3d-alignment.mjs, 0.000mm worst offset).
+// The two boards whose decks are electrically COMPLETE and whose signals actually move lead the list, so
+// the first click on Simulate demonstrates the feature. The rest are built around an IC with no SPICE
+// model (a 555, a 4017, a 7805, a '595) and land on the disclosure instead — which is not hidden by the
+// ordering: each board still states its own case when you select it.
 const BOARDS = [
+    { id: 'bridge-rectifier.glb', title: 'Köprü doğrultucu + filtre', cat: 'güç' },
+    { id: 'opamp-amp.glb', title: 'Op-amp yükselteç (×11)', cat: 'analog' },
+    { id: 'astable-flasher.glb', title: '2-transistör astable flaşör', cat: 'discrete' },
     { id: 'chaser-4017.glb', title: '555+4017 · 10-LED şelale', cat: 'dijital' },
     { id: 'shift-register.glb', title: '74HC595 · 8-LED shift register', cat: 'dijital' },
-    { id: 'opamp-amp.glb', title: 'LM358 · op-amp yükselteç', cat: 'analog' },
     { id: 'ne555-blinker.glb', title: 'NE555 · blinker', cat: 'analog' },
-    { id: 'astable-flasher.glb', title: '2-transistör astable flaşör', cat: 'discrete' },
     { id: 'mosfet-switch.glb', title: 'MOSFET anahtar + flyback', cat: 'anahtarlama' },
-    { id: 'bridge-rectifier.glb', title: 'Köprü doğrultucu + filtre', cat: 'güç' },
     { id: 'regulator-5v.glb', title: '7805 · 5V regülatör', cat: 'güç' },
 ];
 
 const TARGET = 40; // world units on largest side
+/** Wall-clock seconds for one pass through a run, whatever its own span. See SimulationOverlay.loopSeconds. */
+const SIM_LOOP_SECONDS = 6;
 
 /** drei caches by the exact string handed to useGLTF, so the preload and the component have to build
  *  the URL the same way. They did not: the preload asked for a leading-slash path while the component
  *  asked for a bare filename, which made the preload dead code and downloaded every board twice. */
 const boardUrl = (id: string): string => `/${id}`;
+/** The layout + simulation companions gen-gallery emits beside each GLB, keyed off the same board id. */
+const boardDataUrl = (id: string, ext: string): string => `/${id.replace(/\.glb$/, '')}.${ext}`;
 
 // The GLB carries no emitter colour — KiCad's LED_D5.0mm STEP is a neutral epoxy dome — so a colour
 // has to be chosen. Red is the modal 5mm indicator LED by a wide margin, so it is the least-wrong
@@ -556,12 +570,33 @@ function Board({
     url,
     layerMats,
     onMaterials,
-}: Readonly<{ url: string; layerMats: LayerMats; onMaterials: (m: MatEntry[]) => void }>) {
+    sim,
+    playing,
+    onTime,
+}: Readonly<{
+    url: string;
+    layerMats: LayerMats;
+    onMaterials: (m: MatEntry[]) => void;
+    /** The board's own simulation, when one has been loaded. The overlay is a CHILD of the same group as
+     *  the GLB, so it inherits the orientation, the fit scale and the seating offset for free — nothing
+     *  re-derives the board's placement, and nothing can drift out of alignment with it. */
+    sim?: { playback: Playback; layout: BoardLayout; flow: FlowTable | null } | null;
+    playing: boolean;
+    onTime?: (t: number) => void;
+}>) {
     const { scene, parser } = useGLTF(url);
     const camera = useThree((st) => st.camera);
     const controls = useThree((st) => st.controls);
     const size = useThree((st) => st.size);
     const group = useRef<THREE.Group>(null);
+    const [slabLocal, setSlabLocal] = useState<THREE.Box3 | null>(null);
+
+    // The board's own rectangle, in the render and in millimetres, is the same rectangle — so the mapping
+    // between them is a division, not a constant. Recomputed only when the board or its layout changes.
+    const fit = useMemo<BoardFit | null>(
+        () => (slabLocal && sim ? fitFromSlab(slabLocal, sim.layout.geometry.board) : null),
+        [slabLocal, sim],
+    );
 
     useLayoutEffect(() => {
         const g = group.current;
@@ -580,6 +615,10 @@ function Board({
         // whose model spans −8.15 … +20.37 mm, which made the scene taller than it was wide and stood
         // the whole board up on its edge like a wall.
         const slab = boardSlab(g);
+        // Captured HERE, while the group is still identity, so it is expressed in the frame the overlay —
+        // a sibling of the GLB inside this same group — will be drawn in. Read it after the transforms
+        // below and it would be in world space, and the overlay would inherit the fit twice.
+        setSlabLocal(slab ? slab.clone() : null);
         const rs = new THREE.Vector3();
         (slab ?? new THREE.Box3().setFromObject(g)).getSize(rs);
         if (rs.z <= rs.x && rs.z <= rs.y) g.rotation.x = -Math.PI / 2;
@@ -631,8 +670,86 @@ function Board({
     return (
         <group ref={group}>
             <primitive object={scene} />
+            {sim && fit && (
+                <SimulationOverlay
+                    traces={sim.layout.geometry.traces}
+                    playback={sim.playback}
+                    flow={sim.flow}
+                    fit={fit}
+                    playing={playing}
+                    loopSeconds={SIM_LOOP_SECONDS}
+                    voltAnchor={voltAnchorFor(sim.playback)}
+                    onTime={onTime}
+                />
+            )}
         </group>
     );
+}
+
+/**
+ * Board millimetres → the frame the GLB is drawn in, registered corner-to-corner against the laminate.
+ *
+ * glTF is Y-up by specification, so KiCad's export puts the board plane on XZ with Y as the normal — the
+ * same reason the fit code above tests the slab's thinnest axis. The board OUTLINE and the laminate are
+ * the same rectangle expressed in two units, so mapping one onto the other gives scale and origin exactly.
+ *
+ * The outline is used rather than widthMm/heightMm because the board frame is NOT centred on its origin:
+ * shift-register spans x −26.084 … 23.02 on a 49.104 mm board. Centring on width/2 put its copper half a
+ * board off, and every trace still landed on the laminate — a wrong answer that looks right.
+ *
+ * `ySign` is the one bit geometry cannot supply — a rectangle is a rectangle either way round — so it is
+ * DERIVED from the pipeline rather than eyeballed, in two measured steps:
+ *
+ *   1. pcb-core's .kicad_pcb writer negates Y against the LayoutGeometry frame this file consumes. Fitting
+ *      the two component sets across every gallery board leaves a pure translation (spread 0.0000 mm) only
+ *      when Y is negated; taking Y as-is leaves spreads of 42–80 mm.
+ *   2. `scripts/verify-3d-alignment.mjs` resolves the .kicad_pcb → GLB mapping by trying every axis
+ *      permutation and flip, and lands on x+/z+ ×0.001 at 0.000 mm worst offset on all eight boards.
+ *
+ * Composing them: LayoutGeometry +Y → −Z. Step 1 is asserted by that same script, so a writer that ever
+ * stops negating Y fails the gate instead of silently mirroring this overlay.
+ */
+const BOARD_Y_ALONG_Z = -1;
+function fitFromSlab(slab: THREE.Box3, board: BoardLayout['geometry']['board']): BoardFit | null {
+    const xs = board.outline?.map((p) => p.x) ?? [];
+    const ys = board.outline?.map((p) => p.y) ?? [];
+    if (xs.length === 0 || ys.length === 0) return null;
+    const bx0 = Math.min(...xs);
+    const by0 = Math.min(...ys);
+    const bw = Math.max(...xs) - bx0;
+    const bh = Math.max(...ys) - by0;
+    const size = new THREE.Vector3();
+    slab.getSize(size);
+    if (!(size.x > 0 && size.z > 0 && bw > 0 && bh > 0)) return null;
+
+    const scaleX = size.x / bw;
+    const scaleZ = size.z / bh;
+    return {
+        scaleX,
+        scaleZ,
+        ySign: BOARD_Y_ALONG_Z,
+        // Where board (0,0) lands, having pinned the outline's low corner to the matching slab edge.
+        originX: slab.min.x - bx0 * scaleX,
+        originZ: BOARD_Y_ALONG_Z > 0 ? slab.min.z - by0 * scaleZ : slab.max.z + by0 * scaleZ,
+        // Just clear of the laminate's top face: the overlay is a coat of light ON the copper, and drawing
+        // it coplanar would z-fight with the copper layer the GLB already carries.
+        surfaceY: slab.max.y + size.y * 0.06,
+    };
+}
+
+/**
+ * The volts each leg of the diverging colour map spans, snapped to a REAL rail.
+ *
+ * Not auto-scaled to the board's own maximum. Falstad hard-clamps at 5 V and never says so, which renders
+ * a 12 V rail and a 400 V rail identically; Altium's percentage-of-max scale is the documented reason a
+ * healthy board and a failing one look the same there. Snapping to a standard rail keeps two different
+ * boards comparable, and a net beyond the anchor saturates visibly rather than silently rescaling
+ * everything else.
+ */
+const RAILS = [1, 1.8, 3.3, 5, 12, 15, 24, 48];
+function voltAnchorFor(playback: Playback): number {
+    const peak = Math.max(Math.abs(playback.min), Math.abs(playback.max));
+    return RAILS.find((r) => r >= peak) ?? Math.ceil(peak);
 }
 
 /** World-space bounds of the laminate alone (the merged board_PCB), or null if it is not there. */
@@ -1329,6 +1446,48 @@ export default function Viewer() {
     const peel = useMemo(() => makeOrangePeelNormal(), []);
     const layerMats = useMemo(() => buildLayerMaterials(peel), [peel]);
 
+    const { state: simState, run: runSim, stop: stopSim } = useBoardSimulation(url, boardDataUrl, SIM_LOOP_SECONDS);
+    const [playing, setPlaying] = useState(true);
+    // The playhead is written every frame from inside the Canvas. It lives in a ref, and a 10 Hz tick
+    // copies it into state for the readout: routing 60 fps through React would re-render the whole panel
+    // on every frame to move one number.
+    const timeRef = useRef(0);
+    const [tick, setTick] = useState(0);
+    // Stable identity: the 10 Hz readout tick re-renders this component, and an inline arrow here would
+    // hand <Board> a new prop on every one of those renders purely to write a ref.
+    const onSimTime = useCallback((t: number) => {
+        timeRef.current = t;
+    }, []);
+    useEffect(() => {
+        if (simState.kind !== 'ready') return;
+        const h = window.setInterval(() => setTick((n) => n + 1), 100);
+        return () => window.clearInterval(h);
+    }, [simState.kind]);
+
+    const panelState: SimState = useMemo(() => {
+        if (simState.kind === 'ready') {
+            const p = simState.playback;
+            return {
+                kind: 'playing',
+                nets: p.nets.length,
+                unresolved: p.unresolved,
+                span: p.times[p.frames - 1]! - p.times[0]!,
+                time: timeRef.current,
+                min: p.min,
+                max: p.max,
+                loopSeconds: SIM_LOOP_SECONDS,
+                // Threaded through the SUCCESS path on purpose: a board that simulates without its IC is
+                // the case where a confident animation misleads most.
+                coverage: simState.coverage,
+                note: simState.note,
+            };
+        }
+        if (simState.kind === 'unavailable')
+            return { kind: 'unavailable', reason: simState.reason, coverage: simState.coverage };
+        return { kind: simState.kind === 'running' ? 'running' : 'idle' };
+        // `tick` is a dependency on purpose: it is what advances the time readout.
+    }, [simState, tick]);
+
     return (
         <div style={{ position: 'fixed', inset: 0, background: '#080d10' }}>
             <CanvasBoundary>
@@ -1366,7 +1525,15 @@ export default function Viewer() {
                             </Html>
                         }
                     >
-                        <Board key={url} url={boardUrl(url)} layerMats={layerMats} onMaterials={setMaterials} />
+                        <Board
+                            key={url}
+                            url={boardUrl(url)}
+                            layerMats={layerMats}
+                            onMaterials={setMaterials}
+                            sim={simState.kind === 'ready' ? simState : null}
+                            playing={playing}
+                            onTime={onSimTime}
+                        />
                         <DisposeOnUnmount peel={peel} mats={layerMats} />
                         <StudioEnvironment env={env} />
                         <BindEnvMap mats={layerMats} url={url} />
@@ -1428,7 +1595,14 @@ export default function Viewer() {
                         <N8AO aoRadius={1.1} quality="medium" intensity={2.2} distanceFalloff={0.8} />
                         {/* The buffer here is linear HDR, not display-referred, so a threshold below 1 catches
                         ordinary lit surfaces. Above 1 it catches only genuine emitters — the LED domes. */}
-                        <Bloom luminanceThreshold={0.82} intensity={0.3} mipmapBlur />
+                        {/* The threshold stays 0.82 — the whole palette is authored against that number rather than moving it:
+                            the base layer is clamped at luma 0.70 so voltage can never cross it, and the token
+                            cores sit at 0.52…8.42 so current crosses it above the first tier. Smoothing was 0.025,
+                            a 3%-wide pass/fail band that made an antialiased moving pulse edge pop in and out of
+                            bloom every frame — cheap shimmer. 0.10 puts the ramp at 0.82→0.92, with tier 1 fully
+                            below and tier 2 fully above, so nothing sits inside it. Intensity 0.65 because the
+                            halo is authored as geometry, so bloom is confirmation rather than the source. */}
+                        <Bloom luminanceThreshold={0.82} luminanceSmoothing={0.1} intensity={0.65} mipmapBlur />
                         {/* Khronos PBR Neutral, not ACES or AgX: both of those desaturate a saturated green
                         subject hard and pull the small gold details toward grey. Neutral keeps the board
                         green and the ENIG gold while still rolling off the specular highlights. */}
@@ -1509,6 +1683,34 @@ export default function Viewer() {
                 shadow={shadow}
                 setShadow={setShadow}
             />
+
+            {/* Bottom-left, opposite the inspector: the simulation is about the BOARD, so it sits beside it
+                rather than inside the material tweaking panel. */}
+            <div
+                style={{
+                    position: 'absolute',
+                    left: 16,
+                    bottom: 44,
+                    width: 320,
+                    maxWidth: 'calc(100% - 32px)',
+                    padding: 12,
+                    background: 'rgba(12,18,22,.92)',
+                    backdropFilter: 'blur(8px)',
+                    border: '1px solid rgba(255,255,255,.12)',
+                    borderRadius: 12,
+                    color: '#e7efe8',
+                    font: '12px ui-sans-serif, system-ui',
+                    boxShadow: '0 12px 40px rgba(0,0,0,.5)',
+                }}
+            >
+                <SimulationPanel
+                    state={panelState}
+                    onSimulate={runSim}
+                    onStop={stopSim}
+                    playing={playing}
+                    onTogglePlay={() => setPlaying((p) => !p)}
+                />
+            </div>
 
             <div
                 style={{

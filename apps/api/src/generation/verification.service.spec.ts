@@ -1207,3 +1207,69 @@ describe('VerificationService — the component-stress gate', () => {
         expect(entry.detail).toMatch(/only a declared-rating overload gates/);
     });
 });
+
+describe('VerificationService — the deck ↔ schematic disclosure', () => {
+    /** An inverting amplifier whose op-amp is a catalog-only part: real footprint and pins, no SPICE model.
+     *  The generator omits it, ERC passes it, and the simulation returns numbers for the resistors alone. */
+    const opampAmp = (): CircuitJson =>
+        ({
+            version: '1.0',
+            components: [
+                { id: 'v1', type: 'voltage_source', designator: 'V1', value: 'DC 9', pins: [{ pinId: '+', netId: 'vcc' }, { pinId: '-', netId: 'gnd' }] },
+                { id: 'r1', type: 'resistor', designator: 'R1', value: '10k', pins: [{ pinId: '1', netId: 'in' }, { pinId: '2', netId: 'inm' }] },
+                { id: 'r2', type: 'resistor', designator: 'R2', value: '100k', pins: [{ pinId: '1', netId: 'inm' }, { pinId: '2', netId: 'out' }] },
+                { id: 'u1', type: 'generic', designator: 'U1', footprint: 'soic8', pins: [{ pinId: '1', netId: 'inm' }, { pinId: '2', netId: 'out' }, { pinId: '3', netId: 'vcc' }, { pinId: '4', netId: 'gnd' }] },
+            ],
+            nets: [
+                { id: 'vcc', name: 'VCC' },
+                { id: 'gnd', name: 'GND' },
+                { id: 'in', name: 'IN' },
+                { id: 'inm', name: 'INM' },
+                { id: 'out', name: 'OUT' },
+            ],
+        }) as unknown as CircuitJson;
+
+    it('names the omitted part in the manifest instead of certifying a measurement of a different circuit', async () => {
+        const { svc } = makeService(okSim());
+        const ev = await svc.verify(opampAmp(), { type: 'op' }, [A('out', 'final', 'approx', 5.0, 0.1)]);
+
+        const entry = ev.scope.checks.find((c) => c.id === 'sim.coverage')!;
+        expect(entry.status).toBe('run');
+        expect(entry.detail).toContain('U1 (generic)');
+        expect(entry.detail).toMatch(/do not describe the schematic as drawn/);
+
+        // …and the structured fact, for anything that needs to branch rather than read.
+        expect(ev.coverage!.complete).toBe(false);
+        expect(ev.coverage!.loadBearing.map((o) => o.designator)).toEqual(['U1']);
+    });
+
+    it('a fully simulatable circuit says so — a silent field would make "complete" and "never looked" identical', async () => {
+        const { svc } = makeService(okSim());
+        const ev = await svc.verify(
+            {
+                version: '1.0',
+                components: [
+                    { id: 'v1', type: 'voltage_source', designator: 'V1', value: 'DC 5', pins: [{ pinId: '+', netId: 'vcc' }, { pinId: '-', netId: 'gnd' }] },
+                    { id: 'r1', type: 'resistor', designator: 'R1', value: '1k', pins: [{ pinId: '1', netId: 'vcc' }, { pinId: '2', netId: 'gnd' }] },
+                ],
+                nets: [{ id: 'vcc', name: 'VCC' }, { id: 'gnd', name: 'GND' }],
+            } as unknown as CircuitJson,
+            { type: 'op' },
+            [A('out', 'final', 'approx', 5.0, 0.1)],
+        );
+
+        const entry = ev.scope.checks.find((c) => c.id === 'sim.coverage')!;
+        expect(entry.status).toBe('run');
+        expect(entry.detail).toMatch(/every component with an electrical model was emitted/);
+        expect(ev.coverage!.complete).toBe(true);
+    });
+
+    it('an UNVALIDATABLE circuit discloses not-run — never a coverage claim we could not make', async () => {
+        const { svc } = makeService(okSim());
+        const ev = await svc.verify({ nonsense: true }, { type: 'op' }, [A('out', 'final', 'approx', 5.0, 0.1)]);
+
+        const entry = ev.scope.checks.find((c) => c.id === 'sim.coverage')!;
+        expect(entry.status).toBe('not-run');
+        expect(ev.coverage).toBeUndefined();
+    });
+});

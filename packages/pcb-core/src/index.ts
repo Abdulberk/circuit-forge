@@ -8,7 +8,7 @@
  */
 import { buildNodeMap, type CircuitJson, type UiJson } from '@circuit-forge/eda-core';
 
-import { generateTscircuitCode, type AdapterResult } from './adapter';
+import { generateTscircuitCode, type AdapterResult, type PinExpectation } from './adapter';
 import { evaluateTscircuit } from './evaluate';
 import {
     boardExtraProps,
@@ -20,6 +20,7 @@ import {
     type FabProfileInput,
     type FabTierName,
 } from './fab-profile';
+import { loadPadCountOracle } from './footprints';
 import { ipc2221WidthMm } from './ipc2221';
 import { classifyCircuit, type LayoutabilityResult, type LayoutDiagnostic } from './layoutability';
 import { generateGerbers, generateKicadPcb, buildBomCsv, buildPnpCsv, type GerberOutputs } from './outputs';
@@ -177,6 +178,9 @@ export interface LayoutResult {
      *  contract shaper (shapeLayoutResult) needs these to cross-probe geometry back to the design. */
     namesById: Record<string, string>;
     netNameById: Record<string, string>;
+    /** The adapter's pin expectations, so `shapeLayoutResult` can fill each pad's OUR-pinId. Delivered
+     *  rather than left for a consumer to reconstruct from pcb-core's internal pin-name tables. */
+    expectations: PinExpectation[];
     /**
      * netId -> the SPICE node name a simulation of THIS circuit reports (`v(<node>)`), ground as `0`.
      *
@@ -225,7 +229,12 @@ export async function layoutCircuit(circuit: CircuitJson, opts: LayoutOptions = 
     }));
 
     // 1) honest pre-flight
-    const layout = classifyCircuit(circuit, { allowPartial: opts.allowPartial });
+    // The pad-count oracle is loaded HERE, once, and threaded in — footprinter is ESM-only and this is
+    // the first async frame that can await it. Every product path reaches layout through this function,
+    // so the accounting checks always have their oracle; a direct classifyCircuit caller that omits it
+    // gets an explicit "did not run" diagnostic rather than a silent pass.
+    const padCount = await loadPadCountOracle();
+    const layout = classifyCircuit(circuit, { allowPartial: opts.allowPartial, padCount });
     diagnostics.push(...layout.diagnostics);
     if (!layout.layoutable) {
         return failed(layout, diagnostics, started, fab, opts, spiceNodeByNetId);
@@ -288,6 +297,7 @@ export async function layoutCircuit(circuit: CircuitJson, opts: LayoutOptions = 
             delivery: undelivered(opts, 'the board failed connectivity parity or evaluation before routing'),
             namesById: adapted.namesById,
             netNameById: adapted.netNameById,
+            expectations: adapted.expectations,
             spiceNodeByNetId,
         };
     }
@@ -443,6 +453,7 @@ export async function layoutCircuit(circuit: CircuitJson, opts: LayoutOptions = 
         delivery,
         namesById: adapted.namesById,
         netNameById: adapted.netNameById,
+        expectations: adapted.expectations,
         spiceNodeByNetId,
     };
 }
@@ -1060,6 +1071,7 @@ function failed(
         fab,
         delivery: undelivered(opts, 'the circuit was not layoutable — nothing was placed or routed'),
         namesById: {},
+        expectations: [],
         netNameById: {},
         spiceNodeByNetId,
     };
@@ -1082,8 +1094,8 @@ async function throwIfAborted(opts: LayoutOptions): Promise<void> {
 // ---------------------------------------------------------------- public surface
 export { classifyCircuit } from './layoutability';
 export type { LayoutabilityResult, LayoutDiagnostic, ComponentPlan, LayoutRole } from './layoutability';
-export { resolveFootprint, normalizeFootprint, isLedDiode } from './footprints';
-export type { FootprintResolution } from './footprints';
+export { resolveFootprint, normalizeFootprint, isLedDiode, loadPadCountOracle } from './footprints';
+export type { FootprintResolution, PadCountOracle } from './footprints';
 export { generateTscircuitCode, sanitizeName, buildNetNames } from './adapter';
 export type { AdapterResult, PinExpectation, AdapterOptions } from './adapter';
 export { checkConnectivityParity } from './parity';

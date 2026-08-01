@@ -415,6 +415,9 @@ importers:
       '@tscircuit/eval':
         specifier: 0.0.970
         version: 0.0.970(@tscircuit/core@0.0.1382)(circuit-json@0.0.443)(typescript@5.9.3)(zod@3.25.76)
+      '@tscircuit/footprinter':
+        specifier: ^0.0.357
+        version: 0.0.357(circuit-json@0.0.443)(typescript@5.9.3)
       circuit-json-to-gerber:
         specifier: 0.0.78
         version: 0.0.78(circuit-json@0.0.443)(tscircuit@0.0.1987)(typescript@5.9.3)
@@ -5277,7 +5280,7 @@ packages:
       - react
     dev: false
 
-  /@tscircuit/core@0.0.1382(@tscircuit/capacity-autorouter@0.0.624)(@tscircuit/checks@0.0.140)(@tscircuit/circuit-json-util@0.0.97)(@tscircuit/footprinter@0.0.363)(@tscircuit/infgrid-ijump-astar@0.0.35)(@tscircuit/matchpack@0.0.29)(@tscircuit/math-utils@0.0.36)(@tscircuit/props@0.0.565)(@tscircuit/schematic-match-adapt@0.0.22)(bpc-graph@0.0.66)(circuit-json-to-bpc@0.0.13)(circuit-json-to-connectivity-map@0.0.23)(circuit-json@0.0.443)(graphics-debug@0.0.95)(react@19.2.7)(schematic-symbols@0.0.230)(typescript@5.9.3):
+  /@tscircuit/core@0.0.1382(@tscircuit/capacity-autorouter@0.0.624)(@tscircuit/checks@0.0.140)(@tscircuit/circuit-json-util@0.0.97)(@tscircuit/footprinter@0.0.357)(@tscircuit/infgrid-ijump-astar@0.0.35)(@tscircuit/matchpack@0.0.29)(@tscircuit/math-utils@0.0.36)(@tscircuit/props@0.0.565)(@tscircuit/schematic-match-adapt@0.0.22)(bpc-graph@0.0.66)(circuit-json-to-bpc@0.0.13)(circuit-json-to-connectivity-map@0.0.23)(circuit-json@0.0.443)(graphics-debug@0.0.95)(react@19.2.7)(schematic-symbols@0.0.230)(typescript@5.9.3):
     resolution: {integrity: sha512-ljLccy8LDlMK5v8gXEewx+PUAAAV/b/EVHXusoBWeUPwvXM0Koeb9cPPjTauE4UeR2qXv3UY6p2SzvwkGNAp1A==}
     peerDependencies:
       '@tscircuit/capacity-autorouter': '*'
@@ -5301,7 +5304,7 @@ packages:
       '@tscircuit/capacity-autorouter': 0.0.624(typescript@5.9.3)
       '@tscircuit/checks': 0.0.140(@flatten-js/core@1.6.12)(@tscircuit/math-utils@0.0.36)(circuit-json-to-connectivity-map@0.0.23)(circuit-json@0.0.443)(typescript@5.9.3)
       '@tscircuit/circuit-json-util': 0.0.97(circuit-json@0.0.443)(transformation-matrix@3.1.0)(zod@3.25.76)
-      '@tscircuit/footprinter': 0.0.363(circuit-json@0.0.443)(typescript@5.9.3)
+      '@tscircuit/footprinter': 0.0.357(circuit-json@0.0.443)(typescript@5.9.3)
       '@tscircuit/infgrid-ijump-astar': 0.0.35
       '@tscircuit/matchpack': 0.0.29(typescript@5.9.3)
       '@tscircuit/math-utils': 0.0.36(typescript@5.9.3)
@@ -5336,7 +5339,7 @@ packages:
       typescript: ^5.0.0
       zod: '3'
     dependencies:
-      '@tscircuit/core': 0.0.1382(@tscircuit/capacity-autorouter@0.0.624)(@tscircuit/checks@0.0.140)(@tscircuit/circuit-json-util@0.0.97)(@tscircuit/footprinter@0.0.363)(@tscircuit/infgrid-ijump-astar@0.0.35)(@tscircuit/matchpack@0.0.29)(@tscircuit/math-utils@0.0.36)(@tscircuit/props@0.0.565)(@tscircuit/schematic-match-adapt@0.0.22)(bpc-graph@0.0.66)(circuit-json-to-bpc@0.0.13)(circuit-json-to-connectivity-map@0.0.23)(circuit-json@0.0.443)(graphics-debug@0.0.95)(react@19.2.7)(schematic-symbols@0.0.230)(typescript@5.9.3)
+      '@tscircuit/core': 0.0.1382(@tscircuit/capacity-autorouter@0.0.624)(@tscircuit/checks@0.0.140)(@tscircuit/circuit-json-util@0.0.97)(@tscircuit/footprinter@0.0.357)(@tscircuit/infgrid-ijump-astar@0.0.35)(@tscircuit/matchpack@0.0.29)(@tscircuit/math-utils@0.0.36)(@tscircuit/props@0.0.565)(@tscircuit/schematic-match-adapt@0.0.22)(bpc-graph@0.0.66)(circuit-json-to-bpc@0.0.13)(circuit-json-to-connectivity-map@0.0.23)(circuit-json@0.0.443)(graphics-debug@0.0.95)(react@19.2.7)(schematic-symbols@0.0.230)(typescript@5.9.3)
       circuit-json: 0.0.443
       typescript: 5.9.3
       zod: 3.25.76
@@ -5358,18 +5361,6 @@ packages:
 
   /@tscircuit/footprinter@0.0.357(circuit-json@0.0.443)(typescript@5.9.3):
     resolution: {integrity: sha512-N4QjwY+GkRm1DvPDWQbTq+sRJU59v+ahMxiAIGemBJsoPVFjodVOnu50oN8q41ps4mCXQMS8/16blbLWkZlBkw==}
-    peerDependencies:
-      circuit-json: '*'
-    dependencies:
-      '@tscircuit/mm': 0.0.8(typescript@5.9.3)
-      circuit-json: 0.0.443
-      zod: 3.25.76
-    transitivePeerDependencies:
-      - typescript
-    dev: false
-
-  /@tscircuit/footprinter@0.0.363(circuit-json@0.0.443)(typescript@5.9.3):
-    resolution: {integrity: sha512-18XSvFEKx+PkBLnag07Fk0QN2EwTpPi9gcqaOTyw0Q0iViz8ICTTBbDv7o7uKZhLxTn9PZijpqiFIPVT/Oe+bQ==}
     peerDependencies:
       circuit-json: '*'
     dependencies:

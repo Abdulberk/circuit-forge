@@ -11,6 +11,7 @@
  *                 .kicad_pcb and only FILLED at export. `poursFromKicadPcb` (M1b) reads that separately.
  *   • glbUrl / manufacturing — produced by the kicad-cli export step in the worker (M2/M3), not the soup.
  */
+import type { PinExpectation } from './adapter';
 import type { TscElement } from './parity';
 
 export interface Pt {
@@ -43,6 +44,9 @@ export interface LayoutPad {
     componentId: string;
     /** best-available pin reference for schematic cross-probe (source_port name / hint), or null. */
     pin: string | null;
+    /** OUR authored pinId for this pad (1, +, anode, c…), or null when it could not be resolved.
+     *  This is the delivered join between the design and the copper — see ourPinBySrcPort. */
+    sourcePin: string | null;
     /** emitted net name, or null for an unconnected / single-pin pad. */
     net: string | null;
     x: number;
@@ -88,6 +92,9 @@ export interface LayoutGeometry {
 export interface ShapeOptions {
     /** OUR componentId -> emitted (sanitized) name, from AdapterResult. Enables cross-probe to the design. */
     namesById?: Record<string, string>;
+    /** The adapter's pin expectations. Supplying them fills every pad's `sourcePin`; omitting them
+     *  leaves it null rather than guessed. */
+    expectations?: PinExpectation[];
 }
 
 // ---------------------------------------------------------------- helpers
@@ -195,13 +202,51 @@ export function shapeLayoutResult(evaluated: TscElement[], opts: ShapeOptions = 
 
     // pin reference (source_port name/hint) for cross-probe
     const pinBySrcPort = new Map<string, string>();
+    /** Every label a port answers to — its name AND its hints. Needed because the two sides disagree: we
+     *  address a diode as `.D1 > .anode`, and the port tscircuit creates is NAMED `pin1` with `anode` only
+     *  among its hints. Matching on the name alone would fail for exactly the parts where polarity matters. */
+    const labelsBySrcPort = new Map<string, string[]>();
+    /** source_port -> the OWNING source_component, so a label is only matched within its own part. */
+    const srcCompBySrcPort = new Map<string, string>();
     for (const e of of('source_port')) {
         const sp = str(e.source_port_id);
         if (!sp) continue;
         const hints = Array.isArray(e.port_hints)
-            ? (e.port_hints as unknown[]).filter((h) => typeof h === 'string')
+            ? (e.port_hints as unknown[]).filter((h): h is string => typeof h === 'string')
             : [];
-        pinBySrcPort.set(sp, str(e.name) ?? (hints[hints.length - 1] as string) ?? sp);
+        const name = str(e.name);
+        pinBySrcPort.set(sp, name ?? hints[hints.length - 1] ?? sp);
+        labelsBySrcPort.set(sp, [...(name ? [name] : []), ...hints]);
+        const sc = str(e.source_component_id);
+        if (sc) srcCompBySrcPort.set(sp, sc);
+    }
+
+    /**
+     * OUR authored pinId for a rendered pad — the join the consumer must never have to guess.
+     *
+     * Without it, anything that wants to attach a per-terminal quantity to copper (a branch current, a
+     * probe, a cross-probe highlight) has to map `pin1` back to `'1'` / `'+'` / `'anode'` by reproducing
+     * pcb-core's own DIRECT_PIN_MAPS from the outside. That works for the handful of types someone checked
+     * and silently mis-attributes for every other part in a hundred-thousand-part catalog — which is the
+     * same class of gap `netIdentity` closed for nets, one level down.
+     */
+    const ourPinBySrcPort = new Map<string, string>();
+    if (opts.expectations?.length) {
+        // (emitted component name, port label) -> our pinId
+        const byNameAndPort = new Map<string, string>();
+        for (const x of opts.expectations) byNameAndPort.set(`${x.name} ${x.port}`, x.pinId);
+        for (const [sp, labels] of labelsBySrcPort) {
+            const srcComp = srcCompBySrcPort.get(sp);
+            const emitted = srcComp ? designatorBySrcComp.get(srcComp) : undefined;
+            if (!emitted) continue;
+            for (const label of labels) {
+                const hit = byNameAndPort.get(`${emitted} ${label}`);
+                if (hit !== undefined) {
+                    ourPinBySrcPort.set(sp, hit);
+                    break;
+                }
+            }
+        }
     }
     const netByPcbPort = (pcbPortId: string | null): string | null => {
         if (!pcbPortId) return null;
@@ -212,6 +257,11 @@ export function shapeLayoutResult(evaluated: TscElement[], opts: ShapeOptions = 
         if (!pcbPortId) return null;
         const sp = srcPortIdByPcbPort.get(pcbPortId);
         return sp ? (pinBySrcPort.get(sp) ?? null) : null;
+    };
+    const sourcePinByPcbPort = (pcbPortId: string | null): string | null => {
+        if (!pcbPortId) return null;
+        const sp = srcPortIdByPcbPort.get(pcbPortId);
+        return sp ? (ourPinBySrcPort.get(sp) ?? null) : null;
     };
 
     // component id + designator resolver keyed by pcb_component_id
@@ -295,6 +345,7 @@ export function shapeLayoutResult(evaluated: TscElement[], opts: ShapeOptions = 
             id: str(e.pcb_smtpad_id) ?? `smt_${pads.length}`,
             componentId: comp?.id ?? str(e.pcb_component_id) ?? '',
             pin: pinByPcbPort(pcbPort),
+            sourcePin: sourcePinByPcbPort(pcbPort),
             net: netByPcbPort(pcbPort),
             x: r3(num(e.x) ?? 0),
             y: r3(num(e.y) ?? 0),
@@ -315,6 +366,7 @@ export function shapeLayoutResult(evaluated: TscElement[], opts: ShapeOptions = 
             id: str(e.pcb_plated_hole_id) ?? `pth_${pads.length}`,
             componentId: comp?.id ?? str(e.pcb_component_id) ?? '',
             pin: pinByPcbPort(pcbPort),
+            sourcePin: sourcePinByPcbPort(pcbPort),
             net: netByPcbPort(pcbPort),
             x: r3(num(e.x) ?? 0),
             y: r3(num(e.y) ?? 0),

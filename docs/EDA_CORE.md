@@ -227,6 +227,15 @@ Behavioral details from `componentToSpice()`:
 - A non-emittable `type` (no `SPICE_PREFIXES` entry, or `ground`/`generic`) is **skipped**
   (`return null`) — the generator no longer throws on it, so a circuit can carry real parts that
   aren't simulatable. Use `isSimulatable(component)` to discriminate.
+- **That skip is silent to the deck, so it must not be silent to the caller.** A circuit whose op-amp
+  is a `generic` catalog part passes ERC, generates a valid netlist without it, simulates cleanly and
+  returns a flat waveform — indistinguishable from a circuit genuinely at steady state.
+  `simulationCoverage(circuit)` reports what the deck left out, and flags an omission as
+  **load-bearing** when the part bridges two or more nets a simulated device also touches (the deck
+  then has an *open* where the part belongs). A test point or a single-net connector is disclosed but
+  is not load-bearing. `describeCoverage()` renders one line naming the designators. The result rides
+  on the verify evidence as `coverage` and in the scope manifest as `sim.coverage` — always present
+  when the circuit validated, so "complete" and "nobody looked" can never look the same.
 - A pin referencing a net not present in the node map throws
   `Net not found: <netId> for component <designator>`.
 
