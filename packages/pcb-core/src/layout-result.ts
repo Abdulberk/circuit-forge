@@ -230,17 +230,28 @@ export function shapeLayoutResult(evaluated: TscElement[], opts: ShapeOptions = 
      * and silently mis-attributes for every other part in a hundred-thousand-part catalog — which is the
      * same class of gap `netIdentity` closed for nets, one level down.
      */
+    /**
+     * Composite-key separator for (component, port) lookups.
+     *
+     * NUL is deliberate: it cannot occur in a designator or a port name, so the two halves can never run
+     * together ambiguously — "R1" + "0" and "R10" + "" are distinct keys. It is written as an ESCAPE on
+     * purpose. A scripted patch once left the raw 0x00 byte here instead, which made the whole file read
+     * as BINARY to grep, diff and code review while compiling and passing every test, because the set and
+     * the get happened to use the same wrong byte.
+     */
+    const KEY_SEP = '\u0000';
+
     const ourPinBySrcPort = new Map<string, string>();
     if (opts.expectations?.length) {
         // (emitted component name, port label) -> our pinId
         const byNameAndPort = new Map<string, string>();
-        for (const x of opts.expectations) byNameAndPort.set(`${x.name} ${x.port}`, x.pinId);
+        for (const x of opts.expectations) byNameAndPort.set(`${x.name}${KEY_SEP}${x.port}`, x.pinId);
         for (const [sp, labels] of labelsBySrcPort) {
             const srcComp = srcCompBySrcPort.get(sp);
             const emitted = srcComp ? designatorBySrcComp.get(srcComp) : undefined;
             if (!emitted) continue;
             for (const label of labels) {
-                const hit = byNameAndPort.get(`${emitted} ${label}`);
+                const hit = byNameAndPort.get(`${emitted}${KEY_SEP}${label}`);
                 if (hit !== undefined) {
                     ourPinBySrcPort.set(sp, hit);
                     break;
