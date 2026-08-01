@@ -99,7 +99,10 @@ services:
       # OTEL_ENABLED: "true"
       # OTEL_EXPORTER_OTLP_ENDPOINT: http://otel-lgtm:4318
     ports:
-      - "3000:3000"
+      # Host port is overridable: 3000 is a popular default and is often already taken on a dev
+      # machine by something else, and a hard-coded mapping turns that into a failed `compose up` with no
+      # obvious remedy. The container still listens on 3000; only the host side moves.
+      - "${API_HOST_PORT:-3000}:3000"
     depends_on:
       postgres:
         condition: service_healthy
