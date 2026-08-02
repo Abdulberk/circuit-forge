@@ -1,0 +1,21 @@
+{
+    "extends": "../../tsconfig.base.json",
+    "compilerOptions": {
+        "outDir": "./dist",
+        "rootDir": "./src",
+        "composite": true,
+        // Inherited from pcb-core, where these modules used to live, and load-bearing for the same reason.
+        // `@tscircuit/footprinter` is ESM-only; this package emits CommonJS. `module: node16` makes tsc
+        // PRESERVE a dynamic `import()` instead of down-compiling it to `require()`, which is the one legal
+        // CJS-to-ESM bridge. It also makes a top-level import of an ESM-only package a compile ERROR, which
+        // is the guard that keeps the optional dependency genuinely optional.
+        "module": "node16",
+        "moduleResolution": "node16",
+        // Browser-safe by construction: no DOM, no Node globals. This package answers a question about a
+        // circuit — it reads no file and opens no socket — so a consumer could run it anywhere.
+        "lib": ["ES2022"],
+        "types": []
+    },
+    "include": ["src/**/*"],
+    "exclude": ["node_modules", "dist", "**/*.spec.ts", "**/*.test.ts"]
+}

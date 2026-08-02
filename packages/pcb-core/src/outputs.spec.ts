@@ -1,6 +1,6 @@
 import type { CircuitJson } from '@circuit-forge/eda-core';
 
-import { classifyCircuit } from './layoutability';
+import { classifyCircuit } from '@circuit-forge/pcb-preflight';
 import { buildBomCsv, buildPnpCsv, hasVisibleDesignators } from './outputs';
 import type { TscElement } from './parity';
 

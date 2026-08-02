@@ -1,7 +1,7 @@
 import type { CircuitJson, Component, UiJson } from '@circuit-forge/eda-core';
 
 import { generateTscircuitCode, buildNetNames, sanitizeName } from './adapter';
-import { classifyCircuit } from './layoutability';
+import { classifyCircuit } from '@circuit-forge/pcb-preflight';
 
 const comp = (over: Partial<Component>): Component => ({
     id: over.designator ?? 'c',

@@ -556,6 +556,99 @@ describe('the transcribed contracts, against the server that defines them', () =
         await expect(api.workingCopy(projectId)).resolves.toBeNull();
     });
 
+    describe('the cheap checks — the answer an editor can afford to ask for on every pause', () => {
+        it('runs ERC on what is on screen, with no project, no version and no job', async () => {
+            const verdict = await api.erc(DIVIDER);
+            expect(verdict.passed).toBe(true);
+            expect(verdict.summary.errors).toBe(0);
+            // The WHOLE shape. These types are imported from eda-core rather than transcribed, so a field
+            // renamed upstream is a compile error — but only if something actually reads every field.
+            expect(Object.keys(verdict).sort()).toEqual(['issues', 'passed', 'summary']);
+            expect(Object.keys(verdict.summary).sort()).toEqual(['errors', 'infos', 'warnings']);
+        });
+
+        it('finds the classic error and names what it is about', async () => {
+            const noGround: CircuitJson = {
+                ...DIVIDER,
+                components: DIVIDER.components.filter((c) => c.type !== 'ground'),
+                nets: DIVIDER.nets.map((n) => (n.id === 'gnd' ? { id: 'gnd', name: 'GND' } : n)),
+            };
+            const verdict = await api.erc(noGround);
+            expect(verdict.passed).toBe(false);
+            expect(verdict.summary.errors).toBeGreaterThan(0);
+            // A code and the ids it concerns, not a sentence — that is what lets an editor put the message
+            // next to the offending part instead of in a banner the user has to interpret.
+            for (const issue of verdict.issues) {
+                expect(typeof issue.code).toBe('string');
+                expect(['error', 'warning', 'info']).toContain(issue.severity);
+                expect(Array.isArray(issue.relatedIds)).toBe(true);
+            }
+        });
+
+        it('says what each part would become on a board, ground included', async () => {
+            const plan = await api.preflight(DIVIDER);
+            expect(plan.layoutable).toBe(true);
+            // Every component gets a plan. A ground marker comes back as `net-only` rather than being left
+            // out, which is the more useful answer: "this is a net reference" beats the user wondering
+            // where their part went.
+            expect(plan.plans.map((p) => p.component.id).sort()).toEqual(['gnd1', 'r1', 'r2', 'v1']);
+            expect(plan.plans.find((p) => p.component.id === 'gnd1')?.role).toBe('net-only');
+        });
+
+        it('reports pad accounting as NOT RUN rather than passing silently', async () => {
+            // The API deliberately runs preflight without the footprint oracle, in dev and in prod alike,
+            // so that the two never answer differently. The whole value of that decision depends on the
+            // absence being visible here — a board must never be called accounted-for by a check that
+            // never happened.
+            const plan = await api.preflight(DIVIDER);
+            expect(plan.diagnostics.map((d) => d.code)).toContain('PCB006');
+        });
+
+        it('names a part it cannot place — the question this route exists to answer in milliseconds', async () => {
+            // Before this route, learning "this part has no physical mapping" cost a multi-minute layout
+            // job and a quota unit. A `switch` in our vocabulary is the 4-pin voltage-controlled SPICE
+            // device, which has no defensible v1 footprint.
+            const withSwitch: CircuitJson = {
+                ...DIVIDER,
+                components: [
+                    ...DIVIDER.components,
+                    {
+                        id: 's1',
+                        type: 'switch',
+                        designator: 'S1',
+                        pins: [
+                            { pinId: '+', netId: 'vin' },
+                            { pinId: '-', netId: 'gnd' },
+                            { pinId: 'c+', netId: 'vin' },
+                            { pinId: 'c-', netId: 'gnd' },
+                        ],
+                    },
+                ],
+            };
+            const plan = await api.preflight(withSwitch);
+            // Excluded, which is reported — not absent, which is not.
+            expect(plan.plans.find((p) => p.component.id === 's1')?.role).toBe('excluded');
+            expect(JSON.stringify(plan.diagnostics)).toContain('S1');
+        });
+
+        it('REFUSES a body it cannot read instead of answering a verdict about it', async () => {
+            // The worst possible failure for this route: `passed:false, issues:[]` for a malformed body
+            // reads as a design verdict, and the user goes looking for a fault in a circuit that was never
+            // examined.
+            const err = (await api.erc({ nope: true } as unknown as CircuitJson).catch((e: unknown) => e)) as ApiError;
+            expect(err).toBeInstanceOf(ApiError);
+            expect(err.kind).toBe('invalid');
+        });
+
+        it('answers fast enough to ask on every pause in typing', async () => {
+            // The claim the route makes about itself, measured rather than assumed. If a check costs a
+            // visible wait it stops being asked, and the editor goes back to guessing.
+            const started = Date.now();
+            await Promise.all([api.erc(DIVIDER), api.preflight(DIVIDER)]);
+            expect(Date.now() - started).toBeLessThan(1500);
+        });
+    });
+
     it('rotates the session on refresh, and the new pair works', async () => {
         // The behaviour the single-flight guard exists for, confirmed against the real rotation rather than
         // assumed from the schema.

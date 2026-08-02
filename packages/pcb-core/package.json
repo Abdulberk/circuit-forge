@@ -27,7 +27,8 @@
         "@tscircuit/footprinter": "^0.0.357",
         "circuit-json-to-gerber": "0.0.78",
         "circuit-json-to-kicad": "0.0.156",
-        "dsn-converter": "0.0.91"
+        "dsn-converter": "0.0.91",
+        "@circuit-forge/pcb-preflight": "workspace:*"
     },
     "devDependencies": {
         "@types/jest": "^29.5.11",

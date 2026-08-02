@@ -10,8 +10,9 @@
  * right move once the surface stops moving. Until then these are hand-written and each one names the route
  * it mirrors, so a reader can check it in one grep.
  */
-import type { CircuitJson } from '@circuit-forge/eda-core';
+import type { CircuitJson, ErcResult } from '@circuit-forge/eda-core';
 import type { LayoutGeometry } from '@circuit-forge/pcb-contract';
+import type { LayoutabilityResult } from '@circuit-forge/pcb-preflight';
 
 import type { ApiClient } from './client';
 import { ApiError } from './errors';
@@ -399,5 +400,38 @@ export class Api {
     /** GET /simulations/:jobId/result — only meaningful once the job has settled. */
     simulationResult<T = unknown>(jobId: string, signal?: AbortSignal): Promise<T> {
         return this.http.request<T>(`/simulations/${jobId}/result`, { signal });
+    }
+
+    // ---- The cheap checks -----------------------------------------------------------------------------
+
+    /**
+     * POST /design-checks/erc — synchronous. No job, no quota unit, no saved version.
+     *
+     * The circuit goes in the BODY because the question is about what is on screen, which is by definition
+     * not what is saved. Both result types are IMPORTED rather than transcribed: they are the same types the
+     * API returns, so a field added or renamed upstream is a compile error here instead of a panel that
+     * quietly renders nothing.
+     *
+     * Deliberately not debounced or cached at this layer. Both are real decisions about editor behaviour —
+     * how long a pause counts as "stopped typing", whether a stale verdict may stay on screen — and a policy
+     * buried in the transport is one no screen can override.
+     */
+    erc(circuit: CircuitJson, signal?: AbortSignal): Promise<ErcResult> {
+        return this.http.request<ErcResult>('/design-checks/erc', { method: 'POST', body: { circuit }, signal });
+    }
+
+    /**
+     * POST /design-checks/preflight — can this become a board, and what would each part become?
+     *
+     * FAST, not complete: the API runs this without the footprint oracle, so pad accounting is reported as
+     * not-run (`PCB006` in `diagnostics`) rather than passed over. A caller that shows "ready to lay out"
+     * without reading the diagnostics would be claiming a check that never happened.
+     */
+    preflight(circuit: CircuitJson, signal?: AbortSignal): Promise<LayoutabilityResult> {
+        return this.http.request<LayoutabilityResult>('/design-checks/preflight', {
+            method: 'POST',
+            body: { circuit },
+            signal,
+        });
     }
 }

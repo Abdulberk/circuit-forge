@@ -111,11 +111,22 @@ services:
       minio:
         condition: service_healthy
     volumes:
+      # The CMD is `nest start --watch`, but on this host the watch does NOT fire: an edit to a file under
+      # this mount produced no recompilation, and the container kept serving the previous code until
+      # `docker compose restart api`. Windows bind mounts do not reliably propagate inotify into the Linux
+      # container. Worth knowing because the failure is silent — the edit is on disk, the container is
+      # healthy, and a test written against the change passes against the code it was meant to break.
       - ./apps/api:/app/apps/api
       # NOTE: ./packages is intentionally NOT bind-mounted. On a Windows host the mount would shadow the
       # image's Linux node_modules with pnpm's host junction symlinks (which don't resolve in the container
       # → eda-core can't require('zod'), tsc widens its types to any). The image bakes BUILT packages
       # instead; editing a shared package during api dev therefore needs an image rebuild (they change rarely).
+      #
+      # These two are ANONYMOUS volumes, and compose CARRIES THEM OVER to the new container on a rebuild.
+      # So after ADDING a workspace dependency, `up -d --build api` is not enough: the image is correct and
+      # the container still shows the old node_modules, which surfaces as `TS2307: cannot find module
+      # '@circuit-forge/...'` — a message that reads like a broken import in code that is in fact fine.
+      # Adding or removing a workspace package needs `up -d --renew-anon-volumes api`.
       - /app/node_modules
       - /app/apps/api/node_modules
 

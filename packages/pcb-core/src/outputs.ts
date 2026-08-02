@@ -2,7 +2,7 @@
  * Production outputs: Gerber/drill + .kicad_pcb (+ .kicad_pro rules) via the tscircuit converters
  * (ESM seams), BOM + pick-and-place CSVs from our own data (pure).
  */
-import type { LayoutabilityResult } from './layoutability';
+import type { LayoutabilityResult } from '@circuit-forge/pcb-preflight';
 import type { TscElement } from './parity';
 
 export interface GerberOutputs {

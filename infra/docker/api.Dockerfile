@@ -30,10 +30,16 @@ RUN pnpm install --frozen-lockfile
 # Build api's WORKSPACE DEPENDENCIES so their dist (*.js + *.d.ts) exists in the image. The .dockerignore
 # excludes **/dist, so only source is copied; without a build @circuit-forge/eda-core has no dist → its
 # types resolve to `any` and `require('zod')` from its dist fails at runtime. Only api's ACTUAL deps are
-# built (eda-core + llm-core), NOT ./packages/* — that would also build pcb-core's heavy tscircuit/React
-# toolchain, which api never imports. Baking these lets the compose service drop the ./packages bind-mount,
-# whose pnpm junction symlinks (Windows host) don't resolve in the Linux container — the break's root cause.
-RUN pnpm --filter @circuit-forge/eda-core --filter @circuitforge/llm-core run build
+# built, NOT ./packages/* — that would also build pcb-core's heavy tscircuit/React toolchain, which api
+# never imports. Baking these lets the compose service drop the ./packages bind-mount, whose pnpm junction
+# symlinks (Windows host) don't resolve in the Linux container — the break's root cause.
+#
+# pcb-preflight is here because /design-checks/preflight imports it. It is the LIGHT half of pcb-core —
+# one dependency, eda-core — which is exactly why it was extracted: the API answers "can this become a
+# board?" without installing an evaluator and three format converters. Its `@tscircuit/footprinter` peer is
+# optional and deliberately absent here; `classifyCircuit` reports PCB006 ("pad accounting did not run")
+# rather than passing silently, so the image answers the same question as the workspace, only less of it.
+RUN pnpm --filter @circuit-forge/eda-core --filter @circuitforge/llm-core --filter @circuit-forge/pcb-preflight run build
 
 # Generate the Prisma client IN BASE so every downstream stage has it (this was the load-bearing bug:
 # generate lived only in the prod stage, AFTER the builder's `nest build` had already compiled against an

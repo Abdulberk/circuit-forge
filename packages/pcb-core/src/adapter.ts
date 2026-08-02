@@ -15,7 +15,7 @@
 import type { CircuitJson, UiJson, Component } from '@circuit-forge/eda-core';
 import { parseSpiceValue } from '@circuit-forge/eda-core';
 
-import type { ComponentPlan, LayoutabilityResult, LayoutDiagnostic } from './layoutability';
+import type { ComponentPlan, LayoutabilityResult, LayoutDiagnostic } from '@circuit-forge/pcb-preflight';
 
 export interface PinExpectation {
     /** Sanitized designator as emitted into the tscircuit code (e.g. "R1"). */

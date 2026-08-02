@@ -56,6 +56,9 @@ importers:
       '@circuit-forge/eda-core':
         specifier: workspace:*
         version: link:../../packages/eda-core
+      '@circuit-forge/pcb-preflight':
+        specifier: workspace:*
+        version: link:../../packages/pcb-preflight
       '@circuitforge/llm-core':
         specifier: workspace:^
         version: link:../../packages/llm-core
@@ -283,6 +286,9 @@ importers:
       '@circuit-forge/pcb-contract':
         specifier: workspace:*
         version: link:../../packages/pcb-contract
+      '@circuit-forge/pcb-preflight':
+        specifier: workspace:*
+        version: link:../../packages/pcb-preflight
       next:
         specifier: 15.5.4
         version: 15.5.4(@babel/core@7.29.0)(react-dom@19.2.7)(react@19.2.7)
@@ -513,6 +519,9 @@ importers:
       '@circuit-forge/pcb-contract':
         specifier: workspace:*
         version: link:../pcb-contract
+      '@circuit-forge/pcb-preflight':
+        specifier: workspace:*
+        version: link:../pcb-preflight
       '@tscircuit/eval':
         specifier: 0.0.970
         version: 0.0.970(@tscircuit/core@0.0.1382)(circuit-json@0.0.443)(typescript@5.9.3)(zod@3.25.76)
@@ -543,6 +552,31 @@ importers:
         version: 29.4.6(@babel/core@7.29.0)(jest@29.7.0)(typescript@5.9.3)
       typescript:
         specifier: ^5.3.3
+        version: 5.9.3
+
+  packages/pcb-preflight:
+    dependencies:
+      '@circuit-forge/eda-core':
+        specifier: workspace:*
+        version: link:../eda-core
+      '@tscircuit/footprinter':
+        specifier: '*'
+        version: 0.0.357(circuit-json@0.0.443)(typescript@5.9.3)
+    devDependencies:
+      '@types/jest':
+        specifier: ^29.5.12
+        version: 29.5.14
+      '@types/node':
+        specifier: ^22.7.5
+        version: 22.20.0
+      jest:
+        specifier: ^29.7.0
+        version: 29.7.0(@types/node@22.20.0)
+      ts-jest:
+        specifier: ^29.2.5
+        version: 29.4.6(@babel/core@7.29.0)(jest@29.7.0)(typescript@5.9.3)
+      typescript:
+        specifier: ^5.9.3
         version: 5.9.3
 
 packages:

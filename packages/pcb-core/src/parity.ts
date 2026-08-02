@@ -21,7 +21,7 @@
  * evaluated boards, which alarm on any upstream alias change.
  */
 import type { PinExpectation } from './adapter';
-import type { LayoutDiagnostic } from './layoutability';
+import type { LayoutDiagnostic } from '@circuit-forge/pcb-preflight';
 
 /** The minimal slice of tscircuit's circuit-json we consume (structurally typed, version-tolerant). */
 export interface TscElement {

@@ -64,7 +64,8 @@
         "pino-http": "^9.0.0",
         "reflect-metadata": "^0.2.1",
         "rxjs": "^7.8.1",
-        "zod": "^3.22.4"
+        "zod": "^3.22.4",
+        "@circuit-forge/pcb-preflight": "workspace:*"
     },
     "devDependencies": {
         "@nestjs/cli": "^10.3.0",
