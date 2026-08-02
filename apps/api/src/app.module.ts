@@ -25,6 +25,7 @@ import { SimulationModule } from './simulation/simulation.module';
 import { TemplatesModule } from './templates/templates.module';
 import { UsageModule } from './usage/usage.module';
 import { VersionsModule } from './versions/versions.module';
+import { DesignChecksModule } from './design-checks/design-checks.module';
 import { WorkingCopyModule } from './working-copy/working-copy.module';
 
 @Module({
@@ -68,6 +69,7 @@ import { WorkingCopyModule } from './working-copy/working-copy.module';
         ProjectsModule,
         VersionsModule,
         WorkingCopyModule,
+        DesignChecksModule,
         TemplatesModule,
         AssetsModule,
         SimulationModule,

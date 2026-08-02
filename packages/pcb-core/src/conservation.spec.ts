@@ -16,7 +16,7 @@
  */
 import type { CircuitJson } from '@circuit-forge/eda-core';
 
-import { classifyCircuit } from './layoutability';
+import { classifyCircuit } from '@circuit-forge/pcb-preflight';
 
 describe('I-IDENTITY — the delivered bundle must be assemblable', () => {
     /**

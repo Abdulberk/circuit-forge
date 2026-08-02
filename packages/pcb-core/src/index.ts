@@ -20,9 +20,14 @@ import {
     type FabProfileInput,
     type FabTierName,
 } from './fab-profile';
-import { loadPadCountOracle } from './footprints';
+
 import { ipc2221WidthMm } from './ipc2221';
-import { classifyCircuit, type LayoutabilityResult, type LayoutDiagnostic } from './layoutability';
+import {
+    classifyCircuit,
+    loadPadCountOracle,
+    type LayoutabilityResult,
+    type LayoutDiagnostic,
+} from '@circuit-forge/pcb-preflight';
 import { generateGerbers, generateKicadPcb, buildBomCsv, buildPnpCsv, type GerberOutputs } from './outputs';
 import { checkConnectivityParity, type ParityResult, type TscElement } from './parity';
 import { placeParts, computeHpwl, type PlacementInput, type PlacementOutput } from './placement';
@@ -1092,10 +1097,12 @@ async function throwIfAborted(opts: LayoutOptions): Promise<void> {
 }
 
 // ---------------------------------------------------------------- public surface
-export { classifyCircuit } from './layoutability';
-export type { LayoutabilityResult, LayoutDiagnostic, ComponentPlan, LayoutRole } from './layoutability';
-export { resolveFootprint, normalizeFootprint, isLedDiode, loadPadCountOracle } from './footprints';
-export type { FootprintResolution, PadCountOracle } from './footprints';
+// Re-exported so every existing consumer keeps working after the extraction — the logic moved, the public
+// surface did not.
+export { classifyCircuit } from '@circuit-forge/pcb-preflight';
+export type { LayoutabilityResult, LayoutDiagnostic, ComponentPlan, LayoutRole } from '@circuit-forge/pcb-preflight';
+export { resolveFootprint, normalizeFootprint, isLedDiode, loadPadCountOracle } from '@circuit-forge/pcb-preflight';
+export type { FootprintResolution, PadCountOracle } from '@circuit-forge/pcb-preflight';
 export { generateTscircuitCode, sanitizeName, buildNetNames } from './adapter';
 export type { AdapterResult, PinExpectation, AdapterOptions } from './adapter';
 export { checkConnectivityParity } from './parity';
