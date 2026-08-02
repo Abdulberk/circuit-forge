@@ -6,7 +6,10 @@
 module.exports = {
     preset: 'ts-jest',
     testEnvironment: 'node',
-    roots: ['<rootDir>/lib'],
+    // `components` too. It was `lib` alone, which meant the panels — the only place in this app where a user
+    // actually changes a design — could not be tested even if someone wrote a spec: jest would not have
+    // looked at it. A kernel with no reachable surface is the gap that produced this line.
+    roots: ['<rootDir>/lib', '<rootDir>/components'],
     // `.tsx` too: the React hooks are as much a part of this layer as the client is, and a hook whose only
     // proof is "it compiles" is the one that quietly renders the previous project's document. Those files
     // opt into a DOM with a `@jest-environment jsdom` pragma rather than splitting the whole config for them.
