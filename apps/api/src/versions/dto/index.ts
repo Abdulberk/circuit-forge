@@ -4,7 +4,7 @@
 import { ApiProperty } from '@nestjs/swagger';
 import { IsObject, Validate } from 'class-validator';
 
-import { HasCircuitShape } from '../../working-copy/dto';
+import { HasCircuitShape, IsUiJson } from '../../working-copy/dto';
 
 export class CreateVersionDto {
     /**
@@ -22,5 +22,6 @@ export class CreateVersionDto {
 
     @ApiProperty({ description: 'UI JSON (layout information)' })
     @IsObject()
+    @Validate(IsUiJson)
     uiJson!: Record<string, unknown>;
 }

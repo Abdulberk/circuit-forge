@@ -162,40 +162,109 @@ export interface Net {
 }
 
 /**
- * UI JSON structure for layout information
+ * The DRAWING: where things sit on the sheet, and how the wires between them are routed.
+ *
+ * WHY THIS IS A SEPARATE DOCUMENT FROM `CircuitJson`, and must stay one. Connectivity here is DECLARED —
+ * a pin names its net — not inferred from coordinates. KiCad computes nets from wire geometry; copying that
+ * would make our netlist, ERC and the whole layout pipeline depend on pixel positions, and a design would
+ * change meaning when someone nudged a symbol.
+ *
+ * It also cannot live ON `CircuitJson`. The zod schemas are plain objects that STRIP unknown keys, and four
+ * hot paths forward the parsed result rather than the raw input — AI generate, AI edit, simulate, netlist
+ * export. Geometry placed there would be deleted, without an error, by the first "edit this circuit" round
+ * trip. The separation is not tidiness; it is the only place the drawing survives.
+ *
+ * THE COST OF THE SPLIT, stated plainly: nothing checks that the drawing agrees with the netlist. A wire can
+ * carry `netId: "N"` while its endpoints sit on pins bound to net "M" and no validator objects. The editor
+ * is what must keep them in step, by translating every drawn wire into a change to the pin list — and that
+ * is step five, not this one.
  */
 export interface UiJson {
+    /**
+     * Which shape of this document you are reading.
+     *
+     * Present from the first version that has anything worth migrating. Absent means the original shape:
+     * viewport + positions + wires with no ids, which is what the two rows in existence today hold.
+     */
+    schemaVersion?: 1;
     viewport?: Viewport;
     positions?: Record<string, Position>;
     wires?: Wire[];
+    /**
+     * The sheet this drawing is on.
+     *
+     * One sheet today, and the field exists anyway — a schematic that outgrows one page is ordinary, and
+     * retrofitting a sheet id onto stored drawings later is a migration where adding it now is a default.
+     * Nothing reads it yet, which is stated rather than implied.
+     */
+    sheetId?: string;
 }
 
-/**
- * Viewport state
- */
+/** Viewport state. */
 export interface Viewport {
     x: number;
     y: number;
     zoom: number;
 }
 
-/**
- * Component position
- */
-export interface Position {
+/** A point on the sheet. No rotation — a coordinate is not an object with an orientation. */
+export interface Point {
     x: number;
     y: number;
-    // Quarter-turn rotation as a string enum — matches PositionSchema (the runtime validator), which
-    // accepts only these literals. (Kept as strings, not numbers, so the type and the Zod schema agree.)
-    rotation?: '0' | '90' | '180' | '270';
 }
 
 /**
- * Wire path for visual routing
+ * Where a component sits on the sheet, and how it is oriented.
+ *
+ * CONSUMED OUTSIDE THE EDITOR: `pcb-core`'s adapter seeds PCB placement from `positions`, all-or-nothing,
+ * scaling and re-centring the whole arrangement into the board. So these are SHEET coordinates in an
+ * arbitrary unit, not millimetres, and changing that meaning is a cross-package break.
+ */
+export interface Position extends Point {
+    // Quarter-turn rotation as a string enum — matches PositionSchema (the runtime validator), which
+    // accepts only these literals. (Kept as strings, not numbers, so the type and the Zod schema agree.)
+    rotation?: '0' | '90' | '180' | '270';
+    /**
+     * Flip the symbol about an axis. Routine in real schematics — an op-amp with its inputs on the right,
+     * a connector facing the other way — and not expressible by rotation alone.
+     *
+     * Purely a DRAWING property: mirroring a symbol says nothing about which side of the board the part is
+     * on, which is a placement fact and belongs to the layout. `pcb-core` correctly ignores it.
+     */
+    mirror?: 'x' | 'y';
+}
+
+/**
+ * One drawn connection between two points on the sheet.
+ *
+ * `id` exists so a wire survives a save. Selecting, deleting and dragging a bend all work by array index
+ * inside a session; nothing addressed by index survives a reload or a second tab, which is exactly when a
+ * user notices that the editor has forgotten which wire they meant.
+ *
+ * `netId` is the ELECTRICAL truth, unchanged: this wire draws part of that net. The endpoints are the
+ * drawing's own record of what it was attached to when it was drawn.
  */
 export interface Wire {
+    /** Stable across saves. Absent on drawings authored before wires had one. */
+    id?: string;
     netId: string;
-    points: Position[];
+    points: Point[];
+    /**
+     * The pin each end terminates on, when it terminates on one at all.
+     *
+     * Recorded rather than recomputed from coordinates: geometric matching is exact until two pins coincide
+     * after a move, until a T-junction puts three ends at one point, or until an endpoint is deliberately
+     * left in mid-air — and then it silently attaches a wire to the wrong part. `null` says "this end is
+     * attached to nothing", which is a real state and different from "we do not know".
+     */
+    from?: PinRef | null;
+    to?: PinRef | null;
+}
+
+/** A reference to one terminal of one component, in the design's own vocabulary. */
+export interface PinRef {
+    componentId: string;
+    pinId: string;
 }
 
 /**

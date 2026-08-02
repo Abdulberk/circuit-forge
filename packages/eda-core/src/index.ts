@@ -16,7 +16,9 @@ export type {
     UiJson,
     Viewport,
     Position,
+    Point,
     Wire,
+    PinRef,
 } from './types/circuit';
 
 export { COMPONENT_PINS, SPICE_PREFIXES, COMPONENT_TYPES, isSimulatable } from './types/circuit';
@@ -84,6 +86,9 @@ export {
     validateCircuitJson,
     safeValidateCircuitJson,
     validateUiJson,
+    safeValidateUiJson,
+    PointSchema,
+    PinRefSchema,
     type CircuitJsonInput,
     type CircuitJsonOutput,
     type ComponentInput,

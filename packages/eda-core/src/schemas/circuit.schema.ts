@@ -117,42 +117,85 @@ export const CircuitJsonSchema = z.object({
 /**
  * Viewport schema
  */
-export const ViewportSchema = z.object({
-    x: z.number(),
-    y: z.number(),
-    zoom: z.number().positive(),
-});
+export const ViewportSchema = z
+    .object({
+        x: z.number().finite(),
+        y: z.number().finite(),
+        // Positive AND finite: a zoom of 0 divides by zero in every transform, and Infinity survives JSON
+        // as null but not as a number a renderer can use.
+        zoom: z.number().positive().finite(),
+    })
+    .strict();
+
+/** A point on the sheet. `.strict()` so a rotation cannot be smuggled onto a coordinate. */
+export const PointSchema = z
+    .object({
+        x: z.number().finite(),
+        y: z.number().finite(),
+    })
+    .strict();
 
 /**
  * Position schema
  */
-export const PositionSchema = z.object({
-    x: z.number(),
-    y: z.number(),
-    rotation: z.enum(['0', '90', '180', '270']).optional(),
-});
+export const PositionSchema = z
+    .object({
+        x: z.number().finite(),
+        y: z.number().finite(),
+        rotation: z.enum(['0', '90', '180', '270']).optional(),
+        mirror: z.enum(['x', 'y']).optional(),
+    })
+    .strict();
+
+export const PinRefSchema = z
+    .object({
+        componentId: z.string().min(1).max(100),
+        pinId: z.string().min(1).max(100),
+    })
+    .strict();
 
 /**
- * Wire schema
+ * Wire schema.
+ *
+ * `points` is `PointSchema`, not `PositionSchema` — the TypeScript type used to say `Position[]`, which
+ * admitted a meaningless `rotation` on a wire vertex, while this schema said `{x, y}`. The two disagreed,
+ * and the disagreement is the kind that survives review because neither side looks wrong on its own.
+ *
+ * `null` on an endpoint means "attached to nothing", which is a real state a user can create by drawing a
+ * wire into empty space. `undefined` means the drawing does not record it — an older document.
  */
-export const WireSchema = z.object({
-    netId: z.string(),
-    points: z.array(
-        z.object({
-            x: z.number(),
-            y: z.number(),
-        }),
-    ),
-});
+export const WireSchema = z
+    .object({
+        id: z.string().min(1).max(100).optional(),
+        netId: z.string().min(1).max(100),
+        points: z.array(PointSchema).max(500),
+        from: PinRefSchema.nullish(),
+        to: PinRefSchema.nullish(),
+    })
+    .strict();
 
 /**
- * UI JSON schema
+ * UI JSON schema — the drawing.
+ *
+ * `.strict()` EVERYWHERE, and that is the whole point of touching this file. A plain `z.object` STRIPS
+ * unknown keys, so validating the editor's state with a schema that had not caught up would silently delete
+ * whatever it did not recognise — a user's wire routing, gone, with a 200 and no message. Strict turns the
+ * same mistake into a 400 that names the field. For a document written by our own editor, loud is correct:
+ * a field the server does not know is a field that was going to be lost anyway.
+ *
+ * Note `{}` still validates, and must — a project with no drawing yet is the ordinary case, and every draft
+ * in existence today holds exactly that. Enforcement here is about not LOSING what is sent, not about
+ * requiring anything to be sent.
  */
-export const UiJsonSchema = z.object({
-    viewport: ViewportSchema.optional(),
-    positions: z.record(PositionSchema).optional(),
-    wires: z.array(WireSchema).optional(),
-});
+export const UiJsonSchema = z
+    .object({
+        schemaVersion: z.literal(1).optional(),
+        viewport: ViewportSchema.optional(),
+        positions: z.record(PositionSchema).optional(),
+        wires: z.array(WireSchema).max(5000).optional(),
+        sheetId: z.string().min(1).max(100).optional(),
+    })
+    .strict();
 
 /**
  * Type exports from schemas
@@ -182,4 +225,14 @@ export function safeValidateCircuitJson(data: unknown): z.SafeParseReturnType<Ci
  */
 export function validateUiJson(data: unknown): z.output<typeof UiJsonSchema> {
     return UiJsonSchema.parse(data);
+}
+
+/**
+ * Safe validate UI JSON — the shape a caller can branch on rather than catch.
+ *
+ * The throwing version is unusable inside a save handler: an editor has to TELL the user which field it
+ * refused, not unwind through a try/catch that ends at "something went wrong".
+ */
+export function safeValidateUiJson(data: unknown) {
+    return UiJsonSchema.safeParse(data);
 }

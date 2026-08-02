@@ -153,14 +153,15 @@ describe('Project working copy (PUT/GET/DELETE /projects/:id/working-copy)', () 
     it('PUT autosave creates the draft and it round-trips EXACTLY (the editor rehydrates from it)', async () => {
         const saved = await put(projectA, tokenA, {
             circuitJson: rev('c1'),
-            uiJson: { zoom: 1.5 },
+            // zoom belongs to the viewport, not to the drawing's root — the schema says so now.
+            uiJson: { viewport: { x: 0, y: 0, zoom: 1.5 } },
             baseVersionId: versionA1,
         }).expect(200);
         expect(saved.body).toMatchObject({ projectId: projectA, updatedByUserId: userIdA, baseVersionId: versionA1 });
 
         const got = await wc(projectA, tokenA).expect(200);
         expect(got.body.circuitJson).toEqual(rev('c1'));
-        expect(got.body.uiJson).toEqual({ zoom: 1.5 });
+        expect(got.body.uiJson).toEqual({ viewport: { x: 0, y: 0, zoom: 1.5 } });
         expect(got.body.baseVersionId).toBe(versionA1);
     });
 

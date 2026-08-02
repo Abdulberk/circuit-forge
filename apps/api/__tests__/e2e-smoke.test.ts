@@ -178,8 +178,10 @@ describe('E2E Smoke Test - Full Simulation Workflow', () => {
                 .set('Authorization', `Bearer ${accessToken}`)
                 .send({
                     circuitJson: rcFilterCircuit,
+                    // A real drawing. `layout: 'hierarchical'` used to sit here and nothing in the
+                    // repository has ever read it — the strict uiJson schema now refuses it rather than
+                    // storing a field no code knows about.
                     uiJson: {
-                        layout: 'hierarchical',
                         positions: {
                             V1: { x: 100, y: 100 },
                             R1: { x: 200, y: 100 },
