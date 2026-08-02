@@ -3,6 +3,7 @@
  * (ESM seams), BOM + pick-and-place CSVs from our own data (pure).
  */
 import type { LayoutabilityResult } from '@circuit-forge/pcb-preflight';
+
 import type { TscElement } from './parity';
 
 export interface GerberOutputs {
@@ -72,8 +73,20 @@ export function buildBomCsv(layout: LayoutabilityResult): string {
     return toCsv(rows);
 }
 
-/** Pick-and-place from the EVALUATED board (real placements), joined back to designators. */
-export function buildPnpCsv(evaluated: TscElement[]): string {
+/**
+ * Component placements in the DESIGN frame — a preview, and NOT a fab artifact.
+ *
+ * The name carries the warning because the old one did not. This was exported as `pnpCsv` and shipped
+ * inside the same bundle as gerbers plotted by kicad-cli from the .kicad_pcb, and the two frames were
+ * apart by exactly (+100, −100) mm on every board: the converter places the board at an offset when it
+ * writes the board file, and these coordinates never went through it. A machine fed that pair puts every
+ * part 100 mm off the copper.
+ *
+ * A real pick-and-place file can only be plotted from the board that ships, which means kicad-cli, which
+ * means the worker — see `exportPos` there. Nothing in this package can produce one, so nothing in this
+ * package should offer something that looks like one.
+ */
+export function buildPlacementPreviewCsv(evaluated: TscElement[]): string {
     const nameById = new Map<string, string>();
     for (const el of evaluated) {
         if (el.type === 'source_component') nameById.set(String(el.source_component_id), String(el.name));

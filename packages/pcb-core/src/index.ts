@@ -7,12 +7,19 @@
  * pass silently) -> Gerber/.kicad_pcb/.kicad_pro/BOM/PnP (fab profile enforced downstream too).
  */
 import { buildNodeMap, type CircuitJson, type UiJson } from '@circuit-forge/eda-core';
+import {
+    classifyCircuit,
+    loadPadCountOracle,
+    type LayoutabilityResult,
+    type LayoutDiagnostic,
+} from '@circuit-forge/pcb-preflight';
 
 import { generateTscircuitCode, type AdapterResult, type PinExpectation } from './adapter';
 import { evaluateTscircuit } from './evaluate';
 import {
     boardExtraProps,
     reportViaCompliance,
+    injectPlacementOrigin,
     injectZone,
     kicadProjectJson,
     resolveFabProfile,
@@ -20,15 +27,14 @@ import {
     type FabProfileInput,
     type FabTierName,
 } from './fab-profile';
-
 import { ipc2221WidthMm } from './ipc2221';
 import {
-    classifyCircuit,
-    loadPadCountOracle,
-    type LayoutabilityResult,
-    type LayoutDiagnostic,
-} from '@circuit-forge/pcb-preflight';
-import { generateGerbers, generateKicadPcb, buildBomCsv, buildPnpCsv, type GerberOutputs } from './outputs';
+    generateGerbers,
+    generateKicadPcb,
+    buildBomCsv,
+    buildPlacementPreviewCsv,
+    type GerberOutputs,
+} from './outputs';
 import { checkConnectivityParity, type ParityResult, type TscElement } from './parity';
 import { placeParts, computeHpwl, type PlacementInput, type PlacementOutput } from './placement';
 import { extractPlacementParts, gridPositions, buildNetWeights, deriveExtraEdges } from './placement-bridge';
@@ -42,6 +48,7 @@ import {
     findFullyUnroutedNets,
     type FreeroutingRunner,
 } from './route';
+import { clampSilkscreen, type SilkClampResult } from './silkscreen';
 
 export interface LayoutOptions {
     ui?: UiJson;
@@ -115,7 +122,13 @@ export interface LayoutResult {
         kicadPcb: string;
         kicadPro: string;
         bomCsv: string;
-        pnpCsv: string;
+        /**
+         * Placements in the DESIGN frame — for inspection, NEVER for delivery. It used to be called
+         * `pnpCsv` and used to be shipped next to gerbers plotted from `kicadPcb`, which put the two
+         * artifacts 100 mm apart. The real position file is plotted from the board that ships, by the
+         * caller that owns kicad-cli.
+         */
+        placementPreviewCsv: string;
     } | null;
     stats: LayoutStats;
     /** The fab rules the board was ACTUALLY built and judged against, after the caller's overrides were
@@ -439,6 +452,35 @@ export async function layoutCircuit(circuit: CircuitJson, opts: LayoutOptions = 
         });
     }
 
+    // Without the shared origin marker, gerbers/drill/position each fall back to the board file's own
+    // absolute frame. They would still AGREE with each other — every one of them defaults the same way —
+    // so this is not the (+100, −100) defect returning; it is the board handing the fab coordinates
+    // measured from a corner that is not the board's. Said out loud rather than left to be noticed.
+    if (assembled.placementOrigin === 'no-outline') {
+        diagnostics.push({
+            code: 'PCB043',
+            severity: 'warning',
+            message:
+                'No Edge.Cuts outline found, so no drill/place origin was marked — fab artifacts will be measured from the board file origin instead of the board corner.',
+        });
+    }
+
+    // Announced, never silent: enlarging someone's board lettering is a visible change to their artwork,
+    // and a later "why is R12 printed over its pad" is unanswerable if the enlargement was never recorded.
+    const silk = assembled.silk;
+    if (silk.widthsClamped > 0 || silk.heightsClamped > 0) {
+        diagnostics.push({
+            code: 'PCB044',
+            severity: 'info',
+            message:
+                `Silkscreen brought up to the fab's floor: ${silk.widthsClamped} stroke(s) widened to ` +
+                `${profile.minSilkWidthMm ?? 0.15} mm (thinnest found ${silk.thinnestFoundMm?.toFixed(4) ?? 'n/a'} mm) and ` +
+                `${silk.heightsClamped} text element(s) raised to ${profile.minSilkTextHeightMm ?? 0.8} mm ` +
+                `(smallest found ${silk.smallestTextMm?.toFixed(4) ?? 'n/a'} mm). Below the floor a fab DELETES the ` +
+                `legend rather than rejecting the board, so untouched art would have shipped as missing designators.`,
+        });
+    }
+
     return {
         ok,
         completeness: layout.completeness,
@@ -451,7 +493,7 @@ export async function layoutCircuit(circuit: CircuitJson, opts: LayoutOptions = 
             kicadPcb,
             kicadPro: kicadProjectJson(profile),
             bomCsv: buildBomCsv(layout),
-            pnpCsv: buildPnpCsv(routedBoard),
+            placementPreviewCsv: buildPlacementPreviewCsv(routedBoard),
         },
         stats: stats(routedBoard, routeErrors.length, started),
         fab,
@@ -634,11 +676,36 @@ async function attemptAutoPlacement(
 async function assembleKicadPcb(
     board: TscElement[],
     profile: FabProfile,
-): Promise<{ kicadPcb: string; pour: 'ok' | 'unsafe-unnetted-copper' | 'no-net' | 'off' }> {
-    const raw = await generateKicadPcb(board);
-    if (!profile.gndPour) return { kicadPcb: raw, pour: 'off' };
+): Promise<{
+    kicadPcb: string;
+    pour: 'ok' | 'unsafe-unnetted-copper' | 'no-net' | 'off';
+    placementOrigin: 'ok' | 'no-outline';
+    silk: SilkClampResult;
+}> {
+    const generated = await generateKicadPcb(board);
+
+    // The shared measuring corner, stamped BEFORE anything else touches the file, because every
+    // delivered artifact is plotted from this one board and they must all read the same marker. See
+    // `injectPlacementOrigin` for the (+100, −100) mm defect this ends.
+    const origin = injectPlacementOrigin(generated);
+    const withOrigin = origin.kind === 'ok' ? origin.kicadPcb : generated;
+    const placementOrigin = origin.kind;
+
+    // Then the legend, before the pour, so the zone's own outline is judged against art the fab will
+    // actually print. See `clampSilkscreen`: the converter sizes a designator to the part it labels, which
+    // put every `R1` on our boards at 0.267 mm tall with a 0.033 mm pen — under every fab's floor, and
+    // silently DELETED rather than rejected, so boards shipped with no part labels at all.
+    const silk = clampSilkscreen(withOrigin, {
+        minWidthMm: profile.minSilkWidthMm ?? 0.15,
+        minTextHeightMm: profile.minSilkTextHeightMm ?? 0.8,
+    });
+    const raw = silk.kicadPcb;
+
+    if (!profile.gndPour) return { kicadPcb: raw, pour: 'off', placementOrigin, silk };
     const zone = injectZone(raw, 'GND', 'B.Cu');
-    return zone.kind === 'ok' ? { kicadPcb: zone.kicadPcb, pour: 'ok' } : { kicadPcb: raw, pour: zone.kind };
+    return zone.kind === 'ok'
+        ? { kicadPcb: zone.kicadPcb, pour: 'ok', placementOrigin, silk }
+        : { kicadPcb: raw, pour: zone.kind, placementOrigin, silk };
 }
 
 /**
@@ -689,7 +756,13 @@ function computeIpcWidths(
 }
 
 /** After a quality route, confirm each widened net actually carries a trace at (≈) its target width. */
-function verifyPerNetWidths(
+/**
+ * Public because it is a verification primitive in its own right — the same category as `ipc2221WidthMm`
+ * and `checkDeliveryFrame` — and because it had NO test at all while carrying a soundness bug: it measured
+ * a net's WIDEST point instead of its narrowest, so the one thing it exists to catch could not fail it. A
+ * check nothing can exercise is a check nothing is keeping honest.
+ */
+export function verifyPerNetWidths(
     board: TscElement[],
     perNetWidthMm: Record<string, number>,
     diagnostics: LayoutDiagnostic[],
@@ -706,25 +779,40 @@ function verifyPerNetWidths(
             .filter((e) => e.type === 'source_net')
             .map((e) => [(e as { source_net_id?: string }).source_net_id, (e as { name?: string }).name]),
     );
-    const maxWidthByNet = new Map<string, number>();
+    // The NARROWEST point on the net, not the widest.
+    //
+    // This measured the maximum until 2 Aug 2026, which made the check unable to fail for the reason it
+    // exists. A trace carrying 2 A can run 0.8 mm for 95% of its length and neck to 0.2 mm squeezing past
+    // one pad, and it is that neck that overheats — the wide part is irrelevant. Taking the max reported
+    // 0.8 mm and passed. KiCad cannot catch it either: the board carries ONE global minimum width, and the
+    // narrow segment satisfies it, so nothing anywhere would have said a word.
+    //
+    // A trace with no route points contributes nothing rather than a zero: an empty geometry is a trace
+    // that was not routed, which is the connectivity check's business, and folding it in here would report
+    // every unrouted net as an infinitely thin one.
+    const minWidthByNet = new Map<string, number>();
     for (const t of board.filter((e) => e.type === 'pcb_trace')) {
         const st = srcTraceById.get((t as { source_trace_id?: string }).source_trace_id) as
             | { connected_source_net_ids?: string[] }
             | undefined;
         const name = st?.connected_source_net_ids?.[0] ? netNameById.get(st.connected_source_net_ids[0]) : undefined;
         if (!name) continue;
-        const w = Math.max(...((t as { route?: Array<{ width?: number }> }).route ?? []).map((p) => p.width ?? 0), 0);
-        maxWidthByNet.set(name, Math.max(maxWidthByNet.get(name) ?? 0, w));
+        const widths = ((t as { route?: Array<{ width?: number }> }).route ?? [])
+            .map((p) => p.width)
+            .filter((w): w is number => typeof w === 'number' && Number.isFinite(w) && w > 0);
+        if (widths.length === 0) continue;
+        const narrowest = Math.min(...widths);
+        minWidthByNet.set(name, Math.min(minWidthByNet.get(name) ?? Infinity, narrowest));
     }
     for (const [net, target] of wide) {
         if (target <= 0) continue;
-        const got = maxWidthByNet.get(net);
+        const got = minWidthByNet.get(net);
         if (got === undefined) continue; // net not on this board (or single-pin) — nothing to check
         if (got < target * 0.95) {
             diagnostics.push({
                 code: 'PCB042',
                 severity: 'warning',
-                message: `net ${net} routed at ${got.toFixed(2)}mm but IPC-2221 needs ${target}mm — the router narrowed it; widen the board or check clearances.`,
+                message: `net ${net} narrows to ${got.toFixed(2)}mm somewhere along its route but IPC-2221 needs ${target}mm — the narrowest point is what heats up; widen the board or check clearances.`,
             });
         }
     }
@@ -1117,7 +1205,13 @@ export {
     resolveFabProfile,
 } from './fab-profile';
 export type { FabProfile, FabProfileInput, FabTierName, ResolvedFabProfile, ZoneInjectionResult } from './fab-profile';
-export { generateGerbers, generateKicadPcb, buildBomCsv, buildPnpCsv, hasVisibleDesignators } from './outputs';
+export {
+    generateGerbers,
+    generateKicadPcb,
+    buildBomCsv,
+    buildPlacementPreviewCsv,
+    hasVisibleDesignators,
+} from './outputs';
 export type { GerberOutputs } from './outputs';
 export { evaluateTscircuit } from './evaluate';
 export { exportDsn, mergeSes, stripRouting, applyFabRulesToDsn, applyPerNetWidths, enlargeBoard } from './route';
@@ -1132,6 +1226,8 @@ export { shapeLayoutResult } from './layout-result';
 export type { LayoutGeometry, LayoutComponent, LayoutPad, LayoutTrace, LayoutVia, Pt } from './layout-result';
 export { parseDrcReport, drcCategory, drcToChecks, airwiresFromDrc } from './drc';
 export type { ParsedDrc, DrcEntry, DrcItem, DrcCheck, Airwire } from './drc';
+export { checkDeliveryFrame, gerberExtent, parsePositionCsv } from './delivery-frame';
+export type { FrameCheck, OutlineExtent, Placement } from './delivery-frame';
 export type { PlacementRunner } from './placement-engine';
 // Re-export the eda-core scope manifest so the pcb-worker (which depends only on pcb-core) can emit the
 // layout verdict's disclosure fragment without a direct eda-core dependency.

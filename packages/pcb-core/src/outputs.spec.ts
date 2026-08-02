@@ -1,7 +1,7 @@
 import type { CircuitJson } from '@circuit-forge/eda-core';
-
 import { classifyCircuit } from '@circuit-forge/pcb-preflight';
-import { buildBomCsv, buildPnpCsv, hasVisibleDesignators } from './outputs';
+
+import { buildBomCsv, buildPlacementPreviewCsv, hasVisibleDesignators } from './outputs';
 import type { TscElement } from './parity';
 
 const circuit: CircuitJson = {
@@ -37,8 +37,8 @@ describe('buildBomCsv', () => {
     });
 });
 
-describe('buildPnpCsv', () => {
-    it('joins pcb_component placements back to designators', () => {
+describe('buildPlacementPreviewCsv — a preview, never a fab artifact', () => {
+    it('joins pcb_component placements back to designators, in the DESIGN frame', () => {
         const evaluated: TscElement[] = [
             { type: 'source_component', source_component_id: 'sc1', name: 'R1' },
             {
@@ -49,7 +49,10 @@ describe('buildPnpCsv', () => {
                 layer: 'top',
             },
         ];
-        const csv = buildPnpCsv(evaluated);
+        // SOUP coordinates — which is exactly why this file may never be delivered. The gerbers are
+        // plotted from the .kicad_pcb, whose frame differs, and shipping the pair put every part 100 mm
+        // off the copper. The real position file is plotted from that same board by kicad-cli.
+        const csv = buildPlacementPreviewCsv(evaluated);
         expect(csv).toContain('R1,1.5,-2,90,top');
     });
 });

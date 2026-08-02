@@ -15,6 +15,7 @@ import {
     drcToChecks,
     airwiresFromDrc,
     buildLayoutScope,
+    checkDeliveryFrame,
     type LayoutOptions,
 } from '@circuit-forge/pcb-core';
 import { Prisma } from '@prisma/client';
@@ -322,12 +323,29 @@ export async function processLayoutJob(job: Job<LayoutJobPayload>): Promise<void
                 'GND pour injected but the exported B.Cu gerber has no filled copper region — refusing to ship a board missing its advertised ground plane',
             );
         }
-        const gerbersKey = `layouts/${jobId}/manufacturing.json`;
-        await uploadFile(
-            gerbersKey,
-            JSON.stringify({ gerbers, bomCsv: q.outputs.bomCsv, pnpCsv: q.outputs.pnpCsv }),
-            'application/json',
+        // The pick-and-place, plotted from the SAME board as the gerbers above. It used to be
+        // `q.outputs.pnpCsv`, built by pcb-core from the design soup — a second producer with its own idea
+        // of where the board's origin was, and it was wrong by exactly (+100, −100) mm on every board. Both
+        // files are now measured from one marker in one file, so they cannot drift apart.
+        const pnpCsv = await kicad.exportPos(q.outputs.kicadPcb);
+
+        // …and then verified AGAINST EACH OTHER, because "both were produced correctly" is precisely what
+        // was true while the bundle was 100 mm broken. Every check we had examined one artifact against its
+        // own spec; none compared two. Fail-closed, next to the ground-plane evidence check above and for
+        // the same reason: this is the boundary where files become the deliverable.
+        const frame = checkDeliveryFrame(gerbers.layers['Edge_Cuts'] ?? '', pnpCsv);
+        if (!frame.ok) {
+            throw new Error(
+                `Delivery bundle is not self-consistent — ${frame.message} Refusing to ship gerbers and a placement file that disagree about where the board is.`,
+            );
+        }
+        logger.info(
+            { jobId, placements: frame.placements, extent: frame.extent },
+            'Delivery frame verified: every placement lands on the board the copper describes',
         );
+
+        const gerbersKey = `layouts/${jobId}/manufacturing.json`;
+        await uploadFile(gerbersKey, JSON.stringify({ gerbers, bomCsv: q.outputs.bomCsv, pnpCsv }), 'application/json');
 
         // 3D render is BEST-EFFORT: a GLB export failure (missing 3D model, timeout, ENOBUFS) must not sink an
         // already-manufacturable board — deliver the gerbers with the render omitted rather than failing the job.

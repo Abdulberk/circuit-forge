@@ -6,6 +6,7 @@ import {
     FAB_TIERS,
     boardExtraProps,
     kicadProjectJson,
+    injectPlacementOrigin,
     injectZone,
     reportViaCompliance,
     resolveFabProfile,
@@ -265,5 +266,70 @@ describe('ipc2221WidthMm — what happens when the current is not a current', ()
         expect(Number.isNaN(r.widthMm)).toBe(true);
         expect(r.clamped).toBe(false);
         expect(r.notes).toEqual([]);
+    });
+});
+
+/**
+ * The shared measuring corner. Without it the gerbers and the position file each fell back to their own
+ * default, which is how a delivered bundle came to have its placements exactly (+100, −100) mm from its
+ * own copper — every board, every time, and nothing said a word.
+ */
+describe('marking one origin every exporter can read', () => {
+    /** A board whose outline runs x 10…50, y 20…60 in KiCad coordinates (Y grows DOWNWARD). */
+    const board = (extra = '') => `(kicad_pcb
+  (setup
+    (pad_to_mask_clearance 0)
+  )${extra}
+  (net 0 "")
+  (gr_line (start 10 20) (end 50 20) (layer Edge.Cuts))
+  (gr_line (start 50 20) (end 50 60) (layer Edge.Cuts))
+  (gr_line (start 50 60) (end 10 60) (layer Edge.Cuts))
+  (gr_line (start 10 60) (end 10 20) (layer Edge.Cuts))
+)`;
+
+    it('puts the origin at the board’s VISUAL lower-left, which is (minX, maxY) in board coordinates', () => {
+        // The sign that matters. KiCad's Y grows downward while the gerber and position frames grow
+        // upward, so the visually-bottom edge is the LARGEST y. Getting this backwards mirrors the board
+        // about its own centre — a placement that still looks plausible and assembles wrong.
+        const r = injectPlacementOrigin(board());
+        expect(r.kind).toBe('ok');
+        if (r.kind !== 'ok') throw new Error('unreachable');
+        expect(r.originMm).toEqual({ x: 10, y: 60 });
+        expect(r.kicadPcb).toContain('(aux_axis_origin 10 60)');
+    });
+
+    it('replaces an existing marker rather than adding a second one', () => {
+        // Two origins is a file whose meaning depends on which one the reader picks up first.
+        const once = injectPlacementOrigin(board());
+        if (once.kind !== 'ok') throw new Error('unreachable');
+        const twice = injectPlacementOrigin(once.kicadPcb);
+        if (twice.kind !== 'ok') throw new Error('unreachable');
+        expect(twice.kicadPcb.match(/aux_axis_origin/g)).toHaveLength(1);
+        expect(twice.kicadPcb).toBe(once.kicadPcb);
+    });
+
+    it('opens a setup block when the board has none', () => {
+        const noSetup = '(kicad_pcb\n  (net 0 "")\n  (gr_line (start 1 2) (end 3 4) (layer Edge.Cuts))\n)';
+        const r = injectPlacementOrigin(noSetup);
+        expect(r.kind).toBe('ok');
+        if (r.kind !== 'ok') throw new Error('unreachable');
+        expect(r.kicadPcb).toMatch(/\(setup\s+\(aux_axis_origin 1 4\)\s*\)/);
+        expect(r.kicadPcb).toContain('(net 0 "")');
+    });
+
+    it('REFUSES rather than guessing when there is no outline', () => {
+        // injectZone falls back to every coordinate in the file, which is safe for a pour (the filler
+        // clips to the outline anyway). An origin derived from stray copper would silently move every
+        // delivered coordinate instead — the exact failure this function exists to end.
+        const noEdge =
+            '(kicad_pcb\n  (setup\n  )\n  (net 0 "")\n  (segment (start 1 1) (end 2 2) (layer F.Cu) (net 1))\n)';
+        expect(injectPlacementOrigin(noEdge).kind).toBe('no-outline');
+    });
+
+    it('leaves the rest of the board untouched', () => {
+        const src = board();
+        const r = injectPlacementOrigin(src);
+        if (r.kind !== 'ok') throw new Error('unreachable');
+        expect(r.kicadPcb.replace(/\n\s*\(aux_axis_origin [^)]*\)/, '')).toBe(src);
     });
 });

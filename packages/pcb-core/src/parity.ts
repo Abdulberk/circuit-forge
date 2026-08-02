@@ -20,8 +20,9 @@
  * unit tests and (b) the harness's semantic-anchor asserts against tscircuit's own hints on real
  * evaluated boards, which alarm on any upstream alias change.
  */
-import type { PinExpectation } from './adapter';
 import type { LayoutDiagnostic } from '@circuit-forge/pcb-preflight';
+
+import type { PinExpectation } from './adapter';
 
 /** The minimal slice of tscircuit's circuit-json we consume (structurally typed, version-tolerant). */
 export interface TscElement {
