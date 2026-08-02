@@ -171,7 +171,7 @@ must('create project', !!proj.d?.id);
 const ver = await jf(`/projects/${proj.d?.id}/versions`, {
     method: 'POST',
     headers: H(),
-    body: body({ circuitJson: rcFilter, uiJson: { layout: 'hierarchical', positions: {} } }),
+    body: body({ circuitJson: rcFilter, uiJson: { positions: {} } }),
 });
 must('save version', !!ver.d?.id, `v${ver.d?.versionNumber}`);
 

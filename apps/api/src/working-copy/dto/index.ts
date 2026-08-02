@@ -1,3 +1,4 @@
+import { safeValidateUiJson } from '@circuit-forge/eda-core';
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import {
     IsISO8601,
@@ -6,6 +7,7 @@ import {
     IsUUID,
     Validate,
     ValidatorConstraint,
+    type ValidationArguments,
     type ValidatorConstraintInterface,
 } from 'class-validator';
 
@@ -25,6 +27,45 @@ import {
  * So: `components` and `nets` must be arrays. That separates "a circuit being worked on" from "not a
  * circuit", costs one type check, and rejects nothing a real editor would ever send.
  */
+/**
+ * The DRAWING must be a drawing — and nothing it contains may be silently discarded.
+ *
+ * `uiJson` was `@IsObject()`, so anything at all was stored: a viewport with a zoom of zero, a wire whose
+ * points were strings, a typo'd key that would read as `undefined` forever. It is the editor's own state,
+ * so nobody would notice until a drawing came back wrong.
+ *
+ * The trap, and the reason this is a `.strict()` schema rather than the obvious one-liner: `UiJsonSchema`
+ * used to be a plain `z.object`, and zod STRIPS unknown keys. Wiring that in would have DELETED every field
+ * it did not recognise — a user's wire routing gone, with a 200 and no message. Strict turns the same
+ * mistake into a 400 that names the field, which for a document written by our own editor is the correct
+ * trade: a field the server does not know is a field that was going to be lost anyway.
+ *
+ * `{}` still passes, and must. Every draft in existence holds exactly that, and a project with no drawing
+ * yet is the ordinary case — this is about not losing what is sent, not about requiring anything.
+ */
+@ValidatorConstraint({ name: 'uiJsonShape', async: false })
+export class IsUiJson implements ValidatorConstraintInterface {
+    validate(value: unknown): boolean {
+        return safeValidateUiJson(value).success;
+    }
+
+    /**
+     * STATELESS — class-validator reuses one constraint instance across every request, so stashing the last
+     * failure on `this` would let two concurrent callers read each other's field names. Re-validating on the
+     * error path costs one parse and only when something is already wrong.
+     */
+    defaultMessage(args: ValidationArguments): string {
+        const parsed = safeValidateUiJson(args.value);
+        const issues = parsed.success
+            ? ''
+            : parsed.error.issues
+                  .slice(0, 5)
+                  .map((i) => `${i.path.join('.') || '(root)'}: ${i.message}`)
+                  .join('; ');
+        return `uiJson is not valid editor state${issues ? ` — ${issues}` : ''}`;
+    }
+}
+
 @ValidatorConstraint({ name: 'circuitShape', async: false })
 export class HasCircuitShape implements ValidatorConstraintInterface {
     validate(value: unknown): boolean {
@@ -59,6 +100,7 @@ export class SaveWorkingCopyDto {
         additionalProperties: true,
     })
     @IsObject()
+    @Validate(IsUiJson)
     uiJson!: Record<string, unknown>;
 
     @ApiPropertyOptional({

@@ -331,7 +331,9 @@ describe('the transcribed contracts, against the server that defines them', () =
         for (let i = 0; i < 3; i++) {
             await client.request(`/projects/${proj.id}/versions`, {
                 method: 'POST',
-                body: { circuitJson: DIVIDER, uiJson: { n: i } },
+                // A real drawing field rather than a scratch marker. The strict uiJson schema refuses an
+                // unknown key — correctly — and this test was using the column as a notepad.
+                body: { circuitJson: DIVIDER, uiJson: { viewport: { x: i, y: 0, zoom: 1 } } },
             });
         }
         const opened = await api.openProject(proj.id);
@@ -449,6 +451,70 @@ describe('the transcribed contracts, against the server that defines them', () =
         expect(err.kind).toBe('conflict');
         // The body carries the server's current timestamp, which is what the conflict UI shows the user.
         expect(typeof (err.body as { currentUpdatedAt?: unknown })?.currentUpdatedAt).toBe('string');
+    });
+
+    it('stores a DRAWING and gives it back byte for byte', async () => {
+        // The whole of step three, end to end: symbol positions, an orientation, a mirror, and a wire with
+        // both endpoints bound to real pins. If any of it came back altered, an editor would silently
+        // rearrange someone's schematic on every reload.
+        const drawing = {
+            schemaVersion: 1,
+            viewport: { x: -42.5, y: 17, zoom: 1.25 },
+            positions: {
+                r1: { x: 100, y: 200, rotation: '90' as const },
+                r2: { x: 300, y: 200, mirror: 'x' as const },
+                v1: { x: 0, y: 200 },
+            },
+            wires: [
+                {
+                    id: 'w-mid',
+                    netId: 'mid',
+                    points: [
+                        { x: 120, y: 200 },
+                        { x: 210, y: 200 },
+                        { x: 280, y: 200 },
+                    ],
+                    from: { componentId: 'r1', pinId: '2' },
+                    to: { componentId: 'r2', pinId: '1' },
+                },
+                // An endpoint that is deliberately attached to nothing — a real state, and different from
+                // "we never recorded it".
+                { id: 'w-loose', netId: 'vin', points: [{ x: 0, y: 0 }], from: null, to: null },
+            ],
+            sheetId: 'main',
+        };
+
+        await api.saveWorkingCopy(projectId, { circuitJson: DIVIDER, uiJson: drawing });
+        const loaded = await api.workingCopy(projectId);
+        expect(loaded!.uiJson).toEqual(drawing);
+    });
+
+    it('REFUSES a drawing it does not understand, rather than quietly dropping the field', () => {
+        // The reason the schema is `.strict()`. A permissive one would have accepted this, stripped
+        // `selection`, answered 200, and the loss would have surfaced as "the editor forgot my selection"
+        // with nothing in any log.
+        return expect(
+            api.saveWorkingCopy(projectId, {
+                circuitJson: DIVIDER,
+                uiJson: { viewport: { x: 0, y: 0, zoom: 1 }, selection: ['r1'] } as Record<string, unknown>,
+            }),
+        ).rejects.toMatchObject({ kind: 'invalid' });
+    });
+
+    it('refuses a viewport that would divide by zero, and a rotation on a wire vertex', async () => {
+        for (const bad of [
+            { viewport: { x: 0, y: 0, zoom: 0 } },
+            { wires: [{ netId: 'n', points: [{ x: 0, y: 0, rotation: '90' }] }] },
+            { positions: { r1: { x: Number.NaN, y: 0 } } },
+        ] as Array<Record<string, unknown>>) {
+            const err = (await api
+                .saveWorkingCopy(projectId, { circuitJson: DIVIDER, uiJson: bad })
+                .catch((e: unknown) => e)) as ApiError;
+            expect({ bad: JSON.stringify(bad).slice(0, 40), kind: err.kind }).toEqual({
+                bad: JSON.stringify(bad).slice(0, 40),
+                kind: 'invalid',
+            });
+        }
     });
 
     it('classifies a genuinely missing project as not-found', async () => {

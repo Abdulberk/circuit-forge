@@ -107,7 +107,7 @@ describe('the API an editor leans on', () => {
             await auth()
                 .put(`/projects/${projectId}/working-copy`)
                 .set('Authorization', `Bearer ${token}`)
-                .send({ circuitJson: CIRCUIT, uiJson: { moved: 1 } })
+                .send({ circuitJson: CIRCUIT, uiJson: { viewport: { x: 1, y: 0, zoom: 1 } } })
                 .expect(200);
 
             const refused = await auth()
@@ -122,7 +122,7 @@ describe('the API an editor leans on', () => {
                 .get(`/projects/${projectId}/working-copy`)
                 .set('Authorization', `Bearer ${token}`)
                 .expect(200);
-            expect((survived.body as { uiJson: { moved?: number } }).uiJson.moved).toBe(1);
+            expect((survived.body as { uiJson: { viewport?: { x: number } } }).uiJson.viewport?.x).toBe(1);
         });
 
         it('allows a CURRENT discard, and stays idempotent without a token', async () => {

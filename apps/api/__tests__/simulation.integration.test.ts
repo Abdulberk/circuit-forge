@@ -100,7 +100,7 @@ describe('Simulation Integration Tests', () => {
             .set('Authorization', `Bearer ${accessToken}`)
             .send({
                 circuitJson: simpleCircuit,
-                uiJson: { layout: 'grid' },
+                uiJson: {},
             });
         versionId = versionResponse.body.id;
     });
