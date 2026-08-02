@@ -13,7 +13,34 @@ import type { DocumentState } from '../lib/useDocument';
 const time = (iso: string | null) => (iso ? new Date(iso).toLocaleTimeString() : null);
 
 export function SaveStatus({ doc }: { doc: DocumentState }) {
-    const { save } = doc;
+    const { save, recovery } = doc;
+
+    // Ahead of everything else, because it is about work that exists NOWHERE ELSE. A conflict is two saved
+    // documents disagreeing; this is one unsaved document that survived a tab closing, and it is gone the
+    // moment the user edits over it.
+    if (recovery) {
+        return (
+            <div className="notice bad" role="alert">
+                <h4>Unsaved work found on this device</h4>
+                {recovery.continuesServerDraft ? (
+                    <>
+                        Changes from {new Date(recovery.at).toLocaleString()} never reached the server — the tab
+                        probably closed before they were saved. They continue exactly the draft that is open now.
+                    </>
+                ) : (
+                    <>
+                        Changes from {new Date(recovery.at).toLocaleString()} never reached the server, and the draft
+                        has been saved by someone since. Restoring them replaces what is on screen with your older work
+                        — anything saved after it would have to be redone.
+                    </>
+                )}
+                <div style={{ display: 'flex', gap: 8, marginTop: 8 }}>
+                    <button onClick={doc.recoverLocal}>Restore my unsaved work</button>
+                    <button onClick={doc.discardLocal}>Discard it, keep what is open</button>
+                </div>
+            </div>
+        );
+    }
 
     if (save.status === 'conflict') {
         return (
@@ -58,5 +85,18 @@ export function SaveStatus({ doc }: { doc: DocumentState }) {
                 ? `saved ${time(save.savedAt)}`
                 : 'no changes yet';
 
-    return <span style={{ color: save.status === 'dirty' ? 'var(--warn)' : 'var(--text-faint)' }}>{label}</span>;
+    return (
+        <span style={{ color: save.status === 'dirty' ? 'var(--warn)' : 'var(--text-faint)' }}>
+            {label}
+            {/* Only ever shown when it is FALSE. A permanent "backed up ✓" is the badge people stop reading,
+                and the only reason this exists is that "unsaved changes" means something different when
+                nothing is holding them: on this browser they would not survive the tab. */}
+            {!doc.localBackup.ok && (
+                <span className="warn" title={doc.localBackup.message}>
+                    {' '}
+                    · not kept on this device
+                </span>
+            )}
+        </span>
+    );
 }

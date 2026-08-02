@@ -44,9 +44,21 @@ import {
 import { useCallback, useEffect, useRef, useState } from 'react';
 
 import { ApiError, isAbort, type Api, type OpenedProject } from './api';
+import { browserDraftStore, type DraftStore, type PutResult } from './draftStore';
 
 /** How long a pause in typing counts as "done", before a save is attempted. */
 const AUTOSAVE_IDLE_MS = 1_200;
+
+/**
+ * How long a pause counts as "done" for the LOCAL copy — much shorter than the save, because its whole
+ * job is to be there when the tab is not.
+ *
+ * Not zero: serialising the document on every keystroke is work proportional to the whole circuit, and a
+ * large board is a few hundred kilobytes. Coalescing at 250 ms costs at most a quarter-second of typing
+ * in a hard crash, and the ordinary ways a page ends — closing, navigating, backgrounding — are covered
+ * exactly by the synchronous `pagehide` flush below rather than by this timer.
+ */
+const LOCAL_PERSIST_MS = 250;
 
 export type SaveState =
     | { status: 'clean'; savedAt: string | null }
@@ -89,6 +101,29 @@ export interface DocumentState {
     overwriteWithMine: () => void;
     /** Resolve a conflict by taking THEIRS: fetch the server's document and adopt it, discarding local work. */
     takeTheirs: () => void;
+
+    /**
+     * Unsaved work found ON THIS DEVICE when the project opened — an OFFER, never applied automatically.
+     *
+     * Restoring it silently is the failure mode that matters: a tab holding an older copy would overwrite
+     * a colleague's saved work while looking like it rescued yours. `continuesServerDraft` is what lets
+     * the offer be worded honestly — true means this work was typed on top of exactly what the server
+     * still holds ("your unsaved changes"), false means the server has moved on since ("work based on an
+     * older version"), and those two deserve different words and different confidence.
+     */
+    recovery: { circuit: CircuitJson; at: string; continuesServerDraft: boolean } | null;
+    /** Adopt the recovered document as the current one. It becomes dirty and saves like any other edit. */
+    recoverLocal: () => void;
+    /** Throw the local copy away and keep what the server sent. */
+    discardLocal: () => void;
+    /**
+     * Whether unsaved work is actually being kept on this device.
+     *
+     * Reported rather than assumed. `localStorage` throws when the origin is out of quota and in some
+     * private-browsing modes, and a user who believes their work is backed up when it is not will make
+     * different decisions than one who knows. Silence here would be the lie.
+     */
+    localBackup: PutResult;
 }
 
 export function useDocument(
@@ -97,11 +132,33 @@ export function useDocument(
     opened: OpenedProject | null,
     /** Re-fetch the project. Required, because "load theirs" is meaningless without asking the server. */
     reloadOpened: () => void,
+    /**
+     * Where unsaved work is kept on this device. Injected for the same reason the token store is: the
+     * decision stays visible at the composition root, and tests can install one that refuses every write
+     * so the "your work is NOT being backed up" path is exercised rather than assumed.
+     */
+    draftStore?: DraftStore,
 ): DocumentState {
+    /**
+     * PINNED for the life of the hook, and not a default parameter.
+     *
+     * `draftStore: DraftStore = browserDraftStore()` reads correctly and is wrong: a default expression is
+     * evaluated on EVERY render, so the store arrives as a new object identity each time, which invalidates
+     * every callback that depends on it — `sendFor`, `flush`, `schedule` — and through them the effects
+     * that depend on those. The suite went from green to nine failures and five-second timeouts, which is
+     * the render loop that produces. Creating it once is also the honest model: a store swapped mid-life
+     * would leave half the session's work in one place and half in another.
+     */
+    const storeRef = useRef<DraftStore | null>(null);
+    if (!storeRef.current) storeRef.current = draftStore ?? browserDraftStore();
+    const store = storeRef.current;
+
     const [history, setHistory] = useState<History | null>(null);
     const [source, setSource] = useState<OpenedProject['source'] | null>(null);
     const [save, setSave] = useState<SaveState>({ status: 'clean', savedAt: null });
     const [refusal, setRefusal] = useState<DocumentState['refusal']>(null);
+    const [recovery, setRecovery] = useState<DocumentState['recovery']>(null);
+    const [localBackup, setLocalBackup] = useState<PutResult>({ ok: true });
 
     /**
      * Everything mutable, in one object keyed by the project it belongs to.
@@ -122,6 +179,9 @@ export function useDocument(
         /** Currently being sent. Non-null means a save is open and nothing else may start. */
         inFlight: CircuitJson | null;
         timer: ReturnType<typeof setTimeout> | null;
+        /** Typed but not yet written to this device — coalesced separately from the save. */
+        unpersisted: CircuitJson | null;
+        persistTimer: ReturnType<typeof setTimeout> | null;
         alive: boolean;
     }>({
         projectId: null,
@@ -130,6 +190,8 @@ export function useDocument(
         pending: null,
         inFlight: null,
         timer: null,
+        unpersisted: null,
+        persistTimer: null,
         alive: true,
     });
 
@@ -140,6 +202,45 @@ export function useDocument(
             state.alive = false;
         };
     }, []);
+
+    // ---- The copy that survives this tab --------------------------------------------------------------
+
+    /**
+     * Write the current document to this device, now.
+     *
+     * Synchronous on purpose — it is called from `pagehide`, which is the last callback a page reliably
+     * gets, and an async write started there has no promise that it finishes.
+     */
+    const persistNow = useCallback(() => {
+        const state = w.current;
+        if (state.persistTimer) {
+            clearTimeout(state.persistTimer);
+            state.persistTimer = null;
+        }
+        const doc = state.unpersisted;
+        if (!doc || !state.projectId) return;
+        state.unpersisted = null;
+        const result = store.put({
+            projectId: state.projectId,
+            circuit: doc,
+            baseToken: state.token,
+            baseVersionId: state.baseVersionId,
+            at: new Date().toISOString(),
+        });
+        // Only surface a CHANGE, and never from inside a page-teardown callback where a setState is
+        // pointless. `state.alive` is the same guard the save path uses for the same reason.
+        if (state.alive) setLocalBackup((prev) => (prev.ok === result.ok ? prev : result));
+    }, [store]);
+
+    // The ordinary ways a page ends — closing the tab, navigating away, the OS backgrounding a phone —
+    // all deliver `pagehide` and none of them wait for a debounce. `beforeunload` is deliberately not
+    // used: it does not fire on mobile, and browsers restrict what may happen inside it.
+    useEffect(() => {
+        if (typeof window === 'undefined') return;
+        const onHide = () => persistNow();
+        window.addEventListener('pagehide', onHide);
+        return () => window.removeEventListener('pagehide', onHide);
+    }, [persistNow]);
 
     // ---- Adopt whatever the loader opened -------------------------------------------------------------
 
@@ -178,6 +279,41 @@ export function useDocument(
         setSource(opened.source);
         setSave({ status: 'clean', savedAt: opened.source === 'working-copy' ? opened.updatedAt : null });
         setRefusal(null);
+
+        // Is there work on this device the server never received?
+        //
+        // OFFERED, never applied. Restoring automatically is the one behaviour that turns a safety net into
+        // a hazard: a tab reopened after someone else saved would put its own older document back on screen
+        // and then save it over theirs, and it would look like recovery working.
+        // The decision uses ONLY the concurrency token, never a clock. An earlier version compared the
+        // local write time against the server's `updatedAt` to decide whether a copy was stale, which reads
+        // sensibly and cannot work: those two timestamps come from different machines, and a client whose
+        // clock is a day behind would silently delete real unsaved work. The token is the one value both
+        // sides agree on by construction.
+        const local = store.get(projectId);
+        const serverToken = opened.source === 'working-copy' ? opened.updatedAt : null;
+
+        const openedCircuit = opened.source === 'empty' ? null : opened.circuitJson;
+
+        if (!local) {
+            setRecovery(null);
+        } else if (openedCircuit !== null && JSON.stringify(local.circuit) === JSON.stringify(openedCircuit)) {
+            // Nothing to rescue: the server already has exactly this. Offering it would be noise, and this
+            // is decidable from the documents themselves rather than from any assumption about time.
+            store.clear(projectId);
+            setRecovery(null);
+        } else {
+            // Otherwise it IS unsaved work and gets offered — the only question is how confidently. Built
+            // on exactly what the server still holds, it is simply "your unsaved changes". Built on a draft
+            // the server has since replaced, adopting it discards whatever came after, and the wording
+            // downstream depends on knowing which. Never dropped on a guess: erring toward offering costs
+            // a dialog, erring the other way costs the work.
+            setRecovery({
+                circuit: local.circuit,
+                at: local.at,
+                continuesServerDraft: local.baseToken === serverToken,
+            });
+        }
         // `sendFor` is stable for the life of the hook; including it would re-adopt on every render.
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [opened, projectId]);
@@ -231,6 +367,16 @@ export function useDocument(
                     void sendFor(forProject, queued, state.token, state.baseVersionId);
                 } else {
                     setSave({ status: 'clean', savedAt: saved.updatedAt });
+                    // The server now holds this work, so the local copy has nothing left to rescue and
+                    // keeping it would offer a stale document back on the next open. Cleared ONLY here,
+                    // where the document is genuinely safe elsewhere — never on a failure, and never when
+                    // more edits are already queued behind this save.
+                    state.unpersisted = null;
+                    if (state.persistTimer) {
+                        clearTimeout(state.persistTimer);
+                        state.persistTimer = null;
+                    }
+                    store.clear(forProject);
                 }
             } catch (err) {
                 if (state.inFlight === doc) state.inFlight = null;
@@ -254,7 +400,7 @@ export function useDocument(
                 );
             }
         },
-        [api],
+        [api, store],
     );
 
     const flush = useCallback(() => {
@@ -282,8 +428,15 @@ export function useDocument(
                 state.timer = null;
                 flush();
             }, AUTOSAVE_IDLE_MS);
+
+            // The local copy runs on its own, much shorter clock. It must NOT wait for the save: the whole
+            // point is to hold what the server does not have yet, and a failed or refused save leaves the
+            // document unsent for as long as the problem lasts.
+            state.unpersisted = doc;
+            if (state.persistTimer) clearTimeout(state.persistTimer);
+            state.persistTimer = setTimeout(persistNow, LOCAL_PERSIST_MS);
         },
-        [flush],
+        [flush, persistNow],
     );
 
     // The last edit must survive leaving the page. A debounce cancelled by unmount silently drops whatever
@@ -395,6 +548,37 @@ export function useDocument(
         reloadOpened();
     }, [reloadOpened]);
 
+    /**
+     * Take the recovered document as the current one.
+     *
+     * ADOPT, not commit — the same reasoning the loader uses. Recovered work was typed in a session this
+     * history never witnessed, so undoing across it would step back into a document that never existed
+     * here. It is then scheduled like an ordinary edit, which is what makes it reach the server: the local
+     * copy is a rescue buffer, not a place work is allowed to live.
+     */
+    const recoverLocal = useCallback(() => {
+        const state = w.current;
+        const found = recovery;
+        if (!found || !state.projectId) return;
+        setHistory(adoptDocument({ circuit: found.circuit, ui: {} }));
+        setRecovery(null);
+        setRefusal(null);
+        schedule(found.circuit);
+    }, [recovery, schedule]);
+
+    const discardLocal = useCallback(() => {
+        const state = w.current;
+        if (state.projectId) store.clear(state.projectId);
+        // Also drop anything queued for the local writer, or the copy just discarded would be written
+        // straight back when the coalescing timer fires.
+        state.unpersisted = null;
+        if (state.persistTimer) {
+            clearTimeout(state.persistTimer);
+            state.persistTimer = null;
+        }
+        setRecovery(null);
+    }, [store]);
+
     return {
         circuit: history?.present.circuit ?? null,
         source,
@@ -409,5 +593,9 @@ export function useDocument(
         flush,
         overwriteWithMine,
         takeTheirs,
+        recovery,
+        recoverLocal,
+        discardLocal,
+        localBackup,
     };
 }
