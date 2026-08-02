@@ -6,8 +6,8 @@
  */
 import type { CircuitJson } from '@circuit-forge/eda-core';
 import { parseSpiceValue } from '@circuit-forge/eda-core';
-
 import type { LayoutabilityResult } from '@circuit-forge/pcb-preflight';
+
 import type { TscElement } from './parity';
 import type { PlaceablePart, Rotation } from './placement';
 

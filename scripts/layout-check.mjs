@@ -363,7 +363,7 @@ for (const [name, circuit] of cases) {
     writeFileSync(join(dir, 'board.kicad_pcb'), result.outputs.kicadPcb);
     writeFileSync(join(dir, 'board.kicad_pro'), result.outputs.kicadPro);
     writeFileSync(join(dir, 'bom.csv'), result.outputs.bomCsv);
-    writeFileSync(join(dir, 'pnp.csv'), result.outputs.pnpCsv);
+    writeFileSync(join(dir, 'placement-preview.csv'), result.outputs.placementPreviewCsv);
 
     const pourNote = result.diagnostics.find((d) => d.code === 'PCB032' || d.code === 'PCB033');
     if (pourNote)

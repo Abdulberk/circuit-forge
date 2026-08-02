@@ -15,7 +15,6 @@
  * What is left here needs no oracle at all — and is no less load-bearing for it.
  */
 import type { CircuitJson } from '@circuit-forge/eda-core';
-
 import { classifyCircuit } from '@circuit-forge/pcb-preflight';
 
 describe('I-IDENTITY — the delivered bundle must be assemblable', () => {

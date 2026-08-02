@@ -37,8 +37,9 @@ jest.mock('../storage/s3', () => ({ uploadFile: (...a: unknown[]) => uploadFile(
 const drcReport = jest.fn();
 const exportGerbers = jest.fn();
 const exportGlb = jest.fn();
+const exportPos = jest.fn();
 jest.mock('../runners/kicad', () => ({
-    makeNativeKicad: () => ({ notaryDrc: jest.fn(), drcReport, exportGerbers, exportGlb }),
+    makeNativeKicad: () => ({ notaryDrc: jest.fn(), drcReport, exportGerbers, exportGlb, exportPos }),
 }));
 jest.mock('../runners/freerouting', () => ({ makeNativeFreeroutingRunner: () => jest.fn() }));
 jest.mock('../runners/rust-placement', () => ({ makeRustPlacementRunner: () => jest.fn() }));
@@ -56,6 +57,22 @@ import { processLayoutJob } from './processor';
 const JOB_ID = 'job-1';
 const job = { data: { jobId: JOB_ID } } as Job<{ jobId: string }>;
 
+/** A 10 × 10 mm board outline in 4.6 format, as kicad-cli plots it. */
+const EDGE_CUTS_10MM = [
+    '%FSLAX46Y46*%',
+    '%MOMM*%',
+    'D10*',
+    'X0Y0D02*',
+    'X10000000Y0D01*',
+    'X10000000Y10000000D01*',
+    'X0Y10000000D01*',
+    'X0Y0D01*',
+    'M02*',
+].join('\n');
+
+/** Placements that sit on that board — the agreeing pair. */
+const POSITION_ON_BOARD = ['Ref,Val,Package,PosX,PosY,Rot,Side', '"R1","10k","0603",2.5,2.5,0,top'].join('\n');
+
 /** A routed board pcb-core is happy with. Diagnostics carry no PCB032, so no pour is expected. */
 const okLayout = (diagnostics: unknown[] = []) => ({
     ok: true,
@@ -68,7 +85,7 @@ const okLayout = (diagnostics: unknown[] = []) => ({
         kicadPcb: '(kicad_pcb)',
         kicadPro: '(kicad_pro)',
         bomCsv: 'ref,value',
-        pnpCsv: 'ref,x,y',
+        placementPreviewCsv: 'ref,x,y',
     },
     stats: { traces: 7, vias: 1, errors: 0, durationMs: 10 },
     fab: { tier: 'economy', profile: {} },
@@ -106,7 +123,14 @@ beforeEach(() => {
     layoutJob.findUnique.mockResolvedValue({ circuit: { components: [], nets: [] }, options: {} });
     layoutJob.update.mockResolvedValue({});
     layoutCircuit.mockResolvedValue(okLayout());
-    exportGerbers.mockResolvedValue({ layers: { B_Cu: 'G04*', F_Cu: 'G04*' }, drill: 'M48' });
+    // A real 10 × 10 mm outline, not a stub: the delivery-frame check reads this gerber and the position
+    // file below against EACH OTHER, so a placeholder here would make every test in this file assert
+    // against a bundle that could not be checked — the precise blindness the check exists to remove.
+    exportGerbers.mockResolvedValue({
+        layers: { B_Cu: 'G04*', F_Cu: 'G04*', Edge_Cuts: EDGE_CUTS_10MM },
+        drill: 'M48',
+    });
+    exportPos.mockResolvedValue(POSITION_ON_BOARD);
     exportGlb.mockResolvedValue(Buffer.from('glb'));
     uploadFile.mockResolvedValue(undefined);
 });
@@ -188,6 +212,37 @@ describe('a board KiCad ACCEPTED is delivered', () => {
         const payload = JSON.parse(uploadFile.mock.calls[0]![1] as string) as { gerbers: { drill: string } };
         expect(payload.gerbers.drill).toBe('M48'); // from exportGerbers, not outputs.gerbers (drill: '')
         expect(exportGerbers).toHaveBeenCalledWith('(kicad_pcb)');
+    });
+
+    it('delivers the placement file plotted from the SAME board, not pcb-core’s design-frame preview', async () => {
+        // The defect this replaces: the bundle carried gerbers from `kicadPcb` and a CSV built from the
+        // design soup, 100 mm apart on every board. Both files must now come from one board.
+        await processLayoutJob(job);
+        const payload = JSON.parse(uploadFile.mock.calls[0]![1] as string) as { pnpCsv: string };
+        expect(exportPos).toHaveBeenCalledWith('(kicad_pcb)');
+        expect(payload.pnpCsv).toBe(POSITION_ON_BOARD);
+        expect(payload.pnpCsv).not.toBe('ref,x,y'); // the preview, which must never be delivered
+    });
+
+    it('REFUSES a bundle whose placements and gerbers disagree about where the board is', async () => {
+        // The (+100, −100) mm bundle, reconstructed. Every artifact here is individually well-formed:
+        // the outline is a real 10×10 board, the CSV is valid kicad-cli output with parseable numbers,
+        // DRC is clean. Only comparing them to each other reveals it — which is exactly why it shipped.
+        exportPos.mockResolvedValue(
+            [
+                'Ref,Val,Package,PosX,PosY,Rot,Side',
+                '"R1","10k","0603",102.5,-97.5,0,top',
+                '"C1","1u","0402",107,-93,0,top',
+            ].join('\n'),
+        );
+        await processLayoutJob(job);
+        const row = lastUpdate();
+        expect(row.status).toBe('FAILED');
+        expect(String(row.errorMessage)).toMatch(/not self-consistent/i);
+        expect(String(row.errorMessage)).toMatch(/different frames/i);
+        // Fail-closed all the way: no key on the row means the API has nothing to presign.
+        expect(row.gerbersKey).toBeUndefined();
+        expect(uploadFile).not.toHaveBeenCalled();
     });
 
     it('a failed 3D render must not cost a manufacturable board', async () => {

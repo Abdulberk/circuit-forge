@@ -48,6 +48,8 @@ export interface NativeKicad {
     drcReport: (kicadPcb: string, kicadPro?: string) => Promise<KicadDrcJson>;
     exportGlb: (kicadPcb: string) => Promise<Buffer>;
     exportGerbers: (kicadPcb: string) => Promise<GerberOutputs>;
+    /** The DELIVERED pick-and-place, plotted from the same board as the gerbers so the two share a frame. */
+    exportPos: (kicadPcb: string) => Promise<string>;
 }
 
 /**
@@ -283,16 +285,34 @@ export function makeNativeKicad(opts: KicadOpts = {}): NativeKicad {
         withBoard(kicadPcb, undefined, async (dir) => {
             const out = join(dir, 'gbr');
             mkdirSync(out);
+            // `--use-drill-file-origin` here and `--drill-origin plot` below make both artifacts measure
+            // from the marker pcb-core stamps into the board (`injectPlacementOrigin`) — the board's own
+            // lower-left corner. The position file two blocks down reads the SAME marker, which is what
+            // ends the (+100, −100) mm split between the copper and the placements. All three flags are
+            // one decision; changing any one alone re-opens the defect, so they are asserted together.
             await execFileAsync(
                 cli,
-                ['pcb', 'export', 'gerbers', '--check-zones', '--output', out, join(dir, 'b.kicad_pcb')],
+                [
+                    'pcb',
+                    'export',
+                    'gerbers',
+                    '--check-zones',
+                    '--use-drill-file-origin',
+                    '--output',
+                    out,
+                    join(dir, 'b.kicad_pcb'),
+                ],
                 { timeout: timeoutMs, maxBuffer: MAX_BUFFER, signal: opts.signal },
             );
-            await execFileAsync(cli, ['pcb', 'export', 'drill', '--output', `${out}/`, join(dir, 'b.kicad_pcb')], {
-                timeout: timeoutMs,
-                maxBuffer: MAX_BUFFER,
-                signal: opts.signal,
-            });
+            await execFileAsync(
+                cli,
+                ['pcb', 'export', 'drill', '--drill-origin', 'plot', '--output', `${out}/`, join(dir, 'b.kicad_pcb')],
+                {
+                    timeout: timeoutMs,
+                    maxBuffer: MAX_BUFFER,
+                    signal: opts.signal,
+                },
+            );
             const layers: Record<string, string> = {};
             let drill = '';
             for (const f of readdirSync(out)) {
@@ -312,5 +332,52 @@ export function makeNativeKicad(opts: KicadOpts = {}): NativeKicad {
             return { layers, drill };
         });
 
-    return { notaryDrc, drcReport, exportGlb, exportGerbers };
+    /**
+     * The pick-and-place file, plotted from the SAME board the gerbers came from.
+     *
+     * This replaces a CSV that pcb-core built from the design soup. Both looked correct on their own, and
+     * nothing compared them to each other, so nobody noticed they were 100 mm apart — measured across
+     * three boards and nineteen components with no exception. A machine loading that pair puts every part
+     * 100 mm off the copper, on boards whose pads sit half a millimetre apart.
+     *
+     * `--units mm` is not optional decoration: kicad-cli defaults this to INCHES, and a position file
+     * silently in inches next to millimetre gerbers is the same defect back with a 25.4× factor instead of
+     * a 100 mm one — quieter, and therefore worse.
+     *
+     * `--exclude-dnp` follows from what the file MEANS: a do-not-populate part must not be handed to the
+     * placement machine. Harmless today (nothing marks DNP yet), correct the day something does.
+     */
+    const exportPos = async (kicadPcb: string): Promise<string> =>
+        withBoard(kicadPcb, undefined, async (dir) => {
+            const out = join(dir, 'pos.csv');
+            await execFileAsync(
+                cli,
+                [
+                    'pcb',
+                    'export',
+                    'pos',
+                    '--format',
+                    'csv',
+                    '--units',
+                    'mm',
+                    '--use-drill-file-origin',
+                    '--exclude-dnp',
+                    '--output',
+                    out,
+                    join(dir, 'b.kicad_pcb'),
+                ],
+                { timeout: timeoutMs, maxBuffer: MAX_BUFFER, signal: opts.signal },
+            );
+            const csv = readFileSync(out, 'utf8');
+            // A header-only file is what an empty board and a broken export look like alike. The board
+            // reaching this point has already passed parity and DRC, so it HAS components; a position file
+            // without any is the export failing quietly, and quiet is the one thing this path may not do.
+            if (csv.split(/\r?\n/).filter((l) => l.trim()).length < 2)
+                throw new Error(
+                    'kicad-cli exported a position file with no placements — refusing to deliver a bundle whose assembly file is empty.',
+                );
+            return csv;
+        });
+
+    return { notaryDrc, drcReport, exportGlb, exportGerbers, exportPos };
 }

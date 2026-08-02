@@ -4,7 +4,22 @@
  *
  * Closed form (PCB_BRIEF §V5): `I = k · ΔT^0.44 · A^0.725`  ⇒  `A = (I / (k·ΔT^0.44))^(1/0.725)` [mil²],
  * then `width_mil = A / (1.378 · copperOz)` and `width_mm = width_mil · 0.0254`.
- *   k = 0.048 external (outer) layer, 0.024 internal (a buried trace dissipates heat worse → wider).
+ *   k = 0.048 external (outer) layer, 0.024 internal.
+ *
+ * ON THAT 2:1 — the number is right to use, the usual EXPLANATION for it is not, and this docstring
+ * carried the wrong one until 2 Aug 2026 ("a buried trace dissipates heat worse → wider"). IPC-2152's
+ * measurements show the opposite: in still air an internal trace runs COOLER than an identical external
+ * one, because FR-4 conducts heat away better than convection and radiation do. The internal k was never
+ * measured — when multilayer boards appeared, the external chart values were simply halved. So treat
+ * k=0.024 as a deliberately CONSERVATIVE floor with no physical derivation behind it, and do not repeat
+ * the heat-dissipation story to a customer; the first person who knows IPC-2152 will catch it.
+ *
+ * Note also that halving k does not halve the width: width scales as I^(1/0.725), so the internal
+ * requirement is about 2.6× the external one, not 2×.
+ *
+ * IPC-2221 is the LEGACY curve fit. IPC-2152 supersedes it for current capacity (it accounts for copper
+ * and board thickness, dielectric conductivity and adjacent planes). We stay on 2221 because it needs
+ * only what we actually know about a board; the label matters when reporting a verdict.
  *
  * Validity envelope (the IPC-2221 chart bounds): I ≤ 35 A, ΔT 10–100 °C, copper 0.5–3 oz, width ≤ 400 mil.
  * OUTSIDE the chart we CLAMP and flag — never silently extrapolate a chart past where it was measured

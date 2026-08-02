@@ -44,6 +44,18 @@ export interface FabProfile {
     placementGridMm?: number;
     /** Lever 2 keep-back from the board edge for part courtyards (mm). Default 4. */
     placementMarginMm?: number;
+    /**
+     * Narrowest silkscreen stroke the fab will PRINT. Below it the art is not rejected, it is deleted —
+     * so a board can arrive with its reference designators silently missing. Default 0.15 mm (JLCPCB and
+     * PCBWay's published floor; Eurocircuits 0.10, OSH Park 0.127 — 0.15 satisfies all of them).
+     */
+    minSilkWidthMm?: number;
+    /**
+     * Shortest silkscreen character worth printing. The converter scales a designator to the part it
+     * labels, which puts `R1` at 0.267 mm on an 0603 — geometry a fab can print and nobody can read.
+     * Default 0.8 mm, the smallest height commonly cited as legible on a populated board.
+     */
+    minSilkTextHeightMm?: number;
 }
 
 /**
@@ -62,6 +74,8 @@ export const FAB_TIERS: Record<'economy' | 'standard' | 'advanced', FabProfile> 
         copperOz: 1,
         deltaTC: 10,
         gndPour: true,
+        minSilkWidthMm: 0.15,
+        minSilkTextHeightMm: 0.8,
     },
     standard: {
         minTraceWidthMm: 0.127,
@@ -71,6 +85,8 @@ export const FAB_TIERS: Record<'economy' | 'standard' | 'advanced', FabProfile> 
         copperOz: 1,
         deltaTC: 10,
         gndPour: true,
+        minSilkWidthMm: 0.15,
+        minSilkTextHeightMm: 0.8,
     },
     advanced: {
         minTraceWidthMm: 0.0889,
@@ -80,6 +96,8 @@ export const FAB_TIERS: Record<'economy' | 'standard' | 'advanced', FabProfile> 
         copperOz: 1,
         deltaTC: 10,
         gndPour: true,
+        minSilkWidthMm: 0.15,
+        minSilkTextHeightMm: 0.8,
     },
 };
 
@@ -110,6 +128,8 @@ export interface FabProfileInput {
     gndPour?: unknown;
     placementGridMm?: unknown;
     placementMarginMm?: unknown;
+    minSilkWidthMm?: unknown;
+    minSilkTextHeightMm?: unknown;
 }
 
 export interface ResolvedFabProfile {
@@ -131,6 +151,12 @@ const PASSTHROUGH_FIELDS = [
     'deltaTC',
     'placementGridMm',
     'placementMarginMm',
+    // Silkscreen limits are passthrough rather than FLOOR fields because they are not a fab's capability
+    // limit in the same sense: a caller who knows their fab prints 0.10 mm legend is making a legitimate
+    // choice, and the harm from going too LOW is deletion of the art, not a rejected panel. The default is
+    // applied below so an unset value can never mean "no limit".
+    'minSilkWidthMm',
+    'minSilkTextHeightMm',
 ] as const;
 
 const isPositiveFinite = (v: unknown): v is number => typeof v === 'number' && Number.isFinite(v) && v > 0;
@@ -316,6 +342,61 @@ export function reportViaCompliance(
         if (hole < profile.viaDrillMm || outer < minOuter) undersized++;
     }
     return { total, undersized };
+}
+
+/**
+ * Mark the board's own lower-left corner as the drill/place origin.
+ *
+ * WHY THIS EXISTS — the defect it removes, measured 2 Aug 2026. The delivered bundle carried gerbers
+ * plotted by kicad-cli from the .kicad_pcb, and a pick-and-place CSV built separately from the design
+ * soup. Nothing tied the two frames together, and they were apart by exactly (+100, −100) mm on every
+ * board (3 boards, 19 components, zero exceptions). An assembly house feeding that bundle to a machine
+ * places every part 100 mm from where the copper is, which on a board whose pads sit 0.5 mm apart is
+ * not "slightly off" — it is off the board. The parts are 100 mm out and the board is scrap.
+ *
+ * The cheap repair would be to add the offset back in the CSV writer. That is a constant standing in
+ * for an agreement between two producers, and the day either one moves, the constant is silently wrong
+ * again with nothing to say so — which is precisely how this survived. So instead: name ONE origin, in
+ * the board file, and have every exporter measure from it. `pcb export gerbers --use-drill-file-origin`,
+ * `pcb export drill --drill-origin plot` and `pcb export pos --use-drill-file-origin` then read the same
+ * marker out of the same file, and the frames agree BY CONSTRUCTION. There is no constant left to drift.
+ *
+ * Lower-left is chosen because that is the corner an assembly house expects, and because KiCad's Y grows
+ * DOWNWARD while the gerber/position frame grows upward: the visual bottom-left is `(minX, maxY)` in
+ * board coordinates. Getting that sign wrong flips the board about its own centre — a mirrored placement
+ * that still looks plausible — so it is asserted in the tests rather than reasoned about here.
+ *
+ * Idempotent: an existing origin is replaced, never duplicated (a second `aux_axis_origin` is a file
+ * whose meaning depends on which one the reader takes).
+ */
+export type PlacementOriginResult =
+    | { kind: 'ok'; kicadPcb: string; originMm: { x: number; y: number } }
+    | { kind: 'no-outline' };
+
+export function injectPlacementOrigin(kicadPcb: string): PlacementOriginResult {
+    // The OUTLINE only — never the all-coordinates fallback `injectZone` accepts. A pour may safely
+    // over-cover, but an origin derived from stray copper would silently move every delivered
+    // coordinate, which is the very failure this function exists to end.
+    const box = edgeCutsBbox(kicadPcb);
+    if (!box) return { kind: 'no-outline' };
+
+    const originMm = { x: round3(box.minX), y: round3(box.maxY) };
+    const entry = `(aux_axis_origin ${originMm.x} ${originMm.y})`;
+
+    if (/\(aux_axis_origin\s+[-\d.]+\s+[-\d.]+\)/.test(kicadPcb)) {
+        return { kind: 'ok', kicadPcb: kicadPcb.replace(/\(aux_axis_origin\s+[-\d.]+\s+[-\d.]+\)/, entry), originMm };
+    }
+    if (/\(setup\b/.test(kicadPcb)) {
+        return { kind: 'ok', kicadPcb: kicadPcb.replace(/\(setup\b/, `(setup\n    ${entry}`), originMm };
+    }
+    // No setup block at all: open one before the net table, which every board file has. Horizontal
+    // whitespace only — `\s*` would swallow blank lines and reindent the net table it is anchoring to.
+    if (!/^[^\S\n]*\(net \d+ /m.test(kicadPcb)) return { kind: 'no-outline' };
+    return {
+        kind: 'ok',
+        kicadPcb: kicadPcb.replace(/^([^\S\n]*)(\(net \d+ )/m, `$1(setup\n$1  ${entry}\n$1)\n$1$2`),
+        originMm,
+    };
 }
 
 /**
