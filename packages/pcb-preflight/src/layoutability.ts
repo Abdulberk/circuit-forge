@@ -20,6 +20,7 @@ import {
     type FootprintResolution,
     type PadCountOracle,
 } from './footprints';
+import { reportPackageAgreement } from './package-agreement';
 
 export type LayoutRole = 'direct' | 'chip-fallback' | 'connectorized' | 'net-only' | 'excluded';
 
@@ -235,6 +236,11 @@ function classifyComponent(
         });
         return { component, role: 'excluded' };
     }
+
+    // The one check that looks OUTSIDE our own chain of reasoning: does the part number we are ordering
+    // agree with the pads we are about to draw? Everything else here compares our data to our data, and
+    // a board can pass all of it with a QFN part sitting on SOIC pads. See package-agreement.ts.
+    reportPackageAgreement(component, footprint, diagnostics);
 
     // subckt + jfet -> chip fallback; everything else has a direct tscircuit element.
     if (type === 'subckt' || type === 'jfet') {

@@ -25,6 +25,8 @@ export {
     type PadCountOracle,
 } from './footprints';
 
+export { checkPackageAgreement, reportPackageAgreement, type PackageAgreement } from './package-agreement';
+
 export {
     classifyCircuit,
     type LayoutabilityResult,
