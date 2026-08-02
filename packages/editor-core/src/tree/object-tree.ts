@@ -49,6 +49,15 @@ export interface ObjectRef {
     /** Stable id within its kind: a componentId, a padId, a net name, or the kind itself for singletons. */
     id: string;
     path: string[];
+    /**
+     * Which component this belongs to, for the kinds whose id is unique only WITHIN one.
+     *
+     * A pin is called `1`, `+` or `anode`, and every second part on the board has a pin by that name — so
+     * `ref.id` alone cannot address one. The owner is visible in `path`, but reading it back by counting
+     * from the end (`path[path.length - 3]`) is positional coupling: it works until the tree gains a level,
+     * and then it silently addresses the wrong part rather than failing. Carried explicitly instead.
+     */
+    componentId?: string;
 }
 
 export interface TreeNode {
@@ -81,7 +90,12 @@ export interface ObjectTree {
     ambiguous: Array<{ what: string; path: string }>;
 }
 
-const ref = (kind: ObjectKind, id: string, parent: string[]): ObjectRef => ({ kind, id, path: [...parent, id] });
+const ref = (kind: ObjectKind, id: string, parent: string[], componentId?: string): ObjectRef => ({
+    kind,
+    id,
+    path: [...parent, id],
+    ...(componentId === undefined ? {} : { componentId }),
+});
 
 /**
  * Is this a PART — something an engineer places, buys and assembles — or a net annotation?
@@ -178,7 +192,7 @@ export function buildObjectTree(circuit: CircuitJson, layout?: LayoutGeometry): 
                             // `pinId` is the design's own name for the terminal — '1', '+', 'anode', 'base'.
                             // The index is the fallback for a design that left it blank, so two unnamed pins
                             // stay addressable apart instead of collapsing onto one path.
-                            ref: ref('pin', p.pinId || String(i), pinsRef.path),
+                            ref: ref('pin', p.pinId || String(i), pinsRef.path, c.id),
                             label: p.pinId || `pin${i + 1}`,
                             // The net's NAME, not its id: 'GND' is what an engineer reads, 'gnd' is a key.
                             // Falls back to the id when the pin references a net the design does not declare

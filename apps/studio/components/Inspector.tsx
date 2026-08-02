@@ -13,7 +13,14 @@
  */
 
 import type { CircuitJson } from '@circuit-forge/eda-core';
-import { setDesignator, setNetName, setValue, type TreeNode } from '@circuit-forge/editor-core';
+import {
+    disconnectPin,
+    movePinToNet,
+    setDesignator,
+    setNetName,
+    setValue,
+    type TreeNode,
+} from '@circuit-forge/editor-core';
 import { useEffect, useRef, useState } from 'react';
 
 import type { DocumentState } from '../lib/useDocument';
@@ -89,6 +96,16 @@ export function Inspector({
     const component = kind === 'component' ? (circuit.components ?? []).find((c) => c.id === id) : undefined;
     const net = kind === 'net' ? (circuit.nets ?? []).find((n) => n.id === id) : undefined;
 
+    // A pin: the only place in this app where connectivity can be changed. `componentId` comes off the ref
+    // rather than being counted out of the path, because a pin is called `1` or `+` on every second part
+    // and its id alone addresses nothing.
+    const owner =
+        kind === 'pin' && selected.ref.componentId
+            ? (circuit.components ?? []).find((c) => c.id === selected.ref.componentId)
+            : undefined;
+    const pin = owner?.pins.find((p) => p.pinId === id);
+    const pinNet = pin ? (circuit.nets ?? []).find((n) => n.id === pin.netId) : undefined;
+
     return (
         <dl>
             {component && (
@@ -125,7 +142,58 @@ export function Inspector({
                 </>
             )}
 
-            {!component && !net && (
+            {owner && pin && (
+                <>
+                    <EditableField label="Pin" value={`${owner.designator} · ${pin.pinId}`} readOnly />
+                    {/*
+                        Connectivity, as a list rather than a canvas. This is the whole point of the kernel
+                        work behind it: until now every connection in every document came from the AI and no
+                        human could correct one.
+
+                        A SELECT, not a drag: choosing a net from a list means "this pin belongs there", which
+                        moves ONLY this pin. Dragging a wire would mean "these become one node" and would
+                        bring the pin's existing neighbours along — a merge. They are different operations
+                        (`movePinToNet` vs `connectPins`) and offering the wrong one here would silently
+                        rewire parts the user never selected.
+                    */}
+                    <dt>Net</dt>
+                    <dd>
+                        <select
+                            value={pin.netId}
+                            aria-label="Net"
+                            onChange={(e) =>
+                                doc.apply((c) =>
+                                    movePinToNet(c, { componentId: owner.id, pinId: pin.pinId }, e.target.value),
+                                )
+                            }
+                        >
+                            {(circuit.nets ?? []).map((n) => (
+                                <option key={n.id} value={n.id}>
+                                    {n.name}
+                                    {n.isGround ? ' (ground)' : n.isPower ? ' (power)' : ''}
+                                </option>
+                            ))}
+                        </select>
+                    </dd>
+                    <dt />
+                    <dd>
+                        {/* Named for what it does, not for what it is called elsewhere: the pin does not
+                            become unconnected — the schema has no such state — it lands on a net of its
+                            own, which is what "unconnected" means to ERC. */}
+                        <button
+                            onClick={() =>
+                                doc.apply((c) => disconnectPin(c, { componentId: owner.id, pinId: pin.pinId }))
+                            }
+                        >
+                            Move to its own net
+                        </button>
+                    </dd>
+                    {pinNet && pinNet.isGround && <EditableField label="Role" value="ground" readOnly />}
+                    {pinNet && pinNet.isPower && <EditableField label="Role" value="power rail" readOnly />}
+                </>
+            )}
+
+            {!component && !net && !pin && (
                 <>
                     <EditableField label="Name" value={selected.label} readOnly />
                     <EditableField label="Kind" value={selected.ref.kind} readOnly />

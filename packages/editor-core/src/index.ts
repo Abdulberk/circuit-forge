@@ -18,7 +18,7 @@ export type { ObjectKind, ObjectRef, TreeNode, ObjectTree } from './tree/object-
  * the reason, so a caller can put the message beside the input rather than showing "something went wrong".
  */
 export { setDesignator, setNetName, setValue } from './document/edits';
-export { connectPins, disconnectPin, splitNet } from './document/nets';
+export { connectPins, disconnectPin, movePinToNet, splitNet } from './document/nets';
 export type { EditResult, EditRefusal } from './document/edits';
 
 /**

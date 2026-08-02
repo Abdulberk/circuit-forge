@@ -208,6 +208,54 @@ export function disconnectPin(circuit: CircuitJson, ref: PinRef): EditResult {
 }
 
 /**
+ * Put ONE pin on a named net, taking it off whatever it was on.
+ *
+ * Deliberately not the same operation as `connectPins`, and the difference is the whole reason both exist.
+ * Dragging a wire from a pin says "these become one node", so everything the pin was already tied to comes
+ * with it — a merge. Choosing a net from a list next to a pin says "this pin belongs on that net", and
+ * dragging its former neighbours along would be a second, invisible edit the user never asked for.
+ *
+ * No rail-short guard here, and that is not an omission: moving a single pin joins no two nets, so the
+ * situation `connectPins` refuses cannot arise.
+ */
+export function movePinToNet(circuit: CircuitJson, ref: PinRef, netId: string): EditResult {
+    const found = findPin(circuit, ref);
+    if (typeof found === 'string') return refuse('no-such-pin', found);
+
+    const target = netById(circuit, netId);
+    if (!target) return refuse('no-such-net', `No net with id "${netId}".`);
+    if (found.netId === netId) return { ok: true, circuit, changed: false };
+
+    const old = netById(circuit, found.netId);
+    const leftBehind = pinsOn(circuit, found.netId).filter((p) => pinKey(p) !== pinKey(ref)).length;
+
+    const moved: CircuitJson = {
+        ...circuit,
+        components: (circuit.components ?? []).map((c) =>
+            c.id === ref.componentId
+                ? { ...c, pins: c.pins.map((p) => (p.pinId === ref.pinId ? { ...p, netId } : p)) }
+                : c,
+        ),
+        // A net nothing sits on any more is not a node. Left in place it would show up in the tree and in
+        // the netlist as a connection to look for, and there is none.
+        nets: (circuit.nets ?? []).filter((n) => !(leftBehind === 0 && n.id === found.netId)),
+    };
+
+    const where = `${found.component.designator} pin ${ref.pinId} moved to ${target.name}`;
+    return {
+        ok: true,
+        changed: true,
+        circuit: moved,
+        note:
+            leftBehind === 0
+                ? `${where}; ${old?.name ?? found.netId} had no other pins and is gone.`
+                : leftBehind === 1
+                  ? `${where}; ${old?.name ?? found.netId} is left with a single pin.`
+                  : `${where}.`,
+    };
+}
+
+/**
  * Break one net into two by moving a chosen set of pins onto a new one.
  *
  * The operation an editor needs when a net was joined too eagerly — by an AI that tied two things it should
