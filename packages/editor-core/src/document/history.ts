@@ -94,7 +94,20 @@ export function beginHistory(opened: EditorDocument): History {
 }
 
 export type CommitResult =
-    | { ok: true; history: History; changed: true }
+    | {
+          ok: true;
+          history: History;
+          changed: true;
+          /**
+           * What the edits destroyed on the way, in order.
+           *
+           * Carried through because a connectivity edit can remove something the user did not name: joining
+           * two nets leaves one name where there were two. The kernel is the only place that knows it
+           * happened, and a caller that could not hear it would leave the user to discover the loss later,
+           * by its absence.
+           */
+          notes: string[];
+      }
     /** Every edit was valid and none of them changed anything — never an undo entry, never a save. */
     | { ok: true; history: History; changed: false }
     /** One edit was refused, so NONE were applied. `index` is which one, for a caller that batched them. */
@@ -114,6 +127,7 @@ export function commit(
 ): CommitResult {
     let circuit = history.present.circuit;
     let changed = false;
+    const notes: string[] = [];
 
     for (const [index, edit] of edits.entries()) {
         const result = edit(circuit);
@@ -123,6 +137,7 @@ export function commit(
         if (result.changed) {
             circuit = result.circuit;
             changed = true;
+            if (result.note) notes.push(result.note);
         }
     }
 
@@ -140,6 +155,7 @@ export function commit(
     return {
         ok: true,
         changed: true,
+        notes,
         history: {
             present: next,
             past: [...history.past, revision].slice(-HISTORY_LIMIT),
@@ -157,6 +173,8 @@ export function commitUi(history: History, label: string, ui: Readonly<Record<st
     return {
         ok: true,
         changed: true,
+        // A viewport change destroys nothing a user could go looking for later.
+        notes: [],
         history: {
             present: next,
             past: [

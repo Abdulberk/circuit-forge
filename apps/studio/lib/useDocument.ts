@@ -81,6 +81,15 @@ export interface DocumentState {
     /** The last refusal from an edit, for the field that caused it. Cleared by the next successful edit. */
     refusal: { reason: string; message: string } | null;
     /**
+     * What the last edit COST, beyond what it changed.
+     *
+     * A connectivity edit can destroy something the user never named: joining two nets leaves one name
+     * where there were two. That is not a refusal — the edit was right and it happened — but it is not
+     * silence either, because a user who is not told that VOUT ceased to exist will look for it later.
+     * Replaced on every commit, so it always describes the action just taken.
+     */
+    notes: readonly string[];
+    /**
      * Apply an edit. Takes the edit FUNCTION rather than a patch, so validation lives in the kernel and this
      * hook never has to know what a designator is.
      */
@@ -157,6 +166,7 @@ export function useDocument(
     const [source, setSource] = useState<OpenedProject['source'] | null>(null);
     const [save, setSave] = useState<SaveState>({ status: 'clean', savedAt: null });
     const [refusal, setRefusal] = useState<DocumentState['refusal']>(null);
+    const [notes, setNotes] = useState<readonly string[]>([]);
     const [recovery, setRecovery] = useState<DocumentState['recovery']>(null);
     const [localBackup, setLocalBackup] = useState<PutResult>({ ok: true });
 
@@ -279,6 +289,7 @@ export function useDocument(
         setSource(opened.source);
         setSave({ status: 'clean', savedAt: opened.source === 'working-copy' ? opened.updatedAt : null });
         setRefusal(null);
+        setNotes([]);
 
         // Is there work on this device the server never received?
         //
@@ -470,6 +481,10 @@ export function useDocument(
                     return current;
                 }
                 setRefusal(null);
+                setNotes([]);
+                // Replaced, never appended: these describe what the LAST action cost, and a growing list
+                // would leave a user reading about a merge they made ten edits ago.
+                setNotes(result.changed ? result.notes : []);
                 // A commit that changed nothing is not a save and not an undo step — re-typing the same value
                 // must not mint a revision that then conflicts with another tab for no reason.
                 if (!result.changed) return current;
@@ -496,6 +511,7 @@ export function useDocument(
             const next = undoRevision(current);
             if (next === current) return current; // nothing to undo — not a save either
             setRefusal(null);
+            setNotes([]);
             schedule(next.present.circuit);
             return next;
         });
@@ -507,6 +523,7 @@ export function useDocument(
             const next = redoRevision(current);
             if (next === current) return current;
             setRefusal(null);
+            setNotes([]);
             schedule(next.present.circuit);
             return next;
         });
@@ -563,6 +580,7 @@ export function useDocument(
         setHistory(adoptDocument({ circuit: found.circuit, ui: {} }));
         setRecovery(null);
         setRefusal(null);
+        setNotes([]);
         schedule(found.circuit);
     }, [recovery, schedule]);
 
@@ -584,6 +602,7 @@ export function useDocument(
         source,
         save,
         refusal,
+        notes,
         apply,
         applyMany,
         undo: undoOne,
