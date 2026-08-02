@@ -15,7 +15,7 @@
  * every accepted write moves the token. Every conflict case runs against that.
  */
 import type { CircuitJson } from '@circuit-forge/eda-core';
-import { setValue } from '@circuit-forge/editor-core';
+import { connectPins, setValue } from '@circuit-forge/editor-core';
 import { act, render, screen, waitFor } from '@testing-library/react';
 import { useState } from 'react';
 
@@ -25,8 +25,16 @@ import { useDocument } from './useDocument';
 
 const CIRCUIT: CircuitJson = {
     version: '1.0',
-    components: [{ id: 'r1', type: 'resistor', designator: 'R1', value: '1k', pins: [{ pinId: '1', netId: 'n1' }] }],
-    nets: [{ id: 'n1', name: 'N1' }],
+    // Two parts on two nets, so a MERGE is expressible. `r1` stays components[0], which every existing
+    // assertion in this file reads through.
+    components: [
+        { id: 'r1', type: 'resistor', designator: 'R1', value: '1k', pins: [{ pinId: '1', netId: 'n1' }] },
+        { id: 'r2', type: 'resistor', designator: 'R2', value: '2k', pins: [{ pinId: '1', netId: 'n2' }] },
+    ],
+    nets: [
+        { id: 'n1', name: 'N1' },
+        { id: 'n2', name: 'N2' },
+    ],
 };
 
 const asDraft = (updatedAt: string, baseVersionId: string | null = null): OpenedProject => ({
@@ -144,6 +152,26 @@ function Harness({
                 }
             >
                 bad-compound
+            </button>
+
+            <output data-testid="notes">{doc.notes.join(' | ') || '—'}</output>
+            <button
+                onClick={() =>
+                    doc.apply((c) =>
+                        connectPins(c, { componentId: 'r2', pinId: '1' }, { componentId: 'r1', pinId: '1' }),
+                    )
+                }
+            >
+                connect
+            </button>
+            <button
+                onClick={() =>
+                    doc.apply((c) =>
+                        connectPins(c, { componentId: 'r1', pinId: '1' }, { componentId: 'r1', pinId: '1' }),
+                    )
+                }
+            >
+                connect-self
             </button>
 
             <output data-testid="recovery">
@@ -682,5 +710,53 @@ describe('recovered work is OFFERED, never applied', () => {
         const { api } = conditionalSave('T0');
         render(<Harness api={api} opened={asDraft('T0')} store={memoryDraftStore()} />);
         expect(recovery()).toBe('—');
+    });
+});
+
+/**
+ * The edit that costs something.
+ *
+ * A refusal stops an edit; a note accompanies one that went through and destroyed something on the way.
+ * Connectivity is where that happens: joining two nets leaves one name where there were two. These tests
+ * exist because the whole chain — kernel → commit → hook → screen — has to carry the sentence, and a break
+ * anywhere in it is silent by construction.
+ */
+const notes = () => screen.getByTestId('notes').textContent;
+
+describe('an edit that destroys something says so', () => {
+    it('carries a merge note from the kernel all the way to the hook', async () => {
+        const { api } = conditionalSave('T0');
+        render(<Harness api={api} opened={asDraft('T0')} store={memoryDraftStore()} />);
+
+        click('connect');
+        expect(notes()).toBe('N2 merged into N1.');
+    });
+
+    it('REPLACES the note on the next edit rather than accumulating', async () => {
+        // A growing list would leave the user reading about a merge they made ten edits ago.
+        const { api } = conditionalSave('T0');
+        render(<Harness api={api} opened={asDraft('T0')} store={memoryDraftStore()} />);
+
+        click('connect');
+        expect(notes()).not.toBe('—');
+        click('edit'); // an ordinary value change, which costs nothing
+        expect(notes()).toBe('—');
+    });
+
+    it('shows nothing for an edit that destroys nothing', async () => {
+        const { api } = conditionalSave('T0');
+        render(<Harness api={api} opened={asDraft('T0')} store={memoryDraftStore()} />);
+        click('edit');
+        expect(notes()).toBe('—');
+    });
+
+    it('a refused connection produces a refusal and NO note', async () => {
+        // The two are different answers and must not both appear: the edit did not happen, so nothing
+        // was destroyed.
+        const { api } = conditionalSave('T0');
+        render(<Harness api={api} opened={asDraft('T0')} store={memoryDraftStore()} />);
+        click('connect-self');
+        expect(screen.getByTestId('refusal').textContent).toBe('no-such-pin');
+        expect(notes()).toBe('—');
     });
 });

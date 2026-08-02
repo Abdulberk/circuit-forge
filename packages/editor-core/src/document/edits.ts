@@ -27,7 +27,20 @@ import {
 
 /** The outcome of an edit: a new document, or a refusal a UI can put next to the offending field. */
 export type EditResult =
-    | { ok: true; circuit: CircuitJson; changed: true }
+    | {
+          ok: true;
+          circuit: CircuitJson;
+          changed: true;
+          /**
+           * Something the user should be told about what just happened, beyond the change itself.
+           *
+           * Added for connectivity, where an edit can destroy something the user did not name. Joining two
+           * nets leaves one name where there were two, and a user who is not told that VOUT ceased to exist
+           * will look for it later and conclude the editor lost it. A refusal is for edits that must not
+           * happen; this is for edits that should, and that cost something on the way.
+           */
+          note?: string;
+      }
     /** The edit was valid but changed nothing — re-typing the same value. Never a save, never an undo entry. */
     | { ok: true; circuit: CircuitJson; changed: false }
     | { ok: false; reason: EditRefusal; message: string };
@@ -40,7 +53,20 @@ export type EditRefusal =
     /** Empty or whitespace where the pipeline needs a token. */
     | 'empty'
     /** Contains characters the downstream format cannot carry. */
-    | 'invalid-characters';
+    | 'invalid-characters'
+    /** The component or the pin named does not exist — a stale selection, or a document that moved. */
+    | 'no-such-pin'
+    /** No net with that id. */
+    | 'no-such-net'
+    /** The pins named are not all on the net being split. */
+    | 'pin-not-on-net'
+    /**
+     * Joining a net declared ground to one declared a supply rail. Representable, and never an intention —
+     * refused here rather than left for a check three stages later to find in copper.
+     */
+    | 'rail-short'
+    /** A split that takes every pin, or none: neither produces two nets. */
+    | 'pointless-split';
 
 const refuse = (reason: EditRefusal, message: string): EditResult => ({ ok: false, reason, message });
 

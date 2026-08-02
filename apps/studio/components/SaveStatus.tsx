@@ -13,7 +13,7 @@ import type { DocumentState } from '../lib/useDocument';
 const time = (iso: string | null) => (iso ? new Date(iso).toLocaleTimeString() : null);
 
 export function SaveStatus({ doc }: { doc: DocumentState }) {
-    const { save, recovery } = doc;
+    const { save, recovery, notes } = doc;
 
     // Ahead of everything else, because it is about work that exists NOWHERE ELSE. A conflict is two saved
     // documents disagreeing; this is one unsaved document that survived a tab closing, and it is gone the
@@ -87,6 +87,15 @@ export function SaveStatus({ doc }: { doc: DocumentState }) {
 
     return (
         <span style={{ color: save.status === 'dirty' ? 'var(--warn)' : 'var(--text-faint)' }}>
+            {/* What the last edit COST. Not an error — the edit was right and it happened — but not silence
+                either: joining two nets leaves one name where there were two, and a user who is not told
+                that VOUT ceased to exist will look for it later and conclude the editor lost it. Replaced
+                on every commit, so it always describes the action just taken. */}
+            {notes.map((n) => (
+                <span key={n} className="warn" role="status" style={{ display: 'block' }}>
+                    {n}
+                </span>
+            ))}
             {label}
             {/* Only ever shown when it is FALSE. A permanent "backed up ✓" is the badge people stop reading,
                 and the only reason this exists is that "unsaved changes" means something different when
