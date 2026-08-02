@@ -28,6 +28,19 @@ export interface PlaceablePart {
     pads: PlaceablePad[];
     /** Connectors (user-wired headers) get pulled toward the board edge. */
     role: 'part' | 'connector';
+    /**
+     * Where the CALLER has decided this part goes. Absent means the engine chooses.
+     *
+     * Fixed means fixed. There is deliberately no "hint" or "preferred position": at the output a hint the
+     * optimizer overruled is indistinguishable from one it ignored, so neither the user nor a test can tell
+     * a respected hint from a discarded one. This file already carries the scar of the softer choice — the
+     * `UiJson` seed at adapter.ts is all-or-nothing precisely because partial seeding could not be verified.
+     *
+     * `rotation` is separately optional, and that is a real degree of freedom rather than a shortcut:
+     * omitting it says "this part stays HERE, orient it however routes best", which the engine can honour
+     * because rotation only changes half-extents about the same centre.
+     */
+    fixed?: { x: number; y: number; rotation?: Rotation };
 }
 
 export interface PlacementInput {
@@ -177,7 +190,14 @@ function seed(parts: PlaceablePart[], edges: Edge[], boardW: number, boardH: num
         .sort((a, b) => degree[b]! - degree[a]! || parts[a]!.id.localeCompare(parts[b]!.id))
         .slice(0, 3);
 
-    const st: State = { x: new Array(n).fill(0), y: new Array(n).fill(0), r: new Array(n).fill(0) };
+    const st: State = {
+        x: new Array(n).fill(0),
+        y: new Array(n).fill(0),
+        // A pinned rotation belongs in the INITIAL state, not in a correction applied later: the sweep runs
+        // only at fixed checkpoints and can skip a part entirely, so guarding the sweep alone left a part
+        // pinned at 90° delivered at 0°. A pin is an input; it is true from the first step.
+        r: parts.map((p) => p.fixed?.rotation ?? 0),
+    };
 
     // base grid seed (also the hubless fallback), deterministic by id order
     const order = parts.map((_, i) => i).sort((a, b) => parts[a]!.id.localeCompare(parts[b]!.id));
@@ -185,8 +205,11 @@ function seed(parts: PlaceablePart[], edges: Edge[], boardW: number, boardH: num
     const pitchX = boardW / (cols + 1);
     const pitchY = boardH / (Math.ceil(n / cols) + 1);
     order.forEach((pi, k) => {
-        st.x[pi] = ((k % cols) - (cols - 1) / 2) * pitchX;
-        st.y[pi] = (Math.floor(k / cols) - (Math.ceil(n / cols) - 1) / 2) * pitchY;
+        // A pinned part is seeded AT its pin, not at a grid cell: every later stage nudges from where a
+        // part starts, so seeding it elsewhere would make the pin a suggestion.
+        const f = parts[pi]!.fixed;
+        st.x[pi] = f ? f.x : ((k % cols) - (cols - 1) / 2) * pitchX;
+        st.y[pi] = f ? f.y : (Math.floor(k / cols) - (Math.ceil(n / cols) - 1) / 2) * pitchY;
     });
 
     if (hubIdx.length === 0) {
@@ -236,8 +259,9 @@ function seed(parts: PlaceablePart[], edges: Edge[], boardW: number, boardH: num
         const h = clusterOf.get(i)!;
         const [cx, cy] = centers.get(h)!;
         if (i === h) {
-            st.x[i] = cx;
-            st.y[i] = cy;
+            const f = parts[i]!.fixed;
+            st.x[i] = f ? f.x : cx;
+            st.y[i] = f ? f.y : cy;
             continue;
         }
         const hub = parts[h]!;
@@ -257,8 +281,9 @@ function seed(parts: PlaceablePart[], edges: Edge[], boardW: number, boardH: num
         perQuadrant.set(key, k + 1);
         const ring = Math.floor(k / 3);
         const rad = hub.w / 2 + hub.h / 2 + 3 + ring * 4 + (k % 3) * 1.5;
-        st.x[i] = cx + qx * rad * (0.6 + 0.2 * (k % 3));
-        st.y[i] = cy + qy * rad * (0.6 + 0.2 * ((k + 1) % 3));
+        const fi = parts[i]!.fixed;
+        st.x[i] = fi ? fi.x : cx + qx * rad * (0.6 + 0.2 * (k % 3));
+        st.y[i] = fi ? fi.y : cy + qy * rad * (0.6 + 0.2 * ((k + 1) % 3));
     }
     notes.push(`seed: ${hubIdx.length} hub(s) [${hubIdx.map((h) => parts[h]!.id).join(', ')}]`);
     return st;
@@ -311,7 +336,8 @@ function rotationSweep(parts: PlaceablePart[], st: State, order: number[], netWe
                 bestR = r;
             }
         }
-        st.r[i] = bestR;
+        // A pinned rotation is a decision already taken; searching it would overwrite the caller.
+        st.r[i] = parts[i]!.fixed?.rotation ?? bestR;
     }
 }
 
@@ -388,6 +414,9 @@ function forceLoop(parts: PlaceablePart[], edges: Edge[], st: State, input: Plac
         }
 
         for (let i = 0; i < n; i++) {
+            // Forces were accumulated for every part, including pinned ones, so their neighbours are still
+            // pulled toward them. Only the INTEGRATION is skipped: a pinned part exerts, and does not move.
+            if (parts[i]!.fixed) continue;
             st.x[i]! += fx[i]! * lr;
             st.y[i]! += fy[i]! * lr;
         }
@@ -433,8 +462,14 @@ function legalize(
         .sort(
             (a, b) => parts[b]!.w * parts[b]!.h - parts[a]!.w * parts[a]!.h || parts[a]!.id.localeCompare(parts[b]!.id),
         );
-    const placed: number[] = [];
+    // Pinned parts are already placed, and they are marked so BEFORE the loop rather than encountered
+    // inside it. The order is by descending area, so a pinned part late in that order would be invisible to
+    // everything legalized before it: the engine would park a free part on top of a pin, find no overlap
+    // (the pin was not in `placed` yet), and return ok:true with two courtyards in the same square
+    // millimetre. Marking first is what makes the ring walk route AROUND them.
+    const placed: number[] = order.filter((i) => parts[i]!.fixed);
     for (const i of order) {
+        if (parts[i]!.fixed) continue; // its position is the caller's, not this function's
         const [wi, hi] = halfExtents(parts[i]!, st.r[i]!);
         // clamp bounds FLOORED to the grid — a raw min/max clamp parks edge parts OFF-grid
         // (measured 5 Tem 2026: a connector landed at x=7.48 and broke the snap contract)
@@ -479,6 +514,75 @@ function legalize(
 }
 
 // ---------------------------------------------------------------- HPWL (plan §4.7)
+
+/** Why a set of fixed placements cannot be honoured. Machine-readable: a UI puts each next to its part. */
+export type FixedPlacementProblem =
+    | { kind: 'off-grid'; id: string; axis: 'x' | 'y'; given: number; nearest: number }
+    | { kind: 'off-board'; id: string; axis: 'x' | 'y'; given: number; limit: number }
+    | { kind: 'overlap'; a: string; b: string; byMm: number };
+
+/**
+ * Can these parts actually sit where the caller says?
+ *
+ * ONE authority, exported, so the pre-flight that refuses a request and the engine that honours it cannot
+ * disagree about what "legal" means. Two copies of this rule would eventually let the API accept a request
+ * the engine then silently un-pins.
+ *
+ * REFUSED, NOT SNAPPED, for an off-grid pin. `legalize` snaps freely — it must, it is choosing — and this
+ * file records what silent snapping cost once: "a connector landed at x=7.48 and broke the snap contract".
+ * Snapping a PINNED part moves the one thing the caller asked not to move, and moves it without saying so.
+ * Refusing is cheap, reversible, and the message can name the nearest legal value as the remedy.
+ *
+ * Overlap is measured against the same `spacing` the legalizer uses, so a pinned pair is judged by the rule
+ * the engine would have applied to a pair it placed itself.
+ */
+export function validateFixedPlacements(
+    parts: readonly PlaceablePart[],
+    boardW: number,
+    boardH: number,
+    grid: number,
+    margin: number,
+    spacing: number,
+): FixedPlacementProblem[] {
+    const problems: FixedPlacementProblem[] = [];
+    const pinned = parts.filter((p) => p.fixed);
+
+    for (const p of pinned) {
+        const f = p.fixed!;
+        for (const axis of ['x', 'y'] as const) {
+            const given = axis === 'x' ? f.x : f.y;
+            const nearest = snap(given, grid);
+            // A tolerance, not an equality: these arrive as JSON doubles and 7.5 can be 7.499999999999999.
+            // Comparing exactly would refuse coordinates that ARE on the grid.
+            if (Math.abs(given - nearest) > 1e-6) problems.push({ kind: 'off-grid', id: p.id, axis, given, nearest });
+        }
+        const [w, h] = halfExtents(p, f.rotation ?? 0);
+        const maxX = boardW / 2 - margin - w;
+        const maxY = boardH / 2 - margin - h;
+        if (Math.abs(f.x) > maxX + 1e-6)
+            problems.push({ kind: 'off-board', id: p.id, axis: 'x', given: f.x, limit: maxX });
+        if (Math.abs(f.y) > maxY + 1e-6)
+            problems.push({ kind: 'off-board', id: p.id, axis: 'y', given: f.y, limit: maxY });
+    }
+
+    // Pairwise, and only among the PINNED: a pinned part overlapping one the engine will place is not a
+    // problem, it is the engine's job to move the other one out of the way.
+    for (let i = 0; i < pinned.length; i++) {
+        for (let j = i + 1; j < pinned.length; j++) {
+            const a = pinned[i]!;
+            const b = pinned[j]!;
+            const [wa, ha] = halfExtents(a, a.fixed!.rotation ?? 0);
+            const [wb, hb] = halfExtents(b, b.fixed!.rotation ?? 0);
+            if (!overlaps(spacing, a.fixed!.x, a.fixed!.y, wa, ha, b.fixed!.x, b.fixed!.y, wb, hb)) continue;
+            // How far apart they would have to move — the remedy, as a number the caller can act on.
+            const needX = wa + wb + spacing - Math.abs(a.fixed!.x - b.fixed!.x);
+            const needY = ha + hb + spacing - Math.abs(a.fixed!.y - b.fixed!.y);
+            problems.push({ kind: 'overlap', a: a.id, b: b.id, byMm: round2(Math.min(needX, needY)) });
+        }
+    }
+
+    return problems;
+}
 
 export function computeHpwl(
     parts: PlaceablePart[],
@@ -567,10 +671,27 @@ export function placeParts(input: PlacementInput): PlacementOutput {
         if (st.y[i]! - hi < minY) minY = st.y[i]! - hi;
         if (st.y[i]! + hi > maxY) maxY = st.y[i]! + hi;
     });
-    const cx = snap((minX + maxX) / 2, grid);
-    const cy = snap((minY + maxY) / 2, grid);
-    let fitW = Math.max(MIN_BOARD_MM, snap(maxX - minX + 2 * margin + grid, grid));
-    let fitH = Math.max(MIN_BOARD_MM, snap(maxY - minY + 2 * margin + grid, grid));
+    /**
+     * FRAME FREEZE — the quietest way a pin could have been lost.
+     *
+     * Every position below is emitted relative to the content midpoint, so the whole arrangement is
+     * recentred at the end. That is right when the engine owns every coordinate: the board and its contents
+     * move together and nothing observable changes. It is wrong the moment ONE coordinate came from outside,
+     * because the caller's mm are absolute in the design frame — the same frame `LayoutGeometry` reports
+     * back — and shifting them means a part pinned at (12, −4) is delivered somewhere else, with every
+     * courtyard check still passing because the arrangement is internally identical.
+     *
+     * So when anything is pinned the origin stays where the caller's numbers are, and the board is sized
+     * SYMMETRICALLY about it instead of around the content. That costs a slightly larger board when the
+     * pinned content sits off-centre, which is the honest price of the caller owning the frame.
+     */
+    const frozen = parts.some((p) => p.fixed);
+    const cx = frozen ? 0 : snap((minX + maxX) / 2, grid);
+    const cy = frozen ? 0 : snap((minY + maxY) / 2, grid);
+    const spanX = frozen ? 2 * Math.max(Math.abs(minX), Math.abs(maxX)) : maxX - minX;
+    const spanY = frozen ? 2 * Math.max(Math.abs(minY), Math.abs(maxY)) : maxY - minY;
+    let fitW = Math.max(MIN_BOARD_MM, snap(spanX + 2 * margin + grid, grid));
+    let fitH = Math.max(MIN_BOARD_MM, snap(spanY + 2 * margin + grid, grid));
     // routability floor: keep courtyard utilization ≤ ROUTE_UTIL so freerouting has escape room
     const fitUsable = (fitW - 2 * margin) * (fitH - 2 * margin);
     if (fitUsable > 0 && area / fitUsable > ROUTE_UTIL) {
