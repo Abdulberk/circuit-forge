@@ -20,6 +20,7 @@ import { act, render, screen, waitFor } from '@testing-library/react';
 import { useState } from 'react';
 
 import { ApiError, type Api, type OpenedProject } from './api';
+import { memoryDraftStore, refusingDraftStore, type DraftStore, type StoredDraft } from './draftStore';
 import { useDocument } from './useDocument';
 
 const CIRCUIT: CircuitJson = {
@@ -97,14 +98,16 @@ function Harness({
     opened,
     projectId = 'project-1',
     onReload,
+    store,
 }: {
     api: Api;
     opened: OpenedProject;
     projectId?: string;
     onReload?: () => void;
+    store?: DraftStore;
 }) {
     const [n, setN] = useState(0);
-    const doc = useDocument(api, projectId, opened, onReload ?? (() => {}));
+    const doc = useDocument(api, projectId, opened, onReload ?? (() => {}), store ?? memoryDraftStore());
     return (
         <div>
             <output data-testid="value">{(doc.circuit?.components ?? [])[0]?.value ?? '—'}</output>
@@ -142,6 +145,14 @@ function Harness({
             >
                 bad-compound
             </button>
+
+            <output data-testid="recovery">
+                {doc.recovery ? `${doc.recovery.at}/${doc.recovery.continuesServerDraft}` : '—'}
+            </output>
+            <output data-testid="recovered-value">{(doc.recovery?.circuit.components ?? [])[0]?.value ?? '—'}</output>
+            <output data-testid="backup">{doc.localBackup.ok ? 'ok' : doc.localBackup.reason}</output>
+            <button onClick={doc.recoverLocal}>recover</button>
+            <button onClick={doc.discardLocal}>discard-local</button>
         </div>
     );
 }
@@ -496,5 +507,180 @@ describe('leaving the page', () => {
             await Promise.resolve();
         });
         expect(sent).toEqual([{ projectId: 'project-1', value: '2k', token: 'T0', baseVersionId: undefined }]);
+    });
+});
+
+/**
+ * The copy that survives the tab.
+ *
+ * What is actually at risk: an edit is instant and a save is not, so everything typed between a keystroke
+ * and the 1.2 s idle save exists only in memory. A crashed tab, a closed laptop, or a save the server keeps
+ * refusing, and it is gone. These tests are about that gap — and, just as much, about the local copy NOT
+ * becoming a second authority, which is how a safety net turns into a hazard.
+ */
+const recovery = () => screen.getByTestId('recovery').textContent;
+const backup = () => screen.getByTestId('backup').textContent;
+
+const storedDraft = (over: Partial<StoredDraft> = {}): StoredDraft => ({
+    projectId: 'project-1',
+    circuit: { ...CIRCUIT, components: [{ ...CIRCUIT.components[0]!, value: '99k' }] },
+    baseToken: 'T0',
+    baseVersionId: null,
+    at: '2026-08-02T10:00:00.000Z',
+    ...over,
+});
+
+describe('unsaved work survives the tab', () => {
+    it('writes the document to this device WITHOUT waiting for the save', async () => {
+        // The whole point: the local copy must hold what the server does not have yet. Waiting for the save
+        // would leave nothing behind exactly when the save is what failed.
+        const store = memoryDraftStore();
+        const { api } = conditionalSave('T0');
+        render(<Harness api={api} opened={asDraft('T0')} store={store} />);
+
+        click('edit');
+        expect(store.get('project-1')).toBeNull(); // coalesced, not yet written
+
+        await act(async () => {
+            jest.advanceTimersByTime(300); // past the local timer, well short of the 1.2 s save
+            await Promise.resolve();
+        });
+        expect(store.get('project-1')?.circuit.components[0]?.value).toBe('2k');
+        expect(status()).toBe('dirty'); // …and the server still has nothing
+    });
+
+    it('keeps the local copy while a save keeps FAILING — the case it exists for', async () => {
+        const store = memoryDraftStore();
+        const api = {
+            saveWorkingCopy: () => Promise.reject(new ApiError('network', 'offline')),
+        } as unknown as Api;
+        render(<Harness api={api} opened={asDraft('T0')} store={store} />);
+
+        click('edit');
+        await settle();
+        expect(status()).toBe('error');
+        expect(store.get('project-1')?.circuit.components[0]?.value).toBe('2k');
+    });
+
+    it('clears the local copy once the server actually has the work', async () => {
+        // Not before. A copy kept past a successful save would be offered back on the next open as if it
+        // were newer, and the user would be invited to undo their own saved progress.
+        const store = memoryDraftStore();
+        const { api } = conditionalSave('T0');
+        render(<Harness api={api} opened={asDraft('T0')} store={store} />);
+
+        click('edit');
+        await settle();
+        await waitFor(() => expect(status()).toBe('clean'));
+        expect(store.get('project-1')).toBeNull();
+    });
+
+    it('SAYS SO when the browser will not keep anything, instead of pretending', async () => {
+        // A user who believes their work is backed up when it is not makes different decisions than one who
+        // knows. Silence here is the lie.
+        const { api } = conditionalSave('T0');
+        render(<Harness api={api} opened={asDraft('T0')} store={refusingDraftStore('quota')} />);
+        expect(backup()).toBe('ok'); // nothing attempted yet
+
+        click('edit');
+        await act(async () => {
+            jest.advanceTimersByTime(300);
+            await Promise.resolve();
+        });
+        expect(backup()).toBe('quota');
+    });
+});
+
+describe('recovered work is OFFERED, never applied', () => {
+    it('offers unsaved work typed on top of what the server still holds', async () => {
+        const store = memoryDraftStore([storedDraft({ baseToken: 'T0' })]);
+        const { api } = conditionalSave('T0');
+        render(<Harness api={api} opened={asDraft('T0')} store={store} />);
+
+        // The document on screen is the SERVER's, untouched. Restoring silently is how a tab overwrites a
+        // colleague's saved work while looking like it rescued yours.
+        expect(value()).toBe('1k');
+        expect(recovery()).toBe('2026-08-02T10:00:00.000Z/true');
+        expect(screen.getByTestId('recovered-value').textContent).toBe('99k');
+    });
+
+    it('distinguishes work built on a draft the server has since REPLACED', async () => {
+        // Same rescue, different confidence — and the wording downstream depends on it.
+        const store = memoryDraftStore([storedDraft({ baseToken: 'OLD', at: '2999-01-01T00:00:00.000Z' })]);
+        const { api } = conditionalSave('T5');
+        render(<Harness api={api} opened={asDraft('T5')} store={store} />);
+        expect(recovery()).toBe('2999-01-01T00:00:00.000Z/false');
+    });
+
+    it('drops a copy the server ALREADY HAS rather than offering it back', async () => {
+        // Decidable from the documents themselves. The earlier version of this rule compared the local
+        // write time against the server's updatedAt — two clocks on two machines — and a client running a
+        // day behind would have silently deleted real unsaved work.
+        const store = memoryDraftStore([storedDraft({ baseToken: 'OLD', circuit: CIRCUIT })]);
+        const { api } = conditionalSave('T9');
+        render(<Harness api={api} opened={asDraft('T9')} store={store} />);
+        expect(recovery()).toBe('—');
+        expect(store.get('project-1')).toBeNull();
+    });
+
+    it('OFFERS work built on a replaced draft rather than dropping it — erring toward the work', async () => {
+        // Erring toward offering costs a dialog; erring the other way costs the work.
+        const store = memoryDraftStore([storedDraft({ baseToken: 'OLD', at: '2020-01-01T00:00:00.000Z' })]);
+        const { api } = conditionalSave('T9');
+        render(<Harness api={api} opened={asDraft('T9')} store={store} />);
+        expect(recovery()).toBe('2020-01-01T00:00:00.000Z/false');
+    });
+
+    it('adopting puts it on screen AND sends it — the buffer is not a place work may live', async () => {
+        const store = memoryDraftStore([storedDraft({ baseToken: 'T0' })]);
+        const { api, sent } = conditionalSave('T0');
+        render(<Harness api={api} opened={asDraft('T0')} store={store} />);
+
+        click('recover');
+        expect(value()).toBe('99k');
+        expect(recovery()).toBe('—');
+
+        await settle();
+        await waitFor(() => expect(status()).toBe('clean'));
+        expect(sent.at(-1)?.value).toBe('99k');
+    });
+
+    it('adopting is ADOPT, not commit — undo must not step into a session this tab never saw', async () => {
+        const store = memoryDraftStore([storedDraft({ baseToken: 'T0' })]);
+        const { api } = conditionalSave('T0');
+        render(<Harness api={api} opened={asDraft('T0')} store={store} />);
+
+        click('recover');
+        expect(screen.getByTestId('canUndo').textContent).toBe('false');
+    });
+
+    it('discarding removes it for good and does not write it straight back', async () => {
+        // The coalescing timer is the trap: a discard that left a queued write pending would restore the
+        // copy a quarter of a second later.
+        const store = memoryDraftStore([storedDraft({ baseToken: 'T0' })]);
+        const { api } = conditionalSave('T0');
+        render(<Harness api={api} opened={asDraft('T0')} store={store} />);
+
+        click('discard-local');
+        expect(recovery()).toBe('—');
+        expect(store.get('project-1')).toBeNull();
+
+        await settle();
+        expect(store.get('project-1')).toBeNull();
+    });
+
+    it('offers a local draft for a project the server has NOTHING for', async () => {
+        // A project created and typed into but never successfully saved: the server has no draft and no
+        // version, so the local copy is the only place that work exists anywhere.
+        const store = memoryDraftStore([storedDraft({ baseToken: null })]);
+        const { api } = conditionalSave('T0');
+        render(<Harness api={api} opened={{ source: 'empty' }} store={store} />);
+        expect(recovery()).toBe('2026-08-02T10:00:00.000Z/true');
+        expect(screen.getByTestId('recovered-value').textContent).toBe('99k');
+    });
+    it('offers nothing when this device holds no unsaved work', async () => {
+        const { api } = conditionalSave('T0');
+        render(<Harness api={api} opened={asDraft('T0')} store={memoryDraftStore()} />);
+        expect(recovery()).toBe('—');
     });
 });
