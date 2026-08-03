@@ -17,6 +17,7 @@
 import { evaluateAssertions, type AcceptanceCriterion } from './analysis/assertions';
 import type { SimMeasurement } from './analysis/measurements';
 import type { VariantRunner } from './montecarlo';
+import { buildProbeResolver } from './netlist/probe-map';
 import type { CircuitJson, Component } from './types/circuit';
 import { parseComponentMagnitude } from './utils/unit-parser';
 
@@ -141,6 +142,11 @@ export async function runWorstCase(
     runVariant: VariantRunner,
 ): Promise<WorstCaseResult> {
     const { variants, componentsCornered, omitted } = cornerVariants(circuit, spec);
+    // ONE resolver for the whole batch. Variants rewrite component VALUES; the nets and the component
+    // TYPES they are wired with are identical across every one of them, and those are what the mapping
+    // is derived from. Rebuilding it per variant would re-plan the digital bridge N times for an answer
+    // that cannot differ — at N=100 that is the expensive part of a loop whose real work is elsewhere.
+    const resolver = buildProbeResolver(circuit);
     const points: CornerPoint[] = [];
     for (let i = 0; i < variants.length; i++) {
         const { corner, circuit: variant } = variants[i]!;
@@ -154,7 +160,7 @@ export async function runWorstCase(
             points.push({ corner, outcome: 'errored' });
             continue;
         }
-        const results = evaluateAssertions(measurements, criteria, true, circuit.nets);
+        const results = evaluateAssertions(measurements, criteria, true, resolver);
         const pass = results.length > 0 && results.every((r) => r.pass);
         points.push({ corner, outcome: pass ? 'pass' : 'fail' });
     }

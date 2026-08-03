@@ -376,11 +376,12 @@ export class VerificationService {
             supplyTolerance?: number;
         },
     ): Promise<DesignEvidence> {
-        // Validate ONCE up front and reuse: the nets let evaluateAssertions resolve a criterion that names a
-        // net ("v(out)") to the node the generator emitted from that net's ID — so the check still matches when
-        // a net's id differs from its name (universal once the frontend mints UUID ids). Also feeds power below.
+        // Validate ONCE up front and reuse. The whole CIRCUIT — not just its nets — is what lets
+        // evaluateAssertions resolve a criterion to the node the generator actually emitted: a net's id can
+        // differ from its name, a ground reference has no column at all, and a digital net is sampled through
+        // an analog twin derived from the COMPONENTS. Nets alone cover the first two and not the third.
         const validCircuit = safeValidateCircuitJson(circuit);
-        const nets = validCircuit.success ? (validCircuit.data as CircuitJson).nets : undefined;
+        const resolved = validCircuit.success ? (validCircuit.data as CircuitJson) : undefined;
         // Pre-layout design-review graph check (pure, sim-independent): orientation ROLE-consistency, read
         // from OUR validated CircuitJson (never a downstream transform). Informational — surfaces warnings,
         // never gates the verdict; its honest scope ceiling rides in the manifest. (Decoupling presence is
@@ -395,7 +396,7 @@ export class VerificationService {
         // defaults never save it, so without this a current assertion would always read "probe not found".
         const currentProbes = extraProbesForCriteria(assertions);
         const sim = await this.runSimulation(circuit, analysisConfig, userId, currentProbes);
-        const assertionResults = evaluateAssertions(sim.measurements, assertions, sim.simStatus === 'ok', nets);
+        const assertionResults = evaluateAssertions(sim.measurements, assertions, sim.simStatus === 'ok', resolved);
 
         // Power-dissipation review (resistors): only meaningful once we have real node voltages.
         let power: PowerReport | undefined;

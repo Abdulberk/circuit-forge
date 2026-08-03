@@ -11,12 +11,22 @@ import {
 } from '../models/library';
 import type { AnalysisConfig } from '../types/analysis';
 import { analysisToSpice } from '../types/analysis';
-import type { CircuitJson, Component, Net, ModelDef } from '../types/circuit';
+import type { CircuitJson, Component, ModelDef } from '../types/circuit';
 import { SPICE_PREFIXES, COMPONENT_PINS, COMPONENT_TYPES, isDigitalType, isSimulatable } from '../types/circuit';
 
 import { planMixedSignal, emitDigitalComponent, aInstanceName, type MixedSignalPlan } from './digital';
-import { sanitizeNodeName, validateIncludePaths } from './sanitizer';
+import {
+    buildNetRefToNode,
+    buildNodeMap,
+    normalizeProbe,
+    rewriteProbeNodeRefs,
+} from './probe-map';
+import { validateIncludePaths } from './sanitizer';
 import { solverOptionTokens } from './solver-options';
+
+// Re-exported so every existing consumer keeps importing these from where it always did. They moved for a
+// reason that is about who OWNS the mapping, not about where callers should look for it.
+export { buildNodeMap, rewriteProbeNodeRefs } from './probe-map';
 
 /** All valid ComponentType values, for a fail-loud guard against an unknown type slipping through. */
 const VALID_COMPONENT_TYPES = new Set<string>(COMPONENT_TYPES);
@@ -445,28 +455,12 @@ export function generateNetlist(circuit: CircuitJson, analysis: AnalysisConfig, 
     // a node by its net id/name (v(<net>)); remap both to the names actually emitted (the device may have
     // been prefixed, the node sanitized) so they resolve in ngspice instead of yielding "no such vector".
     // Default probes (already sanitized) and any already-correct reference pass through unchanged.
-    const netRefToNode = new Map<string, string>();
-    for (const net of circuit.nets) {
-        const node = nodeMap.get(net.id);
-        if (node && net.name) netRefToNode.set(net.name.toLowerCase(), node); // names first…
-    }
-    for (const net of circuit.nets) {
-        const node = nodeMap.get(net.id);
-        if (node) netRefToNode.set(net.id.toLowerCase(), node); // …ids win on collision (ids are unique/authoritative)
-    }
-    // A pure-digital net's raw event node can't be sampled through wrdata, so planMixedSignal bridged it to
-    // an analog "_p" twin (probeNodeForNet). generateDefaultProbes already probes the twin; apply the SAME
-    // redirect to CALLER-supplied probes (the version-sim path always passes explicit probes) so v(<netId>),
-    // v(<netName>) AND v(<sanitized node>) all resolve to the observable analog twin. Overlaid LAST so it
-    // wins over the raw node above. No-op for analog-only circuits (probeNodeForNet is empty).
-    for (const net of circuit.nets) {
-        const twin = ms.probeNodeForNet.get(net.id);
-        if (!twin) continue;
-        netRefToNode.set(net.id.toLowerCase(), twin);
-        if (net.name) netRefToNode.set(net.name.toLowerCase(), twin);
-        const raw = nodeMap.get(net.id);
-        if (raw) netRefToNode.set(raw.toLowerCase(), twin);
-    }
+    // ONE authority, shared with the assertion evaluator — see netlist/probe-map.ts. It lives there
+    // rather than here precisely so the evaluator cannot keep a second, subtly different copy: it did,
+    // and every way that copy fell short (ground, digital twins, differential probes) reported a
+    // correct design as unverifiable. The GENERATOR consuming it is what makes drift impossible —
+    // a shared helper only the consumer uses is still two implementations waiting to disagree.
+    const netRefToNode = buildNetRefToNode(circuit, nodeMap, ms);
     // Default = auto-probe every node's voltage. An explicit `probes` REPLACES that; `extraProbes` ADDS to
     // it (deduped) — the seam for branch-current criteria, which the voltage-only defaults never save.
     const baseProbes = options.probes || generateDefaultProbes(circuit, nodeMap, ms);
@@ -659,31 +653,6 @@ export function generateNetlist(circuit: CircuitJson, analysis: AnalysisConfig, 
     return lines.join('\n');
 }
 
-/**
- * net id -> the SPICE node name a simulation of this circuit will report.
- *
- * EXPORTED because it is the only correct answer to "which simulation signal is this piece of copper?".
- * The rule is not obvious — a net id is lower-cased, non-word characters collapse, SPICE reserved words
- * take an `x_` prefix, everything else takes an `n` prefix, and a result that collides with an ngspice
- * operator token escapes again — so any consumer that re-derived it would be a second implementation of a
- * naming rule that must have exactly one. This is the same function generateNetlist emits against, so a
- * caller joining on it is joining on what the simulator actually saw.
- *
- * Ground is `0`, per SPICE.
- */
-export function buildNodeMap(nets: Net[]): Map<string, string> {
-    const nodeMap = new Map<string, string>();
-
-    for (const net of nets) {
-        if (net.isGround) {
-            nodeMap.set(net.id, '0');
-        } else {
-            nodeMap.set(net.id, sanitizeNodeName(net.id));
-        }
-    }
-
-    return nodeMap;
-}
 
 /**
  * SPICE identifies a device by the FIRST letter of its name (R=resistor, D=diode, Q=BJT, …). The
@@ -800,54 +769,7 @@ function rewriteCurrentProbeVector(
     return { token: '', savecurrents: false }; // multi-terminal / exotic → drop (can't probe a single current)
 }
 
-/**
- * Rewrite node references — v(<net>) and the differential v(<net>,<net>) — in a probe so they point at
- * the sanitized SPICE node name actually emitted (e.g. net "rail"→"nrail", reserved "out"→"x_out"). A
- * caller naturally writes v(rail)/v(out) using the circuit's net id (or name), but ngspice only knows the
- * sanitized node, so the raw reference resolves to "no such vector". `map` is keyed by the lower-cased net
- * id AND net name (id wins on collision). Each comma-separated arg is mapped independently; an arg that is
- * already a sanitized node (or otherwise unknown) is left as-is, so default/correct probes are untouched.
- */
-export function rewriteProbeNodeRefs(
-    probe: string,
-    map: Map<string, string>,
-    keepGroundFirstSingleEnded = false,
-): string {
-    return probe.replace(/\bv\s*\(\s*([^)]+?)\s*\)/gi, (whole, inner: string) => {
-        const parts = inner.split(',').map((p) => p.trim());
-        const mapped = parts.map((p) => map.get(p.toLowerCase()) ?? p);
-        // ngspice has no voltage vector for ground (node 0): a v(node,gnd) differential is just the
-        // single-ended v(node), and a pure-ground probe v(gnd)/v(0) is meaningless — emitting either
-        // v(0) or v(node,0) errors with "no such vector 0" and aborts the WHOLE wrdata, killing every
-        // other probe on the line. So drop ground args; a probe that reduces to nothing is dropped.
-        //
-        // Dropping ground is only sign-SAFE when ground is the SUBTRAHEND: v(a,0) = v(a) - 0 = v(a). When
-        // ground is the FIRST operand, v(0,b) = 0 - v(b) = -v(b) — for a wrdata probe (sign matters) we DROP
-        // it rather than emit the sign-FLIPPED v(b) (which would corrupt an acceptance criterion). For a
-        // .noise/.sens OUTPUT the sign is irrelevant (a PSD/sensitivity magnitude) AND the card must resolve
-        // to a real node or the whole analysis fails — so those callers pass keepGroundFirstSingleEnded to
-        // keep the sanitized single-ended v(b) instead of dropping.
-        if (!keepGroundFirstSingleEnded && mapped.length === 2 && mapped[0] === '0') return ''; // v(0,b)=-v(b) → drop
-        const nonGround = mapped.filter((a) => a !== '0');
-        const unchanged = nonGround.length === parts.length && nonGround.every((a, i) => a === parts[i]);
-        if (unchanged) return whole; // no remap and no ground arg — preserve the original text verbatim
-        return nonGround.length === 0 ? '' : `v(${nonGround.join(',')})`;
-    });
-}
 
-/**
- * Normalize a caller-supplied probe: a BARE node token (no v()/i()/@ wrapper) is a voltage probe, so wrap it as
- * v(<token>) — then it flows through the SAME net-id → sanitized-node resolution (rewriteProbeNodeRefs) as an
- * explicit v(<net>). Without this a probe like "out" (a natural thing for a client/UI to send) lands in the
- * wrdata line verbatim as `out`, which is NOT a valid ngspice vector (it must be v(x_out)); wrdata then emits
- * nothing and the run yields an opaque "no output file" failure. Already-typed probes — v(...), i(...), @dev[i],
- * or any token containing '(' or '@' — pass through untouched.
- */
-function normalizeProbe(probe: string): string {
-    const t = probe.trim();
-    if (!t || t.includes('(') || t.includes('@')) return t;
-    return `v(${t})`;
-}
 
 /**
  * A transformer's two synthesized internal winding-midpoint nodes (the L→R series junctions). Deterministic

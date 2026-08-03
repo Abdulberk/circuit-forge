@@ -18,6 +18,7 @@
  */
 import { evaluateAssertions, type AcceptanceCriterion } from './analysis/assertions';
 import type { SimMeasurement } from './analysis/measurements';
+import { buildProbeResolver, type ProbeResolver } from './netlist/probe-map';
 import type { CircuitJson } from './types/circuit';
 
 /** Component types whose SPICE models carry temperature physics (so a `.temp` sweep is meaningful). Passives
@@ -115,7 +116,7 @@ function evaluateTempPoint(
     T: number,
     measurements: SimMeasurement[] | null,
     criteria: AcceptanceCriterion[],
-    nets: CircuitJson['nets'],
+    resolver: ProbeResolver,
     hasLimits: boolean,
 ): { point: TempCornerPoint; scalars: Array<{ node: string; value: number }> } {
     if (!measurements) return { point: { temperatureC: T, outcome: 'errored' }, scalars: [] };
@@ -125,7 +126,7 @@ function evaluateTempPoint(
         if (v !== undefined) scalars.push({ node: m.node, value: v });
     }
     if (!hasLimits) return { point: { temperatureC: T, outcome: 'no-limit' }, scalars };
-    const results = evaluateAssertions(measurements, criteria, true, nets);
+    const results = evaluateAssertions(measurements, criteria, true, resolver);
     const pass = results.length > 0 && results.every((r) => r.pass);
     return { point: { temperatureC: T, outcome: pass ? 'pass' : 'fail' }, scalars };
 }
@@ -197,6 +198,9 @@ export async function runTempCorner(
     }
 
     const hasLimits = criteria.length > 0;
+    // ONE resolver for every temperature. A temperature corner does not touch the circuit at all — it sets
+    // an ambient on the same deck — so the mapping cannot vary across the sweep.
+    const resolver = buildProbeResolver(circuit);
     const points: TempCornerPoint[] = [];
     const perMetric = new Map<string, Map<number, number>>(); // node -> (temperature -> scalar)
 
@@ -207,7 +211,7 @@ export async function runTempCorner(
         } catch {
             measurements = null; // a thrown runner = this temperature could not be evaluated → errored
         }
-        const { point, scalars } = evaluateTempPoint(T, measurements, criteria, circuit.nets, hasLimits);
+        const { point, scalars } = evaluateTempPoint(T, measurements, criteria, resolver, hasLimits);
         points.push(point);
         for (const s of scalars) {
             let byTemp = perMetric.get(s.node);

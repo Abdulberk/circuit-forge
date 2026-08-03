@@ -6,7 +6,14 @@
  * the worker, which depends only on eda-core, can reduce each variant to pass/fail locally. No ngspice here:
  * it operates on the already-summarized per-node measurements.
  */
+import {
+    buildProbeResolver,
+    normalizeProbe,
+    rewriteProbeNodeRefs,
+    type ProbeResolver,
+} from '../netlist/probe-map';
 import { sanitizeNodeName } from '../netlist/sanitizer';
+import type { CircuitJson } from '../types/circuit';
 import type { FourierResult, TransferFunctionResult } from '../types/simulation';
 
 import type { SimMeasurement } from './measurements';
@@ -61,12 +68,60 @@ export interface AssertionResult {
  * (id !== name), it is the difference between "verified" and a permanent "probe not found". Mirrors the
  * generator's netRefToNode precedence (name first, id authoritative).
  */
-export function nodeKey(probe: string, refToId?: Map<string, string>): string {
-    const m = probe.trim().match(/^v\(([^)]+)\)$/i);
-    const bare = (m ? m[1]! : probe.trim()).trim();
-    const canonical = refToId?.get(bare.toLowerCase()) ?? bare;
-    return sanitizeNodeName(canonical).toLowerCase();
+export function nodeKey(probe: string, resolver?: ProbeResolver): string {
+    // The generator's OWN rewrite, not a re-implementation of it. That is what makes a differential
+    // criterion work: `v(a,b)` is two references, and the rewrite splits on the comma and resolves each
+    // side, where treating the whole inner string as one token flattens it into something no emitted probe
+    // can equal — and, because the sanitiser turns both a comma and a hyphen into `_`, can COLLIDE with an
+    // unrelated net and bind the criterion to the wrong signal with full confidence.
+    const rewritten = rewriteProbeNodeRefs(normalizeProbe(probe.trim()), resolver?.netRefToNode ?? EMPTY_MAP);
+    const t = rewritten.trim();
+    // Empty means the reference reduced to ground alone, or to ground-minus-a-node. There is no vector for
+    // either, by construction. The caller tells those two apart; see `matchKey`.
+    if (!t) return '';
+    const inner = t.match(/^v\s*\(\s*(.+?)\s*\)$/i)?.[1] ?? t;
+
+    // SYMMETRY, not idempotence, is the rule — and getting that backwards was a defect of its own.
+    //
+    // An earlier version passed `sanitizeNodeName` into the rewrite so it applied only to tokens the map
+    // could NOT resolve, reasoning that a resolved token is already an emitted node and sanitising it twice
+    // would corrupt it. That reads well and is wrong, because the MEASURED side of the comparison
+    // (`nodeKey(m.node)`, no resolver) sanitises unconditionally. What has to match is not "each side
+    // sanitises once" but "both sides do the same thing to the same value".
+    //
+    // Measured, on the one case where sanitising is not a fixed point: a net whose id is `one` emits node
+    // `none`, which is itself a reserved word. Measured `v(none)` → `x_none`. Under the old rule the
+    // criterion `v(one)` resolved to `none` and stopped → the two never met, on a net the deck HAD
+    // measured. Sanitising both sides lands them both on `x_none`.
+    //
+    // Per ARGUMENT, so a differential stays two references: sanitising `nsup,nload` as one string would
+    // flatten the comma back into `_` and undo the split the rewrite just performed.
+    return inner
+        .split(',')
+        .map((p) => sanitizeNodeName(p.trim()).toLowerCase())
+        .join(',');
 }
+
+const EMPTY_MAP: ReadonlyMap<string, string> = new Map();
+
+/**
+ * The key a criterion naming GROUND resolves to.
+ *
+ * A sentinel rather than a normal key, because ground is answered without being measured and must never
+ * accidentally equal a real node. The NUL character cannot occur in a sanitised node name.
+ */
+const GROUND_KEY = 'v:\u0000ground';
+
+/**
+ * The key for a probe that names ground as the FIRST operand of a differential — `v(gnd,out)`.
+ *
+ * `v(a,b)` is `v(a) − v(b)`, so this is `−v(out)`: a real quantity, and the negative of a column we do have.
+ * It gets its own key rather than binding to `v(out)` because answering with the wrong sign is exactly the
+ * failure this module exists to prevent, and rather than the ground key because ground is answered as 0 and
+ * this is not 0. It is reported with the fix in the message — writing the operands the other way round is
+ * always available and unambiguous.
+ */
+const SIGN_AMBIGUOUS_KEY = 'v:\u0000sign-ambiguous';
 
 /**
  * Build the {net reference → canonical net ID} lookup a criterion's probe is resolved through (see nodeKey).
@@ -79,6 +134,36 @@ export function netIdByRef(nets: ReadonlyArray<{ id: string; name?: string }>): 
     for (const n of nets) if (n.name) map.set(n.name.trim().toLowerCase(), n.id);
     for (const n of nets) map.set(n.id.trim().toLowerCase(), n.id);
     return map;
+}
+
+/**
+ * Accept whatever the caller has, and turn it into the one thing this module resolves through.
+ *
+ * THREE SHAPES, and the widening is deliberate rather than indecisive. `evaluateAssertions` is published
+ * API, and its fourth argument used to be a bare `nets` array; narrowing it to a circuit outright would
+ * break every external caller at once, in a function whose failure mode is a silently unverified design.
+ *
+ *   • a CircuitJson — the correct and complete shape. Only this one can model the digital bridge, because
+ *     the analog twin a digital net is probed through is derived from the COMPONENTS, not the nets.
+ *   • a ProbeResolver — for a caller in a loop (Monte-Carlo, corners, a sweep) that builds it once. Those
+ *     paths vary component values, never the net set, so one resolver is correct for every variant and
+ *     rebuilding it per variant would plan the digital bridge a hundred times for one answer.
+ *   • a bare nets array — the old shape, still honoured. It resolves names, ids, ground and differentials;
+ *     it CANNOT resolve a digital net, because it does not carry the components to derive the twin from.
+ *     That is strictly better than what such a caller had before and strictly worse than passing the
+ *     circuit, which is why the type lists it last and the parameter is named for the circuit.
+ */
+function toResolver(
+    from: CircuitJson | ProbeResolver | ReadonlyArray<{ id: string; name?: string }> | undefined,
+): ProbeResolver | undefined {
+    if (!from) return undefined;
+    if (Array.isArray(from)) {
+        const nets = from as ReadonlyArray<{ id: string; name?: string; isGround?: boolean }>;
+        if (nets.length === 0) return undefined;
+        return buildProbeResolver({ version: '1.0', components: [], nets: nets as CircuitJson['nets'] });
+    }
+    if ('netRefToNode' in from) return from;
+    return buildProbeResolver(from as CircuitJson);
 }
 
 /** A current/power probe (i(R1), @r1[i]) — NOT a node voltage. */
@@ -115,26 +200,65 @@ export function isObservableCurrentProbe(probe: string): boolean {
 
 /**
  * The probes a criteria set needs UNIONed into the netlist beyond the generator's default node-voltage sweep.
- * Today that is EXACTLY the branch-CURRENT criteria (`i(R1)` / `@r1[i]`): the generator auto-probes every node
- * VOLTAGE but never a branch current, so a current criterion must have its probe added via generateNetlist's
- * `extraProbes` or it reads "probe not found". Voltage criteria need nothing (auto-probed); a frequency (`cutoff`),
- * `thd`, or `gain` criterion rides on the ANALYSIS request (ac / fourier / tf), not on a probe. This is the ONE
- * place the criterion→extra-probe seam is derived, shared by the nominal verify path AND every variant batch
+ *
+ * TWO KINDS, both of them things the default sweep cannot produce:
+ *
+ *   • a branch-CURRENT criterion (`i(R1)` / `@r1[i]`) — the generator auto-probes every node VOLTAGE and
+ *     never a current, so without this it reads "probe not found";
+ *   • a DIFFERENTIAL voltage criterion (`v(a,b)`) — the default sweep probes single nodes, and a difference
+ *     is a column of its own. This was missing, and the omission was invisible in the worst way: the
+ *     criterion resolved to a perfectly correct key for a column nobody had asked ngspice to write, so a
+ *     shunt-current spec written as a voltage across the sense resistor came back "probe not found" no
+ *     matter how well the board worked. Making the key correct without asking for the column would have
+ *     been half a fix that measured as a whole one.
+ *
+ * A single-node voltage criterion needs nothing (auto-probed); a frequency (`cutoff`), `thd`, or `gain`
+ * criterion rides on the ANALYSIS request (ac / fourier / tf), not on a probe. This is the ONE place the
+ * criterion→extra-probe seam is derived, shared by the nominal verify path AND every variant batch
  * (Monte-Carlo / corner / sweep) so those paths can't measure a different set and silently diverge.
  */
 export function extraProbesForCriteria(criteria: { probe: string }[]): string[] {
-    return criteria.filter((c) => isCurrentProbe(c.probe)).map((c) => c.probe);
+    return criteria.filter((c) => isCurrentProbe(c.probe) || isDifferentialProbe(c.probe)).map((c) => c.probe);
+}
+
+/** `v(a,b)` — a difference between two nodes, which the default single-node sweep never writes. */
+export function isDifferentialProbe(probe: string): boolean {
+    const inner = normalizeProbe(probe.trim()).match(/^v\s*\(\s*(.+?)\s*\)$/i)?.[1];
+    return inner !== undefined && inner.includes(',');
 }
 
 /** Namespaced match key: a current probe keys by its device (`i:r1`), a voltage probe by its node
  *  (`v:<nodeKey>`). Keeps the two kinds from colliding AND bridges `i(R1)` ↔ the measured `@r1[i]`.
  *  `refToId` (net reference → canonical id) is applied only to VOLTAGE keys, to resolve a name-based probe to
  *  its id-derived node (see nodeKey); the measured node is already a SPICE node so it is keyed with no map. */
-function matchKey(probeOrNode: string, refToId?: Map<string, string>): string {
+function matchKey(probeOrNode: string, resolver?: ProbeResolver): string {
     if (isCurrentProbe(probeOrNode)) {
         return `i:${currentKey(probeOrNode) ?? probeOrNode.trim().toLowerCase()}`;
     }
-    return `v:${nodeKey(probeOrNode, refToId)}`;
+    // A criterion naming the reference resolves to the sentinel, so the evaluator can answer it from the
+    // definition of ground rather than looking for a column that is deliberately never emitted. Checked
+    // BEFORE the rewrite, because the rewrite erases a lone ground argument and would leave nothing to
+    // recognise it by.
+    if (resolver && namesGroundOnly(probeOrNode, resolver)) return GROUND_KEY;
+    // A key of `''` means the rewrite ERASED the probe, and there are two ways that happens. `namesGroundOnly`
+    // above has already claimed one of them. The other is `v(gnd,out)` — ground FIRST — which the rewrite
+    // drops deliberately because it is `−v(out)` and emitting the un-negated `v(out)` would answer a
+    // criterion with the wrong SIGN.
+    //
+    // Treating that as "names ground" was a real defect and the dangerous kind: it answered `v(GND,OUT)`
+    // with 0 and PASSED, on a divider actually sitting at −2.5 V. The old code keyed it `ngnd_out` and
+    // reported "probe not found" — a worse answer that was at least fail-safe. So it keeps a key of its
+    // own, distinct from ground and from any real node.
+    const k = nodeKey(probeOrNode, resolver);
+    return k === '' ? SIGN_AMBIGUOUS_KEY : `v:${k}`;
+}
+
+/** Does this probe name the reference and nothing else? `v(gnd)`, `gnd`, `v(0)` — but not `v(out,gnd)`. */
+function namesGroundOnly(probe: string, resolver: ProbeResolver): boolean {
+    const inner = normalizeProbe(probe.trim()).match(/^v\s*\(\s*(.+?)\s*\)$/i)?.[1];
+    if (inner === undefined) return false;
+    const parts = inner.split(',').map((p) => p.trim().toLowerCase());
+    return parts.length === 1 && resolver.groundRefs.has(parts[0]!);
 }
 
 export function compareAssertion(actual: number, op: AcceptanceCriterion['op'], target: number, tol?: number): boolean {
@@ -168,16 +292,70 @@ export function evaluateAssertions(
     measurements: SimMeasurement[],
     assertions: AcceptanceCriterion[],
     simOk = true,
-    nets?: ReadonlyArray<{ id: string; name?: string }>,
+    circuit?: CircuitJson | ProbeResolver | ReadonlyArray<{ id: string; name?: string }>,
 ): AssertionResult[] {
-    const refToId = nets?.length ? netIdByRef(nets) : undefined;
-    // Measured nodes are ALREADY sanitized SPICE nodes → keyed with no ref map; only the user-facing criterion
-    // probe is resolved through refToId (net name/id → canonical id → node).
+    const resolver = toResolver(circuit);
+    // The measured side is keyed with NO resolver, and that is a correctness rule rather than an
+    // optimisation. Emitted nodes are guaranteed distinct from EACH OTHER, but not from other nets' names:
+    // nets {id:'a1', name:'nb'} and {id:'b'} emit `na1` and `nb`, so resolving the measured column `v(nb)`
+    // would hit the first net's NAME and rebind that column to `na1` — silently attributing one net's
+    // measurement to another. Only the user-facing criterion goes through the map.
     const byKey = new Map(measurements.map((m) => [matchKey(m.node), m]));
     return assertions.map((a) => {
         const label = a.label ?? `${a.probe} ${a.metric} ${a.op} ${a.value}`;
         const base = { label, probe: a.probe, metric: a.metric, op: a.op, target: a.value, tol: a.tol };
-        const m = simOk ? byKey.get(matchKey(a.probe, refToId)) : undefined;
+
+        // GROUND, answered rather than measured. There is no column for it and there never will be —
+        // ngspice has no vector for node 0 — so the alternative is reporting "probe not found" for the one
+        // assertion in any circuit that is true by definition, and letting a design that meets every spec
+        // read as unverified because someone wrote down the most obviously correct one.
+        //
+        // Reported as `derived`, never as a measurement. The value is exact, not estimated: every node
+        // voltage in a SPICE deck IS a voltage relative to node 0, so the reference is 0 by construction.
+        // GATED ON THE RUN HAVING PRODUCED SOMETHING, and that guard is doing real work rather than being
+        // defensive. Ground is answered without reading a column, so without it a batch whose simulations
+        // returned NO columns at all still answers every ground criterion with a pass — measured on the
+        // Monte-Carlo engine, whose runner treats an empty result as ran-and-usable: a ground-only criterion
+        // reported 10/10 variants passing, i.e. a 100% robustness verdict manufactured out of nothing. A
+        // verdict that survives its own evidence disappearing is the worst thing this file can produce.
+        if (simOk && measurements.length > 0 && resolver && matchKey(a.probe, resolver) === GROUND_KEY) {
+            const isVoltageMetric = a.metric !== 'cutoff' && a.metric !== 'thd' && a.metric !== 'gain';
+            if (!isVoltageMetric) {
+                return {
+                    ...base,
+                    actual: null,
+                    distance: null,
+                    pass: false,
+                    detail: `"${a.probe}" names the ground reference — ${a.metric} is not defined for it`,
+                };
+            }
+            const pass = compareAssertion(0, a.op, a.value, a.tol);
+            return {
+                ...base,
+                actual: 0,
+                // SIGNED, like every other path: `distance` is documented as `actual − target` and the AI fix
+                // loop reads its sign to know which WAY to move. An absolute value here would tell it a
+                // target of 5 was missed by +5 when the truth is −5.
+                distance: 0 - a.value,
+                pass,
+                detail: `${a.metric}(${a.probe}) = 0 — the ground reference, derived not measured ${pass ? '✓' : '✗'} ${a.op} ${a.value}`,
+            };
+        }
+
+        // The sign-ambiguous differential — `v(gnd,out)`, which is −v(out). Answered specifically rather
+        // than as a generic "probe not found", because the user asked for something real and there is an
+        // exact way to ask for it.
+        if (simOk && resolver && matchKey(a.probe, resolver) === SIGN_AMBIGUOUS_KEY) {
+            return {
+                ...base,
+                actual: null,
+                distance: null,
+                pass: false,
+                detail: `"${a.probe}" measures ground MINUS a node, which is the negative of a node voltage — write the operands the other way round (e.g. "v(out,gnd)") so the sign is unambiguous`,
+            };
+        }
+
+        const m = simOk ? byKey.get(matchKey(a.probe, resolver)) : undefined;
         if (!m) {
             return {
                 ...base,
@@ -296,6 +474,28 @@ export function attachFourierThd(measurements: SimMeasurement[], fourier: Fourie
  * Fold a `.tf` small-signal DC gain onto the measurement of its output node, so a `gain` criterion is evaluated
  * through the SAME measurement path as every other metric (same posture as attachFourierThd). A single tf result
  * (one output node) → at most one measurement updated, matched by node key. Mutates; no-op without a finite gain.
+ */
+/*
+ * KNOWN OPEN SEAM, of the same family this module was just repaired for, and left open DELIBERATELY rather
+ * than patched unproven.
+ *
+ * Both sides below are keyed map-free, which is right whenever `tf.outputNode` is what ngspice echoed back
+ * — an already-emitted probe. But `parseTransferFunction` falls back to the caller's RAW requested output
+ * when that echo line is missing or truncated, and the worker's variant path hands it the un-rewritten
+ * `analysis.tf.output`. On that one path a raw reference would need the resolver to reach its measurement:
+ * a net whose id differs from its name, a digital net, or ground would not bind.
+ *
+ * AND IT IS WORSE THAN "WOULD NOT BIND", which is how this note first described it. Reproduced during
+ * review: with nets {id:'a1', name:'OUT'} and {id:'out', name:'MID'}, a gain of 42 belonging to node `na1`
+ * attached to the measurement for `v(x_out)`, and a `gain(v(OUT))` criterion returned pass=true reading a
+ * DIFFERENT net's gain. So the failure class is a wrong verdict, not a missing one.
+ *
+ * Still not fixed here, and the reason is scope rather than severity: closing it means threading a resolver
+ * through the worker's variant path, whose spec mocks these by name and asserts exact call arguments, and
+ * that belongs in its own change with its own proof. Only the variant path is exposed — the API and the
+ * worker's main runner derive their fallback from the deck TEXT, which is already rewritten. Written down
+ * with its real severity so the next reader finds it by reading rather than by debugging a verdict that
+ * was confidently wrong.
  */
 export function attachTransferFunction(measurements: SimMeasurement[], tf: TransferFunctionResult | undefined): void {
     if (!tf || !Number.isFinite(tf.gain)) return;
