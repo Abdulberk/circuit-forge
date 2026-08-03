@@ -19,14 +19,15 @@
  *     on each net. A real schematic routes orthogonally, breaks crossings and places junction dots, and
  *     pretending to do that badly would be worse than doing it plainly: a user would read a crossing as a
  *     connection. Straight lines are unambiguous about being a topology view.
- *   • It is not a placement the user owns yet. Positions come from `ui.positions` when the document carries
- *     them and from a deterministic grid when it does not, which today is always — nothing writes them yet.
- *     The grid is derived by scanning, never randomised, so the same document draws the same way on every
- *     render and in every test.
+ *   • Positions come from `ui.positions` when the document carries them, and from a deterministic grid when
+ *     it does not — which is the ordinary case for a design a machine wrote and nobody has arranged. The
+ *     grid is derived by scanning, never randomised, so the same document draws the same way on every render
+ *     and in every test. What it is NOT yet is a placement the user can change: nothing here drags. That is
+ *     the next slice; this one is about the arrangement surviving once something does write it.
  *   • It shows the SCHEMATIC, not the board. Board geometry is a different document with its own frame, and
  *     conflating the two is the confusion this codebase already documents in `UiJson.positions`.
  */
-import type { CircuitJson } from '@circuit-forge/eda-core';
+import type { CircuitJson, Position, UiJson } from '@circuit-forge/eda-core';
 import { buildObjectTree, isPlaceablePart, symbolFor, type TreeNode } from '@circuit-forge/editor-core';
 import { useMemo } from 'react';
 
@@ -49,7 +50,7 @@ interface Placed {
  * LARGEST symbol so nothing overlaps whatever mix of parts a design happens to contain. Deterministic by
  * construction: no clock, no randomness, no dependence on render order.
  */
-function layOut(circuit: CircuitJson, positions: Record<string, { x: number; y: number }> | undefined): Placed[] {
+function layOut(circuit: CircuitJson, positions: Record<string, Position> | undefined): Placed[] {
     const parts = (circuit.components ?? []).filter((c) => isPlaceablePart(c));
     const symbols = parts.map((c) => symbolFor(c));
     const cellW = Math.max(CELL_PAD, ...symbols.map((s) => s.width)) + CELL_PAD;
@@ -81,7 +82,14 @@ export function SchematicCanvas({
     onSelect,
 }: {
     circuit: CircuitJson;
-    ui?: { positions?: Record<string, { x: number; y: number }> };
+    /**
+     * The drawing, as the document carries it — not a hand-written subset of it.
+     *
+     * A structural type naming just `positions` reads as a narrow dependency and behaves as a second
+     * definition of what a drawing is: the day `Position` grows a field this component needs, it type-checks
+     * against a shape that no longer matches the one being stored.
+     */
+    ui?: UiJson;
     selectedPath?: string | null;
     onSelect?: (node: TreeNode | null) => void;
 }) {

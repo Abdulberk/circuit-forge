@@ -14,7 +14,7 @@
  * `expectedUpdatedAt` succeeds only if it matches the current row, a save omitting it always succeeds, and
  * every accepted write moves the token. Every conflict case runs against that.
  */
-import type { CircuitJson } from '@circuit-forge/eda-core';
+import type { CircuitJson, UiJson } from '@circuit-forge/eda-core';
 import { connectPins, setValue } from '@circuit-forge/editor-core';
 import { act, render, screen, waitFor } from '@testing-library/react';
 import { useState } from 'react';
@@ -37,9 +37,14 @@ const CIRCUIT: CircuitJson = {
     ],
 };
 
-const asDraft = (updatedAt: string, baseVersionId: string | null = null): OpenedProject => ({
+const asDraft = (
+    updatedAt: string,
+    baseVersionId: string | null = null,
+    uiJson: UiJson = {},
+): OpenedProject => ({
     source: 'working-copy',
     circuitJson: CIRCUIT,
+    uiJson,
     updatedAt,
     baseVersionId,
 });
@@ -54,6 +59,16 @@ interface SaveCall {
 /** A server that behaves like the real one: it holds a row, enforces the precondition, and moves the token. */
 function conditionalSave(initialUpdatedAt: string) {
     const sent: SaveCall[] = [];
+    /**
+     * The DRAWING that went with each save, recorded separately from `sent`.
+     *
+     * Separately because the assertions on `sent` are about which circuit went with which token, and
+     * folding a positions map into every one of them would bury that in noise. It is still recorded on
+     * EVERY call, never only when a test asks: the whole failure being guarded against here is a save that
+     * carries a circuit and silently blanks the arrangement, and that is only visible if the blank is
+     * captured too.
+     */
+    const sentUi: UiJson[] = [];
     let current = initialUpdatedAt;
     let issued = 0;
 
@@ -67,7 +82,7 @@ function conditionalSave(initialUpdatedAt: string) {
             projectId: string,
             body: {
                 circuitJson: CircuitJson;
-                uiJson: Record<string, unknown>;
+                uiJson: UiJson;
                 baseVersionId?: string;
                 expectedUpdatedAt?: string;
             },
@@ -78,6 +93,7 @@ function conditionalSave(initialUpdatedAt: string) {
                 token: body.expectedUpdatedAt,
                 baseVersionId: body.baseVersionId,
             });
+            sentUi.push(body.uiJson);
             if (body.expectedUpdatedAt !== undefined && body.expectedUpdatedAt !== current) {
                 // Exactly the API's 409: the conditional update matched zero rows.
                 return Promise.reject(
@@ -98,8 +114,15 @@ function conditionalSave(initialUpdatedAt: string) {
         },
     } as unknown as Api;
 
-    return { api, sent, somebodyElseSaves, currentToken: () => current };
+    return { api, sent, sentUi, somebodyElseSaves, currentToken: () => current };
 }
+
+/** Put R1 at a point, leaving the rest of the drawing alone — what a drag-release produces. */
+const withR1 = (ui: UiJson, x: number, y: number): UiJson => ({
+    ...ui,
+    schemaVersion: 1,
+    positions: { ...ui.positions, r1: { x, y } },
+});
 
 function Harness({
     api,
@@ -174,10 +197,18 @@ function Harness({
                 connect-self
             </button>
 
+            {/* The drawing, driven the way the canvas will drive it: derive the next one from the current
+                one and hand the whole thing back. `at` is a parameter so a test can move a symbol TO where
+                it already is, which must not mint a revision. */}
+            <output data-testid="ui">{JSON.stringify(doc.ui)}</output>
+            <button onClick={() => doc.commitUi('Move R1', withR1(doc.ui, 100, 40))}>move</button>
+            <button onClick={() => doc.commitUi('Move R1', withR1(doc.ui, 300, 40))}>move-again</button>
+
             <output data-testid="recovery">
                 {doc.recovery ? `${doc.recovery.at}/${doc.recovery.continuesServerDraft}` : '—'}
             </output>
             <output data-testid="recovered-value">{(doc.recovery?.circuit.components ?? [])[0]?.value ?? '—'}</output>
+            <output data-testid="recovered-ui">{JSON.stringify(doc.recovery?.ui ?? null)}</output>
             <output data-testid="backup">{doc.localBackup.ok ? 'ok' : doc.localBackup.reason}</output>
             <button onClick={doc.recoverLocal}>recover</button>
             <button onClick={doc.discardLocal}>discard-local</button>
@@ -556,6 +587,203 @@ const storedDraft = (over: Partial<StoredDraft> = {}): StoredDraft => ({
     baseVersionId: null,
     at: '2026-08-02T10:00:00.000Z',
     ...over,
+});
+
+describe('the drawing is part of the document', () => {
+    // Every test here fails against the build that shipped before this one, and that build was not missing
+    // a feature — it was actively destroying data. `uiJson: {}` was hard-coded into the save, `ui: {}` into
+    // the open, and `commitUi` had no caller outside its own unit test. So the drawing could not be sent,
+    // could not be read back, and the one function that could have changed it was unreachable.
+
+    const arrangement: UiJson = {
+        schemaVersion: 1,
+        positions: { r1: { x: 20, y: 20, rotation: '90' }, r2: { x: 120, y: 20 } },
+    };
+
+    it('SENDS the arrangement, not an empty one', async () => {
+        const { api, sentUi } = conditionalSave('T0');
+        render(<Harness api={api} opened={asDraft('T0')} />);
+
+        click('move');
+        await settle();
+
+        await waitFor(() => expect(sentUi).toHaveLength(1));
+        expect(sentUi[0]!.positions).toEqual({ r1: { x: 100, y: 40 } });
+    });
+
+    it('READS the arrangement back when the project opens', () => {
+        const { api } = conditionalSave('T0');
+        render(<Harness api={api} opened={asDraft('T0', null, arrangement)} />);
+        expect(JSON.parse(screen.getByTestId('ui').textContent!)).toEqual(arrangement);
+    });
+
+    it('does not WIPE the arrangement when the circuit is edited', async () => {
+        // The bug in its exact shape. Arrange the sheet, then type one character: the autosave that follows
+        // carried a hard-coded empty drawing, so the positions were gone from the server 1.2 s later while
+        // still on screen. The user would only find out on the next reload.
+        const { api, sent, sentUi } = conditionalSave('T0');
+        render(<Harness api={api} opened={asDraft('T0', null, arrangement)} />);
+
+        click('edit');
+        await settle();
+
+        await waitFor(() => expect(sent).toHaveLength(1));
+        expect(sent[0]!.value).toBe('2k'); // the edit really went
+        expect(sentUi[0]).toEqual(arrangement); // …and took the arrangement with it
+    });
+
+    it('does not wipe the CIRCUIT when the arrangement changes either', async () => {
+        // The same failure mirrored. A drag saves the whole document, so a version of this that sent only
+        // the drawing would push the netlist back to whatever the last circuit save happened to hold.
+        const { api, sent } = conditionalSave('T0');
+        render(<Harness api={api} opened={asDraft('T0')} />);
+
+        click('edit');
+        click('move');
+        await settle();
+
+        await waitFor(() => expect(status()).toBe('clean'));
+        expect(sent[sent.length - 1]!.value).toBe('2k');
+    });
+
+    it('UNDOES a move, and the undone arrangement is what gets saved', async () => {
+        // Undo has to cover the drawing or Ctrl+Z becomes conditional on what kind of thing you did last,
+        // which is not something a user can hold in their head.
+        const { api, sentUi } = conditionalSave('T0');
+        render(<Harness api={api} opened={asDraft('T0')} />);
+
+        click('move');
+        await settle();
+        click('move-again');
+        await settle();
+        expect(sentUi[sentUi.length - 1]!.positions).toEqual({ r1: { x: 300, y: 40 } });
+
+        click('undo');
+        await settle();
+        expect(JSON.parse(screen.getByTestId('ui').textContent!).positions).toEqual({ r1: { x: 100, y: 40 } });
+        expect(sentUi[sentUi.length - 1]!.positions).toEqual({ r1: { x: 100, y: 40 } });
+    });
+
+    it('a move that ends where it started is not a revision and not a save', async () => {
+        // A drag that returns to the origin, a rotate pressed four times. Minting a revision for it would
+        // put a step in the undo stack that visibly does nothing, and minting a save would bump the
+        // concurrency token — so another tab's real work would 409 against a gesture that changed nothing.
+        const { api, sent } = conditionalSave('T0');
+        render(<Harness api={api} opened={asDraft('T0')} />);
+
+        click('move');
+        await settle();
+        const after = sent.length;
+        expect(screen.getByTestId('canUndo').textContent).toBe('true');
+
+        click('move'); // same coordinates again
+        await settle();
+
+        expect(sent).toHaveLength(after);
+        expect(status()).toBe('clean');
+        click('undo');
+        // One undo is enough to get back to no arrangement at all — proof the second click minted nothing.
+        expect(JSON.parse(screen.getByTestId('ui').textContent!)).toEqual({});
+    });
+
+    it('keeps the arrangement in the copy held on THIS device', async () => {
+        // A crash between the drag and the save must not hand back a document that is correct and looks
+        // scrambled, which is a loss nothing announces.
+        const { api } = conditionalSave('T0');
+        const store = memoryDraftStore();
+        render(<Harness api={api} opened={asDraft('T0')} store={store} />);
+
+        click('move');
+        await act(async () => {
+            jest.advanceTimersByTime(300); // past the local write, short of the save
+            await Promise.resolve();
+        });
+
+        expect(store.get('project-1')?.ui).toEqual({ schemaVersion: 1, positions: { r1: { x: 100, y: 40 } } });
+    });
+
+    it('OFFERS a local copy whose only unsaved change is the arrangement', () => {
+        // The comparison that decides "nothing to rescue" used to look at the netlist alone. A session
+        // spent dragging twenty symbols changes no component and no net, so that copy was deleted on open
+        // as a duplicate — silently discarding the entire session's work.
+        const { api } = conditionalSave('T0');
+        const store = memoryDraftStore([
+            {
+                projectId: 'project-1',
+                circuit: CIRCUIT, // byte-identical to the server's
+                ui: arrangement, // …and this is the whole difference
+                baseToken: 'T0',
+                baseVersionId: null,
+                at: '2026-08-02T10:00:00.000Z',
+            },
+        ]);
+        render(<Harness api={api} opened={asDraft('T0')} store={store} />);
+
+        expect(screen.getByTestId('recovery').textContent).toBe('2026-08-02T10:00:00.000Z/true');
+        expect(JSON.parse(screen.getByTestId('recovered-ui').textContent!)).toEqual(arrangement);
+    });
+
+    it('does NOT offer a local copy that only differs in key order', async () => {
+        // Both values here come out of Postgres `jsonb` columns, which do not preserve the key order they
+        // were given — a drawing saved as {schemaVersion, positions, sheetId} comes back as {sheetId,
+        // positions, schemaVersion}. A stringify comparison calls those different, so the "the server
+        // already has exactly this" branch could never fire and every single open would announce unsaved
+        // work that does not exist, which the user then has to make a decision about.
+        const { api } = conditionalSave('T0');
+        const reordered: UiJson = {
+            positions: { r2: { x: 120, y: 20 }, r1: { y: 20, x: 20, rotation: '90' } },
+            schemaVersion: 1,
+        };
+        const store = memoryDraftStore([
+            {
+                projectId: 'project-1',
+                circuit: CIRCUIT,
+                ui: reordered,
+                baseToken: 'T0',
+                baseVersionId: null,
+                at: '2026-08-02T10:00:00.000Z',
+            },
+        ]);
+        render(<Harness api={api} opened={asDraft('T0', null, arrangement)} store={store} />);
+
+        expect(screen.getByTestId('recovery').textContent).toBe('—');
+        expect(store.get('project-1')).toBeNull(); // …and the duplicate was cleared, not left to re-offer
+    });
+
+    it('restores the arrangement when that copy is recovered', async () => {
+        const { api, sentUi } = conditionalSave('T0');
+        const store = memoryDraftStore([
+            {
+                projectId: 'project-1',
+                circuit: CIRCUIT,
+                ui: arrangement,
+                baseToken: 'T0',
+                baseVersionId: null,
+                at: '2026-08-02T10:00:00.000Z',
+            },
+        ]);
+        render(<Harness api={api} opened={asDraft('T0')} store={store} />);
+
+        click('recover');
+        expect(JSON.parse(screen.getByTestId('ui').textContent!)).toEqual(arrangement);
+
+        // Recovered work is not allowed to live on the device — it is scheduled like any edit so it reaches
+        // the server, arrangement included.
+        await settle();
+        await waitFor(() => expect(sentUi).toHaveLength(1));
+        expect(sentUi[0]).toEqual(arrangement);
+    });
+
+    it('does not save the VIEWPORT, so scrolling cannot conflict with someone else’s work', async () => {
+        // Where a person has scrolled is a property of the person, not the board. Writing it would make
+        // merely looking at a project a write that bumps the concurrency token, and a second tab doing
+        // nothing but panning would 409 the first tab's real edits.
+        const { api, sent } = conditionalSave('T0');
+        render(<Harness api={api} opened={asDraft('T0', null, arrangement)} />);
+
+        await settle();
+        expect(sent).toHaveLength(0); // opening and looking is not a write
+    });
 });
 
 describe('unsaved work survives the tab', () => {
