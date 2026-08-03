@@ -262,13 +262,25 @@ export async function layoutCircuit(circuit: CircuitJson, opts: LayoutOptions = 
     // Complete the caller's overrides against a real fab tier BEFORE anything reads them. A raw partial
     // object here leaves via geometry undefined, which propagates as NaN into the KiCad design rules the
     // DRC notary judges against — the board would be checked by a rulebook that is not a rulebook.
-    const { profile, tier, adjustments } = resolveFabProfile(opts.fabProfile);
+    const { profile, tier, adjustments, unsupportedLayers } = resolveFabProfile(opts.fabProfile);
     const fab = { tier, profile };
     const diagnostics: LayoutDiagnostic[] = adjustments.map((message) => ({
         code: 'fab_profile_adjusted',
         severity: 'warning' as const,
         message,
     }));
+
+    // An unbuildable layer count is an ERROR, not a clamp, and it is the one profile refusal that stops the
+    // job. Every other override that gets adjusted still describes the board the caller asked for, built to
+    // a coarser process. A board silently reduced from eight layers to two is a DIFFERENT board — the design
+    // may not fit on it — and someone would order a stackup for a design that was never laid out on it.
+    if (unsupportedLayers !== undefined) {
+        diagnostics.push({
+            code: 'PCB054',
+            severity: 'error',
+            message: `${unsupportedLayers} copper layers were requested. The board toolchain builds 1, 2 or 4, and silently produces 2 for anything else — so this is refused rather than delivered as a two-layer board.`,
+        });
+    }
 
     // 1) honest pre-flight
     // The pad-count oracle is loaded HERE, once, and threaded in — footprinter is ESM-only and this is

@@ -333,3 +333,57 @@ describe('marking one origin every exporter can read', () => {
         expect(r.kicadPcb.replace(/\n\s*\(aux_axis_origin [^)]*\)/, '')).toBe(src);
     });
 });
+
+/**
+ * Copper layers, where the ceiling is upstream and the failure is silent.
+ *
+ * tscircuit's board returns `["top","bottom"]` for ANY count it does not recognise — 6 and 8 included —
+ * with no error and no warning. So the danger is not a wrong number, it is a customer ordering an
+ * eight-layer stackup for a design that was laid out on two.
+ */
+describe('layer count is refused rather than clamped', () => {
+    it('accepts the three counts the toolchain actually builds', () => {
+        for (const layers of [1, 2, 4] as const) {
+            const r = resolveFabProfile({ layers });
+            expect(r.profile.layers).toBe(layers);
+            expect(r.adjustments).toEqual([]);
+            // The regression that mattered: a braceless `else` recorded the refusal for EVERY count, so a
+            // perfectly valid four-layer request was rejected while tests that only asked about 8 stayed
+            // green.
+            expect(r.unsupportedLayers).toBeUndefined();
+        }
+    });
+
+    it('REFUSES a count the toolchain silently degrades, and records it separately', () => {
+        for (const layers of [6, 8]) {
+            const r = resolveFabProfile({ layers });
+            // Not clamped to 2: the caller must not receive a different board than the one they asked for.
+            expect(r.profile.layers).toBeUndefined();
+            expect(r.unsupportedLayers).toBe(layers);
+            expect(r.adjustments.join(' ')).toMatch(/layers: refused/);
+        }
+    });
+
+    it('refuses a value that is not a layer count at all', () => {
+        const r = resolveFabProfile({ layers: 'four' });
+        expect(r.profile.layers).toBeUndefined();
+        expect(r.adjustments.join(' ')).toMatch(/layers: refused/);
+        // Not a number, so there is no count to report — the message carries the whole story.
+        expect(r.unsupportedLayers).toBeUndefined();
+    });
+
+    it('says nothing when no layer count is asked for', () => {
+        const r = resolveFabProfile({});
+        expect(r.profile.layers).toBeUndefined();
+        expect(r.unsupportedLayers).toBeUndefined();
+    });
+
+    it('emits the board prop only when it is NOT the default', () => {
+        // A two-layer board's generated source stays byte-identical to what it was before this option
+        // existed, so the diff of a routine board stays about the board.
+        expect(boardExtraProps({ ...JLC_FAB_PROFILE, layers: 2 })).not.toMatch(/layers=/);
+        expect(boardExtraProps({ ...JLC_FAB_PROFILE })).not.toMatch(/layers=/);
+        expect(boardExtraProps({ ...JLC_FAB_PROFILE, layers: 4 })).toMatch(/layers=\{4\}/);
+        expect(boardExtraProps({ ...JLC_FAB_PROFILE, layers: 1 })).toMatch(/layers=\{1\}/);
+    });
+});
