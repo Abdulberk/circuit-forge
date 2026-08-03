@@ -308,6 +308,29 @@ export async function layoutCircuit(circuit: CircuitJson, opts: LayoutOptions = 
     let routeErrors = evaluated.filter((e) => e.type.endsWith('_error'));
     for (const err of routeErrors) diagnostics.push(passThroughError(err, 'tscircuit'));
 
+    /**
+     * Did the board come back with the layers that were ordered?
+     *
+     * The count is otherwise READ AS FACT — `layout-result.ts` takes `num_layers` straight off the board
+     * and reports it — so an upstream degrade would be relayed as the truth. That is not hypothetical: the
+     * evaluator returns two layers for any count it does not recognise, silently, which is exactly why the
+     * profile refuses 6 and 8 before reaching here. This is the second half of that guard, and the half
+     * that keeps working if the upstream rule ever changes underneath us.
+     *
+     * Fail-closed, following `assertDeliverable`: a board that is not the board that was ordered must not
+     * become a downloadable bundle, whatever else about it is correct.
+     */
+    const orderedLayers = profile.layers ?? 2;
+    const deliveredLayers =
+        (evaluated.find((e) => e.type === 'pcb_board') as { num_layers?: number } | undefined)?.num_layers ?? 2;
+    if (deliveredLayers !== orderedLayers) {
+        diagnostics.push({
+            code: 'PCB056',
+            severity: 'error',
+            message: `${orderedLayers} copper layers were ordered but the board came back with ${deliveredLayers}. Refusing to deliver a board that is not the one that was asked for.`,
+        });
+    }
+
     // 4) connectivity parity — OUR netlist vs the evaluated board (condition 1)
     let parity = checkConnectivityParity(evaluated, adapted.expectations);
     diagnostics.push(...parity.diagnostics);
