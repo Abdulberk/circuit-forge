@@ -13,6 +13,7 @@ import { useMemo, useState } from 'react';
 
 import { AddPart, Inspector } from '../components/Inspector';
 import { ObjectTreePanel } from '../components/ObjectTreePanel';
+import { PartLibrary } from '../components/PartLibrary';
 import { SaveStatus } from '../components/SaveStatus';
 import { SchematicCanvas } from '../components/SchematicCanvas';
 import { SignIn } from '../components/SignIn';
@@ -223,6 +224,10 @@ function Workspace() {
                         {/* The palette lives beside the tree it adds to, and only once a document is open —
                             there is nothing to add a part TO before that. */}
                         {circuit && <AddPart doc={doc} />}
+                        {/* Real parts, from the catalogue. The palette above adds a generic; this adds a
+                            part with an MPN, a footprint and a tolerance — which is what the package
+                            check, the robustness verdict and an orderable BOM all key on. */}
+                        {circuit && <PartLibrary api={api} doc={doc} />}
                         {circuit && (
                             // Keyed by project so React REMOUNTS it on a switch. The panel's selection and
                             // collapse state are its own `useState`; unkeyed, they survived a project change

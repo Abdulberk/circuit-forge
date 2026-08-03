@@ -92,6 +92,16 @@ services:
       S3_FORCE_PATH_STYLE: "true"
       JWT_SECRET: dev-jwt-secret-min-32-characters-long
       JWT_REFRESH_SECRET: dev-refresh-secret-min-32-characters-long
+      # The component catalogue credentials, interpolated from the project .env rather than written here —
+      # .env is gitignored and this file is not.
+      #
+      # They were simply MISSING. The parts backend, its cache, its quota metering and its component mapper
+      # were all built and .env carried the keys, and the container had ZERO TME variables: every /parts
+      # call answered 503 'catalog authorization failed', which reads as an outage at the supplier rather
+      # than as a compose file that never passed the keys through. Absent values interpolate to empty, so a
+      # developer without credentials still sees the same honest 503.
+      TME_TOKEN: ${TME_TOKEN:-}
+      TME_SECRET: ${TME_SECRET:-}
       NODE_ENV: development
       API_PORT: 3000
       # Observability — uncomment to emit traces/metrics to the otel-lgtm viewer (start the stack with

@@ -172,6 +172,59 @@ export interface Version extends VersionSummary {
  * the circuit without saying which one it had is the silent-wrong-state failure: the user believes they are
  * editing their draft, and they are looking at something else.
  */
+/**
+ * A catalogue part, transcribed from the API's own `CatalogPart`.
+ *
+ * `unavailable` is the field that matters and the one a careless transcription drops: it names the
+ * enrichment lookups that DID NOT ANSWER on this fetch. Without it a supplier blip returns a part with no
+ * price and no stock, which reads exactly like a part the supplier genuinely does not price — and the
+ * consequences are concrete, because tolerance and footprint both come from the same call.
+ */
+export interface CatalogPart {
+    mpn: string;
+    manufacturer: string;
+    description: string;
+    category?: string;
+    footprint?: string;
+    photo?: string;
+    datasheetUrl?: string;
+    stock?: number;
+    unitCost?: number;
+    currency?: string;
+    supplier: string;
+    supplierId: string;
+    unavailable?: string[];
+}
+
+export interface PartSearchResult {
+    items: CatalogPart[];
+    page: number;
+    /** How many THIS page returned — not the page capacity. A short page is not the end of the results. */
+    returned: number;
+    total?: number;
+}
+
+/** What the catalogue part becomes in a document, plus the server's honest verdict on simulating it. */
+export interface MappedPart {
+    simulatable: boolean;
+    /** Why not, when it is not. Present exactly when `simulatable` is false. */
+    reason?: string;
+    component?: {
+        type: string;
+        value?: string;
+        model?: string;
+        mpn?: string;
+        manufacturer?: string;
+        footprint?: string;
+        tolerance?: number;
+        toleranceSource?: 'user' | 'catalog';
+        sourcing?: Record<string, unknown>;
+    };
+    /** The SPICE model body to add alongside the component, for active devices. */
+    modelDef?: { name: string; [k: string]: unknown };
+    catalog: CatalogPart;
+}
+
 export type OpenedProject =
     | { source: 'working-copy'; circuitJson: CircuitJson; updatedAt: string; baseVersionId: string | null }
     | { source: 'version'; circuitJson: CircuitJson; version: VersionSummary; totalVersions: number }
@@ -400,6 +453,33 @@ export class Api {
     /** GET /simulations/:jobId/result — only meaningful once the job has settled. */
     simulationResult<T = unknown>(jobId: string, signal?: AbortSignal): Promise<T> {
         return this.http.request<T>(`/simulations/${jobId}/result`, { signal });
+    }
+
+    // ---- The component catalogue ----------------------------------------------------------------------
+
+    /**
+     * GET /parts/search — real manufacturer parts, by keyword or MPN.
+     *
+     * Metered per request (the billable unit is the call, cache hits included), so a client debounces
+     * rather than searching per keystroke. The envelope carries `page`/`returned` and NOT a total on every
+     * provider, so a caller must page rather than treating a short page as the end — `returned` is what
+     * this page gave back, not the page capacity.
+     */
+    searchParts(q: string, page = 1, signal?: AbortSignal): Promise<PartSearchResult> {
+        return this.http.request<PartSearchResult>('/parts/search', { query: { q, page }, signal });
+    }
+
+    /**
+     * GET /parts/:symbol/component — the catalogue part as something the document can hold.
+     *
+     * The server does the classification: which of OUR component types this part is, its value pulled from
+     * the right catalogue parameter, its footprint, and whether it can be SIMULATED at all — with the
+     * reason when it cannot. That verdict is the server's and is passed through untouched; a client that
+     * re-derived "is this a resistor" would be a second authority, and the day the two disagreed a part
+     * would enter the design as something it is not.
+     */
+    partComponent(supplierId: string, signal?: AbortSignal): Promise<MappedPart> {
+        return this.http.request<MappedPart>(`/parts/${encodeURIComponent(supplierId)}/component`, { signal });
     }
 
     // ---- The cheap checks -----------------------------------------------------------------------------
