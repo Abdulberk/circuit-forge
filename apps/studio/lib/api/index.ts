@@ -8,8 +8,11 @@ export { pollUntilSettled, isPending, type PollOptions } from './poll';
 export { browserTokenStore, memoryTokenStore, type TokenStore, type Tokens } from './tokens';
 export {
     Api,
+    type CatalogPart,
     type LayoutJob,
+    type MappedPart,
     type OpenedProject,
+    type PartSearchResult,
     type Org,
     type Paginated,
     type Project,

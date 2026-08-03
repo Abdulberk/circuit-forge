@@ -78,6 +78,21 @@ export interface NewPart {
     value?: string;
     /** SPICE model name, for the types that need one (diodes, transistors). */
     model?: string;
+    /**
+     * Catalogue identity, when the part came from one rather than being a generic.
+     *
+     * Carried because these fields are what make the rest of the pipeline able to tell the truth about a
+     * board: `mpn` and `footprint` are what the package-agreement check compares (a part ordered as a WSON
+     * against SOIC pads is refused), `tolerance` is what the robustness verdict spreads over instead of
+     * assuming ±5%, and `sourcing` is what the BOM can actually be ordered from. Dropping them here would
+     * turn a real part into a generic the moment it entered the document.
+     */
+    mpn?: string;
+    manufacturer?: string;
+    footprint?: string;
+    tolerance?: number;
+    toleranceSource?: 'user' | 'catalog';
+    sourcing?: Record<string, unknown>;
 }
 
 /**
@@ -113,12 +128,19 @@ export function addComponent(circuit: CircuitJson, spec: NewPart): EditResult {
     // Each pin on its own net. A new part is unconnected until someone connects it, and pretending
     // otherwise would invent wiring nobody asked for.
     const nets = freshNets(circuit, pins.length);
+    // Every optional field is omitted when absent rather than written as `undefined`: the working copy is
+    // compared and diffed, and a key that exists with no value is a change nobody made.
+    const optional = (
+        ['value', 'model', 'mpn', 'manufacturer', 'footprint', 'tolerance', 'toleranceSource', 'sourcing'] as const
+    )
+        .filter((k) => spec[k] !== undefined)
+        .reduce<Record<string, unknown>>((acc, k) => ({ ...acc, [k]: spec[k] }), {});
+
     const component = {
         id,
         type: spec.type,
         designator,
-        ...(spec.value === undefined ? {} : { value: spec.value }),
-        ...(spec.model === undefined ? {} : { model: spec.model }),
+        ...optional,
         pins: pins.map((pinId, i) => ({ pinId, netId: nets[i]!.id })),
     } as Component;
 
