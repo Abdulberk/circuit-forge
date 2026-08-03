@@ -12,8 +12,10 @@
  * a refusal leave your typing on screen instead of snapping back to the old value and losing what you wrote.
  */
 
-import type { CircuitJson } from '@circuit-forge/eda-core';
+import { COMPONENT_PINS, type CircuitJson, type ComponentType } from '@circuit-forge/eda-core';
 import {
+    addComponent,
+    deleteComponent,
     disconnectPin,
     movePinToNet,
     setDesignator,
@@ -81,6 +83,45 @@ function EditableField(props: FieldProps) {
     );
 }
 
+/**
+ * The parts a user can add.
+ *
+ * Only the FIXED-ARITY types. A subcircuit's pins are authored to match its own port order and a logic
+ * gate's input count is derived from what was written, so `COMPONENT_PINS` gives them an empty list and the
+ * kernel refuses to create one blank. Offering them here would put a button on screen whose only outcome is
+ * a refusal — the shape this codebase keeps removing, one layer up.
+ */
+const ADDABLE: ComponentType[] = (
+    ['resistor', 'capacitor', 'inductor', 'diode', 'zener', 'bjt', 'mosfet', 'voltage_source'] as ComponentType[]
+).filter((t) => (COMPONENT_PINS[t] ?? []).length > 0);
+
+export function AddPart({ doc }: { doc: DocumentState }): React.JSX.Element {
+    return (
+        <div className="field">
+            <label htmlFor="add-part">Add a part</label>{' '}
+            <select
+                id="add-part"
+                value=""
+                onChange={(e) => {
+                    const type = e.target.value as ComponentType;
+                    if (!type) return;
+                    // The kernel picks the designator by scanning what exists, so two clicks give R3 then R4
+                    // without this component tracking anything.
+                    doc.apply((c) => addComponent(c, { type }));
+                    e.target.value = '';
+                }}
+            >
+                <option value="">Choose…</option>
+                {ADDABLE.map((t) => (
+                    <option key={t} value={t}>
+                        {t.replace(/_/g, ' ')}
+                    </option>
+                ))}
+            </select>
+        </div>
+    );
+}
+
 export function Inspector({
     selected,
     circuit,
@@ -128,6 +169,14 @@ export function Inspector({
                     <EditableField label="Type" value={component.type} readOnly />
                     {component.model && <EditableField label="Model" value={component.model} readOnly />}
                     <EditableField label="Pins" value={String(component.pins?.length ?? 0)} readOnly />
+                    <dt />
+                    <dd>
+                        {/* Deleting is lossy and the kernel says what it lost — the nets this part was the
+                            last thing holding up come back as a note, which the status bar renders. */}
+                        <button onClick={() => doc.apply((c) => deleteComponent(c, component.id))}>
+                            Delete {component.designator}
+                        </button>
+                    </dd>
                 </>
             )}
 

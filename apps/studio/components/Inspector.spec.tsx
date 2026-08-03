@@ -10,12 +10,12 @@
  * everything was fine. So every test below goes through the rendered panel and a real click.
  */
 import type { CircuitJson } from '@circuit-forge/eda-core';
-import { buildObjectTree, type TreeNode } from '@circuit-forge/editor-core';
+import { buildObjectTree, type EditResult, type TreeNode } from '@circuit-forge/editor-core';
 import { fireEvent, render, screen } from '@testing-library/react';
 
 import type { DocumentState } from '../lib/useDocument';
 
-import { Inspector } from './Inspector';
+import { AddPart, Inspector } from './Inspector';
 
 const CIRCUIT: CircuitJson = {
     version: '1.0',
@@ -65,7 +65,7 @@ function fakeDoc() {
     const doc = {
         refusal: null,
         notes: [],
-        apply: (edit: (c: CircuitJson) => ReturnType<typeof edit>) => {
+        apply: (edit: (c: CircuitJson) => EditResult) => {
             const r = edit(CIRCUIT);
             if (r.ok) {
                 if (r.changed) applied.push(r.circuit);
@@ -141,5 +141,58 @@ describe('a pin can be rewired from the panel', () => {
         } as unknown as DocumentState;
         render(<Inspector selected={pinNode('r1', '2')} circuit={CIRCUIT} doc={doc} />);
         expect(screen.getByRole('alert').textContent).toMatch(/declared ground/);
+    });
+});
+
+/**
+ * Adding and removing a part, through the rendered panel.
+ *
+ * The kernel work behind this is worth nothing if no screen calls it — the mistake made twice this week and
+ * caught once by the founder. So both operations are exercised by a real click on a real control.
+ */
+describe('a user can add and remove a part', () => {
+    it('offers only the types that can be created with a known pin list', () => {
+        // A subcircuit's pins are authored to match its own port order, so the kernel refuses a blank one.
+        // Offering it would put a control on screen whose only outcome is a refusal.
+        const { doc } = fakeDoc();
+        render(<AddPart doc={doc} />);
+        const options = [...(screen.getByLabelText('Add a part') as HTMLSelectElement).options].map((o) => o.value);
+        expect(options).toContain('resistor');
+        expect(options).toContain('capacitor');
+        expect(options).not.toContain('subckt');
+        expect(options).not.toContain('logic_and');
+    });
+
+    it('adds the chosen type, numbered after what is already there', () => {
+        const { doc, applied } = fakeDoc();
+        render(<AddPart doc={doc} />);
+
+        fireEvent.change(screen.getByLabelText('Add a part'), { target: { value: 'capacitor' } });
+
+        expect(applied).toHaveLength(1);
+        const added = applied[0]!.components.find((c) => c.id === 'c1');
+        expect(added?.designator).toBe('C1');
+        // Born disconnected: each pin on a net of its own, touching nothing that was there.
+        expect(new Set(added!.pins.map((p) => p.netId)).size).toBe(2);
+        for (const p of added!.pins) expect(['vin', 'mid', 'gnd']).not.toContain(p.netId);
+    });
+
+    it('deletes the selected part from its own panel', () => {
+        const { doc, applied } = fakeDoc();
+        const tree = buildObjectTree(CIRCUIT);
+        render(<Inspector selected={tree.byPath.get('root/components/r1')!} circuit={CIRCUIT} doc={doc} />);
+
+        fireEvent.click(screen.getByText('Delete R1'));
+
+        expect(applied).toHaveLength(1);
+        expect(applied[0]!.components.map((c) => c.id)).toEqual(['r2']);
+    });
+
+    it('offers no delete control for a node that is not a component', () => {
+        const { doc } = fakeDoc();
+        const tree = buildObjectTree(CIRCUIT);
+        const netNode = [...tree.byPath.values()].find((n) => n.ref.kind === 'net')!;
+        render(<Inspector selected={netNode} circuit={CIRCUIT} doc={doc} />);
+        expect(screen.queryByText(/^Delete /)).toBeNull();
     });
 });

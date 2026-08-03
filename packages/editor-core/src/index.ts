@@ -19,6 +19,7 @@ export type { ObjectKind, ObjectRef, TreeNode, ObjectTree } from './tree/object-
  */
 export { setDesignator, setNetName, setValue } from './document/edits';
 export { connectPins, disconnectPin, movePinToNet, splitNet } from './document/nets';
+export { addComponent, deleteComponent, type NewPart } from './document/parts';
 export type { EditResult, EditRefusal } from './document/edits';
 
 /**

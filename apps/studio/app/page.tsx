@@ -11,7 +11,7 @@
 import { isPlaceablePart, type TreeNode } from '@circuit-forge/editor-core';
 import { useMemo, useState } from 'react';
 
-import { Inspector } from '../components/Inspector';
+import { AddPart, Inspector } from '../components/Inspector';
 import { ObjectTreePanel } from '../components/ObjectTreePanel';
 import { SaveStatus } from '../components/SaveStatus';
 import { SignIn } from '../components/SignIn';
@@ -219,6 +219,9 @@ function Workspace() {
                         )}
                         <SaveStatus doc={doc} />
                         <Provenance doc={opened.data} />
+                        {/* The palette lives beside the tree it adds to, and only once a document is open —
+                            there is nothing to add a part TO before that. */}
+                        {circuit && <AddPart doc={doc} />}
                         {circuit && (
                             // Keyed by project so React REMOUNTS it on a switch. The panel's selection and
                             // collapse state are its own `useState`; unkeyed, they survived a project change
