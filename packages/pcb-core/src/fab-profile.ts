@@ -45,6 +45,26 @@ export interface FabProfile {
     /** Lever 2 keep-back from the board edge for part courtyards (mm). Default 4. */
     placementMarginMm?: number;
     /**
+     * Copper layers. Default 2.
+     *
+     * ONE, TWO OR FOUR, and the ceiling is upstream rather than a choice made here. tscircuit's board
+     * computes its layer set as:
+     *
+     *     layerCount === 1 → ["top"]
+     *     layerCount === 4 → ["top","bottom","inner1","inner2"]
+     *     anything else    → ["top","bottom"]
+     *
+     * so a board asking for 6 or 8 comes back with TWO layers, no error and no warning — measured against
+     * @tscircuit/core, not inferred. That silent degrade is the reason this field is a closed union and the
+     * resolver REFUSES an unsupported count instead of clamping it: a customer who asks for eight layers and
+     * is handed two would order a board that cannot work, and nothing anywhere would have said so.
+     *
+     * Four is genuinely end-to-end, verified rather than assumed: the evaluator reports `num_layers: 4`, the
+     * KiCad file declares F.Cu/In1.Cu/In2.Cu/B.Cu, the gerber set gains In1_Cu/In2_Cu, and the DSN handed to
+     * freerouting declares all four — so the router can actually use the inner copper.
+     */
+    layers?: 1 | 2 | 4;
+    /**
      * Narrowest silkscreen stroke the fab will PRINT. Below it the art is not rejected, it is deleted —
      * so a board can arrive with its reference designators silently missing. Default 0.15 mm (JLCPCB and
      * PCBWay's published floor; Eurocircuits 0.10, OSH Park 0.127 — 0.15 satisfies all of them).
@@ -128,6 +148,7 @@ export interface FabProfileInput {
     gndPour?: unknown;
     placementGridMm?: unknown;
     placementMarginMm?: unknown;
+    layers?: unknown;
     minSilkWidthMm?: unknown;
     minSilkTextHeightMm?: unknown;
 }
@@ -137,6 +158,16 @@ export interface ResolvedFabProfile {
     tier: FabTierName;
     /** Human-readable record of every value the resolver refused or clamped, for honest disclosure. */
     adjustments: string[];
+    /**
+     * A layer count the toolchain cannot build, recorded separately because it is a different KIND of
+     * refusal from everything in `adjustments`.
+     *
+     * A clamped design rule leaves a board that is still the board the caller described, just built to a
+     * coarser process. A reduced layer count leaves a DIFFERENT board: the design may not fit on it, and a
+     * customer ordering an eight-layer stackup for a two-layer design loses real money. So the caller
+     * raises this at error severity rather than folding it into the warning list.
+     */
+    unsupportedLayers?: number;
 }
 
 /** The four fields a fab physically cannot go below. A caller may raise them (more conservative, always
@@ -181,6 +212,7 @@ const isPositiveFinite = (v: unknown): v is number => typeof v === 'number' && N
  */
 export function resolveFabProfile(input?: FabProfileInput | null): ResolvedFabProfile {
     const adjustments: string[] = [];
+    let unsupportedLayers: number | undefined;
     const raw = (input ?? {}) as Record<string, unknown>;
 
     const requestedTier = raw.tier;
@@ -220,6 +252,30 @@ export function resolveFabProfile(input?: FabProfileInput | null): ResolvedFabPr
         profile[field] = supplied;
     }
 
+    /**
+     * Layer count is REFUSED rather than clamped when unsupported, and that differs from every other field
+     * here on purpose.
+     *
+     * Clamping is right for a design rule: a clearance finer than the fab can etch becomes the fab's limit,
+     * and the board is still buildable — just to the tier's process instead of the caller's wish. It is
+     * wrong here. Handing back two layers to someone who asked for eight produces a board that cannot carry
+     * the design, ordered against a stackup that never existed, and the silence is the whole danger:
+     * tscircuit's board returns `["top","bottom"]` for any count it does not recognise, with no error.
+     */
+    if (raw.layers !== undefined) {
+        // Braces on both arms deliberately. The first version wrote the `else` without them and put the
+        // refusal record on the next line, so it ran for EVERY layer count — a perfectly valid four-layer
+        // request was refused, and the tests that only asked about 8 were all green.
+        if (raw.layers === 1 || raw.layers === 2 || raw.layers === 4) {
+            profile.layers = raw.layers;
+        } else {
+            adjustments.push(
+                `layers: refused ${JSON.stringify(raw.layers)} — the board toolchain builds 1, 2 or 4 copper layers, and any other count silently produces 2`,
+            );
+            if (typeof raw.layers === 'number') unsupportedLayers = raw.layers;
+        }
+    }
+
     // Only an EXPLICIT boolean moves the pour — the whole point of the resolver is that "absent" and
     // "deliberately off" stop meaning the same thing.
     if (raw.gndPour !== undefined) {
@@ -250,12 +306,16 @@ export function resolveFabProfile(input?: FabProfileInput | null): ResolvedFabPr
         }
     }
 
-    return { profile, tier, adjustments };
+    return { profile, tier, adjustments, ...(unsupportedLayers === undefined ? {} : { unsupportedLayers }) };
 }
 
 /** Board-tag props enforcing the profile upstream (verified knobs only). */
 export function boardExtraProps(profile: FabProfile): string {
-    return `autorouter={{ local: true }} minTraceWidth={${profile.minTraceWidthMm}}`;
+    // `layers` is emitted only when it is not the default, so a two-layer board's generated source is
+    // byte-identical to what it was before this option existed — the diff of a routine board stays about
+    // the board.
+    const layers = profile.layers && profile.layers !== 2 ? ` layers={${profile.layers}}` : '';
+    return `autorouter={{ local: true }} minTraceWidth={${profile.minTraceWidthMm}}${layers}`;
 }
 
 /**

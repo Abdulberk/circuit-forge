@@ -275,8 +275,26 @@ export function shapeLayoutResult(evaluated: TscElement[], opts: ShapeOptions = 
               { x: r3(bc.x + bw / 2), y: r3(bc.y + bh / 2) },
               { x: r3(bc.x - bw / 2), y: r3(bc.y + bh / 2) },
           ];
+    /**
+     * The layers the board ACTUALLY has, not a fixed pair.
+     *
+     * This reported `top` and `bottom` for every board with two or more layers, so a four-layer board — one
+     * whose KiCad file declares F.Cu/In1.Cu/In2.Cu/B.Cu and whose gerber set carries In1_Cu and In2_Cu —
+     * came back through the contract as two layers. A viewer built on that shows half the copper and has no
+     * way to know it is missing; a client counting layers to price a board undercounts it.
+     *
+     * The inner names are tscircuit's own (`inner1`, `inner2`), which is what `pcb_trace`/`pcb_via` carry in
+     * their own `layers` fields — so a consumer joining a trace to a layer by name finds it.
+     */
     const numLayers = (boardEl && num(boardEl.num_layers)) ?? 2;
-    const layers = numLayers >= 2 ? [{ name: 'top' }, { name: 'bottom' }] : [{ name: 'top' }];
+    const layers =
+        numLayers <= 1
+            ? [{ name: 'top' }]
+            : [
+                  { name: 'top' },
+                  ...Array.from({ length: Math.max(0, numLayers - 2) }, (_, i) => ({ name: `inner${i + 1}` })),
+                  { name: 'bottom' },
+              ];
 
     // ---- components
     const components: LayoutComponent[] = of('pcb_component').map((e) => {
