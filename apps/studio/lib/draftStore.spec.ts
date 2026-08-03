@@ -21,6 +21,10 @@ const CIRCUIT = {
 const draft = (over: Partial<StoredDraft> = {}): StoredDraft => ({
     projectId: 'p1',
     circuit: CIRCUIT,
+    // A real arrangement, not `{}`. Dragging symbols into a readable layout is work that exists nowhere in
+    // the netlist, so a rescue buffer that held the components and lost their positions would hand back a
+    // document that is correct and looks scrambled — the kind of loss nothing announces.
+    ui: { schemaVersion: 1, positions: { r1: { x: 100, y: 40, rotation: '90' } } },
     baseToken: 'T0',
     baseVersionId: null,
     at: '2026-08-02T10:00:00.000Z',
@@ -71,6 +75,32 @@ describe('keeping a draft on this device', () => {
         const midEdit = { version: '1.0', components: [{ id: 'r9' }], nets: [] } as unknown as CircuitJson;
         expect(store.put(draft({ circuit: midEdit })).ok).toBe(true);
         expect(store.get('p1')?.circuit).toEqual(midEdit);
+    });
+
+    it('still recovers an entry written before drawings were kept', () => {
+        // Real entries from the previous build of this store are sitting in real users' browsers with no
+        // `ui` key at all. Reading one as a broken draft would throw away the circuit it holds because of a
+        // field that did not exist when it was written — losing work over an upgrade, which is the one
+        // thing a recovery buffer must never do.
+        const legacy = { ...draft() } as Partial<StoredDraft>;
+        delete legacy.ui;
+        window.localStorage.setItem('circuit-forge.draft.p1', JSON.stringify(legacy));
+
+        const found = browserDraftStore().get('p1');
+        expect(found?.circuit).toEqual(CIRCUIT);
+        // No drawing means no drawing, not a crash and not `undefined` — the same value a project nobody
+        // has arranged yet produces, so one branch downstream covers both.
+        expect(found?.ui).toEqual({});
+    });
+
+    it('refuses a drawing that is not an object, rather than handing a reader something that breaks it', () => {
+        // A hand-edited or truncated entry. `ui` reaching the canvas as a string or an array is a crash on
+        // the first property read, and the circuit beside it is still perfectly recoverable.
+        window.localStorage.setItem(
+            'circuit-forge.draft.p1',
+            JSON.stringify({ ...draft(), ui: ['positions', 'r1'] }),
+        );
+        expect(browserDraftStore().get('p1')?.ui).toEqual({});
     });
 
     it('ignores unrelated localStorage keys when listing', () => {

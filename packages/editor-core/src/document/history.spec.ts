@@ -10,7 +10,7 @@ import { execFileSync } from 'node:child_process';
 import { join } from 'node:path';
 import { pathToFileURL } from 'node:url';
 
-import type { CircuitJson } from '@circuit-forge/eda-core';
+import type { CircuitJson, UiJson } from '@circuit-forge/eda-core';
 
 import { setDesignator, setNetName, setValue } from './edits';
 import {
@@ -306,6 +306,82 @@ describe('what a revision touched', () => {
             expect({ name, other: r.history.past[0]!.touched.other }).toEqual({ name, other: true });
             // …and undoing it restores the previous UI state, not just the circuit.
             expect({ name, ui: undo(r.history).present.ui }).toEqual({ name, ui: {} });
+        });
+    });
+
+    describe('a drawing that did not change is not a revision', () => {
+        // Reference comparison reads as sufficient here and never fires: a caller derives the next drawing
+        // immutably, so it hands back a NEW object every time — including a drag dropped exactly where it
+        // started, or rotate pressed four times. Calling those changes mints an undo step that visibly does
+        // nothing AND a save that bumps the concurrency token, so another tab's real work is refused
+        // because of a gesture that changed nothing.
+        const arranged = { schemaVersion: 1 as const, positions: { r1: { x: 10, y: 20 } } };
+        const start = () => commitUi(beginHistory(docOf(GALLERY[0]![1])), 'arrange', arranged);
+
+        it('an equal drawing built as a different object commits nothing', () => {
+            const r = start();
+            expect(r.ok && r.changed).toBe(true);
+            if (!r.ok) throw new Error('unreachable');
+
+            const again = commitUi(r.history, 'move R1', {
+                schemaVersion: 1,
+                positions: { r1: { x: 10, y: 20 } },
+            });
+            expect(again.ok && again.changed).toBe(false);
+            expect(again.ok && again.history).toBe(r.history); // untouched, not rebuilt
+        });
+
+        it('key ORDER is not a change — which order a spread produces is the caller’s business', () => {
+            const r = start();
+            if (!r.ok) throw new Error('unreachable');
+            const reordered = commitUi(r.history, 'move R1', {
+                positions: { r1: { y: 20, x: 10 } },
+                schemaVersion: 1,
+            });
+            expect(reordered.ok && reordered.changed).toBe(false);
+        });
+
+        it('an absent field and an explicitly undefined one are the same drawing', () => {
+            // What a round trip through the server does: `{ rotation: undefined }` is stored and returned
+            // as `{}`. Treating them as different would make the first save after every reload a change
+            // that commits itself.
+            const r = start();
+            if (!r.ok) throw new Error('unreachable');
+            const withUndefined = commitUi(r.history, 'move R1', {
+                schemaVersion: 1,
+                positions: { r1: { x: 10, y: 20, rotation: undefined } },
+                viewport: undefined,
+            });
+            expect(withUndefined.ok && withUndefined.changed).toBe(false);
+        });
+
+        it('but a real move IS a change, in any field', () => {
+            const r = start();
+            if (!r.ok) throw new Error('unreachable');
+            const variants: UiJson[] = [
+                { schemaVersion: 1, positions: { r1: { x: 11, y: 20 } } }, // moved one unit
+                { schemaVersion: 1, positions: { r1: { x: 10, y: 20, rotation: '90' } } }, // turned
+                { schemaVersion: 1, positions: { r1: { x: 10, y: 20 }, r2: { x: 0, y: 0 } } }, // one more part
+                { schemaVersion: 1, positions: {} }, // arrangement cleared
+            ];
+            for (const next of variants) {
+                const moved = commitUi(r.history, 'move', next);
+                expect({ next, changed: moved.ok && moved.changed }).toEqual({ next, changed: true });
+            }
+        });
+
+        it('reversing a wire’s points is a different wire, not the same one', () => {
+            // Order is significant INSIDE an array: a wire's points are a path, and the same set of points
+            // in the other order is a different path. A comparison that sorted or set-ified would erase it.
+            const path = beginHistory(docOf(GALLERY[0]![1]));
+            const drawn = commitUi(path, 'wire', {
+                wires: [{ id: 'w1', netId: 'n1', points: [{ x: 0, y: 0 }, { x: 10, y: 0 }] }],
+            });
+            if (!drawn.ok) throw new Error('unreachable');
+            const reversed = commitUi(drawn.history, 'wire', {
+                wires: [{ id: 'w1', netId: 'n1', points: [{ x: 10, y: 0 }, { x: 0, y: 0 }] }],
+            });
+            expect(reversed.ok && reversed.changed).toBe(true);
         });
     });
 });

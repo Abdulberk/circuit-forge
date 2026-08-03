@@ -10,7 +10,7 @@
  * right move once the surface stops moving. Until then these are hand-written and each one names the route
  * it mirrors, so a reader can check it in one grep.
  */
-import type { CircuitJson, ErcResult } from '@circuit-forge/eda-core';
+import type { CircuitJson, ErcResult, UiJson } from '@circuit-forge/eda-core';
 import type { LayoutGeometry } from '@circuit-forge/pcb-contract';
 import type { LayoutabilityResult } from '@circuit-forge/pcb-preflight';
 
@@ -225,9 +225,34 @@ export interface MappedPart {
     catalog: CatalogPart;
 }
 
+/**
+ * The drawing that comes back with the document.
+ *
+ * `unknown` on the wire types above, and NARROWED here, because this is the boundary where it stops being
+ * "whatever the server stored" and starts being something the canvas will position symbols from. Both
+ * endpoints already carry it — the working copy validates it against `UiJsonSchema` on write — but neither
+ * was ever read back into the editor, so every project opened with a blank drawing regardless of what was
+ * saved. A malformed or absent value becomes `{}`: a project with no drawing yet is the ordinary case, and
+ * refusing to open one because its layout is unreadable would make a recoverable annoyance fatal.
+ */
+const asUiJson = (raw: unknown): UiJson =>
+    raw !== null && typeof raw === 'object' && !Array.isArray(raw) ? (raw as UiJson) : {};
+
 export type OpenedProject =
-    | { source: 'working-copy'; circuitJson: CircuitJson; updatedAt: string; baseVersionId: string | null }
-    | { source: 'version'; circuitJson: CircuitJson; version: VersionSummary; totalVersions: number }
+    | {
+          source: 'working-copy';
+          circuitJson: CircuitJson;
+          uiJson: UiJson;
+          updatedAt: string;
+          baseVersionId: string | null;
+      }
+    | {
+          source: 'version';
+          circuitJson: CircuitJson;
+          uiJson: UiJson;
+          version: VersionSummary;
+          totalVersions: number;
+      }
     | { source: 'empty' };
 
 export class Api {
@@ -296,13 +321,16 @@ export class Api {
         draft: {
             circuitJson: CircuitJson;
             /**
-             * Editor state — viewport, selection, panel sizes. REQUIRED, mirroring the API's own DTO, and
-             * deliberately not defaulted to `{}` here. A default would look convenient and would eventually
-             * destroy data: the save replaces the stored value, so the first caller that omitted it because
-             * it "only changed the circuit" would silently wipe the user's editor state. Sending `{}` is a
-             * decision ("there is no UI state"), and it should be made where it is true.
+             * The drawing — where each symbol sits and how it is turned. REQUIRED, mirroring the API's own
+             * DTO, and deliberately not defaulted to `{}` here. A default would look convenient and would
+             * destroy data: the save REPLACES the stored value, so a caller that omitted it because it
+             * "only changed the circuit" would wipe the user's arrangement.
+             *
+             * That is not hypothetical. The hook above sent a hard-coded `{}` on every autosave for exactly
+             * that reason, which meant no drawing could survive a keystroke. The parameter being required is
+             * what makes the decision visible at the call site instead of implied by its absence.
              */
-            uiJson: Record<string, unknown>;
+            uiJson: UiJson;
             baseVersionId?: string | null;
             expectedUpdatedAt?: string;
         },
@@ -358,6 +386,7 @@ export class Api {
             return {
                 source: 'working-copy',
                 circuitJson: draft.circuitJson,
+                uiJson: asUiJson(draft.uiJson),
                 updatedAt: draft.updatedAt,
                 baseVersionId: draft.baseVersionId,
             };
@@ -368,7 +397,15 @@ export class Api {
         if (!newest) return { source: 'empty' };
 
         const full = await this.version(newest.id, signal);
-        return { source: 'version', circuitJson: full.circuitJson, version: newest, totalVersions: page.total };
+        return {
+            source: 'version',
+            circuitJson: full.circuitJson,
+            // A version's drawing comes forward with it: opening v12 and finding every symbol back at the
+            // grid fallback would read as the editor having lost the layout that was saved WITH that version.
+            uiJson: asUiJson(full.uiJson),
+            version: newest,
+            totalVersions: page.total,
+        };
     }
 
     // ---- Layout, the long-running one -----------------------------------------------------------------

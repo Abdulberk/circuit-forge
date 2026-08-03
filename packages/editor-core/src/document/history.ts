@@ -26,20 +26,26 @@
  * rendering the intermediate document (a drag has to draw). KiCad's own commit model draws the same line,
  * and pretending otherwise would be a claim no editor keeps.
  */
-import type { CircuitJson } from '@circuit-forge/eda-core';
+import type { CircuitJson, UiJson } from '@circuit-forge/eda-core';
 
 import type { EditResult } from './edits';
+import { sameJson } from './same-json';
 
 /**
  * The whole editable state.
  *
- * `ui` is opaque here on purpose — the kernel has no opinion about viewport or symbol positions yet, and
- * carrying it through undo now means the day it gains structure, undo already covers it. A history that
- * restored the circuit but not the layout would put parts back in the wrong places.
+ * The kernel has no OPINION about the drawing — it never inspects a position or reconciles a wire, it just
+ * carries `ui` through every revision so that undo restores the arrangement along with the netlist. A
+ * history that put the parts back but not where they were would be undo that scrambles the sheet.
+ *
+ * It is typed as `UiJson` rather than an anonymous bag, now that the drawing has a shape and a validator in
+ * `eda-core`. The bag version needed a cast at every boundary, and a cast is exactly where the wrong shape
+ * gets in without anything objecting — including on the way to a server that DOES validate and would
+ * reject the save, one debounce after the user could still have been told.
  */
 export interface EditorDocument {
     circuit: CircuitJson;
-    ui: Readonly<Record<string, unknown>>;
+    ui: UiJson;
 }
 
 /**
@@ -166,9 +172,22 @@ export function commit(
     };
 }
 
-/** Replace the UI state as one revision — viewport, positions, whatever it grows into. */
-export function commitUi(history: History, label: string, ui: Readonly<Record<string, unknown>>): CommitResult {
-    if (ui === history.present.ui) return { ok: true, history, changed: false };
+/**
+ * Replace the drawing as one revision — positions, rotations, wires, whatever it grows into.
+ *
+ * The "did anything change" test is BY VALUE, and that is load-bearing rather than a refinement. Comparing
+ * by reference reads as sufficient and never fires: a caller derives the next drawing immutably — `{...ui,
+ * positions: {...}}` — so it hands back a NEW object every time, including when the user dragged a symbol
+ * and dropped it exactly where it was, or pressed rotate four times. Reference comparison called every one
+ * of those a change, which mints an undo step that visibly does nothing AND a save that bumps the
+ * concurrency token, so a second tab's real work gets refused because of a gesture that changed nothing.
+ *
+ * The comparison lives here rather than in each caller. A caller asking "did my drag change anything" has to
+ * do exactly this work, and every caller doing it separately is several authorities on what "changed" means
+ * — the day they disagree, one gesture is a revision in the undo menu and not in the save, or the reverse.
+ */
+export function commitUi(history: History, label: string, ui: UiJson): CommitResult {
+    if (sameJson(ui, history.present.ui)) return { ok: true, history, changed: false };
     const next: EditorDocument = { ...history.present, ui };
     return {
         ok: true,

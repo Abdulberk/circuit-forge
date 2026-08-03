@@ -43,6 +43,7 @@ export {
     undo,
 } from './document/history';
 export type { CommitResult, EditorDocument, History, Revision, Touched } from './document/history';
+export { sameJson } from './document/same-json';
 
 /**
  * Schematic symbol geometry, in unitless local coordinates. `basis` says whether the symbol is a

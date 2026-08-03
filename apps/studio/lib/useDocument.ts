@@ -28,16 +28,38 @@
  *   one project's circuit into another's draft, poisoned the new project's token, and reported "saved" for a
  *   document that was never sent. Every async completion now checks it is still talking about the project it
  *   started from.
+ *
+ *   THE DRAWING IS PART OF THE DOCUMENT. It was not, and that was a live data-loss path rather than a missing
+ *   feature: this hook sent a hard-coded `uiJson: {}` on every save, adopted `ui: {}` on every open, and the
+ *   kernel's `commitUi` had no caller anywhere outside its own test. So the channel existed end to end —
+ *   the schema, the validator, the database column — and the editor overwrote it with nothing 1.2 seconds
+ *   after any keystroke. Anyone who arranged a schematic would have watched it survive until they typed.
+ *
+ * WHAT IS AND IS NOT IN THAT DRAWING — the split matters, and getting it wrong is expensive both ways.
+ *
+ *   POSITIONS, ROTATIONS AND WIRES are document state. Arranging twenty symbols so a circuit can be read is
+ *   real work, it exists nowhere in the netlist, and a colleague opening the project must see the same
+ *   arrangement. So they are saved, they are undoable, and they take the same conflict path as any edit.
+ *
+ *   THE VIEWPORT IS NOT, and is deliberately not written here. Where a person has scrolled is a property of
+ *   the person, not of the board. Saving it would make merely LOOKING at a project a write: every pan bumps
+ *   `updatedAt`, which is the concurrency token, so a second tab doing nothing but scrolling would 409 the
+ *   first tab's real work — a conflict storm generated entirely by reading. It would also land in the undo
+ *   stack, where Ctrl+Z would spend itself un-scrolling instead of undoing an edit. `UiJson` carries a
+ *   `viewport` field and the API accepts it; this editor keeps the camera on the device instead.
  */
 
-import type { CircuitJson } from '@circuit-forge/eda-core';
+import type { CircuitJson, UiJson } from '@circuit-forge/eda-core';
 import {
     adopt as adoptDocument,
     canRedo as canRedoRevision,
     canUndo as canUndoRevision,
     commit,
+    commitUi as commitUiRevision,
     redo as redoRevision,
+    sameJson,
     undo as undoRevision,
+    type EditorDocument,
     type EditResult,
     type History,
 } from '@circuit-forge/editor-core';
@@ -75,6 +97,14 @@ export type SaveState =
 export interface DocumentState {
     /** What is on screen. Local edits are applied here immediately, before any save. */
     circuit: CircuitJson | null;
+    /**
+     * The drawing that goes with it — where each symbol sits and how it is turned.
+     *
+     * `{}` when the project has never been arranged, which is the ordinary case for a design a machine
+     * wrote, and is what tells the canvas to fall back to a derived layout rather than stacking everything
+     * at the origin.
+     */
+    ui: UiJson;
     /** Where it came from — a draft, a saved version, or nothing yet. */
     source: OpenedProject['source'] | null;
     save: SaveState;
@@ -96,6 +126,18 @@ export interface DocumentState {
     apply: (edit: (circuit: CircuitJson) => EditResult) => void;
     /** Apply several edits as ONE revision — one undo step, and impossible to half-apply. */
     applyMany: (label: string, edits: ReadonlyArray<(circuit: CircuitJson) => EditResult>) => void;
+    /**
+     * Replace the drawing as ONE revision — a symbol moved, a symbol turned, a wire drawn.
+     *
+     * Takes the whole `UiJson` rather than a patch for the same reason `apply` takes a function: there is
+     * one authority for what the drawing is, and a merge invented here would be a second one. Callers
+     * derive the next drawing from `ui` and hand it back.
+     *
+     * A drag must call this ONCE, on release. Calling it per pointer-move would mint sixty revisions for one
+     * gesture, so Ctrl+Z would walk the symbol back a pixel at a time and the save debounce would never
+     * settle while the mouse was down.
+     */
+    commitUi: (label: string, next: UiJson) => void;
     undo: () => void;
     redo: () => void;
     canUndo: boolean;
@@ -120,7 +162,7 @@ export interface DocumentState {
      * still holds ("your unsaved changes"), false means the server has moved on since ("work based on an
      * older version"), and those two deserve different words and different confidence.
      */
-    recovery: { circuit: CircuitJson; at: string; continuesServerDraft: boolean } | null;
+    recovery: { circuit: CircuitJson; ui: UiJson; at: string; continuesServerDraft: boolean } | null;
     /** Adopt the recovered document as the current one. It becomes dirty and saves like any other edit. */
     recoverLocal: () => void;
     /** Throw the local copy away and keep what the server sent. */
@@ -184,13 +226,19 @@ export function useDocument(
         token: string | null;
         /** Which saved version this draft descends from; must survive every circuit-only autosave. */
         baseVersionId: string | null;
-        /** Typed but not yet sent. */
-        pending: CircuitJson | null;
+        /**
+         * Edited but not yet sent — the whole document, circuit AND drawing.
+         *
+         * One value rather than two queues on purpose: they are saved by the same request, so a split
+         * would let a circuit change and the drawing that explains it reach the server in different
+         * writes, and a crash between them would store a netlist whose layout describes a different one.
+         */
+        pending: EditorDocument | null;
         /** Currently being sent. Non-null means a save is open and nothing else may start. */
-        inFlight: CircuitJson | null;
+        inFlight: EditorDocument | null;
         timer: ReturnType<typeof setTimeout> | null;
-        /** Typed but not yet written to this device — coalesced separately from the save. */
-        unpersisted: CircuitJson | null;
+        /** Edited but not yet written to this device — coalesced separately from the save. */
+        unpersisted: EditorDocument | null;
         persistTimer: ReturnType<typeof setTimeout> | null;
         alive: boolean;
     }>({
@@ -232,7 +280,8 @@ export function useDocument(
         state.unpersisted = null;
         const result = store.put({
             projectId: state.projectId,
-            circuit: doc,
+            circuit: doc.circuit,
+            ui: doc.ui,
             baseToken: state.token,
             baseVersionId: state.baseVersionId,
             at: new Date().toISOString(),
@@ -285,7 +334,13 @@ export function useDocument(
 
         // ADOPT, not commit: a document from the server, a project switch or a reload is work this history
         // did not witness, and undoing across it would resurrect what the other author had replaced.
-        setHistory(opened.source === 'empty' ? null : adoptDocument({ circuit: opened.circuitJson, ui: {} }));
+        //
+        // `opened.uiJson`, never `{}`. Hard-coding the empty drawing here is what made the round trip
+        // one-way: the server could hold a perfectly good arrangement and the editor would open blank,
+        // then send that blank back over it on the first autosave.
+        setHistory(
+            opened.source === 'empty' ? null : adoptDocument({ circuit: opened.circuitJson, ui: opened.uiJson }),
+        );
         setSource(opened.source);
         setSave({ status: 'clean', savedAt: opened.source === 'working-copy' ? opened.updatedAt : null });
         setRefusal(null);
@@ -305,10 +360,24 @@ export function useDocument(
         const serverToken = opened.source === 'working-copy' ? opened.updatedAt : null;
 
         const openedCircuit = opened.source === 'empty' ? null : opened.circuitJson;
+        const openedUi = opened.source === 'empty' ? null : opened.uiJson;
 
         if (!local) {
             setRecovery(null);
-        } else if (openedCircuit !== null && JSON.stringify(local.circuit) === JSON.stringify(openedCircuit)) {
+        } else if (
+            openedCircuit !== null &&
+            // STRUCTURAL, not `JSON.stringify`. Both of these values come back from a Postgres `jsonb`
+            // column, which does not preserve the key order it was given — it sorts keys by length and then
+            // bytewise, measured against the live API. The local copy is written by this browser in
+            // insertion order. So a stringify comparison reports "different" for two identical documents,
+            // and this branch — "the server already has exactly this, nothing to rescue" — could never fire:
+            // every open would offer unsaved work that does not exist, and the user has to decide about it.
+            sameJson(local.circuit, openedCircuit) &&
+            // The DRAWING counts as content here too. Comparing only the netlist would throw away a local
+            // copy whose sole unsaved change was an arrangement — the user's twenty drags — and report
+            // nothing to rescue, because the components and nets did match.
+            sameJson(local.ui ?? {}, openedUi ?? {})
+        ) {
             // Nothing to rescue: the server already has exactly this. Offering it would be noise, and this
             // is decidable from the documents themselves rather than from any assumption about time.
             store.clear(projectId);
@@ -321,6 +390,7 @@ export function useDocument(
             // a dialog, erring the other way costs the work.
             setRecovery({
                 circuit: local.circuit,
+                ui: local.ui ?? {},
                 at: local.at,
                 continuesServerDraft: local.baseToken === serverToken,
             });
@@ -342,7 +412,7 @@ export function useDocument(
     const sendFor = useCallback(
         async (
             forProject: string,
-            doc: CircuitJson,
+            doc: EditorDocument,
             token: string | null,
             baseVersionId: string | null,
         ): Promise<void> => {
@@ -352,9 +422,11 @@ export function useDocument(
 
             try {
                 const saved = await api.saveWorkingCopy(forProject, {
-                    circuitJson: doc,
-                    // Editor state is not modelled yet; `{}` is the truthful value for "there is none".
-                    uiJson: {},
+                    circuitJson: doc.circuit,
+                    // The drawing, in the SAME request as the netlist it describes. Two requests would be
+                    // two chances to fail, and the failure would store a circuit whose saved arrangement
+                    // belongs to a different one.
+                    uiJson: doc.ui,
                     ...(baseVersionId === null ? {} : { baseVersionId }),
                     ...(token === null ? {} : { expectedUpdatedAt: token }),
                 });
@@ -430,7 +502,7 @@ export function useDocument(
     }, [sendFor]);
 
     const schedule = useCallback(
-        (doc: CircuitJson) => {
+        (doc: EditorDocument) => {
             const state = w.current;
             state.pending = doc;
             setSave((s) => (s.status === 'conflict' ? s : { status: 'dirty' }));
@@ -488,7 +560,7 @@ export function useDocument(
                 // A commit that changed nothing is not a save and not an undo step — re-typing the same value
                 // must not mint a revision that then conflicts with another tab for no reason.
                 if (!result.changed) return current;
-                schedule(result.history.present.circuit);
+                schedule(result.history.present);
                 return result.history;
             });
         },
@@ -496,6 +568,30 @@ export function useDocument(
     );
 
     const apply = useCallback((edit: (c: CircuitJson) => EditResult) => applyMany('Edit', [edit]), [applyMany]);
+
+    /**
+     * Move, turn, wire — the drawing, as one revision that saves like any other edit.
+     *
+     * Routed through the SAME commit kernel as a circuit edit rather than a separate lane, so a drag lands
+     * in the same undo stack in the same order as the delete that followed it. Two stacks would let Ctrl+Z
+     * un-move something without un-deleting what was deleted after it.
+     */
+    const commitUi = useCallback(
+        (label: string, next: UiJson) => {
+            setHistory((current) => {
+                if (!current) return current;
+                const result = commitUiRevision(current, label, next);
+                // `commitUiRevision` cannot refuse — it replaces opaque state — but it CAN report no change,
+                // and a drag that ends where it started must not mint a revision or a save.
+                if (!result.ok || !result.changed) return current;
+                setRefusal(null);
+                setNotes([]);
+                schedule(result.history.present);
+                return result.history;
+            });
+        },
+        [schedule],
+    );
 
     /**
      * Undo and redo, which SAVE.
@@ -512,7 +608,7 @@ export function useDocument(
             if (next === current) return current; // nothing to undo — not a save either
             setRefusal(null);
             setNotes([]);
-            schedule(next.present.circuit);
+            schedule(next.present);
             return next;
         });
     }, [schedule]);
@@ -524,7 +620,7 @@ export function useDocument(
             if (next === current) return current;
             setRefusal(null);
             setNotes([]);
-            schedule(next.present.circuit);
+            schedule(next.present);
             return next;
         });
     }, [schedule]);
@@ -541,7 +637,7 @@ export function useDocument(
      */
     const overwriteWithMine = useCallback(() => {
         const state = w.current;
-        const doc = state.pending ?? state.inFlight ?? history?.present.circuit ?? null;
+        const doc = state.pending ?? state.inFlight ?? history?.present ?? null;
         if (!doc || !state.projectId || state.inFlight) return;
         state.pending = null;
         void sendFor(state.projectId, doc, null, state.baseVersionId);
@@ -577,11 +673,11 @@ export function useDocument(
         const state = w.current;
         const found = recovery;
         if (!found || !state.projectId) return;
-        setHistory(adoptDocument({ circuit: found.circuit, ui: {} }));
+        setHistory(adoptDocument({ circuit: found.circuit, ui: found.ui }));
         setRecovery(null);
         setRefusal(null);
         setNotes([]);
-        schedule(found.circuit);
+        schedule({ circuit: found.circuit, ui: found.ui });
     }, [recovery, schedule]);
 
     const discardLocal = useCallback(() => {
@@ -599,12 +695,14 @@ export function useDocument(
 
     return {
         circuit: history?.present.circuit ?? null,
+        ui: history?.present.ui ?? {},
         source,
         save,
         refusal,
         notes,
         apply,
         applyMany,
+        commitUi,
         undo: undoOne,
         redo: redoOne,
         canUndo: history !== null && canUndoRevision(history),

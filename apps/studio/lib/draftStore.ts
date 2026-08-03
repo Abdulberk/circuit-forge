@@ -26,12 +26,24 @@
  * components and nets, a few hundred kilobytes at the top end, against a ~5 MB budget. Durability at
  * shutdown beats capacity we do not need.
  */
-import type { CircuitJson } from '@circuit-forge/eda-core';
+import type { CircuitJson, UiJson } from '@circuit-forge/eda-core';
 
 /** One project's unsaved work, with everything needed to judge whether it is worth restoring. */
 export interface StoredDraft {
     projectId: string;
     circuit: CircuitJson;
+    /**
+     * The DRAWING — where each symbol sits, how it is turned, where the view was.
+     *
+     * Kept here for exactly the same reason the circuit is. Dragging twenty symbols into a readable
+     * arrangement is real work, it is not represented anywhere in the netlist, and a recovery that restored
+     * the components but not their positions would hand the user back a document that is correct and looks
+     * scrambled — which is harder to trust than an obvious loss, because nothing announces it.
+     *
+     * Optional on the way IN, because entries written by the version of this store that predates the field
+     * are still on real users' machines and must still be recoverable; `parse` fills the gap with `{}`.
+     */
+    ui?: UiJson;
     /**
      * The server `updatedAt` this work was edited ON TOP OF — the same concurrency token the save carries.
      * Kept because it is what distinguishes "unsaved work from my last session" (token matches what the
@@ -77,6 +89,14 @@ function parse(raw: string | null): StoredDraft | null {
         return {
             projectId: v.projectId,
             circuit: v.circuit as CircuitJson,
+            // An entry written before drawings were kept has no `ui`, and so does a project nobody has
+            // arranged yet. Both mean the same thing to the caller — no drawing — so both read as `{}`
+            // rather than as `undefined` for one and a missing key for the other.
+            // Shape-checked, not schema-checked, and the cast is the same trade the circuit above makes: a
+            // recovery buffer holds half-finished work, and validating it as a complete drawing would refuse
+            // exactly the entries most worth rescuing. What is guarded against is the shape that would
+            // CRASH a reader — a string, an array, a null — not a position the editor has yet to fill in.
+            ui: v.ui !== null && typeof v.ui === 'object' && !Array.isArray(v.ui) ? (v.ui as UiJson) : {},
             baseToken: typeof v.baseToken === 'string' ? v.baseToken : null,
             baseVersionId: typeof v.baseVersionId === 'string' ? v.baseVersionId : null,
             at: v.at,

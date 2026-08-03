@@ -11,7 +11,7 @@
  * runs it deliberately. It fails loudly rather than skipping when the API is unreachable — a live test that
  * quietly passes when it did not run is worse than no test.
  */
-import type { CircuitJson } from '@circuit-forge/eda-core';
+import type { CircuitJson, UiJson } from '@circuit-forge/eda-core';
 import { buildObjectTree, setValue } from '@circuit-forge/editor-core';
 
 import { ApiClient } from './client';
@@ -457,7 +457,7 @@ describe('the transcribed contracts, against the server that defines them', () =
         // The whole of step three, end to end: symbol positions, an orientation, a mirror, and a wire with
         // both endpoints bound to real pins. If any of it came back altered, an editor would silently
         // rearrange someone's schematic on every reload.
-        const drawing = {
+        const drawing: UiJson = {
             schemaVersion: 1,
             viewport: { x: -42.5, y: 17, zoom: 1.25 },
             positions: {

@@ -244,6 +244,10 @@ function Workspace() {
                     {circuit ? (
                         <SchematicCanvas
                             circuit={circuit}
+                            // The drawing the document actually carries. Without this line the canvas falls
+                            // back to its derived grid on every render no matter what anyone arranged — the
+                            // stored-position branch below it has been unreachable since it was written.
+                            ui={doc.ui}
                             selectedPath={selected?.ref.path.join('/') ?? null}
                             onSelect={setSelected}
                         />
