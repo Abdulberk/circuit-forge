@@ -109,6 +109,7 @@ export class LayoutService {
             ...(dto.placer ? { placer: dto.placer } : {}),
             ...(dto.fabProfile ? { fabProfile: dto.fabProfile } : {}),
             ...(dto.netCurrentsA ? { netCurrentsA: dto.netCurrentsA } : {}),
+            ...(dto.fixedPlacements ? { fixedPlacements: dto.fixedPlacements } : {}),
         };
 
         // Admission control (parity with sim/design): SUSPENSION is enforced for every enqueue, and any

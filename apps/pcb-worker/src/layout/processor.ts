@@ -152,7 +152,10 @@ export async function processLayoutJob(job: Job<LayoutJobPayload>): Promise<void
         // The API validated this JSON against LayoutOptionsDto before it was stored, so it is described
         // rather than re-parsed here — but described as the SUBSET this worker reads. `any` let a typo in
         // a field name compile into a silently-ignored option.
-        const options = (row.options ?? {}) as Pick<LayoutOptions, 'placer' | 'fabProfile' | 'netCurrentsA'>;
+        const options = (row.options ?? {}) as Pick<
+            LayoutOptions,
+            'placer' | 'fabProfile' | 'netCurrentsA' | 'fixedPlacements'
+        >;
 
         // CANCELLATION — two mechanisms, because one alone is a lie.
         //
@@ -201,6 +204,9 @@ export async function processLayoutJob(job: Job<LayoutJobPayload>): Promise<void
             notaryDrc: kicad.notaryDrc,
             fabProfile: options.fabProfile,
             netCurrentsA: options.netCurrentsA,
+            // The caller-owned positions. Forwarded verbatim: whether they can be honoured is geometry,
+            // and pcb-core decides it against the resolved fab profile rather than this layer guessing.
+            fixedPlacements: options.fixedPlacements,
             placer,
             rustPlace,
             routingMarginMm: config.PCB_ROUTING_MARGIN_MM,

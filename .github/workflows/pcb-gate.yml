@@ -84,6 +84,18 @@ jobs:
           pnpm --filter @circuit-forge/pcb-core build
           node scripts/pcb-invariants.mjs
 
+      # Caller-owned placements, through the whole entry function rather than the engine alone. It is a
+      # script and not a spec for the reason pcb-core's jest config already documents: `layoutCircuit`
+      # reaches the ESM-only footprinter through a dynamic import, which the flat CommonJS test transpile
+      # cannot serve — so the entry point is only exercisable against the BUILT output, which this uses.
+      # Both defects it guards survived a green engine suite and were found by running one real circuit:
+      # pins honoured by the engine and then discarded by the HPWL gate, and an impossible pin set that was
+      # reported as an error and shipped anyway.
+      - name: Fixed-placement gate (pure — no Docker)
+        run: |
+          set -euo pipefail
+          node scripts/pin-placement-check.mjs
+
       # Pull the images BY DIGEST, taken from the same module the harness uses, which in turn refuses to
       # disagree with docker/pcb-runtime/Dockerfile. This job used to pull the bare `kicad/kicad:10.0-full`
       # tag — a ROLLING tag upstream republishes for every 10.0.x patch — while production pinned a digest.

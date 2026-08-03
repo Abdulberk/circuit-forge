@@ -31,6 +31,59 @@ import { PaginationQueryDto } from '../../common/dto/pagination.dto';
  * Rejecting at the edge is the cheap half; pcb-core also refuses the value defensively, for callers that
  * are not this HTTP endpoint (worker replays, rows written before this constraint existed).
  */
+/**
+ * Fixed placements, checked at the boundary for SHAPE only.
+ *
+ * Whether a pin is legal — on the grid, on the board, not on top of another — is geometry, and it is
+ * decided by `validateFixedPlacements` in pcb-core against the profile's grid, margin and spacing. None of
+ * those are known here, and re-deciding them at the edge would be a second authority that eventually
+ * accepts what the engine refuses. So this rejects only what is not a placement at all.
+ *
+ * `side`/`layer` is rejected EXPLICITLY rather than stripped. Nothing in the chain can be told which side of
+ * the board a part goes on — the placement output is `{x, y, rotation}` and the adapter emits no layer prop
+ * — so accepting the key would be accepting a value we silently drop, which is the failure this codebase
+ * keeps removing.
+ */
+@ValidatorConstraint({ name: 'fixedPlacementRecord', async: false })
+export class FixedPlacementRecord implements ValidatorConstraintInterface {
+    private static problems(value: unknown): string[] {
+        if (typeof value !== 'object' || value === null || Array.isArray(value)) return ['must be an object'];
+        const bad: string[] = [];
+        for (const [id, at] of Object.entries(value as Record<string, unknown>)) {
+            if (typeof at !== 'object' || at === null || Array.isArray(at)) {
+                bad.push(`${id}: not a placement`);
+                continue;
+            }
+            const p = at as Record<string, unknown>;
+            for (const axis of ['x', 'y']) {
+                if (typeof p[axis] !== 'number' || !Number.isFinite(p[axis])) bad.push(`${id}.${axis}: not a number`);
+            }
+            if (p.rotation !== undefined && ![0, 90, 180, 270].includes(p.rotation as number))
+                bad.push(`${id}.rotation: must be 0, 90, 180 or 270`);
+            for (const unsupported of ['side', 'layer']) {
+                if (p[unsupported] !== undefined)
+                    bad.push(
+                        `${id}.${unsupported}: not supported — the pipeline cannot be told which side a part goes on, so this would be accepted and dropped`,
+                    );
+            }
+            for (const key of Object.keys(p)) {
+                if (!['x', 'y', 'rotation'].includes(key) && !['side', 'layer'].includes(key))
+                    bad.push(`${id}.${key}: unknown field`);
+            }
+        }
+        return bad;
+    }
+
+    validate(value: unknown): boolean {
+        return FixedPlacementRecord.problems(value).length === 0;
+    }
+
+    defaultMessage(args: ValidationArguments): string {
+        const bad = FixedPlacementRecord.problems(args.value);
+        return `${args.property} must map each componentId to {x, y, rotation?} in millimetres (${bad.join('; ')})`;
+    }
+}
+
 @ValidatorConstraint({ name: 'positiveNumberRecord', async: false })
 export class PositiveNumberRecord implements ValidatorConstraintInterface {
     validate(value: unknown): boolean {
@@ -223,6 +276,29 @@ export class CreateLayoutDto {
     @IsObject()
     @Validate(PositiveNumberRecord)
     netCurrentsA?: Record<string, number>;
+
+    @ApiPropertyOptional({
+        description:
+            'Component positions to KEEP, keyed by componentId, in millimetres in the design frame — the same ' +
+            'frame `result.layout.components[].x/y` reports, so reading a layout out and sending edited ' +
+            'positions back in is the identity. Rotation is optional and quarter-turn only; omitting it means ' +
+            '"stay here, orient however routes best". Fixed means fixed: a set that cannot all be honoured ' +
+            '(off-grid, past the board edge, or two pinned courtyards overlapping) is refused with the remedy ' +
+            'named, rather than partly applied. Positions are NOT relative to the board edge — the outline is ' +
+            're-centred on its content between runs, so compute an edge distance against the board you are ' +
+            'showing. A `side`/`layer` key is rejected: nothing in the pipeline can be told which side a part ' +
+            'goes on, and accepting one would be accepting a value we silently drop.',
+        type: 'object',
+        additionalProperties: {
+            type: 'object',
+            properties: { x: { type: 'number' }, y: { type: 'number' }, rotation: { enum: [0, 90, 180, 270] } },
+            required: ['x', 'y'],
+        },
+    })
+    @IsOptional()
+    @IsObject()
+    @Validate(FixedPlacementRecord)
+    fixedPlacements?: Record<string, { x: number; y: number; rotation?: 0 | 90 | 180 | 270 }>;
 }
 
 /**

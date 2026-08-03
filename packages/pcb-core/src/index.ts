@@ -36,7 +36,13 @@ import {
     type GerberOutputs,
 } from './outputs';
 import { checkConnectivityParity, type ParityResult, type TscElement } from './parity';
-import { placeParts, computeHpwl, type PlacementInput, type PlacementOutput } from './placement';
+import {
+    placeParts,
+    computeHpwl,
+    validateFixedPlacements,
+    type PlacementInput,
+    type PlacementOutput,
+} from './placement';
 import { extractPlacementParts, gridPositions, buildNetWeights, deriveExtraEdges } from './placement-bridge';
 import type { PlacementRunner } from './placement-engine';
 import {
@@ -77,6 +83,24 @@ export interface LayoutOptions {
      *  width on the quality router — a power/ground net routes wider than a signal net, deterministically.
      *  Typically fed from simulation; nets without an entry use the profile's minimum width. */
     netCurrentsA?: Record<string, number>;
+    /**
+     * Component positions the CALLER owns, keyed by OUR componentId, in millimetres in the DESIGN frame —
+     * the same frame `LayoutGeometry.components[].x/y` reports back, so reading a layout out and sending
+     * edited positions back in is the identity.
+     *
+     * Fixed means fixed. A pin the engine could overrule would be indistinguishable at the output from one
+     * it ignored, so there is deliberately no soft "preferred position". A set that cannot all be honoured
+     * is REFUSED before routing rather than partly applied: two courtyards pinned on top of each other is an
+     * unsatisfiable request, not a board to be judged, and no router or margin can resolve it.
+     *
+     * Keyed by componentId, never by the emitted designator: emitted names are minted per run in iteration
+     * order (`R1`, `R1_2`), so a pin stored against one would land on a different part after a rename.
+     *
+     * NOT relative to the board edge. `shrinkBoardToContent` moves the outline's centre to the content
+     * midpoint between runs, so an edge distance is not preserved; the origin is. A client that wants
+     * "5 mm inside the left edge" computes it once, against the board it is showing.
+     */
+    fixedPlacements?: Record<string, { x: number; y: number; rotation?: 0 | 90 | 180 | 270 }>;
     boardWidthMm?: number;
     boardHeightMm?: number;
     /** Placement engine (Lever 2, PLACEMENT_PLAN.md). 'grid' = the deterministic connectivity-blind
@@ -340,6 +364,10 @@ export async function layoutCircuit(circuit: CircuitJson, opts: LayoutOptions = 
         // no routing oracle (fast router / no notary): single attempt, HPWL-gated adoption
         const auto = await attemptAutoPlacement(circuit, opts, layout, adapted, evaluated, profile, undefined);
         diagnostics.push(...auto.diagnostics);
+        // A fixed placement that cannot be honoured stops the pipeline, exactly as a parity failure does.
+        // The alternative is the grid, which ignores pins — so continuing would deliver a board that looks
+        // right and has silently discarded the only geometry the caller owned.
+        if (auto.fatal) return failed(layout, diagnostics, started, fab, opts, spiceNodeByNetId);
         placementAdopted = auto.adopted;
         placementReason = auto.reason ?? placementReason;
         if (auto.adopted && auto.code && auto.evaluated && auto.parity) {
@@ -366,6 +394,8 @@ export async function layoutCircuit(circuit: CircuitJson, opts: LayoutOptions = 
             await throwIfAborted(opts); // each rung is a full place+route+DRC cycle
             const auto = await attemptAutoPlacement(circuit, opts, layout, adapted, gridEvaluated, profile, spacingMm);
             diagnostics.push(...auto.diagnostics);
+            // Wider channels cannot make an unhonourable pin honourable, and the grid would drop it.
+            if (auto.fatal) return failed(layout, diagnostics, started, fab, opts, spiceNodeByNetId);
             if (!auto.adopted || !auto.code || !auto.evaluated || !auto.parity) {
                 placementReason = auto.reason ?? placementReason;
                 break; // wider channels can't fix an HPWL/overlap rejection
@@ -543,6 +573,15 @@ interface AutoPlacementAttempt {
     /** Why the advanced placement was NOT adopted. Present exactly when adopted === false, and it is
      *  what LayoutResult.delivery.placement.degradedReason reports. */
     reason?: string;
+    /**
+     * The attempt failed in a way the grid cannot paper over.
+     *
+     * Every other non-adoption falls back to the grid placement, and that is right: the grid is a valid
+     * board and the advanced engine is an optimisation. A FIXED PLACEMENT is not an optimisation — the grid
+     * ignores pins entirely, so falling back would silently discard the one thing the caller asked to keep
+     * and hand back a board that looks perfectly fine. Same posture as the parity failure: stop, say why.
+     */
+    fatal?: boolean;
     code?: string;
     evaluated?: TscElement[];
     parity?: ParityResult;
@@ -576,7 +615,51 @@ async function attemptAutoPlacement(
         return { adopted: false, diagnostics: diags, reason: why };
     };
 
-    const { parts, missing } = extractPlacementParts(gridEvaluated, adapted.namesById, layout);
+    const { parts: extracted, missing } = extractPlacementParts(gridEvaluated, adapted.namesById, layout);
+
+    /**
+     * Attach the caller's pins, translating OUR component ids into the emitted names the engine keys on.
+     *
+     * The translation happens exactly once, here, through `adapted.namesById`. Keying a stored pin by the
+     * emitted name instead would break on the next rename: those names are minted per run (`R1`, `R1_2`) in
+     * iteration order, so a pin recorded against one would silently land on a different part.
+     */
+    const pinnedByName = new Map<string, { x: number; y: number; rotation?: 0 | 90 | 180 | 270 }>();
+    const unknownPins: string[] = [];
+    for (const [componentId, at] of Object.entries(opts.fixedPlacements ?? {})) {
+        const name = adapted.namesById[componentId];
+        if (name) pinnedByName.set(name, at);
+        else unknownPins.push(componentId);
+    }
+    const parts = extracted.map((p) => {
+        const at = pinnedByName.get(p.id);
+        return at ? { ...p, fixed: at } : p;
+    });
+    // A pin naming a component that is not on this board is not a detail to skip: the caller believes they
+    // pinned something, and the board that comes back would look as though they had.
+    if (unknownPins.length) {
+        diags.push({
+            code: 'PCB051',
+            severity: 'error',
+            message: `${placementLabel}: fixed placement given for ${unknownPins.length} component(s) that are not placeable on this board (${unknownPins.join(', ')}).`,
+        });
+        return {
+            adopted: false,
+            fatal: true,
+            diagnostics: diags,
+            reason: 'fixed placement names an unknown component',
+        };
+    }
+    const pinnedButUnplaceable = [...pinnedByName.keys()].filter((n) => !extracted.some((p) => p.id === n));
+    if (pinnedButUnplaceable.length) {
+        diags.push({
+            code: 'PCB051',
+            severity: 'error',
+            message: `${placementLabel}: ${pinnedButUnplaceable.length} pinned part(s) have no resolvable geometry, so their position cannot be honoured (${pinnedButUnplaceable.join(', ')}).`,
+        });
+        return { adopted: false, fatal: true, diagnostics: diags, reason: 'a pinned part has no geometry' };
+    }
+
     if (missing.length) {
         diags.push({
             code: 'PCB050',
@@ -604,8 +687,57 @@ async function attemptAutoPlacement(
         marginMm: profile.placementMarginMm ?? 4,
         spacingMm,
     };
+    /**
+     * Pins are checked BEFORE the ladder runs, against the same rule the engine applies.
+     *
+     * Following the layoutability pre-flight rather than the DRC gate, and the difference matters: two
+     * courtyards pinned on top of each other is not a judgement about a board, it is an unsatisfiable
+     * request. No router, margin or spacing can fix it, and each routing attempt costs minutes to learn
+     * nothing. So it fails closed here, with the remedy as a number the caller can act on.
+     */
+    const pinProblems = validateFixedPlacements(
+        parts,
+        placementInput.boardW,
+        placementInput.boardH,
+        placementInput.gridMm,
+        placementInput.marginMm,
+        spacingMm ?? 2.4,
+    );
+    if (pinProblems.length) {
+        for (const p of pinProblems) {
+            diags.push({
+                code: 'PCB052',
+                severity: 'error',
+                message:
+                    p.kind === 'off-grid'
+                        ? `${p.id} is pinned at ${p.axis}=${p.given}mm, which is off the ${placementInput.gridMm}mm placement grid — nearest legal value is ${p.nearest}mm.`
+                        : p.kind === 'off-board'
+                          ? `${p.id} is pinned at ${p.axis}=${p.given}mm, which puts its courtyard past the board edge — the limit here is ±${p.limit.toFixed(2)}mm.`
+                          : `${p.a} and ${p.b} are pinned with overlapping courtyards; move one by at least ${p.byMm}mm or unpin it.`,
+            });
+        }
+        return { adopted: false, fatal: true, diagnostics: diags, reason: 'fixed placements cannot all be honoured' };
+    }
+
     let placed: PlacementOutput;
-    if (opts.placer === 'rust') {
+    if (opts.placer === 'rust' && pinnedByName.size > 0) {
+        /**
+         * Pins do not go out to the Rust binary in this version, and this is a refusal rather than a silent
+         * degrade because the failure mode is invisible. `cf-pcb-place` lives in a separately-versioned
+         * image, its input struct does not reject unknown fields, and the TypeScript side never checks the
+         * `protocolVersion` the binary emits. So an older binary would accept a payload carrying pins,
+         * ignore them completely, and return `ok:true` with every pinned part moved — and the pipeline would
+         * adopt it. Until the ABI can say "I did not understand this", pins stay on the engine that provably
+         * honours them.
+         */
+        diags.push({
+            code: 'PCB053',
+            severity: 'info',
+            message:
+                'fixed placements were requested, so the in-process placement engine is used instead of the Rust placer — the Rust protocol cannot yet confirm it honoured them.',
+        });
+        placed = placeParts(placementInput);
+    } else if (opts.placer === 'rust') {
         if (!opts.rustPlace) return keepGrid('Rust placement runner is not configured', 'warning');
         const started = Date.now();
         try {
@@ -624,7 +756,10 @@ async function attemptAutoPlacement(
     for (const note of placed.notes)
         diags.push({ code: 'PCB050', severity: 'info', message: `${placementLabel}: ${note}` });
     if (!placed.ok) return keepGrid('legalization failed even after board growth', 'warning');
-    if (!adoptOnValidity && placed.hpwl >= hpwlGrid)
+    // With pins, the grid baseline is not a comparable alternative: it ignores them. Preferring it for a
+    // better wirelength would trade an explicit constraint for a metric nobody asked about, and the board
+    // would come back silently un-pinned.
+    if (!adoptOnValidity && pinnedByName.size === 0 && placed.hpwl >= hpwlGrid)
         return keepGrid(
             `HPWL did not improve (${placementLabel} ${placed.hpwl.toFixed(1)}mm vs grid ${hpwlGrid.toFixed(1)}mm)`,
         );
