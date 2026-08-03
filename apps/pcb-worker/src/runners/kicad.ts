@@ -93,8 +93,21 @@ const hasGeometry = (gerber: string): boolean => /D0[123]\*/.test(gerber);
  * the trigger is a KiCad-image or converter bump — precisely the event the PCB gate exists to catch, and
  * the one thing that gate does not check, because it verifies DRC rather than delivery.
  */
-function assertDeliverable(layers: Record<string, string>): void {
-    const missing = REQUIRED_LAYERS.filter((l) => layers[l] === undefined);
+function assertDeliverable(layers: Record<string, string>, innerCopperExpected = 0): void {
+    /**
+     * The inner copper, when the board has any.
+     *
+     * `REQUIRED_LAYERS` is a two-layer literal, which was the whole truth until four-layer boards existed
+     * and is now the blindest possible spot: the two layers a customer paid extra for are exactly the two
+     * this gate did not look at. A four-layer board plotted without In1_Cu and In2_Cu passes every other
+     * check — the copper that defines the circuit is on the surface layers, the outline is there, the mask
+     * is there — and arrives as a two-layer board with a four-layer invoice.
+     *
+     * Derived from the board rather than hardcoded again, so six layers (if the toolchain ever builds them)
+     * needs no edit here.
+     */
+    const required = [...REQUIRED_LAYERS, ...Array.from({ length: innerCopperExpected }, (_, i) => `In${i + 1}_Cu`)];
+    const missing = required.filter((l) => layers[l] === undefined);
     if (missing.length > 0)
         throw new Error(
             `kicad-cli exported an incomplete fab bundle — missing ${missing.join(', ')} (got: ${Object.keys(layers).join(', ') || 'nothing'}). Refusing to deliver a board that cannot be manufactured.`,
@@ -281,6 +294,15 @@ export function makeNativeKicad(opts: KicadOpts = {}): NativeKicad {
     // (the advertised ground plane silently absent from delivery), WITH it the pour lands as real copper.
     // pcb-core's own generateGerbers plots the routed SOUP, which has no zone element at all — hence this
     // authoritative re-export in the worker (where kicad-cli lives) rather than shipping the pourless soup.
+    /**
+     * How many buried copper layers this board declares.
+     *
+     * Read from the .kicad_pcb the notary judged, not from the request: the gate must compare the export
+     * against the board that was actually verified, or it is checking the order form instead of the goods.
+     */
+    const innerCopperCount = (kicadPcb: string): number =>
+        new Set([...kicadPcb.matchAll(/"(Ind+).Cu"/g)].map((m) => m[1])).size;
+
     const exportGerbers = async (kicadPcb: string): Promise<GerberOutputs> =>
         withBoard(kicadPcb, undefined, async (dir) => {
             const out = join(dir, 'gbr');
@@ -328,7 +350,7 @@ export function makeNativeKicad(opts: KicadOpts = {}): NativeKicad {
                 // Record<layer, content> shape the delivery already used from circuit-json-to-gerber.
                 layers[f.replace(/^b-/, '').replace(/\.[^.]+$/, '')] = readFileSync(join(out, f), 'utf8');
             }
-            assertDeliverable(layers);
+            assertDeliverable(layers, innerCopperCount(kicadPcb));
             return { layers, drill };
         });
 

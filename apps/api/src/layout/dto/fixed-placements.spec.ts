@@ -7,7 +7,10 @@
  * defect this codebase keeps removing. So these tests are about the difference between "not a placement"
  * and "a placement we cannot evaluate yet", and about the one key that must be REJECTED rather than dropped.
  */
-import { FixedPlacementRecord } from './index';
+import { plainToInstance } from 'class-transformer';
+import { validateSync } from 'class-validator';
+
+import { FabProfileDto, FixedPlacementRecord } from './index';
 
 const v = new FixedPlacementRecord();
 const message = (value: unknown): string => v.defaultMessage({ value, property: 'fixedPlacements' } as never);
@@ -71,5 +74,51 @@ describe('what counts as a placement', () => {
         expect(bad).toMatch(/r1\.x/);
         expect(bad).toMatch(/r1\.y/);
         expect(bad).toMatch(/c1\.rotation/);
+    });
+});
+
+/**
+ * The fab-profile fields that were built and had no door.
+ *
+ * The global pipe runs `forbidNonWhitelisted`, so a field absent from `FabProfileDto` is a 400 rather than a
+ * silently ignored option. That is the right default, and it is exactly why the gap was invisible: pcb-core
+ * shipped 1/2/4 copper layers with 215 green tests and a passing harness, and `{"fabProfile":{"layers":4}}`
+ * came back `property layers should not exist`. Measured against the running API, not assumed.
+ *
+ * These assertions run the REAL validation pipeline over the real DTO, so a field removed from the class
+ * fails here rather than in production.
+ */
+describe('the fab profile options a caller can actually send', () => {
+    const validate = async (fabProfile: Record<string, unknown>) => {
+        const dto = plainToInstance(FabProfileDto, fabProfile);
+        return validateSync(dto, { whitelist: true, forbidNonWhitelisted: true });
+    };
+
+    it('accepts every layer count the toolchain builds, and refuses the rest', async () => {
+        for (const layers of [1, 2, 4]) expect(await validate({ layers })).toEqual([]);
+        for (const layers of [3, 6, 8]) {
+            const errs = await validate({ layers });
+            expect(errs).toHaveLength(1);
+            // The message must name the allowed set — "invalid" alone leaves the caller guessing.
+            expect(JSON.stringify(errs[0]!.constraints)).toMatch(/1, 2, 4/);
+        }
+    });
+
+    it('accepts the silkscreen and via-clearance knobs pcb-core already honours', async () => {
+        for (const field of ['minSilkWidthMm', 'minSilkTextHeightMm', 'viaClearanceMm', 'viaClearanceGuardMm']) {
+            expect(await validate({ [field]: 0.15 })).toEqual([]);
+            // …and still refuses a nonsense value rather than passing it to the design rules.
+            expect(await validate({ [field]: -1 })).not.toEqual([]);
+        }
+    });
+
+    it('accepts per-net minimum widths, and rejects a non-positive one', async () => {
+        expect(await validate({ perNetMinWidthMm: { GND: 0.8 } })).toEqual([]);
+        expect(await validate({ perNetMinWidthMm: { GND: 0 } })).not.toEqual([]);
+    });
+
+    it('still refuses a field nobody implemented, rather than accepting and dropping it', async () => {
+        // The guard that made this gap visible in the first place, kept pointed the other way.
+        expect(await validate({ stackupMaterial: 'FR4' })).not.toEqual([]);
     });
 });

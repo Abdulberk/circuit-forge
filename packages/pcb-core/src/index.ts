@@ -462,7 +462,7 @@ export async function layoutCircuit(circuit: CircuitJson, opts: LayoutOptions = 
     };
 
     // Confirm the widened nets actually routed at their IPC width (freerouting honoured the per-net class).
-    if (qualityApplied) verifyPerNetWidths(routedBoard, perNetWidthMm, diagnostics);
+    if (qualityApplied) verifyPerNetWidths(routedBoard, perNetWidthMm, diagnostics, opts.netCurrentsA, profile);
 
     // Via compliance on the FINAL copper. freerouting routes with the DSN padstack (0.6/0.3 = compliant),
     // so quality boards clear this; the local router's undersized vias are an honest limitation we report
@@ -913,6 +913,10 @@ export function verifyPerNetWidths(
     board: TscElement[],
     perNetWidthMm: Record<string, number>,
     diagnostics: LayoutDiagnostic[],
+    /** The declared currents and the copper they run in — needed to judge a BURIED segment, which the
+     *  pre-route sizing deliberately does not account for. Omit and only the flat targets are checked. */
+    netCurrentsA?: Record<string, number>,
+    profile: Pick<FabProfile, 'copperOz' | 'deltaTC'> = {},
 ): void {
     const wide = Object.entries(perNetWidthMm).filter(([, mm]) => mm > 0);
     if (wide.length === 0) return;
@@ -926,6 +930,23 @@ export function verifyPerNetWidths(
             .filter((e) => e.type === 'source_net')
             .map((e) => [(e as { source_net_id?: string }).source_net_id, (e as { name?: string }).name]),
     );
+    /**
+     * Where a segment RUNS decides how wide it has to be.
+     *
+     * `computeIpcWidths` sizes every net for an EXTERNAL layer, which is exactly right on a two-layer board
+     * — both of its copper layers are outer surfaces — and optimistic the moment inner layers exist. Buried
+     * copper is judged against k=0.024 instead of 0.048, which is about 2.6× the width for the same current,
+     * so a 2 A rail the router happened to put on In1 would be sized as though it were on top and nothing
+     * anywhere would object: KiCad carries one global minimum width, and the trace meets it.
+     *
+     * Checked here rather than by widening everything up front. Sizing every net for the worst case would
+     * make a four-layer board's power nets 2.6× wider even where they route on the surface, which is the
+     * kind of over-constraint that makes a board unroutable to fix a problem it does not have. Route points
+     * carry their own `layer`, so the honest thing is to size optimistically and VERIFY per segment.
+     */
+    const layerOf = (p: { layer?: unknown }): 'external' | 'internal' =>
+        p.layer === 'top' || p.layer === 'bottom' || p.layer === undefined ? 'external' : 'internal';
+
     // The NARROWEST point on the net, not the widest.
     //
     // This measured the maximum until 2 Aug 2026, which made the check unable to fail for the reason it
@@ -938,19 +959,47 @@ export function verifyPerNetWidths(
     // that was not routed, which is the connectivity check's business, and folding it in here would report
     // every unrouted net as an infinitely thin one.
     const minWidthByNet = new Map<string, number>();
+    /** The narrowest point that runs on BURIED copper, where the same current needs ~2.6× the width. */
+    const minInnerByNet = new Map<string, number>();
     for (const t of board.filter((e) => e.type === 'pcb_trace')) {
         const st = srcTraceById.get((t as { source_trace_id?: string }).source_trace_id) as
             | { connected_source_net_ids?: string[] }
             | undefined;
         const name = st?.connected_source_net_ids?.[0] ? netNameById.get(st.connected_source_net_ids[0]) : undefined;
         if (!name) continue;
-        const widths = ((t as { route?: Array<{ width?: number }> }).route ?? [])
-            .map((p) => p.width)
-            .filter((w): w is number => typeof w === 'number' && Number.isFinite(w) && w > 0);
-        if (widths.length === 0) continue;
-        const narrowest = Math.min(...widths);
+        const points = (t as { route?: Array<{ width?: number; layer?: unknown }> }).route ?? [];
+        const usable = points.filter(
+            (p): p is { width: number; layer?: unknown } =>
+                typeof p.width === 'number' && Number.isFinite(p.width) && p.width > 0,
+        );
+        if (usable.length === 0) continue;
+        const narrowest = Math.min(...usable.map((p) => p.width));
         minWidthByNet.set(name, Math.min(minWidthByNet.get(name) ?? Infinity, narrowest));
+        const inner = usable.filter((p) => layerOf(p) === 'internal').map((p) => p.width);
+        if (inner.length) minInnerByNet.set(name, Math.min(minInnerByNet.get(name) ?? Infinity, ...inner));
     }
+
+    // The buried half, checked FIRST because it is the stricter requirement and reporting the looser one
+    // for a net that also fails this would send the reader to the wrong segment.
+    for (const [net, currentA] of Object.entries(netCurrentsA ?? {})) {
+        const gotInner = minInnerByNet.get(net);
+        if (gotInner === undefined) continue; // this net never reaches an inner layer
+        if (typeof currentA !== 'number' || !Number.isFinite(currentA) || currentA <= 0) continue;
+        const need = ipc2221WidthMm({
+            currentA: Math.abs(currentA),
+            copperOz: profile.copperOz,
+            deltaTC: profile.deltaTC,
+            layer: 'internal',
+        }).widthMm;
+        if (gotInner < need * 0.95) {
+            diagnostics.push({
+                code: 'PCB055',
+                severity: 'warning',
+                message: `net ${net} narrows to ${gotInner.toFixed(2)}mm where it runs on an INNER layer, but buried copper carrying ${currentA}A needs ${need.toFixed(2)}mm — inner layers dissipate through the board rather than the surface, so the same current wants a wider trace there.`,
+            });
+        }
+    }
+
     for (const [net, target] of wide) {
         if (target <= 0) continue;
         const got = minWidthByNet.get(net);

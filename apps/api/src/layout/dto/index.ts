@@ -176,6 +176,74 @@ export class FabProfileDto {
     @IsNumber()
     @IsPositive()
     placementMarginMm?: number;
+
+    /**
+     * These six were built in pcb-core and had no door.
+     *
+     * The global pipe runs `forbidNonWhitelisted`, so a field absent from this class is a 400 rather than a
+     * silently ignored option — which is the right default and the reason the gap was invisible: pcb-core's
+     * tests passed, its harness passed, and `{"fabProfile":{"layers":4}}` came back
+     * `property layers should not exist`. A capability nobody can reach is not a capability, and this is the
+     * third time in a week that shape has been shipped.
+     */
+    @ApiPropertyOptional({
+        description:
+            'Copper layers: 1, 2 or 4. Any other count is REFUSED rather than delivered — the board toolchain ' +
+            'silently produces 2 for anything it does not recognise, so an 8-layer request would return a ' +
+            '2-layer board and someone would order the wrong stackup.',
+        enum: [1, 2, 4],
+    })
+    @IsOptional()
+    @IsIn([1, 2, 4])
+    layers?: 1 | 2 | 4;
+
+    @ApiPropertyOptional({
+        description:
+            'Narrowest silkscreen stroke the fab will PRINT (mm, default 0.15). Below its floor a fab DELETES ' +
+            'the legend rather than rejecting the board, so a board can arrive with no reference designators.',
+    })
+    @IsOptional()
+    @IsNumber()
+    @IsPositive()
+    minSilkWidthMm?: number;
+
+    @ApiPropertyOptional({
+        description:
+            'Shortest silkscreen character worth printing (mm, default 0.8). Raised automatically when the ' +
+            'requested stroke needs a taller glyph to render at that width.',
+    })
+    @IsOptional()
+    @IsNumber()
+    @IsPositive()
+    minSilkTextHeightMm?: number;
+
+    @ApiPropertyOptional({ description: 'Explicit clearance around vias (mm). Normally omit — it is derived.' })
+    @IsOptional()
+    @IsNumber()
+    @IsPositive()
+    viaClearanceMm?: number;
+
+    @ApiPropertyOptional({
+        description:
+            'Fixed guard added to the minimum clearance for vias (mm, default 0.10). Raise it if a dense board ' +
+            'still trips a via↔track clearance.',
+    })
+    @IsOptional()
+    @IsNumber()
+    @IsPositive()
+    viaClearanceGuardMm?: number;
+
+    @ApiPropertyOptional({
+        description:
+            'Minimum trace width per EMITTED net name (mm). Merged with the widths computed from netCurrentsA; ' +
+            'the wider of the two wins. Every value must be a positive finite number.',
+        type: 'object',
+        additionalProperties: { type: 'number' },
+    })
+    @IsOptional()
+    @IsObject()
+    @Validate(PositiveNumberRecord)
+    perNetMinWidthMm?: Record<string, number>;
 }
 
 /**
