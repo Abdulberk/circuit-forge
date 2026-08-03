@@ -14,6 +14,7 @@ import { useMemo, useState } from 'react';
 import { AddPart, Inspector } from '../components/Inspector';
 import { ObjectTreePanel } from '../components/ObjectTreePanel';
 import { SaveStatus } from '../components/SaveStatus';
+import { SchematicCanvas } from '../components/SchematicCanvas';
 import { SignIn } from '../components/SignIn';
 import { API_BASE_URL, type ApiError, type OpenedProject } from '../lib/api';
 import { useAsync } from '../lib/useAsync';
@@ -235,11 +236,15 @@ function Workspace() {
                 </aside>
 
                 <main className="stage">
-                    <p className="empty">
-                        {circuit
-                            ? 'Schematic and board canvases mount here.'
-                            : 'Open a project with a working copy to begin.'}
-                    </p>
+                    {circuit ? (
+                        <SchematicCanvas
+                            circuit={circuit}
+                            selectedPath={selected?.ref.path.join('/') ?? null}
+                            onSelect={setSelected}
+                        />
+                    ) : (
+                        <p className="empty">Open a project with a working copy to begin.</p>
+                    )}
                 </main>
 
                 <aside className="pane">
