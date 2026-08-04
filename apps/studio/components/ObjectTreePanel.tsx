@@ -93,14 +93,28 @@ function Row({ node, depth, collapsed, selected, onToggle, onSelect }: RowProps)
 export function ObjectTreePanel({
     circuit,
     layout,
+    selectedPath = null,
     onSelect,
 }: {
     circuit: CircuitJson | null;
     layout?: LayoutGeometry;
+    /**
+     * Which row is selected — OWNED BY THE CALLER, not by this panel.
+     *
+     * It used to be private `useState` here, which made two authorities on one question: clicking a symbol
+     * on the canvas told the Inspector and left the tree painting some other row, and clicking a row told
+     * the Inspector and left the canvas highlighting nothing. Two panels describing the same document
+     * disagreed on screen about what the user had selected, and neither was wrong by its own lights.
+     *
+     * The remount-on-project-switch that used to be necessary goes with it: a selection held above cannot
+     * survive a document it does not belong to, because the same thing that changes the document clears it.
+     */
+    selectedPath?: string | null;
     onSelect?: (node: TreeNode | null) => void;
 }) {
+    // Collapse state stays private, and the difference is the point: which rows are folded is about this
+    // panel's own appearance, and no other view has an opinion about it. Selection is about the DOCUMENT.
     const [collapsed, setCollapsed] = useState<Set<string>>(COLLAPSED_BY_DEFAULT);
-    const [selected, setSelected] = useState<string | null>(null);
 
     // Rebuilt only when a document actually changes. The kernel builds a 400-part board in single-digit
     // milliseconds, but this runs on every keystroke in the editor, and "fast enough" times 60 per second is
@@ -112,10 +126,7 @@ export function ObjectTreePanel({
 
     if (!tree) return <p className="empty">No design loaded.</p>;
 
-    const select = (path: string) => {
-        setSelected(path);
-        onSelect?.(nodeAt(tree, path.split('/')) ?? null);
-    };
+    const select = (path: string) => onSelect?.(nodeAt(tree, path.split('/')) ?? null);
 
     return (
         <div className="tree" role="tree" aria-label="Design objects">
@@ -123,7 +134,7 @@ export function ObjectTreePanel({
                 node={tree.root}
                 depth={0}
                 collapsed={collapsed}
-                selected={selected}
+                selected={selectedPath}
                 onToggle={(path) =>
                     setCollapsed((prev) => {
                         const next = new Set(prev);

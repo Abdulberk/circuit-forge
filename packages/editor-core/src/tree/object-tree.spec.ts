@@ -157,16 +157,25 @@ describe('buildObjectTree — Root › Components › C › Pins / Footprint / P
     it('builds a large board without a quadratic scan', () => {
         // The tree is rebuilt on every document change, so a nested scan here is felt on every keystroke.
         //
-        // MEASURED AS A RATIO, NOT A DEADLINE, and the difference is the whole point. This used to assert a
-        // wall-clock ceiling of 250 ms, which passed on a developer machine and failed on a CI runner at
-        // 261 ms — missed by 4%, on a test whose own comment said a nested scan "costs seconds rather than
-        // milliseconds". A 250 ms ceiling does not measure that; it measures how fast the machine is, so the
-        // verdict was decided by the hardware and the answer changed with the box.
+        // COUNTED, NOT TIMED — and it took three attempts to get there, which is the part worth recording.
         //
-        // Doubling the input is machine-independent, which is exactly the property that was missing. Linear
-        // work doubles; a nested scan quadruples. The bar sits between the two, far from both, so ordinary
-        // noise — GC, JIT warm-up, a busy runner — cannot reach it and a reintroduced quadratic cannot miss
-        // it.
+        // First it asserted a wall-clock ceiling of 250 ms. That failed CI at 261 ms, on a test whose own
+        // comment said a nested scan "costs seconds rather than milliseconds"; a deadline does not measure
+        // complexity, it measures how fast the box is. Worse, it was wrong in BOTH directions: a real
+        // reintroduced quadratic ran in 36 ms at that size and sailed under the bar.
+        //
+        // Then it doubled the input and asserted the TIME ratio, on the reasoning that linear work doubles
+        // and a nested scan quadruples regardless of machine. Locally that measured 1.75–2.17 across
+        // 100→1600 parts, cleanly linear. On a two-core CI runner the same code measured 4.6 — because a
+        // larger workload on a constrained machine degrades super-linearly for reasons that have nothing to
+        // do with the algorithm: allocation pressure, cache, the scheduler. A ratio is less
+        // machine-dependent than a deadline and it is not machine-INdependent, which is what the claim
+        // needed.
+        //
+        // So this counts the WORK. Every pad access is tallied through a proxy: a linear build touches each
+        // pad a fixed number of times, a nested scan touches every pad once per component. At 400 parts
+        // that is ~1.6k against ~640k — three orders of magnitude apart, exact, and identical on every
+        // machine that has ever run it. There is no bar to tune and no noise to sit above.
         const boardOf = (components: number): LayoutGeometry => ({
             ...layout,
             components: Array.from({ length: components }, (_, i) => ({
@@ -190,25 +199,40 @@ describe('buildObjectTree — Root › Components › C › Pins / Footprint / P
             })),
         });
 
-        const timed = (components: number): number => {
+        /** Build the tree and report how many times the pad array was READ. */
+        const padReads = (components: number): { reads: number; pads: number } => {
             const board = boardOf(components);
-            const circuit = circuitFor(board);
-            buildObjectTree(circuit, board); // warm-up: the first call pays for JIT, not for the algorithm
-            const started = performance.now();
-            const tree = buildObjectTree(circuit, board);
-            const elapsed = performance.now() - started;
+            let reads = 0;
+            // A proxy over the pad array. Only numeric index reads are counted — `length`, `Symbol.iterator`
+            // and the like are structure, not work. A `for…of` over the array reads each element once; a
+            // `filter` per component reads every element once PER COMPONENT, which is exactly the shape the
+            // guard exists to catch.
+            const counted = new Proxy(board.pads, {
+                get(target, prop, receiver) {
+                    if (typeof prop === 'string' && /^\d+$/.test(prop)) reads++;
+                    return Reflect.get(target, prop, receiver) as unknown;
+                },
+            });
+            const tree = buildObjectTree(circuitFor(board), { ...board, pads: counted });
             expect(tree.ambiguous).toEqual([]);
-            return elapsed;
+            return { reads, pads: board.pads.length };
         };
 
-        // A floor under the timings as well: below a millisecond the ratio is measuring the clock's
-        // resolution rather than the work, and would pass no matter what the code did.
-        const small = Math.max(timed(400), 1);
-        const large = Math.max(timed(800), 1);
+        const { reads, pads } = padReads(400);
 
-        // 3 sits between linear (2) and quadratic (4). Reported with both timings so a failure says which
-        // way it went instead of only that it did.
-        expect({ ratio: large / small < 3, small, large }).toEqual({ ratio: true, small, large });
+        // A small constant multiple of the pad count. Linear work reads each pad a bounded number of times
+        // however the implementation is arranged; a nested scan reads `components × pads`, four hundred
+        // times more. The bound is loose on purpose — it is not a performance budget, it is the line
+        // between "touches each pad a few times" and "touches every pad for every component".
+        expect({ reads: reads <= pads * 8, reads_actual: reads, pads }).toEqual({
+            reads: true,
+            reads_actual: reads,
+            pads,
+        });
+
+        // …and it must not be vacuous: a build that read NO pads would satisfy the bound while doing
+        // nothing, which is how a guard quietly stops guarding.
+        expect(reads).toBeGreaterThan(0);
     });
 
     it('every gallery board projects without loss', () => {
