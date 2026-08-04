@@ -154,35 +154,61 @@ describe('buildObjectTree — Root › Components › C › Pins / Footprint / P
         expect(buildObjectTree(circuit).ambiguous).toEqual([]);
     });
 
-    it('builds a 400-component board without a quadratic scan', () => {
-        // The tree is rebuilt on every document change. This is a floor, not a benchmark: it fails only if
-        // someone reintroduces a nested scan, which at this size costs seconds rather than milliseconds.
-        const big: LayoutGeometry = {
+    it('builds a large board without a quadratic scan', () => {
+        // The tree is rebuilt on every document change, so a nested scan here is felt on every keystroke.
+        //
+        // MEASURED AS A RATIO, NOT A DEADLINE, and the difference is the whole point. This used to assert a
+        // wall-clock ceiling of 250 ms, which passed on a developer machine and failed on a CI runner at
+        // 261 ms — missed by 4%, on a test whose own comment said a nested scan "costs seconds rather than
+        // milliseconds". A 250 ms ceiling does not measure that; it measures how fast the machine is, so the
+        // verdict was decided by the hardware and the answer changed with the box.
+        //
+        // Doubling the input is machine-independent, which is exactly the property that was missing. Linear
+        // work doubles; a nested scan quadruples. The bar sits between the two, far from both, so ordinary
+        // noise — GC, JIT warm-up, a busy runner — cannot reach it and a reintroduced quadratic cannot miss
+        // it.
+        const boardOf = (components: number): LayoutGeometry => ({
             ...layout,
-            components: Array.from({ length: 400 }, (_, i) => ({
+            components: Array.from({ length: components }, (_, i) => ({
                 ...layout.components[0]!,
                 id: `c${i}`,
                 designator: `R${i}`,
             })),
-            // Four pads per component, each with a DISTINCT source pin. Spreading one real pad 1600 times
+            // Four pads per component, each with a DISTINCT source pin. Spreading one real pad N×4 times
             // gave every pad the same `sourcePin`, so all four pins of a component claimed one address — and
-            // the tree correctly reported 4802 collisions. The fixture was wrong, not the code; a component
-            // whose pins are all called the same thing is not a board anyone would fabricate.
-            pads: Array.from({ length: 1600 }, (_, i) => ({
+            // the tree correctly reported thousands of collisions. The fixture was wrong, not the code; a
+            // component whose pins are all called the same thing is not a board anyone would fabricate.
+            pads: Array.from({ length: components * 4 }, (_, i) => ({
                 ...layout.pads[0]!,
                 id: `p${i}`,
-                componentId: `c${i % 400}`,
-                // The pad's index WITHIN its component, not `i % 4` — with 400 components that stride is a
+                componentId: `c${i % components}`,
+                // The pad's index WITHIN its component, not `i % 4` — with N components that stride is a
                 // multiple of 4, so every pad of a component landed on the same name and the collision came
                 // straight back. Deriving it from the position in the group is what actually makes it unique.
-                pin: String(Math.floor(i / 400) + 1),
-                sourcePin: `pin${Math.floor(i / 400) + 1}`,
+                pin: String(Math.floor(i / components) + 1),
+                sourcePin: `pin${Math.floor(i / components) + 1}`,
             })),
+        });
+
+        const timed = (components: number): number => {
+            const board = boardOf(components);
+            const circuit = circuitFor(board);
+            buildObjectTree(circuit, board); // warm-up: the first call pays for JIT, not for the algorithm
+            const started = performance.now();
+            const tree = buildObjectTree(circuit, board);
+            const elapsed = performance.now() - started;
+            expect(tree.ambiguous).toEqual([]);
+            return elapsed;
         };
-        const started = performance.now();
-        const tree = buildObjectTree(circuitFor(big), big);
-        expect(performance.now() - started).toBeLessThan(250);
-        expect(tree.ambiguous).toEqual([]);
+
+        // A floor under the timings as well: below a millisecond the ratio is measuring the clock's
+        // resolution rather than the work, and would pass no matter what the code did.
+        const small = Math.max(timed(400), 1);
+        const large = Math.max(timed(800), 1);
+
+        // 3 sits between linear (2) and quadratic (4). Reported with both timings so a failure says which
+        // way it went instead of only that it did.
+        expect({ ratio: large / small < 3, small, large }).toEqual({ ratio: true, small, large });
     });
 
     it('every gallery board projects without loss', () => {
