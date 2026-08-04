@@ -15,8 +15,14 @@
  */
 import { useEffect } from 'react';
 
-/** Is the event coming from somewhere with its own text-editing undo? */
-function isTextEntry(target: EventTarget | null): boolean {
+/**
+ * Is the event coming from somewhere with its own text-editing undo?
+ *
+ * EXPORTED because every keyboard shortcut this editor grows needs exactly this question, and a second
+ * implementation of it is a second answer. `R` rotates a part — so without this check, typing a resistance
+ * of `4R7` into the Inspector would silently turn the part behind the panel.
+ */
+export function isTextEntry(target: EventTarget | null): boolean {
     if (!(target instanceof HTMLElement)) return false;
     if (target.isContentEditable) return true;
     const tag = target.tagName;
