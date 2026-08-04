@@ -15,10 +15,18 @@
  *   NO DOM, NO NODE — enforced by the compiler (`lib:["ES2022"]`, `types:[]`), stated here so a reader who
  *   widens the tsconfig learns what it was for.
  *
- *   IT INSTALLS STANDALONE — the gate that catches what the others cannot. Inside a pnpm workspace every
- *   sibling resolves whether or not it is declared, so a missing dependency is invisible until the package
- *   is consumed from somewhere else. Packing it and resolving the tarball's manifest against its declared
- *   deps is the only check that sees it.
+ *   EVERYTHING IT SHIPS IS DECLARED — the gate that catches what the others cannot. Inside a pnpm
+ *   workspace every sibling resolves whether or not it is declared, so a missing dependency is invisible
+ *   until the package is consumed from somewhere else. Packing it and comparing every specifier in the
+ *   shipped files — the emitted JavaScript AND the emitted declarations — against the tarball's own
+ *   manifest is the only check that sees an undeclared one.
+ *
+ * WHAT NONE OF THEM PROVE: that the package can actually be INSTALLED. This file used to say it did, in
+ * those words, and the claim was wrong twice over — it never ran an install, and its scan read only the
+ * compiled JavaScript, where a type-only dependency has already vanished. So a declared, correct, never-
+ * published dependency passed cleanly and would have failed at `npm i`. Proving installability needs a
+ * real install against a real registry; that belongs in a release pipeline, and its absence is a stated
+ * gap rather than a covered one.
  */
 import { execFileSync } from 'node:child_process';
 import { mkdtempSync, readdirSync, readFileSync, rmSync, statSync } from 'node:fs';
@@ -103,11 +111,26 @@ describe('the kernel stays liftable', () => {
         expect((PKG.exports as { '.': { types?: string } })['.'].types).toBe('./dist/index.d.ts');
     });
 
-    it('packs and resolves OUTSIDE the workspace — every runtime import is declared', () => {
-        // The workspace hides missing dependencies: a sibling resolves whether or not it is declared.
-        // `npm pack` produces exactly what a consumer would receive, so reading the tarball's manifest
-        // and checking that every non-relative import in the BUILT output is declared there is the only
-        // check that sees an undeclared one.
+    it('packs with every shipped import DECLARED — in the types as well as the code', () => {
+        // WHAT THIS PROVES, stated narrowly on purpose. The workspace hides missing dependencies: a sibling
+        // resolves whether or not it is declared. `npm pack` produces exactly what a consumer receives, so
+        // comparing every non-relative specifier in the shipped files against the tarball's own manifest is
+        // what catches an UNDECLARED one.
+        //
+        // WHAT IT DOES NOT PROVE, and this is written down because the omission already cost something.
+        // This test does not install anything. Its header used to say it did, and a reader — me — repeated
+        // that claim as fact. Resolving a manifest and installing a tarball are different acts: the first
+        // says "the package asks for what it uses", the second says "what it asks for can be obtained".
+        // A dependency that is declared, correct, and has never been published to the registry passes this
+        // gate and fails at `npm i`. Proving otherwise needs a real install against a real registry, which
+        // is a release-pipeline job, not a unit test.
+        //
+        // TYPES ARE SCANNED TOO, and that is the part that was missing rather than merely unstated. A
+        // `import type { X } from 'pkg'` compiles away completely, so the emitted JavaScript never mentions
+        // `pkg` — a JS-only scan reports a clean bill of health while the shipped `.d.ts` still requires
+        // that package for any TypeScript consumer to compile. The gate passed VACUOUSLY for exactly this
+        // reason, which is the worst way for a test to be wrong: it was green because it was looking in the
+        // one place the evidence could not be.
         const out = mkdtempSync(join(tmpdir(), 'editor-core-pack-'));
         try {
             execFileSync('npm', ['pack', '--pack-destination', out], { cwd: ROOT, stdio: 'pipe', shell: true });
@@ -126,17 +149,31 @@ describe('the kernel stays liftable', () => {
 
             const built = readdirSync(join(out, 'package', 'dist'), { recursive: true }) as string[];
             const js = built.filter((f) => typeof f === 'string' && f.endsWith('.js'));
-            expect(js.length).toBeGreaterThan(0); // an empty dist would make this vacuous
+            const dts = built.filter((f) => typeof f === 'string' && f.endsWith('.d.ts'));
+            // Both non-empty, or the scan below is vacuous in the direction it is vacuous in — which is
+            // precisely how this gate passed while shipping a dependency nobody could install.
+            expect({ js: js.length > 0, dts: dts.length > 0 }).toEqual({ js: true, dts: true });
 
-            const undeclared = new Set<string>();
-            for (const f of js) {
-                const code = readFileSync(join(out, 'package', 'dist', f), 'utf8');
-                for (const m of code.matchAll(/require\("([^"]+)"\)/g)) {
-                    const spec = m[1]!;
-                    if (!spec.startsWith('.') && !declared.has(spec)) undeclared.add(spec);
+            /** Every module specifier a consumer's toolchain would have to resolve, from one shipped file. */
+            const specifiersIn = (code: string): string[] => [
+                ...[...code.matchAll(/require\("([^"]+)"\)/g)].map((m) => m[1]!),
+                // The declaration forms. `import type`/`export type` erase from JS but survive here, and
+                // `import("pkg")` is what TypeScript emits for an inlined type reference.
+                ...[...code.matchAll(/\bfrom\s+['"]([^'"]+)['"]/g)].map((m) => m[1]!),
+                ...[...code.matchAll(/\bimport\(['"]([^'"]+)['"]\)/g)].map((m) => m[1]!),
+            ];
+
+            const undeclared = new Map<string, string>(); // specifier -> the file that needs it
+            for (const f of [...js, ...dts]) {
+                for (const spec of specifiersIn(readFileSync(join(out, 'package', 'dist', f), 'utf8'))) {
+                    // A subpath import (`pkg/sub`) is satisfied by declaring `pkg`; a scoped package keeps
+                    // two segments. Node builtins are not dependencies and this package must not use them
+                    // anyway — the allowlist above is what enforces that.
+                    const pkg = spec.startsWith('@') ? spec.split('/').slice(0, 2).join('/') : spec.split('/')[0]!;
+                    if (!spec.startsWith('.') && !declared.has(pkg)) undeclared.set(spec, f);
                 }
             }
-            expect([...undeclared]).toEqual([]);
+            expect([...undeclared].map(([spec, f]) => `${spec} (needed by dist/${f})`)).toEqual([]);
         } finally {
             rmSync(out, { recursive: true, force: true });
         }

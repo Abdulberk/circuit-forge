@@ -57,7 +57,71 @@ export interface SymbolGeometry {
     labelAnchor: { x: number; y: number };
 }
 
-const PIN_LEN = 8;
+/**
+ * The lattice every pin sits on.
+ *
+ * WHY A LATTICE AT ALL. Two symbols placed side by side must have pins at commensurable heights, or a wire
+ * between them can never be a straight line and orthogonal routing has nothing to aim at. Before this, pin
+ * coordinates across the library were 0, 11, 15 and 20 — greatest common divisor 1, which is to say no grid
+ * at all, which is to say every wire was a diagonal waiting to happen.
+ *
+ * TEN, and it is FROZEN. Changing it is a data migration, not a preference: stored drawings hold
+ * coordinates in these units, and `pcb-core`'s adapter seeds board placement from the same numbers. A test
+ * pins the value so that cost is visible to whoever reaches for it.
+ */
+export const PIN_GRID = 10;
+
+/**
+ * The shortest lead worth drawing, before the pin is snapped outward to the lattice.
+ *
+ * A lead is what a wire visibly attaches to; too short and the wire appears to touch the body itself. This
+ * is a FLOOR, not a length — the actual lead is however far it is from the body edge to the next lattice
+ * point, so it varies per symbol. Equal leads are not a property worth having; pins on a grid is.
+ */
+const MIN_LEAD = 6;
+
+/** Snap a coordinate AWAY from the origin to the next lattice point. */
+const snapOut = (v: number): number => (v >= 0 ? Math.ceil(v / PIN_GRID) : Math.floor(v / PIN_GRID)) * PIN_GRID;
+
+/** The bounding box of a set of strokes — the authority on how big a body actually is. */
+function boundsOf(strokes: SymbolStroke[]): { minX: number; maxX: number; minY: number; maxY: number } {
+    const xs = strokes.flatMap((s) => s.points.map((p) => p[0]));
+    const ys = strokes.flatMap((s) => s.points.map((p) => p[1]));
+    return { minX: Math.min(...xs), maxX: Math.max(...xs), minY: Math.min(...ys), maxY: Math.max(...ys) };
+}
+
+/**
+ * Attach pins to a body, and DRAW THE LEADS THAT REACH THEM.
+ *
+ * This is the whole fix for a defect that had nothing to do with any one symbol. Previously a symbol wrote
+ * its pin coordinates and its lead strokes as two separate hand-authored facts, so the two could disagree
+ * — and did: the diode's shared two-terminal frame put its pins at ±15 from a body half-width of 7, while
+ * the diode overrode the strokes and drew its right lead from the cathode bar at x=5 to x=13. The pin sat
+ * two units past the end of its own conductor, and a wire drawn to it met empty space. Nothing detected
+ * that, because nothing related the two numbers.
+ *
+ * Here the pin position is the ONLY authored fact and the lead is derived from it. A lead that fails to
+ * reach its pin is not a bug that can be fixed; it is a shape this function cannot express.
+ */
+function withLeads(body: SymbolStroke[], pins: SymbolPin[]): SymbolStroke[] {
+    const b = boundsOf(body);
+    const edge = (pin: SymbolPin): [number, number] => {
+        switch (pin.side) {
+            case 'left':
+                return [b.minX, pin.y];
+            case 'right':
+                return [b.maxX, pin.y];
+            case 'top':
+                return [pin.x, b.minY];
+            case 'bottom':
+                return [pin.x, b.maxY];
+        }
+    };
+    return [...body, ...pins.map((pin) => ({ points: [[pin.x, pin.y], edge(pin)] as Array<[number, number]> }))];
+}
+
+/** Place a pin on the lattice, clear of the body by at least `MIN_LEAD`. */
+const pinOut = (bodyEdge: number): number => snapOut(bodyEdge + Math.sign(bodyEdge || 1) * MIN_LEAD);
 
 /**
  * Order a POLARISED part's terminals by NAME, not by array position.
@@ -78,33 +142,49 @@ function orderedByName(pins: string[], first: readonly string[], second: readonl
     return a !== undefined && b !== undefined && a !== b ? [a, b] : null;
 }
 
-/** A two-terminal part: one pin left, one right, body between. The shared frame for R, C, L, D, V. */
-function twoTerminal(pins: string[], body: SymbolStroke[], halfWidth: number, halfHeight: number): SymbolGeometry {
+/**
+ * A two-terminal part: one pin left, one right, body between. The shared frame for R, C, L, D, V.
+ *
+ * The body is the ONLY thing a caller supplies. Its extent is scanned rather than declared, the pins are
+ * placed from that extent onto the lattice, and the leads are drawn to the pins — so a caller cannot
+ * describe a shape whose pins miss its conductors, and cannot declare a size its drawing does not have.
+ * Both were real defects, and both are now unsayable rather than merely fixed.
+ */
+function twoTerminal(pins: string[], body: SymbolStroke[]): SymbolGeometry {
+    const b = boundsOf(body);
+    const placed: SymbolPin[] = [
+        { pinId: pins[0] ?? '1', x: pinOut(b.minX), y: 0, side: 'left' },
+        { pinId: pins[1] ?? '2', x: pinOut(b.maxX), y: 0, side: 'right' },
+    ];
     return {
         basis: 'drawn',
-        width: (halfWidth + PIN_LEN) * 2,
-        height: halfHeight * 2,
-        strokes: [
-            {
-                points: [
-                    [-halfWidth - PIN_LEN, 0],
-                    [-halfWidth, 0],
-                ],
-            },
-            ...body,
-            {
-                points: [
-                    [halfWidth, 0],
-                    [halfWidth + PIN_LEN, 0],
-                ],
-            },
-        ],
-        pins: [
-            { pinId: pins[0] ?? '1', x: -halfWidth - PIN_LEN, y: 0, side: 'left' },
-            { pinId: pins[1] ?? '2', x: halfWidth + PIN_LEN, y: 0, side: 'right' },
-        ],
-        labelAnchor: { x: 0, y: -halfHeight - 5 },
+        ...measured(withLeads(body, placed), placed),
+        pins: placed,
+        labelAnchor: { x: 0, y: b.minY - 5 },
     };
+}
+
+/**
+ * The size of a symbol, scanned from the symbol.
+ *
+ * `width`/`height` used to be hand-typed beside the shape, which made them a second description of
+ * something that already describes itself — and the two disagreed the moment either was edited.
+ * `voltage_source` declared 40×24 for a shape that is 24×40, because the horizontal formula was copied
+ * onto a vertical symbol; `inductor` declared a height of 10 for a body that never leaves the top half.
+ * Deriving them does not fix those two so much as delete the whole class: there is nothing left to get
+ * wrong.
+ *
+ * FULL extents, including the pins, because that is what the quantity is for — a placer spacing parts so
+ * they do not overlap has to account for the leads a wire attaches to. The old docstring said half-extents
+ * while every producer returned full ones, and the one consumer read it BOTH ways in the same file.
+ */
+function measured(
+    strokes: SymbolStroke[],
+    pins: SymbolPin[],
+): { width: number; height: number; strokes: SymbolStroke[] } {
+    const all = [...strokes, { points: pins.map((p) => [p.x, p.y] as [number, number]) }];
+    const b = boundsOf(all);
+    return { width: b.maxX - b.minX, height: b.maxY - b.minY, strokes };
 }
 
 /**
@@ -117,32 +197,22 @@ function twoTerminal(pins: string[], body: SymbolStroke[], halfWidth: number, ha
  */
 const DRAWN: Record<string, (pins: string[]) => SymbolGeometry | null> = {
     resistor: (p) =>
-        twoTerminal(
-            p,
-            [
-                {
-                    points: [
-                        [-10, -4],
-                        [10, -4],
-                        [10, 4],
-                        [-10, 4],
-                    ],
-                    closed: true,
-                },
-            ],
-            10,
-            4,
-        ),
-
-    capacitor: (p) => ({
-        ...twoTerminal(p, [], 3, 8),
-        strokes: [
+        twoTerminal(p, [
             {
                 points: [
-                    [-3 - PIN_LEN, 0],
-                    [-3, 0],
+                    [-10, -4],
+                    [10, -4],
+                    [10, 4],
+                    [-10, 4],
                 ],
+                closed: true,
             },
+        ]),
+
+    // Two plates and the gap between them: the convention that says "no DC path", which a labelled box
+    // cannot say. The leads are NOT written here — they are drawn to wherever the pins land.
+    capacitor: (p) =>
+        twoTerminal(p, [
             {
                 points: [
                     [-3, -8],
@@ -155,25 +225,13 @@ const DRAWN: Record<string, (pins: string[]) => SymbolGeometry | null> = {
                     [3, 8],
                 ],
             },
-            {
-                points: [
-                    [3, 0],
-                    [3 + PIN_LEN, 0],
-                ],
-            },
-        ],
-    }),
+        ]),
 
-    inductor: (p) => ({
-        ...twoTerminal(p, [], 12, 5),
-        strokes: [
-            {
-                points: [
-                    [-12 - PIN_LEN, 0],
-                    [-12, 0],
-                ],
-            },
-            // Four arcs approximated as a polyline: a renderer that wants true arcs can draw them instead, but the shape reads.
+    inductor: (p) =>
+        twoTerminal(p, [
+            // Four arcs approximated as a polyline: a renderer that wants true arcs can draw them instead,
+            // but the shape reads. It sits entirely on or above the axis, which is why a hand-typed height
+            // of 10 was wrong for it — the scan says 5, and now the scan is the only thing that says it.
             {
                 points: [
                     [-12, 0],
@@ -188,51 +246,34 @@ const DRAWN: Record<string, (pins: string[]) => SymbolGeometry | null> = {
                     [12, 0],
                 ],
             },
-            {
-                points: [
-                    [12, 0],
-                    [12 + PIN_LEN, 0],
-                ],
-            },
-        ],
-    }),
+        ]),
 
     diode: (raw) => {
         // Anode LEFT, cathode RIGHT — by name. Taking them in array order drew the diode backwards for
         // any design that listed cathode first, which is legal everywhere else in this system.
         const p = orderedByName(raw, ['anode', 'a', '+'], ['cathode', 'k', 'c', '-']);
         if (!p) return null;
-        return {
-            ...twoTerminal(p, [], 7, 7),
-            strokes: [
-                {
-                    points: [
-                        [-7 - PIN_LEN, 0],
-                        [-7, 0],
-                    ],
-                },
-                {
-                    points: [
-                        [-7, -7],
-                        [-7, 7],
-                        [5, 0],
-                    ],
-                    closed: true,
-                }, // anode triangle
-                {
-                    points: [
-                        [5, -7],
-                        [5, 7],
-                    ],
-                }, // cathode bar
-                {
-                    points: [
-                        [5, 0],
-                        [5 + PIN_LEN, 0],
-                    ],
-                },
-            ],
-        };
+        // The body is ASYMMETRIC — the triangle's back sits at −7, the cathode bar at +5 — and that
+        // asymmetry is exactly what broke the old version: the shared frame placed both pins from a single
+        // half-width of 7, so the right pin landed at 15 while the hand-written lead stopped at 13. Two
+        // units of nothing, masked only by the renderer's pin dot happening to be exactly that radius.
+        // Here each pin is placed from the edge it actually belongs to, and the leads follow.
+        return twoTerminal(p, [
+            {
+                points: [
+                    [-7, -7],
+                    [-7, 7],
+                    [5, 0],
+                ],
+                closed: true,
+            }, // anode triangle
+            {
+                points: [
+                    [5, -7],
+                    [5, 7],
+                ],
+            }, // cathode bar
+        ]);
     },
 
     voltage_source: (raw) => {
@@ -240,69 +281,55 @@ const DRAWN: Record<string, (pins: string[]) => SymbolGeometry | null> = {
         // down inverts every polarity an engineer reads off the sheet.
         const p = orderedByName(raw, ['+', 'p', 'pos', 'plus'], ['-', 'n', 'neg', 'minus']);
         if (!p) return null;
+        // VERTICAL, and that is what the old hand-typed size got wrong: it declared 40×24 by reusing the
+        // horizontal frame's formula, for a shape that is 24 wide and 40 tall. A placer spacing parts by
+        // those numbers reserved the wrong axis. Scanned now, so the shape and its stated size cannot part
+        // company again.
+        const body: SymbolStroke[] = [
+            // A circle, as a polygon — the renderer needs no arc support to draw a source.
+            {
+                points: Array.from({ length: 24 }, (_, i) => {
+                    const a = (i / 24) * Math.PI * 2;
+                    return [Math.cos(a) * 12, Math.sin(a) * 12] as [number, number];
+                }),
+                closed: true,
+            },
+            {
+                points: [
+                    [-4, -5],
+                    [4, -5],
+                ],
+            }, // + bar
+            {
+                points: [
+                    [0, -9],
+                    [0, -1],
+                ],
+            }, // + stem
+            {
+                points: [
+                    [-4, 5],
+                    [4, 5],
+                ],
+            }, // −
+        ];
+        const b = boundsOf(body);
+        const placed: SymbolPin[] = [
+            { pinId: p[0] ?? '+', x: 0, y: pinOut(b.minY), side: 'top' },
+            { pinId: p[1] ?? '-', x: 0, y: pinOut(b.maxY), side: 'bottom' },
+        ];
         return {
             basis: 'drawn',
-            width: (12 + PIN_LEN) * 2,
-            height: 24,
-            strokes: [
-                {
-                    points: [
-                        [0, -12 - PIN_LEN],
-                        [0, -12],
-                    ],
-                },
-                // A circle, as a polygon — the renderer needs no arc support to draw a source.
-                {
-                    points: Array.from({ length: 24 }, (_, i) => {
-                        const a = (i / 24) * Math.PI * 2;
-                        return [Math.cos(a) * 12, Math.sin(a) * 12] as [number, number];
-                    }),
-                    closed: true,
-                },
-                {
-                    points: [
-                        [-4, -5],
-                        [4, -5],
-                    ],
-                }, // + bar
-                {
-                    points: [
-                        [0, -9],
-                        [0, -1],
-                    ],
-                }, // + stem
-                {
-                    points: [
-                        [-4, 5],
-                        [4, 5],
-                    ],
-                }, // −
-                {
-                    points: [
-                        [0, 12],
-                        [0, 12 + PIN_LEN],
-                    ],
-                },
-            ],
-            pins: [
-                { pinId: p[0] ?? '+', x: 0, y: -12 - PIN_LEN, side: 'top' },
-                { pinId: p[1] ?? '-', x: 0, y: 12 + PIN_LEN, side: 'bottom' },
-            ],
-            labelAnchor: { x: 16, y: 0 },
+            ...measured(withLeads(body, placed), placed),
+            pins: placed,
+            labelAnchor: { x: b.maxX + 4, y: 0 },
         };
     },
 
-    ground: (p) => ({
-        basis: 'drawn',
-        width: 16,
-        height: 14,
-        strokes: [
-            {
-                points: [
-                    [0, -7],
-                    [0, 0],
-                ],
-            },
+    // Three shrinking bars — the convention that says REFERENCE, which a box cannot. One terminal, entering
+    // from above; the vertical stem is the lead and is therefore not written here, it is drawn to the pin.
+    ground: (p) => {
+        const body: SymbolStroke[] = [
             {
                 points: [
                     [-8, 0],
@@ -321,10 +348,15 @@ const DRAWN: Record<string, (pins: string[]) => SymbolGeometry | null> = {
                     [2, 6],
                 ],
             },
-        ],
-        pins: [{ pinId: p[0] ?? '1', x: 0, y: -7, side: 'top' }],
-        labelAnchor: { x: 0, y: 12 },
-    }),
+        ];
+        const placed: SymbolPin[] = [{ pinId: p[0] ?? '1', x: 0, y: pinOut(boundsOf(body).minY), side: 'top' }];
+        return {
+            basis: 'drawn',
+            ...measured(withLeads(body, placed), placed),
+            pins: placed,
+            labelAnchor: { x: 0, y: 12 },
+        };
+    },
 };
 
 /**
@@ -337,45 +369,43 @@ const DRAWN: Record<string, (pins: string[]) => SymbolGeometry | null> = {
  */
 function derive(pins: string[]): SymbolGeometry {
     const perSide = Math.max(1, Math.ceil(pins.length / 2));
-    const spacing = 12;
-    const halfHeight = Math.max(14, (perSide * spacing) / 2 + 4);
-    const halfWidth = Math.max(18, 6 + Math.max(...pins.map((p) => p.length), 1) * 4);
+    // Pin pitch IS the lattice. It used to be 12, which put every pin off-grid and therefore made a
+    // straight wire between two derived parts impossible — on the path 26 of the 32 component types take.
+    const halfHeight = Math.max(2 * PIN_GRID, (perSide * PIN_GRID) / 2 + 4);
+    const halfWidth = Math.max(2 * PIN_GRID, 6 + Math.max(...pins.map((p) => p.length), 1) * 4);
 
     const placed: SymbolPin[] = pins.map((pinId, i) => {
         const left = i < perSide;
         const indexOnSide = left ? i : i - perSide;
         const countOnSide = left ? Math.min(perSide, pins.length) : pins.length - perSide;
-        // Centred on the side, so a 3-pin part is not top-heavy.
-        const y = (indexOnSide - (countOnSide - 1) / 2) * spacing;
+        // Centred on the side, so a 3-pin part is not top-heavy — but centred to the nearest LATTICE step
+        // rather than exactly. An exact centring puts an even pin count on half-steps (±5, ±15), which is
+        // off-grid by construction, and being half a step from centre is invisible where being off-grid is
+        // a wire that cannot be straight.
+        const y = (indexOnSide - Math.round((countOnSide - 1) / 2)) * PIN_GRID;
         return {
             pinId,
-            x: left ? -halfWidth - PIN_LEN : halfWidth + PIN_LEN,
+            x: left ? -snapOut(halfWidth + MIN_LEAD) : snapOut(halfWidth + MIN_LEAD),
             y,
             side: left ? 'left' : 'right',
         };
     });
 
+    const body: SymbolStroke[] = [
+        {
+            points: [
+                [-halfWidth, -halfHeight],
+                [halfWidth, -halfHeight],
+                [halfWidth, halfHeight],
+                [-halfWidth, halfHeight],
+            ],
+            closed: true,
+        },
+    ];
+
     return {
         basis: 'derived',
-        width: (halfWidth + PIN_LEN) * 2,
-        height: halfHeight * 2,
-        strokes: [
-            {
-                points: [
-                    [-halfWidth, -halfHeight],
-                    [halfWidth, -halfHeight],
-                    [halfWidth, halfHeight],
-                    [-halfWidth, halfHeight],
-                ],
-                closed: true,
-            },
-            ...placed.map((p) => ({
-                points: [
-                    [p.x, p.y],
-                    [p.side === 'left' ? -halfWidth : halfWidth, p.y],
-                ] as Array<[number, number]>,
-            })),
-        ],
+        ...measured(withLeads(body, placed), placed),
         pins: placed,
         labelAnchor: { x: 0, y: -halfHeight - 5 },
     };

@@ -66,9 +66,26 @@ jobs:
       - name: Install
         run: pnpm install --frozen-lockfile
 
-      # pcb-core imports @circuit-forge/eda-core at build AND runtime, so its dist must exist first.
-      - name: Build eda-core (pcb-core dependency)
-        run: pnpm --filter @circuit-forge/eda-core build
+      # pcb-core needs its workspace dependencies' `dist` to exist before `tsc` can resolve their types, so
+      # they are built first — DERIVED from the dependency graph, never listed by hand.
+      #
+      # This step used to name `eda-core` and only `eda-core`, which was true when it was written and went
+      # stale silently: pcb-core later grew imports of `pcb-contract` and `pcb-preflight` (the first was
+      # extracted OUT of pcb-core precisely to keep a server toolchain out of a browser bundle), and nothing
+      # brought the list along. The gate then failed with `Cannot find module '@circuit-forge/pcb-contract'`
+      # — which reads as a missing package rather than an unbuilt one, so the message points away from the
+      # cause. `...<pkg>` is pnpm's "this package and everything it depends on, in order", so the list
+      # cannot fall behind the imports again.
+      #
+      # `<pkg>^...` is "everything <pkg> depends on, excluding <pkg> itself" — verified against this
+      # workspace rather than taken from memory, because the neighbouring form points the other way:
+      #   @circuit-forge/pcb-core...   → eda-core, pcb-contract, pcb-preflight, pcb-core
+      #   ...@circuit-forge/pcb-core   → pcb-core, pcb-worker      (DEPENDENTS — the wrong direction)
+      #   @circuit-forge/pcb-core^...  → eda-core, pcb-contract, pcb-preflight
+      # The leading-dot form reads like the natural spelling of "and its dependencies" and is the opposite,
+      # which would have left this step doing less than before while looking like a fix.
+      - name: Build pcb-core's workspace dependencies
+        run: pnpm --filter "@circuit-forge/pcb-core^..." build
 
       # The conservation gate runs BEFORE Docker on purpose: it needs neither, it finishes in ~20 ms, and
       # the defects it locks are the ones no downstream gate can see. A three-legged transistor on a 2-pad

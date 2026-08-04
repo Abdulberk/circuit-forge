@@ -12,6 +12,7 @@ import { AuthModule } from './auth/auth.module';
 import { AuditModule } from './common/audit/audit.module';
 import { requestContextMiddleware } from './common/context/request-context';
 import { validateEnv } from './config/env.validation';
+import { DesignChecksModule } from './design-checks/design-checks.module';
 import { GenerationModule } from './generation/generation.module';
 import { HealthModule } from './health/health.module';
 import { InvitationsModule } from './invitations/invitations.module';
@@ -25,7 +26,6 @@ import { SimulationModule } from './simulation/simulation.module';
 import { TemplatesModule } from './templates/templates.module';
 import { UsageModule } from './usage/usage.module';
 import { VersionsModule } from './versions/versions.module';
-import { DesignChecksModule } from './design-checks/design-checks.module';
 import { WorkingCopyModule } from './working-copy/working-copy.module';
 
 @Module({

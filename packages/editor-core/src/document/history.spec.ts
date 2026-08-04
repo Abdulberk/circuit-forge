@@ -375,11 +375,29 @@ describe('what a revision touched', () => {
             // in the other order is a different path. A comparison that sorted or set-ified would erase it.
             const path = beginHistory(docOf(GALLERY[0]![1]));
             const drawn = commitUi(path, 'wire', {
-                wires: [{ id: 'w1', netId: 'n1', points: [{ x: 0, y: 0 }, { x: 10, y: 0 }] }],
+                wires: [
+                    {
+                        id: 'w1',
+                        netId: 'n1',
+                        points: [
+                            { x: 0, y: 0 },
+                            { x: 10, y: 0 },
+                        ],
+                    },
+                ],
             });
             if (!drawn.ok) throw new Error('unreachable');
             const reversed = commitUi(drawn.history, 'wire', {
-                wires: [{ id: 'w1', netId: 'n1', points: [{ x: 10, y: 0 }, { x: 0, y: 0 }] }],
+                wires: [
+                    {
+                        id: 'w1',
+                        netId: 'n1',
+                        points: [
+                            { x: 10, y: 0 },
+                            { x: 0, y: 0 },
+                        ],
+                    },
+                ],
             });
             expect(reversed.ok && reversed.changed).toBe(true);
         });

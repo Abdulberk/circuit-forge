@@ -107,6 +107,43 @@ describe('what the canvas draws', () => {
         expect(wires(container)).toHaveLength(0);
     });
 
+    it('CLOSES the shapes that are closed — a box is not a box with one side missing', () => {
+        // Measured before this was fixed: `<polyline>` auto-closes when FILLING but never strokes the
+        // closing edge, so every closed body in the library rendered short of one side. On a derived box
+        // that side is the LEFT one — and 26 of the 32 component types derive — so every IC, transistor,
+        // gate and subcircuit drew open, with its left-hand pin stubs floating 10–14 units from anything
+        // drawn. The resistor drew as a bracket; the diode had no triangle at all.
+        //
+        // Asserted structurally (which ELEMENT was emitted) rather than visually, because the difference is
+        // invisible in a DOM snapshot: both elements accept the same `points` and differ only in whether
+        // the renderer joins the last point to the first.
+        const { container } = render(<SchematicCanvas circuit={CIRCUIT} />);
+        const closedShapes = container.querySelectorAll('polygon');
+        expect(closedShapes.length).toBeGreaterThan(0);
+
+        // …and every one of them is FILLED with a colour that exists. The previous fill named
+        // `--surface-2`, which is defined nowhere in the app's stylesheet, so it fell through to
+        // transparent and left the missing edges with nothing behind them.
+        for (const shape of Array.from(closedShapes)) {
+            const fill = shape.getAttribute('fill') ?? '';
+            expect({ fill, transparent: /transparent|^none$/.test(fill) }).toEqual({ fill, transparent: false });
+        }
+    });
+
+    it('keeps a part at NEGATIVE coordinates on screen', () => {
+        // Stored positions make negative coordinates ordinary — the origin is the middle of the sheet, not
+        // its corner. The viewBox used to be anchored at 0,0 and sized from the maximum, so anything above
+        // or left of the origin was simply not drawn, with nothing to say the sheet had been cropped.
+        const { container } = render(
+            <SchematicCanvas circuit={CIRCUIT} ui={{ positions: { r1: { x: -300, y: -200 } } }} />,
+        );
+        const [vx, vy, vw, vh] = container.querySelector('svg')!.getAttribute('viewBox')!.split(' ').map(Number);
+
+        expect({ leftOfPart: vx! < -300, abovePart: vy! < -200 }).toEqual({ leftOfPart: true, abovePart: true });
+        // …and the far side still reaches whatever else is on the sheet.
+        expect({ w: vw! > 0, h: vh! > 0 }).toEqual({ w: true, h: true });
+    });
+
     it('places the same document the same way every time', () => {
         // A layout that shuffled between renders would make it impossible to point at anything, and would
         // make every visual assertion here meaningless.
