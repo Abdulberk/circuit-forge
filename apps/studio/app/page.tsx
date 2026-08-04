@@ -250,6 +250,11 @@ function Workspace() {
                             ui={doc.ui}
                             selectedPath={selected?.ref.path.join('/') ?? null}
                             onSelect={setSelected}
+                            // Arranging goes through the SAME commit kernel as any other edit, so a move
+                            // lands in the undo stack in the same order as the rename that followed it. Two
+                            // stacks would let Ctrl+Z un-move something without un-deleting what was deleted
+                            // after it — an order a user cannot hold in their head.
+                            onArrange={doc.commitUi}
                         />
                     ) : (
                         <p className="empty">Open a project with a working copy to begin.</p>
