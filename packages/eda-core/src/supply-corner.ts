@@ -23,6 +23,7 @@
 import { evaluateAssertions, type AcceptanceCriterion } from './analysis/assertions';
 import type { SimMeasurement } from './analysis/measurements';
 import type { VariantRunner } from './montecarlo';
+import { buildProbeResolver, type ProbeResolver } from './netlist/probe-map';
 import type { CircuitJson, Component } from './types/circuit';
 import { parseComponentMagnitude } from './utils/unit-parser';
 
@@ -265,12 +266,12 @@ function cornerOutcome(
     measurements: SimMeasurement[] | null,
     corner: Record<string, 'lo' | 'hi'>,
     criteria: AcceptanceCriterion[],
-    nets: CircuitJson['nets'],
+    resolver: ProbeResolver,
     hasLimits: boolean,
 ): SupplyCornerPoint {
     if (!measurements) return { corner, outcome: 'errored' };
     if (!hasLimits) return { corner, outcome: 'no-limit' };
-    const results = evaluateAssertions(measurements, criteria, true, nets);
+    const results = evaluateAssertions(measurements, criteria, true, resolver);
     const pass = results.length > 0 && results.every((r) => r.pass);
     return { corner, outcome: pass ? 'pass' : 'fail' };
 }
@@ -348,6 +349,9 @@ export async function runSupplyCorner(
     const nominal = new Map<string, number>(); // node → nominal-run value (the drift reference)
     const worst = new Map<string, { value: number; corner: Record<string, 'lo' | 'hi'> }>();
 
+    // ONE resolver for every corner. buildSupplyVariants rewrites the SOURCE values only — the nets and the
+    // components they are wired with are the same in each — so the mapping is identical at every corner.
+    const resolver = buildProbeResolver(circuit);
     for (let i = 0; i < variants.length; i++) {
         const { corner, circuit: variant } = variants[i]!;
         let measurements: SimMeasurement[] | null;
@@ -363,7 +367,7 @@ export async function runSupplyCorner(
             continue;
         }
         if (measurements) trackWorst(measurements, corner, nominal, worst);
-        points.push(cornerOutcome(measurements, corner, criteria, circuit.nets, hasLimits));
+        points.push(cornerOutcome(measurements, corner, criteria, resolver, hasLimits));
     }
 
     const { evaluated, passed, failed, errored } = tallyOutcomes(points);

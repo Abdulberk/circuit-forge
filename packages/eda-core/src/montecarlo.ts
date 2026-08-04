@@ -9,6 +9,7 @@
  */
 import { evaluateAssertions, type AcceptanceCriterion } from './analysis/assertions';
 import type { SimMeasurement } from './analysis/measurements';
+import { buildProbeResolver } from './netlist/probe-map';
 import type { CircuitJson } from './types/circuit';
 import { mulberry32 } from './utils/prng';
 import { parseComponentMagnitude } from './utils/unit-parser';
@@ -186,6 +187,12 @@ export async function runMonteCarlo(
     // still terminates. Without bars the ceiling keeps its original attempt semantics, untouched.
     const attemptCap = bars ? Math.min(ABSOLUTE_MAX_RUNS, n * ERRORED_ATTEMPT_HEADROOM) : n;
 
+    // ONE resolver for the whole batch. `perturbCircuit` rewrites component VALUES; the nets, and the
+    // component TYPES they are wired with, are identical in every variant — and those are what the mapping
+    // is derived from. This is also where rebuilding would cost the most: at N = 100+ it would re-plan the
+    // digital bridge a hundred times to produce an answer that cannot differ.
+    const resolver = buildProbeResolver(circuit);
+
     for (let attempt = 0; attempt < attemptCap; attempt++) {
         // Collected enough usable samples for the bar — a complete run, not an early stop.
         if (bars && evaluated >= n) break;
@@ -213,7 +220,7 @@ export async function runMonteCarlo(
             }
             continue;
         }
-        const results = evaluateAssertions(measurements, criteria, true, circuit.nets);
+        const results = evaluateAssertions(measurements, criteria, true, resolver);
         const ok = results.length > 0 && results.every((r) => r.pass);
         outcomes.push(ok ? 'pass' : 'fail');
         evaluated++;

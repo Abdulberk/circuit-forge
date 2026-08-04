@@ -201,7 +201,10 @@ async function nominalGate(name, circuit, ana, crit, wantPass) {
     });
     const ms = (r.result?.series ?? []).map((s) => summarizeSeries(s, 'tran'));
     attachFourierThd(ms, r.result?.fourier);
-    const res = evaluateAssertions(ms, [crit])[0];
+    // The CIRCUIT, not nothing. A harness that evaluates a criterion without the resolver is exercising a
+    // path the product does not use — every production caller passes it — so a green result here would say
+    // nothing about whether the shipped path binds. That is what this file exists to check.
+    const res = evaluateAssertions(ms, [crit], true, c)[0];
     const ok = r.success && res && res.pass === wantPass;
     if (!ok) fail++;
     console.log(
@@ -281,7 +284,10 @@ async function gainGate(name, crit, wantPass) {
     });
     const ms = (r.result?.series ?? []).map((s) => summarizeSeries(s, 'op'));
     attachTransferFunction(ms, r.result?.transferFunction);
-    const res = evaluateAssertions(ms, [crit])[0];
+    // The CIRCUIT, not nothing. A harness that evaluates a criterion without the resolver is exercising a
+    // path the product does not use — every production caller passes it — so a green result here would say
+    // nothing about whether the shipped path binds. That is what this file exists to check.
+    const res = evaluateAssertions(ms, [crit], true, c)[0];
     const ok = r.success && res && res.pass === wantPass;
     if (!ok) fail++;
     console.log(
