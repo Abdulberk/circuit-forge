@@ -59,7 +59,30 @@ async function reportOn(
 
 /** A port nothing listens on, so the probe genuinely fails rather than being told it failed. */
 const DEAD = 'postgresql://postgres:x@127.0.0.1:59999/nope';
-const HEALTHY = process.env.DATABASE_URL!; // whatever the suite is really configured with
+
+/**
+ * A socket this test OWNS, rather than whichever services happen to be up.
+ *
+ * The first version borrowed the ambient `DATABASE_URL` for its "healthy" case, which passed here and
+ * failed in CI — where Postgres and Redis are provided as services and MinIO is not, so the environment
+ * genuinely is degraded and the reporter said so. The reporter was right and the test was wrong, which is
+ * the good direction for that pair to disagree in, and it is still a test that reports a false failure.
+ *
+ * A test about BEHAVIOUR must not depend on the weather. Listening on an ephemeral port and pointing every
+ * dependency at it makes "reachable" a fact this file establishes rather than one it hopes for.
+ */
+let healthy: string;
+let server: import('node:net').Server;
+
+beforeAll(async () => {
+    const net = await import('node:net');
+    server = net.createServer();
+    await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
+    const { port } = server.address() as import('node:net').AddressInfo;
+    healthy = `postgresql://postgres:x@127.0.0.1:${port}/ok`;
+});
+
+afterAll(() => new Promise<void>((resolve) => server.close(() => resolve())));
 
 describe('a run against a broken environment cannot read as a verdict', () => {
     it('names the unreachable dependency BEFORE any test runs', async () => {
@@ -81,21 +104,28 @@ describe('a run against a broken environment cannot read as a verdict', () => {
     it('counts SKIPPED tests, because a skip is a question that was not asked', async () => {
         // The quieter half. Several suites here vanish when their dependency is missing — the live ngspice
         // specs look for a binary and skip — so the run goes green having measured nothing.
-        const out = await reportOn({ DATABASE_URL: HEALTHY }, { numPendingTests: 7 });
+        const out = await reportOn(
+            { DATABASE_URL: healthy, REDIS_URL: undefined, S3_ENDPOINT: undefined },
+            { numPendingTests: 7 },
+        );
         expect(out).toMatch(/7 test\(s\) SKIPPED/);
     });
 
     it('STAYS QUIET when the environment is healthy and nothing was skipped', async () => {
         // The property that keeps the other three worth anything. A banner on every run is one nobody
         // reads, and an unread warning is the same as no warning with extra noise.
-        const out = await reportOn({ DATABASE_URL: HEALTHY });
+        const out = await reportOn({ DATABASE_URL: healthy, REDIS_URL: undefined, S3_ENDPOINT: undefined });
         expect(out).toBe('');
     });
 
     it('reads the endpoints from the ENV the tests are configured with, not from hard-coded ports', async () => {
         // Hard-coded ports would report a healthy environment as broken the day someone moves a service —
         // the same lie in the other direction, and the one that teaches people to ignore the banner.
-        const out = await reportOn({ DATABASE_URL: 'postgresql://postgres:x@127.0.0.1:59998/nope' });
+        const out = await reportOn({
+            DATABASE_URL: 'postgresql://postgres:x@127.0.0.1:59998/nope',
+            REDIS_URL: undefined,
+            S3_ENDPOINT: undefined,
+        });
         expect(out).toMatch(/127\.0\.0\.1:59998/);
     });
 });
