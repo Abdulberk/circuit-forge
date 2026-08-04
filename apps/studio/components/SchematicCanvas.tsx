@@ -28,12 +28,22 @@
  *     conflating the two is the confusion this codebase already documents in `UiJson.positions`.
  */
 import type { CircuitJson, Position, UiJson } from '@circuit-forge/eda-core';
-import { buildObjectTree, isPlaceablePart, symbolFor, type TreeNode } from '@circuit-forge/editor-core';
-import { useMemo } from 'react';
+import {
+    buildObjectTree,
+    isPlaceablePart,
+    orientSymbol,
+    PIN_GRID,
+    symbolFor,
+    type TreeNode,
+} from '@circuit-forge/editor-core';
+import { useMemo, useRef, useState } from 'react';
 
 /** Room around a symbol before the next one starts, in the same units `symbolFor` uses. */
 const CELL_PAD = 44;
 const MARGIN = 24;
+
+/** Snap a sheet coordinate onto the pin lattice, so a dropped part lands where a wire can reach it. */
+const snapToGrid = (v: number): number => Math.round(v / PIN_GRID) * PIN_GRID;
 
 interface Placed {
     id: string;
@@ -52,7 +62,15 @@ interface Placed {
  */
 function layOut(circuit: CircuitJson, positions: Record<string, Position> | undefined): Placed[] {
     const parts = (circuit.components ?? []).filter((c) => isPlaceablePart(c));
-    const symbols = parts.map((c) => symbolFor(c));
+    // TURNED as well as placed. `Position` has carried `rotation` and `mirror` since it was written and
+    // nothing has ever applied them: measured, the same diode rendered with `rotation:'90'` produced SVG
+    // byte-identical to the upright one, because this function read only x and y. That is not a missing
+    // feature — `pcb-core`'s adapter DOES read the field and emits `pcbRotation={90}`, so the sheet was
+    // quietly disagreeing with the board about the same design, with nothing comparing the two.
+    //
+    // `orientSymbol` returns the SAME object for an upright, unmirrored part, so the overwhelmingly common
+    // case — every design a machine wrote — costs one comparison rather than a rebuilt symbol.
+    const symbols = parts.map((c) => orientSymbol(symbolFor(c), positions?.[c.id]));
     const cellW = Math.max(CELL_PAD, ...symbols.map((s) => s.width)) + CELL_PAD;
     const cellH = Math.max(CELL_PAD, ...symbols.map((s) => s.height)) + CELL_PAD;
     const cols = Math.max(1, Math.ceil(Math.sqrt(parts.length)));
@@ -80,6 +98,7 @@ export function SchematicCanvas({
     ui,
     selectedPath,
     onSelect,
+    onArrange,
 }: {
     circuit: CircuitJson;
     /**
@@ -92,7 +111,37 @@ export function SchematicCanvas({
     ui?: UiJson;
     selectedPath?: string | null;
     onSelect?: (node: TreeNode | null) => void;
+    /**
+     * Commit a new drawing as ONE revision. Omitted makes the canvas read-only, which is what every test
+     * that is not about dragging wants.
+     */
+    onArrange?: (label: string, next: UiJson) => void;
 }) {
+    const svgRef = useRef<SVGSVGElement | null>(null);
+    /**
+     * The gesture in flight, and it lives HERE rather than in the document — measured, not preferred.
+     *
+     * Routing sixty pointer-moves through `commitUi` does not merely mint sixty revisions. The history is
+     * bounded at fifty, so a single drag EVICTS EVERY EARLIER REVISION: Ctrl+Z then walks the symbol back
+     * one pixel at a time for fifty presses and the edit you actually wanted to undo is gone for good. And
+     * each call resets the local-persist timer as well as the save timer, so nothing is written to the
+     * device for as long as the mouse is down — which is exactly the window in which a crash costs most.
+     *
+     * So the document is untouched for the whole gesture. `origin` is captured from what is currently ON
+     * SCREEN, which for an un-arranged design is the computed fallback rather than a stored position — the
+     * only way a first drag has a number to add a delta to.
+     */
+    const [drag, setDrag] = useState<{
+        pointerId: number;
+        ids: readonly string[];
+        origin: Record<string, { x: number; y: number }>;
+        /** Where the pointer went DOWN, in client pixels — the delta is measured from here, every frame. */
+        from: { x: number; y: number };
+        dx: number;
+        dy: number;
+        moved: boolean;
+    } | null>(null);
+
     const { placed, wires, extent, byPath } = useMemo(() => {
         const placed = layOut(circuit, ui?.positions);
         const byId = new Map(placed.map((p) => [p.id, p]));
@@ -152,14 +201,110 @@ export function SchematicCanvas({
         return { placed, wires, extent, byPath };
     }, [circuit, ui?.positions]);
 
+    /**
+     * Screen pixels to sheet units.
+     *
+     * The viewBox scales, so a pointer delta in pixels is not a delta in sheet units. Computed from the
+     * viewBox and the element's own box rather than from `getScreenCTM`, which is exact for the uniform
+     * scaling `preserveAspectRatio` defaults to and — unlike the CTM — actually exists under jsdom, so the
+     * drag can be tested at all rather than only demonstrated.
+     */
+    const toSheet = (px: number, py: number): [number, number] => {
+        const rect = svgRef.current?.getBoundingClientRect();
+        if (!rect || rect.width === 0 || rect.height === 0) return [px, py];
+        const scale = Math.max(extent.w / rect.width, extent.h / rect.height);
+        return [px * scale, py * scale];
+    };
+
+    /**
+     * Where a part is RIGHT NOW, which during a gesture is not where the document says.
+     *
+     * The offset is added at render time and nowhere else, so the drawing on screen and the drawing in the
+     * document are the same object until the pointer comes up. Nothing to reconcile, and nothing to undo if
+     * the gesture is cancelled — a cancelled drag is simply a piece of state that stopped existing.
+     */
+    const dragged = (p: Placed): { x: number; y: number } =>
+        drag?.ids.includes(p.id) ? { x: p.x + drag.dx, y: p.y + drag.dy } : { x: p.x, y: p.y };
+
+    const beginDrag = (e: React.PointerEvent, id: string) => {
+        // Any button that is NOT a secondary one. Written as `> 0` rather than `!== 0` because a pointer
+        // event that carries no `button` at all — a synthetic one, or a touch — is a primary press, and
+        // `!== 0` silently refuses it. That is not a test artefact: it is the same class of guard that
+        // refuses a real touch on a tablet, where nothing would report why dragging simply did not work.
+        if (!onArrange || (e.button ?? 0) > 0) return;
+        e.stopPropagation();
+        (e.target as Element).setPointerCapture?.(e.pointerId);
+        // Only the part under the pointer. Group drag arrives with multi-select; until then, moving one part
+        // must not move anything else — and a selection the user cannot see is not a selection.
+        const start = placed.find((p) => p.id === id);
+        if (!start) return;
+        setDrag({
+            pointerId: e.pointerId,
+            ids: [id],
+            origin: { [id]: { x: start.x, y: start.y } },
+            from: { x: e.clientX, y: e.clientY },
+            dx: 0,
+            dy: 0,
+            moved: false,
+        });
+    };
+
+    const moveDrag = (e: React.PointerEvent) => {
+        // From the point the gesture STARTED, not by accumulating per-frame deltas.  is the
+        // obvious alternative and the wrong one: it reports raw device movement, ignores pointer capture,
+        // is inconsistent between browsers, and is absent entirely from a synthetic event — so a drag built
+        // on it works in one browser, drifts in another, and cannot be tested at all. Measuring from the
+        // origin also makes the gesture self-correcting: a dropped frame costs nothing, because the next
+        // one recomputes the whole offset rather than adding to a total that has already lost something.
+        const { clientX, clientY } = e;
+        setDrag((g) => {
+            if (!g || g.pointerId !== e.pointerId) return g;
+            const [dx, dy] = toSheet(clientX - g.from.x, clientY - g.from.y);
+            return { ...g, dx, dy, moved: g.moved || dx !== 0 || dy !== 0 };
+        });
+    };
+
+    const endDrag = (e: React.PointerEvent) => {
+        const g = drag;
+        setDrag(null);
+        if (!g || g.pointerId !== e.pointerId || !onArrange) return;
+        // A plain CLICK must not write geometry. Selecting a part in a design nobody has arranged would
+        // otherwise materialise its fallback position — and that position is not neutral: `pcb-core`'s
+        // adapter seeds board placement from `positions` as soon as EVERY part has one, so a click could
+        // silently re-lay-out the board.
+        if (!g.moved) return;
+
+        const positions = { ...(ui?.positions ?? {}) };
+        for (const id of g.ids) {
+            const from = g.origin[id]!;
+            positions[id] = {
+                ...positions[id],
+                x: snapToGrid(from.x + g.dx),
+                y: snapToGrid(from.y + g.dy),
+            };
+        }
+        // ONE revision, and the kernel decides whether it is one at all: `commitUi` compares by value, so a
+        // drag that ends where it started commits nothing. The comparison lives in one place on purpose — a
+        // second "did it change" test here would be the second authority this codebase keeps paying for.
+        const label =
+            g.ids.length === 1
+                ? `Move ${placed.find((p) => p.id === g.ids[0])?.designator ?? 'part'}`
+                : `Move ${g.ids.length} parts`;
+        onArrange(label, { ...ui, schemaVersion: 1, positions });
+    };
+
     if (placed.length === 0) return <p className="empty">Nothing to draw yet — this design has no placeable parts.</p>;
 
     return (
         <svg
+            ref={svgRef}
             role="img"
             aria-label="Schematic"
             viewBox={`${extent.x} ${extent.y} ${extent.w} ${extent.h}`}
-            style={{ width: '100%', height: '100%' }}
+            style={{ width: '100%', height: '100%', touchAction: 'none' }}
+            onPointerMove={drag ? moveDrag : undefined}
+            onPointerUp={drag ? endDrag : undefined}
+            onPointerCancel={drag ? endDrag : undefined}
         >
             {wires.map((w) => (
                 <line
@@ -181,7 +326,8 @@ export function SchematicCanvas({
                     <g
                         key={p.id}
                         data-testid={`symbol-${p.id}`}
-                        transform={`translate(${p.x} ${p.y})`}
+                        transform={`translate(${dragged(p).x} ${dragged(p).y})`}
+                        onPointerDown={(e) => beginDrag(e, p.id)}
                         onClick={() => onSelect?.(byPath.get(path) ?? null)}
                         style={{ cursor: 'pointer' }}
                     >

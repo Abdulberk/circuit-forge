@@ -52,3 +52,5 @@ export { sameJson } from './document/same-json';
  */
 export { symbolFor, DRAWN_TYPES, UNDRAWN_BY_DESIGN } from './schematic/symbols';
 export type { SymbolGeometry, SymbolPin, SymbolStroke } from './schematic/symbols';
+export { PIN_GRID } from './schematic/symbols';
+export { orientSymbol, type Orientation } from './schematic/orient';

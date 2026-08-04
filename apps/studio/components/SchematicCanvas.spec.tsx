@@ -8,7 +8,7 @@
  * looks wrong": they are a wire drawn where there is no connection, a part missing from the picture that is
  * present in the netlist, and a layout that shuffles between renders so a user cannot point at anything.
  */
-import type { CircuitJson } from '@circuit-forge/eda-core';
+import type { CircuitJson, UiJson } from '@circuit-forge/eda-core';
 import { render, screen, fireEvent } from '@testing-library/react';
 
 import { SchematicCanvas } from './SchematicCanvas';
@@ -144,7 +144,59 @@ describe('what the canvas draws', () => {
         expect({ w: vw! > 0, h: vh! > 0 }).toEqual({ w: true, h: true });
     });
 
+    it('actually TURNS a part the document says is turned', () => {
+        // Measured before this was wired: the same symbol rendered with `rotation:'90'` produced SVG
+        // byte-identical to the upright one, because the layout read only x and y. The field has been in
+        // the schema since it was written and the sheet silently discarded it.
+        //
+        // Which is worse than a missing feature, because pcb-core's adapter does NOT discard it — it emits
+        // `pcbRotation={90}` from the same number. So the board honoured an instruction the drawing ignored,
+        // and nothing anywhere compares a schematic against its own board.
+        const upright = render(
+            <SchematicCanvas circuit={CIRCUIT} ui={{ positions: { r1: { x: 200, y: 100 } } }} />,
+        ).container.querySelector('[data-testid="symbol-r1"]')!.innerHTML;
+
+        const turned = render(
+            <SchematicCanvas circuit={CIRCUIT} ui={{ positions: { r1: { x: 200, y: 100, rotation: '90' } } }} />,
+        ).container.querySelector('[data-testid="symbol-r1"]')!.innerHTML;
+
+        expect(turned).not.toBe(upright);
+    });
+
+    it('returns a turned part to itself after four quarter turns', () => {
+        // The property that makes the rotate key safe to hold down. Exact integer matrices, so this is
+        // identity rather than approximation — a symbol that drifts a fraction per turn eventually has pins
+        // off the lattice, and nothing reports that; the wire simply stops meeting the pin.
+        const at = (rotation?: '0' | '90' | '180' | '270') =>
+            render(
+                <SchematicCanvas circuit={CIRCUIT} ui={{ positions: { r1: { x: 200, y: 100, rotation } } }} />,
+            ).container.querySelector('[data-testid="symbol-r1"]')!.innerHTML;
+
+        expect(at('0')).toBe(at(undefined));
+        expect(at('90')).not.toBe(at('0'));
+        expect(at('180')).not.toBe(at('0'));
+        expect(at('270')).not.toBe(at('90'));
+    });
+
+    it('moves the WIRES with the pins when a part turns', () => {
+        // The half that would be easy to miss: a symbol that turns while its wires stay put is a picture of
+        // a different circuit. Wire endpoints come from the pin coordinates, so this is really asserting
+        // that one source of truth feeds both.
+        const ends = (rotation?: '90') =>
+            [
+                ...render(
+                    <SchematicCanvas circuit={CIRCUIT} ui={{ positions: { r1: { x: 200, y: 100, rotation } } }} />,
+                ).container.querySelectorAll('line'),
+            ]
+                .map((l) => `${l.getAttribute('x1')},${l.getAttribute('y1')}`)
+                .sort()
+                .join(' ');
+
+        expect(ends('90')).not.toBe(ends(undefined));
+    });
+
     it('places the same document the same way every time', () => {
+        // (kept adjacent to the drag tests below: a layout that shuffled would make every one of them lie)
         // A layout that shuffled between renders would make it impossible to point at anything, and would
         // make every visual assertion here meaningless.
         const a = render(<SchematicCanvas circuit={CIRCUIT} />).container.innerHTML;
@@ -184,5 +236,136 @@ describe('selection is shared with the tree, not invented here', () => {
         const selected = container.querySelector('[data-testid="symbol-r1"] polyline');
         const other = container.querySelector('[data-testid="symbol-r2"] polyline');
         expect(selected?.getAttribute('stroke')).not.toBe(other?.getAttribute('stroke'));
+    });
+});
+
+/**
+ * DRAGGING — and the two properties that are about data loss rather than about feel.
+ *
+ * The document is not touched while the pointer is down. That is not a preference: measured against the
+ * real kernel, routing sixty pointer-moves through `commitUi` overflows a fifty-deep history and EVICTS
+ * every earlier revision, so Ctrl+Z walks the symbol back a pixel at a time and the edit the user actually
+ * wanted to undo is gone permanently. Each call also resets the local-persist timer, so nothing reaches the
+ * device for as long as the gesture lasts — the window in which a crash costs the most.
+ */
+describe('dragging a part', () => {
+    /** jsdom gives every element a zero-size box; the canvas needs one to convert pixels to sheet units. */
+    const withBox = (container: HTMLElement, w = 800, h = 600) => {
+        const svg = container.querySelector('svg')!;
+        svg.getBoundingClientRect = () =>
+            ({ width: w, height: h, x: 0, y: 0, top: 0, left: 0, right: w, bottom: h, toJSON: () => ({}) }) as DOMRect;
+        return svg;
+    };
+
+    const dragBy = (container: HTMLElement, id: string, dx: number, dy: number) => {
+        const svg = withBox(container);
+        const part = container.querySelector(`[data-testid="symbol-${id}"]`)!;
+        fireEvent.pointerDown(part, { pointerId: 1, button: 0, clientX: 0, clientY: 0 });
+        fireEvent.pointerMove(svg, { pointerId: 1, clientX: dx, clientY: dy });
+        fireEvent.pointerUp(svg, { pointerId: 1, clientX: dx, clientY: dy });
+    };
+
+    it('commits ONE revision, on release', () => {
+        const calls: Array<[string, unknown]> = [];
+        const { container } = render(
+            <SchematicCanvas
+                circuit={CIRCUIT}
+                ui={{ positions: { r1: { x: 100, y: 100 } } }}
+                onArrange={(label, next) => calls.push([label, next])}
+            />,
+        );
+        dragBy(container, 'r1', 40, 30);
+        expect(calls).toHaveLength(1);
+        expect(calls[0]![0]).toBe('Move R1');
+    });
+
+    it('writes NOTHING while the pointer is down', () => {
+        // The measured failure: sixty per-frame commits overflow a fifty-deep history and destroy the undo
+        // stack. Asserted by counting commits DURING the gesture rather than by inspecting the kernel.
+        const calls: unknown[] = [];
+        const { container } = render(
+            <SchematicCanvas
+                circuit={CIRCUIT}
+                ui={{ positions: { r1: { x: 100, y: 100 } } }}
+                onArrange={(...a) => calls.push(a)}
+            />,
+        );
+        const svg = withBox(container);
+        const part = container.querySelector('[data-testid="symbol-r1"]')!;
+        fireEvent.pointerDown(part, { pointerId: 1, button: 0, clientX: 0, clientY: 0 });
+        for (let i = 1; i <= 60; i++) fireEvent.pointerMove(svg, { pointerId: 1, clientX: i, clientY: i });
+        expect(calls).toHaveLength(0); // …sixty frames, nothing committed
+        fireEvent.pointerUp(svg, { pointerId: 1, clientX: 60, clientY: 60 });
+        expect(calls).toHaveLength(1); // …and exactly one on release
+    });
+
+    it('SNAPS the dropped position onto the pin lattice', () => {
+        // A part dropped off-grid has pins off-grid, and a wire to an off-grid pin cannot be a straight
+        // line — which is the whole reason the lattice exists.
+        let next: UiJson | undefined;
+        const { container } = render(
+            <SchematicCanvas
+                circuit={CIRCUIT}
+                ui={{ positions: { r1: { x: 100, y: 100 } } }}
+                onArrange={(_l, n) => (next = n)}
+            />,
+        );
+        dragBy(container, 'r1', 37, 23);
+        const p = next!.positions!.r1!;
+        expect({ onGrid: p.x % 10 === 0 && p.y % 10 === 0 }).toEqual({ onGrid: true });
+    });
+
+    it('a plain CLICK writes no geometry at all', () => {
+        // Selecting a part in a design nobody has arranged must not materialise its fallback position. That
+        // position is not neutral: pcb-core's adapter seeds BOARD placement from `positions` as soon as
+        // every part has one, so a click could silently re-lay-out the board — measured elsewhere as parts
+        // moving from 10 mm apart to 15 mm apart.
+        const calls: unknown[] = [];
+        const { container } = render(<SchematicCanvas circuit={CIRCUIT} onArrange={(...a) => calls.push(a)} />);
+        const svg = withBox(container);
+        const part = container.querySelector('[data-testid="symbol-r1"]')!;
+        fireEvent.pointerDown(part, { pointerId: 1, button: 0, clientX: 0, clientY: 0 });
+        fireEvent.pointerUp(svg, { pointerId: 1 });
+        expect(calls).toHaveLength(0);
+    });
+
+    it('moves ONLY the part under the pointer', () => {
+        let next: UiJson | undefined;
+        const { container } = render(
+            <SchematicCanvas
+                circuit={CIRCUIT}
+                ui={{ positions: { r1: { x: 100, y: 100 }, r2: { x: 300, y: 100 } } }}
+                onArrange={(_l, n) => (next = n)}
+            />,
+        );
+        dragBy(container, 'r1', 50, 0);
+        expect(next!.positions!.r2).toEqual({ x: 300, y: 100 }); // untouched
+        expect(next!.positions!.r1!.x).not.toBe(100);
+    });
+
+    it('KEEPS a part’s rotation when it is moved', () => {
+        // Position carries more than x and y. A move that dropped the rotation would silently straighten a
+        // part the user had turned — and pcb-core reads that field, so the board would change too.
+        let next: UiJson | undefined;
+        const { container } = render(
+            <SchematicCanvas
+                circuit={CIRCUIT}
+                ui={{ positions: { r1: { x: 100, y: 100, rotation: '90' } } }}
+                onArrange={(_l, n) => (next = n)}
+            />,
+        );
+        dragBy(container, 'r1', 40, 0);
+        expect(next!.positions!.r1!.rotation).toBe('90');
+    });
+
+    it('is READ-ONLY when no handler is given', () => {
+        // Every screen that only displays a schematic gets the old behaviour, with no way to modify a
+        // document by accident.
+        const { container } = render(
+            <SchematicCanvas circuit={CIRCUIT} ui={{ positions: { r1: { x: 100, y: 100 } } }} />,
+        );
+        const before = container.querySelector('[data-testid="symbol-r1"]')!.getAttribute('transform');
+        dragBy(container, 'r1', 60, 60);
+        expect(container.querySelector('[data-testid="symbol-r1"]')!.getAttribute('transform')).toBe(before);
     });
 });

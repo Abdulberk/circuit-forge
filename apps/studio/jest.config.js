@@ -36,4 +36,7 @@ module.exports = {
             },
         ],
     },
+    // Browser APIs jsdom lacks — see jest.setup.ts. Without PointerEvent a simulated drag silently loses
+    // every coordinate, and the component computes NaN from it.
+    setupFilesAfterEnv: ['<rootDir>/jest.setup.ts'],
 };
