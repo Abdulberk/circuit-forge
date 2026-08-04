@@ -369,3 +369,110 @@ describe('dragging a part', () => {
         expect(container.querySelector('[data-testid="symbol-r1"]')!.getAttribute('transform')).toBe(before);
     });
 });
+
+/**
+ * ROTATING with the keyboard — the step that makes rotation a feature rather than a schema field.
+ *
+ * It was storable, then renderable, and until this there was no way for a person to produce one. That is
+ * the defect shape this codebase keeps finding: a capability built end to end, green, and unreachable.
+ */
+describe('rotating the selected part', () => {
+    const R1 = 'root/components/r1';
+
+    it('turns it a quarter, and commits ONE revision', () => {
+        const calls: Array<[string, UiJson]> = [];
+        render(
+            <SchematicCanvas
+                circuit={CIRCUIT}
+                ui={{ positions: { r1: { x: 100, y: 100 } } }}
+                selectedPath={R1}
+                onArrange={(l, n) => calls.push([l, n])}
+            />,
+        );
+        fireEvent.keyDown(window, { key: 'r' });
+        expect(calls).toHaveLength(1);
+        expect(calls[0]![0]).toBe('Rotate R1');
+        expect(calls[0]![1].positions!.r1).toEqual({ x: 100, y: 100, rotation: '90' });
+    });
+
+    it('comes back UPRIGHT on the fourth press, with no rotation left behind', () => {
+        // `rotationField` omits a zero, so the fourth press produces a drawing structurally equal to the one
+        // before the first — and the commit kernel compares by value, so it mints nothing. Writing
+        // `rotation: '0'` explicitly would leave a revision and a save for a part that visibly did not move.
+        let ui: UiJson = { positions: { r1: { x: 100, y: 100 } } };
+        const { rerender } = render(
+            <SchematicCanvas circuit={CIRCUIT} ui={ui} selectedPath={R1} onArrange={(_l, n) => (ui = n)} />,
+        );
+        for (const expected of ['90', '180', '270', undefined]) {
+            fireEvent.keyDown(window, { key: 'r' });
+            rerender(<SchematicCanvas circuit={CIRCUIT} ui={ui} selectedPath={R1} onArrange={(_l, n) => (ui = n)} />);
+            expect(ui.positions!.r1!.rotation).toBe(expected);
+        }
+    });
+
+    it('does NOT fire while the user is typing', () => {
+        // `R` is a letter. Typing a resistance of `4R7` in the Inspector must not turn the part behind the
+        // panel — and the guard is the SAME one the undo shortcut uses, not a second copy of it.
+        const calls: unknown[] = [];
+        render(
+            <SchematicCanvas
+                circuit={CIRCUIT}
+                ui={{ positions: { r1: { x: 100, y: 100 } } }}
+                selectedPath={R1}
+                onArrange={(...a) => calls.push(a)}
+            />,
+        );
+        const input = document.createElement('input');
+        document.body.appendChild(input);
+        fireEvent.keyDown(input, { key: 'r' });
+        expect(calls).toHaveLength(0);
+        input.remove();
+    });
+
+    it('ignores the CHORDED versions, which belong to the browser', () => {
+        const calls: unknown[] = [];
+        render(
+            <SchematicCanvas
+                circuit={CIRCUIT}
+                ui={{ positions: { r1: { x: 100, y: 100 } } }}
+                selectedPath={R1}
+                onArrange={(...a) => calls.push(a)}
+            />,
+        );
+        fireEvent.keyDown(window, { key: 'r', ctrlKey: true }); // reload
+        fireEvent.keyDown(window, { key: 'r', metaKey: true });
+        fireEvent.keyDown(window, { key: 'r', altKey: true });
+        expect(calls).toHaveLength(0);
+    });
+
+    it('does nothing when the selection is not a part', () => {
+        const calls: unknown[] = [];
+        render(
+            <SchematicCanvas
+                circuit={CIRCUIT}
+                ui={{ positions: { r1: { x: 100, y: 100 } } }}
+                selectedPath="root/nets/VIN"
+                onArrange={(...a) => calls.push(a)}
+            />,
+        );
+        fireEvent.keyDown(window, { key: 'r' });
+        expect(calls).toHaveLength(0);
+    });
+
+    it('turns a part nobody has arranged, placing it where it already appears', () => {
+        // `Position` requires x and y, so a rotation cannot be written without them — turning an un-arranged
+        // part necessarily places it, exactly as dragging one does. The coordinates come from where the part
+        // is ON SCREEN, so nothing moves.
+        let next: UiJson | undefined;
+        const { container } = render(
+            <SchematicCanvas circuit={CIRCUIT} selectedPath={R1} onArrange={(_l, n) => (next = n)} />,
+        );
+        const before = container.querySelector('[data-testid="symbol-r1"]')!.getAttribute('transform');
+        fireEvent.keyDown(window, { key: 'r' });
+        const p = next!.positions!.r1!;
+        expect({ rotation: p.rotation, placedWhereItWas: `translate(${p.x} ${p.y})` }).toEqual({
+            rotation: '90',
+            placedWhereItWas: before,
+        });
+    });
+});

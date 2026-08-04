@@ -27,7 +27,14 @@
  *   • It shows the SCHEMATIC, not the board. Board geometry is a different document with its own frame, and
  *     conflating the two is the confusion this codebase already documents in `UiJson.positions`.
  */
-import type { CircuitJson, Position, UiJson } from '@circuit-forge/eda-core';
+import {
+    nextTurn,
+    rotationField,
+    toDegrees,
+    type CircuitJson,
+    type Position,
+    type UiJson,
+} from '@circuit-forge/eda-core';
 import {
     buildObjectTree,
     isPlaceablePart,
@@ -36,7 +43,9 @@ import {
     symbolFor,
     type TreeNode,
 } from '@circuit-forge/editor-core';
-import { useMemo, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
+
+import { isTextEntry } from '../lib/useUndoShortcuts';
 
 /** Room around a symbol before the next one starts, in the same units `symbolFor` uses. */
 const CELL_PAD = 44;
@@ -215,6 +224,58 @@ export function SchematicCanvas({
         const scale = Math.max(extent.w / rect.width, extent.h / rect.height);
         return [px * scale, py * scale];
     };
+
+    /**
+     * `R` turns the selected part — the convention every schematic editor shares.
+     *
+     * IT LIVES HERE because this is the only place that knows where a part actually IS. `Position` requires
+     * x and y, so a rotation cannot be written without them, and a part nobody has arranged has no stored
+     * position — only the fallback this component computes. A hook outside the canvas would have to
+     * re-derive that layout, which is the second-authority defect this codebase keeps paying for.
+     *
+     * ONE PRESS IS ONE REVISION, and the fourth press mints nothing: `rotationField` omits a zero rotation,
+     * so the drawing after four turns is structurally equal to the one before the first, and the commit
+     * kernel compares by value and declines it. Writing `rotation: '0'` explicitly would leave a revision
+     * and a save behind for a part that visibly did not move.
+     */
+    useEffect(() => {
+        if (!onArrange || !selectedPath) return;
+        const id = selectedPath.split('/').pop();
+        const part = placed.find((p) => p.id === id);
+        if (!part) return; // the selection is a net, a pin, or something with no orientation
+
+        const onKeyDown = (event: KeyboardEvent) => {
+            // No modifiers: Ctrl+R is reload, Alt+R belongs to the browser's menus. A bare letter is the
+            // convention, and taking the chorded versions would break something the user expects.
+            if (event.ctrlKey || event.metaKey || event.altKey) return;
+            if (event.key.toLowerCase() !== 'r') return;
+            // The SAME guard the undo shortcut uses, imported rather than restated. `R` is a letter: without
+            // it, typing a resistance of `4R7` in the Inspector would turn the part behind the panel.
+            if (isTextEntry(event.target)) return;
+
+            event.preventDefault();
+            const at = ui?.positions?.[part.id];
+            const turn = nextTurn(toDegrees(at?.rotation));
+            // The rotation key is REPLACED, never merged past: `rotationField` returns `{}` at zero, and
+            // spreading that over an existing `rotation: '270'` would leave the old value in place, so the
+            // part would turn three times and then stick.
+            const { rotation: _dropped, x: _x, y: _y, ...rest } = at ?? { x: part.x, y: part.y };
+            onArrange(`Rotate ${part.designator}`, {
+                ...ui,
+                schemaVersion: 1,
+                positions: {
+                    ...ui?.positions,
+                    // x and y come from where the part is ON SCREEN, which for an un-arranged design is the
+                    // computed fallback. The schema requires them, so turning a part necessarily places it —
+                    // exactly as dragging one does.
+                    [part.id]: { x: part.x, y: part.y, ...rest, ...rotationField(turn) },
+                },
+            });
+        };
+
+        window.addEventListener('keydown', onKeyDown);
+        return () => window.removeEventListener('keydown', onKeyDown);
+    }, [onArrange, selectedPath, placed, ui]);
 
     /**
      * Where a part is RIGHT NOW, which during a gesture is not where the document says.
