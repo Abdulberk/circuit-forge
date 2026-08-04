@@ -126,11 +126,24 @@ export function SchematicCanvas({
             }
         }
 
-        const xs = placed.flatMap((p) => [p.x - p.symbol.width, p.x + p.symbol.width]);
-        const ys = placed.flatMap((p) => [p.y - p.symbol.height, p.y + p.symbol.height]);
+        // HALF the extent on each side of the centre, because `width`/`height` are FULL extents — the size
+        // of the whole symbol, scanned from its own strokes and pins. This file used to read them both
+        // ways, 73 lines apart: as a full extent when sizing a grid cell above, and as a half extent here,
+        // which inflated the sheet by a factor of two in each axis and drew everything at half size inside
+        // a viewBox with dead margin on two sides. The library's docstring said half while every producer
+        // returned full, so both readings had something to point at. There is one meaning now.
+        const xs = placed.flatMap((p) => [p.x - p.symbol.width / 2, p.x + p.symbol.width / 2]);
+        const ys = placed.flatMap((p) => [p.y - p.symbol.height / 2, p.y + p.symbol.height / 2]);
+        // From the true MINIMUM, not from zero. A part dragged to a negative coordinate — which stored
+        // positions make ordinary — sat outside a viewBox anchored at the origin and was simply not on
+        // screen, with nothing to indicate the sheet had been cropped.
+        const minX = Math.min(...xs, 0);
+        const minY = Math.min(...ys, 0);
         const extent = {
-            w: Math.max(200, Math.max(...xs, 0) + MARGIN),
-            h: Math.max(160, Math.max(...ys, 0) + MARGIN),
+            x: minX - MARGIN,
+            y: minY - MARGIN,
+            w: Math.max(200, Math.max(...xs) - minX + MARGIN * 2),
+            h: Math.max(160, Math.max(...ys) - minY + MARGIN * 2),
         };
 
         // The tree is the selection authority; the canvas resolves through it rather than minting its own
@@ -145,7 +158,7 @@ export function SchematicCanvas({
         <svg
             role="img"
             aria-label="Schematic"
-            viewBox={`0 0 ${extent.w} ${extent.h}`}
+            viewBox={`${extent.x} ${extent.y} ${extent.w} ${extent.h}`}
             style={{ width: '100%', height: '100%' }}
         >
             {wires.map((w) => (
@@ -172,15 +185,33 @@ export function SchematicCanvas({
                         onClick={() => onSelect?.(byPath.get(path) ?? null)}
                         style={{ cursor: 'pointer' }}
                     >
-                        {p.symbol.strokes.map((s, i) => (
-                            <polyline
-                                key={i}
-                                points={s.points.map(([x, y]) => `${x},${y}`).join(' ')}
-                                fill={s.closed ? 'var(--surface-2, transparent)' : 'none'}
-                                stroke={isSelected ? 'var(--accent, #d99a5c)' : 'var(--text, #ccc)'}
-                                strokeWidth={isSelected ? 2 : 1.4}
-                            />
-                        ))}
+                        {/* A CLOSED shape is drawn with <polygon>, an open one with <polyline>, and the
+                            difference is not cosmetic. <polyline> auto-closes for FILLING but never STROKES
+                            the closing edge, so every closed body in the library was rendered missing one
+                            side: the derived box — which is 26 of the 32 component types — drew open on the
+                            left with its pin stubs hanging in space, the resistor drew as a bracket, the
+                            diode lost its triangle entirely, and the voltage source's circle had a notch
+                            bitten out of it. Nothing failed; the sheet just quietly showed a different
+                            circuit than the one it had.
+
+                            The fill made it worse rather than covering it. `var(--surface-2)` is used here
+                            and DEFINED NOWHERE — the palette in globals.css names its surfaces `--panel`
+                            and `--panel-raised` — so it fell through to `transparent` and the missing edges
+                            had nothing behind them. A fallback that silently succeeds is how a typo in a
+                            colour name survives review: it renders, so it looks intentional. */}
+                        {p.symbol.strokes.map((s, i) => {
+                            const shape = {
+                                key: i,
+                                points: s.points.map(([x, y]) => `${x},${y}`).join(' '),
+                                stroke: isSelected ? 'var(--accent, #d99a5c)' : 'var(--text, #ccc)',
+                                strokeWidth: isSelected ? 2 : 1.4,
+                            };
+                            return s.closed ? (
+                                <polygon {...shape} fill="var(--panel-raised, #222)" />
+                            ) : (
+                                <polyline {...shape} fill="none" />
+                            );
+                        })}
                         {p.symbol.pins.map((pin) => (
                             <circle key={pin.pinId} cx={pin.x} cy={pin.y} r={2} fill="var(--text-faint, #888)" />
                         ))}
