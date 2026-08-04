@@ -117,10 +117,7 @@ function withLeads(body: SymbolStroke[], pins: SymbolPin[]): SymbolStroke[] {
                 return [pin.x, b.maxY];
         }
     };
-    return [
-        ...body,
-        ...pins.map((pin) => ({ points: [[pin.x, pin.y], edge(pin)] as Array<[number, number]> })),
-    ];
+    return [...body, ...pins.map((pin) => ({ points: [[pin.x, pin.y], edge(pin)] as Array<[number, number]> }))];
 }
 
 /** Place a pin on the lattice, clear of the body by at least `MIN_LEAD`. */
@@ -181,7 +178,10 @@ function twoTerminal(pins: string[], body: SymbolStroke[]): SymbolGeometry {
  * they do not overlap has to account for the leads a wire attaches to. The old docstring said half-extents
  * while every producer returned full ones, and the one consumer read it BOTH ways in the same file.
  */
-function measured(strokes: SymbolStroke[], pins: SymbolPin[]): { width: number; height: number; strokes: SymbolStroke[] } {
+function measured(
+    strokes: SymbolStroke[],
+    pins: SymbolPin[],
+): { width: number; height: number; strokes: SymbolStroke[] } {
     const all = [...strokes, { points: pins.map((p) => [p.x, p.y] as [number, number]) }];
     const b = boundsOf(all);
     return { width: b.maxX - b.minX, height: b.maxY - b.minY, strokes };
@@ -294,9 +294,24 @@ const DRAWN: Record<string, (pins: string[]) => SymbolGeometry | null> = {
                 }),
                 closed: true,
             },
-            { points: [[-4, -5], [4, -5]] }, // + bar
-            { points: [[0, -9], [0, -1]] }, // + stem
-            { points: [[-4, 5], [4, 5]] }, // −
+            {
+                points: [
+                    [-4, -5],
+                    [4, -5],
+                ],
+            }, // + bar
+            {
+                points: [
+                    [0, -9],
+                    [0, -1],
+                ],
+            }, // + stem
+            {
+                points: [
+                    [-4, 5],
+                    [4, 5],
+                ],
+            }, // −
         ];
         const b = boundsOf(body);
         const placed: SymbolPin[] = [
@@ -315,9 +330,24 @@ const DRAWN: Record<string, (pins: string[]) => SymbolGeometry | null> = {
     // from above; the vertical stem is the lead and is therefore not written here, it is drawn to the pin.
     ground: (p) => {
         const body: SymbolStroke[] = [
-            { points: [[-8, 0], [8, 0]] },
-            { points: [[-5, 3], [5, 3]] },
-            { points: [[-2, 6], [2, 6]] },
+            {
+                points: [
+                    [-8, 0],
+                    [8, 0],
+                ],
+            },
+            {
+                points: [
+                    [-5, 3],
+                    [5, 3],
+                ],
+            },
+            {
+                points: [
+                    [-2, 6],
+                    [2, 6],
+                ],
+            },
         ];
         const placed: SymbolPin[] = [{ pinId: p[0] ?? '1', x: 0, y: pinOut(boundsOf(body).minY), side: 'top' }];
         return {

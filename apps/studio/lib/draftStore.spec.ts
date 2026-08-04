@@ -96,10 +96,7 @@ describe('keeping a draft on this device', () => {
     it('refuses a drawing that is not an object, rather than handing a reader something that breaks it', () => {
         // A hand-edited or truncated entry. `ui` reaching the canvas as a string or an array is a crash on
         // the first property read, and the circuit beside it is still perfectly recoverable.
-        window.localStorage.setItem(
-            'circuit-forge.draft.p1',
-            JSON.stringify({ ...draft(), ui: ['positions', 'r1'] }),
-        );
+        window.localStorage.setItem('circuit-forge.draft.p1', JSON.stringify({ ...draft(), ui: ['positions', 'r1'] }));
         expect(browserDraftStore().get('p1')?.ui).toEqual({});
     });
 

@@ -138,7 +138,11 @@ describe('a criterion on GROUND', () => {
         // A board with a separate analog ground names it AGND, and it is still the reference. Keying off
         // the literal string "gnd" would work for the common case and quietly miss this one.
         const circuit = DIVIDER('AGND');
-        const verdict = evaluate([meas('v(nvin)', { flat: 5 })], { probe: 'v(AGND)', metric: 'final', op: 'approx', value: 0 }, circuit);
+        const verdict = evaluate(
+            [meas('v(nvin)', { flat: 5 })],
+            { probe: 'v(AGND)', metric: 'final', op: 'approx', value: 0 },
+            circuit,
+        );
         expect({ actual: verdict.actual, pass: verdict.pass }).toEqual({ actual: 0, pass: true });
     });
 
@@ -207,7 +211,10 @@ describe('a criterion on a DIGITAL net', () => {
         // reaches 5 V. Before this was fixed the criterion read `actual: null` on that working inverter —
         // and note the nets here all have id === name, so this has nothing to do with id/name divergence.
         // It fires on the plainest digital circuit anyone can write.
-        const measurements = [meas('v(na)', { min: 0, max: 5, final: 0 }), meas('v(ny_p)', { min: 0, max: 5, final: 5 })];
+        const measurements = [
+            meas('v(na)', { min: 0, max: 5, final: 0 }),
+            meas('v(ny_p)', { min: 0, max: 5, final: 5 }),
+        ];
 
         const verdict = evaluate(measurements, { probe: 'v(y)', metric: 'max', op: 'gte', value: 4 }, INVERTER);
         expect({ actual: verdict.actual, pass: verdict.pass }).toEqual({ actual: 5, pass: true });
@@ -216,7 +223,10 @@ describe('a criterion on a DIGITAL net', () => {
     it('binds a MIXED net by its own node, unchanged', () => {
         // The bridge applies only where it is needed. A net an analog source drives is sampled directly,
         // and must keep resolving the way it always did.
-        const measurements = [meas('v(na)', { min: 0, max: 5, final: 0 }), meas('v(ny_p)', { min: 0, max: 5, final: 5 })];
+        const measurements = [
+            meas('v(na)', { min: 0, max: 5, final: 0 }),
+            meas('v(ny_p)', { min: 0, max: 5, final: 5 }),
+        ];
         const verdict = evaluate(measurements, { probe: 'v(a)', metric: 'max', op: 'gte', value: 4 }, INVERTER);
         expect({ actual: verdict.actual, pass: verdict.pass }).toEqual({ actual: 5, pass: true });
     });
@@ -310,11 +320,7 @@ const SHUNT_WITH_DECOY: CircuitJson = {
             ],
         },
     ] as never,
-    nets: [
-        ...(SHUNT('LOAD').nets ?? []),
-        { id: 'aux', name: 'AUX' },
-        { id: 'sup-load', name: 'SUP-LOAD' },
-    ],
+    nets: [...(SHUNT('LOAD').nets ?? []), { id: 'aux', name: 'AUX' }, { id: 'sup-load', name: 'SUP-LOAD' }],
 };
 
 describe('a DIFFERENTIAL criterion', () => {
@@ -350,7 +356,11 @@ describe('a DIFFERENTIAL criterion', () => {
             meas('v(nload)', { flat: 9 }),
             meas('v(nsup,nload)', { flat: 1 }),
         ];
-        const verdict = evaluate(measurements, { probe: 'v(SUP,LOAD)', metric: 'final', op: 'approx', value: 1 }, circuit);
+        const verdict = evaluate(
+            measurements,
+            { probe: 'v(SUP,LOAD)', metric: 'final', op: 'approx', value: 1 },
+            circuit,
+        );
         expect({ actual: verdict.actual, pass: verdict.pass }).toEqual({ actual: 1, pass: true });
     });
 
@@ -373,12 +383,20 @@ describe('a DIFFERENTIAL criterion', () => {
             meas('v(nsup,nload)', { flat: 1 }), // the real differential
         ];
 
-        const verdict = evaluate(measurements, { probe: 'v(SUP,LOAD)', metric: 'final', op: 'approx', value: 1 }, circuit);
+        const verdict = evaluate(
+            measurements,
+            { probe: 'v(SUP,LOAD)', metric: 'final', op: 'approx', value: 1 },
+            circuit,
+        );
         expect({ actual: verdict.actual, pass: verdict.pass }).toEqual({ actual: 1, pass: true });
 
         // And stated the other way round, because this is the shape that ships a wrong verdict rather than
         // an obviously missing one: asking for the decoy's value must NOT pass.
-        const wrong = evaluate(measurements, { probe: 'v(SUP,LOAD)', metric: 'final', op: 'approx', value: 3 }, circuit);
+        const wrong = evaluate(
+            measurements,
+            { probe: 'v(SUP,LOAD)', metric: 'final', op: 'approx', value: 3 },
+            circuit,
+        );
         expect(wrong.pass).toBe(false);
     });
 });
@@ -478,7 +496,11 @@ describe('the failure modes the fix introduced on its first attempt', () => {
         };
         expect(extractProbes(generateNetlist(circuit, { type: 'op' }))).toEqual(['v(none)']);
 
-        const verdict = evaluate([meas('v(none)', { flat: 5 })], { probe: 'v(one)', metric: 'final', op: 'approx', value: 5 }, circuit);
+        const verdict = evaluate(
+            [meas('v(none)', { flat: 5 })],
+            { probe: 'v(one)', metric: 'final', op: 'approx', value: 5 },
+            circuit,
+        );
         expect({ actual: verdict.actual, pass: verdict.pass }).toEqual({ actual: 5, pass: true });
     });
 
@@ -517,7 +539,11 @@ describe('the failure modes the fix introduced on its first attempt', () => {
         };
         expect(extractProbes(generateNetlist(circuit, { type: 'op' }))).toEqual(['v(n0)']);
 
-        const verdict = evaluate([meas('v(n0)', { flat: 5 })], { probe: 'v(0)', metric: 'final', op: 'approx', value: 5 }, circuit);
+        const verdict = evaluate(
+            [meas('v(n0)', { flat: 5 })],
+            { probe: 'v(0)', metric: 'final', op: 'approx', value: 5 },
+            circuit,
+        );
         expect({ actual: verdict.actual, pass: verdict.pass }).toEqual({ actual: 5, pass: true });
     });
 
@@ -556,7 +582,11 @@ describe('the failure modes the fix introduced on its first attempt', () => {
         };
         expect(extractProbes(generateNetlist(circuit, { type: 'op' }))).toEqual(['v(na_b)']);
 
-        const verdict = evaluate([meas('v(na_b)', { flat: 5 })], { probe: 'v(a,b)', metric: 'final', op: 'approx', value: 5 }, circuit);
+        const verdict = evaluate(
+            [meas('v(na_b)', { flat: 5 })],
+            { probe: 'v(a,b)', metric: 'final', op: 'approx', value: 5 },
+            circuit,
+        );
         expect({ actual: verdict.actual, pass: verdict.pass }).toEqual({ actual: 5, pass: true });
     });
 });

@@ -37,11 +37,7 @@ const CIRCUIT: CircuitJson = {
     ],
 };
 
-const asDraft = (
-    updatedAt: string,
-    baseVersionId: string | null = null,
-    uiJson: UiJson = {},
-): OpenedProject => ({
+const asDraft = (updatedAt: string, baseVersionId: string | null = null, uiJson: UiJson = {}): OpenedProject => ({
     source: 'working-copy',
     circuitJson: CIRCUIT,
     uiJson,

@@ -137,11 +137,7 @@ describe('what the canvas draws', () => {
         const { container } = render(
             <SchematicCanvas circuit={CIRCUIT} ui={{ positions: { r1: { x: -300, y: -200 } } }} />,
         );
-        const [vx, vy, vw, vh] = container
-            .querySelector('svg')!
-            .getAttribute('viewBox')!
-            .split(' ')
-            .map(Number);
+        const [vx, vy, vw, vh] = container.querySelector('svg')!.getAttribute('viewBox')!.split(' ').map(Number);
 
         expect({ leftOfPart: vx! < -300, abovePart: vy! < -200 }).toEqual({ leftOfPart: true, abovePart: true });
         // …and the far side still reaches whatever else is on the sheet.

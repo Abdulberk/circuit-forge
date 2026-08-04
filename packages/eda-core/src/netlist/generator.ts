@@ -15,12 +15,7 @@ import type { CircuitJson, Component, ModelDef } from '../types/circuit';
 import { SPICE_PREFIXES, COMPONENT_PINS, COMPONENT_TYPES, isDigitalType, isSimulatable } from '../types/circuit';
 
 import { planMixedSignal, emitDigitalComponent, aInstanceName, type MixedSignalPlan } from './digital';
-import {
-    buildNetRefToNode,
-    buildNodeMap,
-    normalizeProbe,
-    rewriteProbeNodeRefs,
-} from './probe-map';
+import { buildNetRefToNode, buildNodeMap, normalizeProbe, rewriteProbeNodeRefs } from './probe-map';
 import { validateIncludePaths } from './sanitizer';
 import { solverOptionTokens } from './solver-options';
 
@@ -653,7 +648,6 @@ export function generateNetlist(circuit: CircuitJson, analysis: AnalysisConfig, 
     return lines.join('\n');
 }
 
-
 /**
  * SPICE identifies a device by the FIRST letter of its name (R=resistor, D=diode, Q=BJT, …). The
  * schematic designator usually already starts with that letter, but it need not: a Zener's natural
@@ -768,8 +762,6 @@ function rewriteCurrentProbeVector(
     }
     return { token: '', savecurrents: false }; // multi-terminal / exotic → drop (can't probe a single current)
 }
-
-
 
 /**
  * A transformer's two synthesized internal winding-midpoint nodes (the L→R series junctions). Deterministic

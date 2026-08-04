@@ -6,12 +6,7 @@
  * the worker, which depends only on eda-core, can reduce each variant to pass/fail locally. No ngspice here:
  * it operates on the already-summarized per-node measurements.
  */
-import {
-    buildProbeResolver,
-    normalizeProbe,
-    rewriteProbeNodeRefs,
-    type ProbeResolver,
-} from '../netlist/probe-map';
+import { buildProbeResolver, normalizeProbe, rewriteProbeNodeRefs, type ProbeResolver } from '../netlist/probe-map';
 import { sanitizeNodeName } from '../netlist/sanitizer';
 import type { CircuitJson } from '../types/circuit';
 import type { FourierResult, TransferFunctionResult } from '../types/simulation';

@@ -123,7 +123,9 @@ class EnvironmentReporter {
         if (results.numFailedTests === 0) {
             console.log('   The result above is GREEN, which under these conditions means less than it looks like.');
         } else {
-            console.log(`   ${results.numFailedTests} test(s) failed. Before blaming the code, rule the environment out —`);
+            console.log(
+                `   ${results.numFailedTests} test(s) failed. Before blaming the code, rule the environment out —`,
+            );
             console.log('   and before blaming the environment, prove it: re-run the suites that do NOT need it.');
         }
         console.log(`${BAR}\n`);

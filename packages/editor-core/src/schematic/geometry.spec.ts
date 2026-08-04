@@ -102,9 +102,7 @@ describe('every pin touches the conductor it belongs to', () => {
         // Not "near" — coincident. A gap of two units is invisible at a glance and is exactly the gap that
         // makes a wire appear to reach a symbol it does not reach.
         forEverySymbol((name, g) => {
-            const floating = g.pins.filter(
-                (p) => !strokeEndpoints(g).some(([x, y]) => x === p.x && y === p.y),
-            );
+            const floating = g.pins.filter((p) => !strokeEndpoints(g).some(([x, y]) => x === p.x && y === p.y));
             expect({ name, floating: floating.map((p) => `${p.pinId}@(${p.x},${p.y})`) }).toEqual({
                 name,
                 floating: [],
