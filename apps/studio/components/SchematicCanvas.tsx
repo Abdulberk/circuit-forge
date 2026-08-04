@@ -40,6 +40,7 @@ import {
     isPlaceablePart,
     orientSymbol,
     PIN_GRID,
+    routeSheet,
     symbolFor,
     type TreeNode,
 } from '@circuit-forge/editor-core';
@@ -106,12 +107,6 @@ function layOut(circuit: CircuitJson, positions: Record<string, Position> | unde
     });
 }
 
-/** Absolute position of one pin, so a wire can start there. */
-function pinAt(p: Placed, pinId: string): { x: number; y: number } | null {
-    const pin = p.symbol.pins.find((s) => s.pinId === pinId);
-    return pin ? { x: p.x + pin.x, y: p.y + pin.y } : null;
-}
-
 export function SchematicCanvas({
     circuit,
     ui,
@@ -161,38 +156,46 @@ export function SchematicCanvas({
         moved: boolean;
     } | null>(null);
 
-    const { placed, wires, extent, byPath } = useMemo(() => {
+    const { placed, routed, extent, byPath } = useMemo(() => {
         const placed = layOut(circuit, ui?.positions);
-        const byId = new Map(placed.map((p) => [p.id, p]));
+        const byComponent = new Map((circuit.components ?? []).map((c) => [c.id, c]));
 
         /**
-         * One segment per connection, drawn as a star from the first pin on the net.
+         * The wires, ROUTED IN THE KERNEL rather than drawn here.
          *
-         * A star rather than a chain because a chain implies an ORDER the netlist does not have: a net is a
-         * set of pins that are all one node, and drawing A–B–C would suggest current flows through B to
-         * reach C. Both are simplifications; only one of them is misleading.
+         * This file used to lay them out itself, as straight lines from the first terminal on each net to
+         * every other. That is honest and unreadable: a real schematic runs at right angles, and turning
+         * diagonals into right angles introduces a hazard diagonals do not have — two axis-aligned wires
+         * along the same line are indistinguishable from one wire, and a wire crossing a terminal is
+         * indistinguishable from a wire connected to it. Getting that right is a claim about the NETLIST,
+         * so it belongs where the netlist rules live, not in the part of the product that will be rewritten
+         * for the next renderer.
          *
-         * Nets with a single pin are skipped and that is the point of them being visible as bare pins: an
-         * unconnected pin is exactly what a one-pin net means, and ERC reports it in those words.
+         * Nets with a single terminal are drawn as nothing, and that is the correct depiction: the bare pin
+         * IS the symbol for an unconnected terminal, and ERC reports it in those words.
          */
-        const wires: Array<{ key: string; net: string; x1: number; y1: number; x2: number; y2: number }> = [];
-        for (const net of circuit.nets ?? []) {
-            const ends: Array<{ x: number; y: number; label: string }> = [];
-            for (const c of circuit.components ?? []) {
-                const p = byId.get(c.id);
-                if (!p) continue; // a net marker, not a drawn part
-                for (const pin of c.pins) {
-                    if (pin.netId !== net.id) continue;
-                    const at = pinAt(p, pin.pinId);
-                    if (at) ends.push({ ...at, label: `${c.id}.${pin.pinId}` });
-                }
-            }
-            const [hub, ...rest] = ends;
-            if (!hub) continue;
-            for (const e of rest) {
-                wires.push({ key: `${net.id}:${e.label}`, net: net.name, x1: hub.x, y1: hub.y, x2: e.x, y2: e.y });
-            }
-        }
+        const routed = routeSheet(
+            (circuit.nets ?? []).map((net) => ({
+                id: net.id,
+                name: net.name,
+                pins: placed.flatMap((p) =>
+                    (byComponent.get(p.id)?.pins ?? [])
+                        .filter((pin) => pin.netId === net.id)
+                        .flatMap((pin) => {
+                            const sp = p.symbol.pins.find((s) => s.pinId === pin.pinId);
+                            return sp
+                                ? [{ x: p.x + sp.x, y: p.y + sp.y, side: sp.side, label: `${p.id}.${pin.pinId}` }]
+                                : [];
+                        }),
+                ),
+            })),
+            placed.map((p) => ({
+                minX: p.x - p.symbol.width / 2,
+                minY: p.y - p.symbol.height / 2,
+                maxX: p.x + p.symbol.width / 2,
+                maxY: p.y + p.symbol.height / 2,
+            })),
+        );
 
         // HALF the extent on each side of the centre, because `width`/`height` are FULL extents — the size
         // of the whole symbol, scanned from its own strokes and pins. This file used to read them both
@@ -217,7 +220,7 @@ export function SchematicCanvas({
         // The tree is the selection authority; the canvas resolves through it rather than minting its own
         // node shape, so clicking a symbol and clicking its row select the identical object.
         const byPath = buildObjectTree(circuit).byPath;
-        return { placed, wires, extent, byPath };
+        return { placed, routed, extent, byPath };
     }, [circuit, ui?.positions]);
 
     /**
@@ -377,17 +380,26 @@ export function SchematicCanvas({
             onPointerUp={drag ? endDrag : undefined}
             onPointerCancel={drag ? endDrag : undefined}
         >
-            {wires.map((w) => (
-                <line
+            {routed.wires.map((w) => (
+                <polyline
                     key={w.key}
-                    x1={w.x1}
-                    y1={w.y1}
-                    x2={w.x2}
-                    y2={w.y2}
+                    points={w.points.map(([x, y]) => `${x},${y}`).join(' ')}
+                    fill="none"
                     stroke="var(--text-faint)"
                     strokeWidth={1}
-                    data-net={w.net}
+                    data-net={w.netName}
+                    // Stated so a reader can tell the difference. A diagonal here is not a style: it is the
+                    // router saying it could not draw this wire at right angles without the drawing claiming
+                    // something the netlist does not, and it means the placement is worth improving.
+                    data-shape={w.shape}
                 />
+            ))}
+
+            {/* THE DOTS, which are not decoration. A dot means these wires are one node; its absence means
+                they merely cross. Without them a branch and a crossing look identical, and a reader has to
+                guess which circuit they are looking at. */}
+            {routed.junctions.map((j) => (
+                <circle key={`${j.netId}@${j.x},${j.y}`} cx={j.x} cy={j.y} r={2} fill="var(--text-faint)" />
             ))}
 
             {placed.map((p) => {

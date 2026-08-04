@@ -54,3 +54,23 @@ export { symbolFor, DRAWN_TYPES, UNDRAWN_BY_DESIGN } from './schematic/symbols';
 export type { SymbolGeometry, SymbolPin, SymbolStroke } from './schematic/symbols';
 export { PIN_GRID } from './schematic/symbols';
 export { orientSymbol, type Orientation } from './schematic/orient';
+
+/**
+ * Wire routing for a schematic sheet.
+ *
+ * The topology decision — a net is a SET of terminals, so its wires are spokes from one point and never a
+ * chain — lives here rather than in a renderer, because it is a claim about the netlist and not about
+ * pixels. A renderer that had to re-derive it would be the second authority this codebase keeps paying for.
+ */
+export { routeSheet } from './schematic/route';
+export type {
+    Box,
+    Fallback,
+    Junction,
+    Point,
+    RoutedSheet,
+    RoutedWire,
+    RouteNet,
+    RoutePin,
+    RouteShape,
+} from './schematic/route';

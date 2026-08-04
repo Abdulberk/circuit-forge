@@ -56,7 +56,10 @@ const CIRCUIT: CircuitJson = {
     ],
 };
 
-const wires = (c: HTMLElement) => [...c.querySelectorAll('line')];
+// Selected by what a wire IS, not by which SVG element happens to draw one. These were `line` elements
+// until the router started emitting right angles, and every assertion about wires went quietly green-on-zero
+// the moment they became `polyline` — a selector that finds nothing passes a "no wire here" test perfectly.
+const wires = (c: HTMLElement) => [...c.querySelectorAll('[data-net]')];
 
 describe('what the canvas draws', () => {
     it('draws every placeable part, and labels it with its designator', () => {
@@ -183,12 +186,11 @@ describe('what the canvas draws', () => {
         // a different circuit. Wire endpoints come from the pin coordinates, so this is really asserting
         // that one source of truth feeds both.
         const ends = (rotation?: '90') =>
-            [
-                ...render(
-                    <SchematicCanvas circuit={CIRCUIT} ui={{ positions: { r1: { x: 200, y: 100, rotation } } }} />,
-                ).container.querySelectorAll('line'),
-            ]
-                .map((l) => `${l.getAttribute('x1')},${l.getAttribute('y1')}`)
+            wires(
+                render(<SchematicCanvas circuit={CIRCUIT} ui={{ positions: { r1: { x: 200, y: 100, rotation } } }} />)
+                    .container,
+            )
+                .map((l) => l.getAttribute('points'))
                 .sort()
                 .join(' ');
 
@@ -541,5 +543,48 @@ describe('every pin lands on the lattice in ABSOLUTE coordinates', () => {
         expect(next?.positions?.r1).toEqual(
             expect.objectContaining({ x: before.x + PIN_GRID, y: before.y + 2 * PIN_GRID }),
         );
+    });
+});
+
+describe('the wires read as a schematic', () => {
+    it('draws right angles, not diagonals', () => {
+        // The visible half of the routing work. A schematic reader follows right angles; a star of diagonals
+        // is a topology diagram wearing a schematic's clothes. The kernel proves no wire LIES; this proves
+        // the drawing that reaches the screen is the routed one and not a straight line from pin to pin.
+        const { container } = render(<SchematicCanvas circuit={CIRCUIT} />);
+        const diagonal = wires(container).flatMap((w) => {
+            const pts = w
+                .getAttribute('points')!
+                .split(' ')
+                .map((p) => p.split(',').map(Number));
+            return pts
+                .slice(1)
+                .map((p, i) => ({ from: pts[i]!, to: p }))
+                .filter((s) => s.from[0] !== s.to[0] && s.from[1] !== s.to[1]);
+        });
+        expect({ diagonalSegments: diagonal }).toEqual({ diagonalSegments: [] });
+    });
+
+    it('marks a branch with a dot, so a fork is not read as a crossing', () => {
+        // GND joins the source, R2 and the ground marker's net. Where the net forks, a reader needs the dot:
+        // without it the same picture is two wires that merely cross, which is a different circuit.
+        const withFork: CircuitJson = {
+            ...CIRCUIT,
+            components: [
+                ...CIRCUIT.components!,
+                {
+                    id: 'r3',
+                    type: 'resistor',
+                    designator: 'R3',
+                    value: '3k',
+                    pins: [
+                        { pinId: '1', netId: 'mid' },
+                        { pinId: '2', netId: 'gnd' },
+                    ],
+                },
+            ],
+        };
+        const { container } = render(<SchematicCanvas circuit={withFork} />);
+        expect(container.querySelectorAll('circle').length).toBeGreaterThan(0);
     });
 });
