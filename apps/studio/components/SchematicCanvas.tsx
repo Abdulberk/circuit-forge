@@ -28,7 +28,7 @@
  *     conflating the two is the confusion this codebase already documents in `UiJson.positions`.
  */
 import type { CircuitJson, Position, UiJson } from '@circuit-forge/eda-core';
-import { buildObjectTree, isPlaceablePart, symbolFor, type TreeNode } from '@circuit-forge/editor-core';
+import { buildObjectTree, isPlaceablePart, orientSymbol, symbolFor, type TreeNode } from '@circuit-forge/editor-core';
 import { useMemo } from 'react';
 
 /** Room around a symbol before the next one starts, in the same units `symbolFor` uses. */
@@ -52,7 +52,15 @@ interface Placed {
  */
 function layOut(circuit: CircuitJson, positions: Record<string, Position> | undefined): Placed[] {
     const parts = (circuit.components ?? []).filter((c) => isPlaceablePart(c));
-    const symbols = parts.map((c) => symbolFor(c));
+    // TURNED as well as placed. `Position` has carried `rotation` and `mirror` since it was written and
+    // nothing has ever applied them: measured, the same diode rendered with `rotation:'90'` produced SVG
+    // byte-identical to the upright one, because this function read only x and y. That is not a missing
+    // feature — `pcb-core`'s adapter DOES read the field and emits `pcbRotation={90}`, so the sheet was
+    // quietly disagreeing with the board about the same design, with nothing comparing the two.
+    //
+    // `orientSymbol` returns the SAME object for an upright, unmirrored part, so the overwhelmingly common
+    // case — every design a machine wrote — costs one comparison rather than a rebuilt symbol.
+    const symbols = parts.map((c) => orientSymbol(symbolFor(c), positions?.[c.id]));
     const cellW = Math.max(CELL_PAD, ...symbols.map((s) => s.width)) + CELL_PAD;
     const cellH = Math.max(CELL_PAD, ...symbols.map((s) => s.height)) + CELL_PAD;
     const cols = Math.max(1, Math.ceil(Math.sqrt(parts.length)));

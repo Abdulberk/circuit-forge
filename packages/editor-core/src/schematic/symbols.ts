@@ -48,7 +48,14 @@ export interface SymbolStroke {
 export interface SymbolGeometry {
     /** `drawn` = a conventional symbol; `derived` = a labelled box built from the part's own pins. */
     basis: 'drawn' | 'derived';
-    /** Half-extents of the body, so a placer can space parts without re-deriving the shape. */
+    /**
+     * The FULL extent of the symbol — strokes and pins together — scanned from the shape itself.
+     *
+     * Full, not half: this is what a placer must not overlap, and a wire attaches to a lead, so the leads
+     * count. It used to be hand-typed beside the drawing and documented as a half-extent while every
+     * producer returned a full one; the single consumer then read it both ways in one file. Scanned now, so
+     * there is nothing left to disagree with.
+     */
     width: number;
     height: number;
     strokes: SymbolStroke[];
@@ -120,8 +127,21 @@ function withLeads(body: SymbolStroke[], pins: SymbolPin[]): SymbolStroke[] {
     return [...body, ...pins.map((pin) => ({ points: [[pin.x, pin.y], edge(pin)] as Array<[number, number]> }))];
 }
 
-/** Place a pin on the lattice, clear of the body by at least `MIN_LEAD`. */
-const pinOut = (bodyEdge: number): number => snapOut(bodyEdge + Math.sign(bodyEdge || 1) * MIN_LEAD);
+/**
+ * Place a pin on the lattice, clear of the body by at least `MIN_LEAD`, in the direction GIVEN.
+ *
+ * The direction is a parameter and not inferred from the edge's sign, because inferring it is wrong exactly
+ * where it matters and silently right everywhere else. A first version read `Math.sign(bodyEdge)` and put
+ * the ground symbol's pin BELOW its bars: ground's topmost bar sits at y = 0, so "outward" was read as
+ * positive — downward, in screen coordinates — and the one-terminal symbol whose whole meaning is "this
+ * connects upward" pointed the other way.
+ *
+ * The geometry contract could not see it. The pin still coincided with its own lead, the lead just ran the
+ * other way, and the extents still matched the drawing. It surfaced only when the symbol was ROTATED and a
+ * pin's declared side was checked against the octant it actually occupied — a pin claiming `top` while
+ * sitting below the body.
+ */
+const pinOut = (bodyEdge: number, outward: -1 | 1): number => snapOut(bodyEdge + outward * MIN_LEAD);
 
 /**
  * Order a POLARISED part's terminals by NAME, not by array position.
@@ -153,8 +173,8 @@ function orderedByName(pins: string[], first: readonly string[], second: readonl
 function twoTerminal(pins: string[], body: SymbolStroke[]): SymbolGeometry {
     const b = boundsOf(body);
     const placed: SymbolPin[] = [
-        { pinId: pins[0] ?? '1', x: pinOut(b.minX), y: 0, side: 'left' },
-        { pinId: pins[1] ?? '2', x: pinOut(b.maxX), y: 0, side: 'right' },
+        { pinId: pins[0] ?? '1', x: pinOut(b.minX, -1), y: 0, side: 'left' },
+        { pinId: pins[1] ?? '2', x: pinOut(b.maxX, 1), y: 0, side: 'right' },
     ];
     return {
         basis: 'drawn',
@@ -315,8 +335,8 @@ const DRAWN: Record<string, (pins: string[]) => SymbolGeometry | null> = {
         ];
         const b = boundsOf(body);
         const placed: SymbolPin[] = [
-            { pinId: p[0] ?? '+', x: 0, y: pinOut(b.minY), side: 'top' },
-            { pinId: p[1] ?? '-', x: 0, y: pinOut(b.maxY), side: 'bottom' },
+            { pinId: p[0] ?? '+', x: 0, y: pinOut(b.minY, -1), side: 'top' },
+            { pinId: p[1] ?? '-', x: 0, y: pinOut(b.maxY, 1), side: 'bottom' },
         ];
         return {
             basis: 'drawn',
@@ -349,7 +369,7 @@ const DRAWN: Record<string, (pins: string[]) => SymbolGeometry | null> = {
                 ],
             },
         ];
-        const placed: SymbolPin[] = [{ pinId: p[0] ?? '1', x: 0, y: pinOut(boundsOf(body).minY), side: 'top' }];
+        const placed: SymbolPin[] = [{ pinId: p[0] ?? '1', x: 0, y: pinOut(boundsOf(body).minY, -1), side: 'top' }];
         return {
             basis: 'drawn',
             ...measured(withLeads(body, placed), placed),

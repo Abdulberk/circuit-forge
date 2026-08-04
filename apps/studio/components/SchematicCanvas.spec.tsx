@@ -144,6 +144,57 @@ describe('what the canvas draws', () => {
         expect({ w: vw! > 0, h: vh! > 0 }).toEqual({ w: true, h: true });
     });
 
+    it('actually TURNS a part the document says is turned', () => {
+        // Measured before this was wired: the same symbol rendered with `rotation:'90'` produced SVG
+        // byte-identical to the upright one, because the layout read only x and y. The field has been in
+        // the schema since it was written and the sheet silently discarded it.
+        //
+        // Which is worse than a missing feature, because pcb-core's adapter does NOT discard it — it emits
+        // `pcbRotation={90}` from the same number. So the board honoured an instruction the drawing ignored,
+        // and nothing anywhere compares a schematic against its own board.
+        const upright = render(
+            <SchematicCanvas circuit={CIRCUIT} ui={{ positions: { r1: { x: 200, y: 100 } } }} />,
+        ).container.querySelector('[data-testid="symbol-r1"]')!.innerHTML;
+
+        const turned = render(
+            <SchematicCanvas circuit={CIRCUIT} ui={{ positions: { r1: { x: 200, y: 100, rotation: '90' } } }} />,
+        ).container.querySelector('[data-testid="symbol-r1"]')!.innerHTML;
+
+        expect(turned).not.toBe(upright);
+    });
+
+    it('returns a turned part to itself after four quarter turns', () => {
+        // The property that makes the rotate key safe to hold down. Exact integer matrices, so this is
+        // identity rather than approximation — a symbol that drifts a fraction per turn eventually has pins
+        // off the lattice, and nothing reports that; the wire simply stops meeting the pin.
+        const at = (rotation?: '0' | '90' | '180' | '270') =>
+            render(
+                <SchematicCanvas circuit={CIRCUIT} ui={{ positions: { r1: { x: 200, y: 100, rotation } } }} />,
+            ).container.querySelector('[data-testid="symbol-r1"]')!.innerHTML;
+
+        expect(at('0')).toBe(at(undefined));
+        expect(at('90')).not.toBe(at('0'));
+        expect(at('180')).not.toBe(at('0'));
+        expect(at('270')).not.toBe(at('90'));
+    });
+
+    it('moves the WIRES with the pins when a part turns', () => {
+        // The half that would be easy to miss: a symbol that turns while its wires stay put is a picture of
+        // a different circuit. Wire endpoints come from the pin coordinates, so this is really asserting
+        // that one source of truth feeds both.
+        const ends = (rotation?: '90') =>
+            [
+                ...render(
+                    <SchematicCanvas circuit={CIRCUIT} ui={{ positions: { r1: { x: 200, y: 100, rotation } } }} />,
+                ).container.querySelectorAll('line'),
+            ]
+                .map((l) => `${l.getAttribute('x1')},${l.getAttribute('y1')}`)
+                .sort()
+                .join(' ');
+
+        expect(ends('90')).not.toBe(ends(undefined));
+    });
+
     it('places the same document the same way every time', () => {
         // A layout that shuffled between renders would make it impossible to point at anything, and would
         // make every visual assertion here meaningless.
