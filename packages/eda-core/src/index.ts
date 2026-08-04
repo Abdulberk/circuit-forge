@@ -321,3 +321,20 @@ export {
     type ESeriesSnapChange,
     type ESeriesSnapResult,
 } from './utils/eseries';
+
+// ---- Quarter-turn geometry -------------------------------------------------------------------------
+// The operator lives beside the type it turns: `Position.rotation` is declared here, and BOTH the
+// schematic editor and pcb-core's placer act on it. Shared rather than copied — a second implementation
+// of the same rule is how a part gets drawn one way and built another.
+export {
+    rotatePoint,
+    rotateSide,
+    mirrorPoint,
+    mirrorSide,
+    toDegrees,
+    rotationField,
+    nextTurn,
+    type RotationDeg,
+    type RotationString,
+    type Side,
+} from './geometry/rotation';

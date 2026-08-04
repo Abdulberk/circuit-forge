@@ -10,6 +10,7 @@
  * matrices (no trig); fixed iteration counts (never wall-clock); all orderings tie-broken by
  * part id. Same input → same output, across platforms.
  */
+import { rotatePoint } from '@circuit-forge/eda-core';
 
 export interface PlaceablePad {
     /** Position relative to part center at rotation 0 (mm). */
@@ -93,19 +94,19 @@ const MIN_BOARD_MM = 20;
 
 // ---------------------------------------------------------------- exact integer rotation
 
-/** Rotate a point by 0/90/180/270° with exact integer matrices — no trig (plan §12). */
-export function rot(r: Rotation, x: number, y: number): [number, number] {
-    switch (r) {
-        case 0:
-            return [x, y];
-        case 90:
-            return [-y, x];
-        case 180:
-            return [-x, -y];
-        case 270:
-            return [y, -x];
-    }
-}
+/**
+ * Rotate a point by 0/90/180/270° with exact integer matrices — no trig (plan §12).
+ *
+ * Re-exported from eda-core rather than implemented here. The schematic editor turns a SYMBOL by the same
+ * stored number this placer turns a FOOTPRINT by, and the two must agree or a board stops matching its own
+ * drawing — with nothing downstream comparing them. eda-core is where `Position.rotation` is declared, so
+ * that is where its operator belongs; keeping a second copy here is precisely the shape of defect that
+ * split the probe-name map earlier in this codebase's life.
+ *
+ * The cast bridges one real seam: this placer works in NUMBERS (`Rotation = 0|90|180|270`) and the document
+ * stores STRINGS. Both spellings are converted in eda-core, beside the type, so no caller invents a third.
+ */
+export const rot = rotatePoint as (r: Rotation, x: number, y: number) => [number, number];
 
 /** Part AABB half-extents at a rotation (90/270 swap w/h). */
 function halfExtents(p: PlaceablePart, r: Rotation): [number, number] {
