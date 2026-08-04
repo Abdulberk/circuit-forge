@@ -89,8 +89,18 @@ function layOut(circuit: CircuitJson, positions: Record<string, Position> | unde
         return {
             id: c.id,
             designator: c.designator,
-            x: stored?.x ?? MARGIN + (i % cols) * cellW + cellW / 2,
-            y: stored?.y ?? MARGIN + Math.floor(i / cols) * cellH + cellH / 2,
+            // SNAPPED, and this is where the lattice actually has to hold. `symbolFor` guarantees every pin
+            // is on the PIN_GRID lattice in the symbol's OWN frame, and placing that symbol at an off-grid
+            // origin destroys the guarantee in the frame that matters — the one wires are drawn in. The
+            // fallback used to put centres at 68, 156, 244, so pins landed on residues 4, 6 and 8 mod 10
+            // and no lattice contained them; two parts side by side had pins at heights that could not be
+            // joined by a straight line, which is the one thing the grid exists to make possible.
+            //
+            // It also made a part JUMP the first time it was dragged: the drop snaps to the lattice, so a
+            // part sitting at 68 landed at 70 without the pointer having moved. Measured 9 out of 9 on a
+            // nine-part fallback layout.
+            x: snapToGrid(stored?.x ?? MARGIN + (i % cols) * cellW + cellW / 2),
+            y: snapToGrid(stored?.y ?? MARGIN + Math.floor(i / cols) * cellH + cellH / 2),
             symbol: symbols[i]!,
         };
     });

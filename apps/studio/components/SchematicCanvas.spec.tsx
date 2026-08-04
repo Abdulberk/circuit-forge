@@ -476,3 +476,70 @@ describe('rotating the selected part', () => {
         });
     });
 });
+
+/**
+ * THE LATTICE, in the frame that actually matters.
+ *
+ * `symbolFor` guarantees every pin sits on the PIN_GRID lattice in the symbol's OWN frame, and
+ * `geometry.spec.ts` in editor-core proves it there. That guarantee is worth nothing if the canvas then
+ * places the symbol at an off-grid origin — and it did: the fallback layout put part centres at 68, 156 and
+ * 244, so pins landed on residues 4, 6 and 8 mod 10 and no lattice contained them.
+ *
+ * Two parts side by side then had pins at heights that could not be joined by a straight line, which is the
+ * one thing the grid exists to make possible. The local contract was green throughout; the property it was
+ * protecting was false where wires are drawn.
+ */
+describe('every pin lands on the lattice in ABSOLUTE coordinates', () => {
+    const PIN_GRID = 10;
+
+    /** Where each symbol was actually translated to, read off the rendered SVG. */
+    const originsOf = (container: HTMLElement) =>
+        [...container.querySelectorAll('[data-testid^="symbol-"]')].map((g) => {
+            const [x, y] = /translate\(([-\d.]+) ([-\d.]+)\)/.exec(g.getAttribute('transform')!)!.slice(1).map(Number);
+            return { x: x!, y: y! };
+        });
+
+    it('holds for the FALLBACK layout, which is what every AI-generated design gets', () => {
+        const { container } = render(<SchematicCanvas circuit={CIRCUIT} />);
+        const off = originsOf(container).filter((o) => o.x % PIN_GRID !== 0 || o.y % PIN_GRID !== 0);
+        expect({ offLattice: off }).toEqual({ offLattice: [] });
+    });
+
+    it('holds for a STORED position that is off-grid', () => {
+        // A drawing written by an older build, or by hand, can carry anything. The sheet still has to draw
+        // parts whose pins can be joined.
+        const { container } = render(
+            <SchematicCanvas circuit={CIRCUIT} ui={{ positions: { r1: { x: 137, y: 92 } } }} />,
+        );
+        const off = originsOf(container).filter((o) => o.x % PIN_GRID !== 0 || o.y % PIN_GRID !== 0);
+        expect({ offLattice: off }).toEqual({ offLattice: [] });
+    });
+
+    it('a part moves exactly as far as the pointer did, on its FIRST drag', () => {
+        // The honest form of "does it jump". A zero-distance gesture commits nothing BY DESIGN — a click
+        // must not write geometry — so asserting on one proves only that nothing happened. My first version
+        // of this test did exactly that and stayed green against the very defect it was written for.
+        //
+        // So: move the pointer a whole number of grid steps and require the part to move the same amount.
+        // Off the lattice that fails by construction — a part at 68 dragged 10 lands at 78, snaps to 80, and
+        // has travelled 12. The hand said one square; the part went one and a fifth.
+        let next: UiJson | undefined;
+        const { container } = render(<SchematicCanvas circuit={CIRCUIT} onArrange={(_l, n) => (next = n)} />);
+        const svg = container.querySelector('svg')!;
+        // One sheet unit per pixel, so the numbers below mean what they say.
+        const box = svg.getAttribute('viewBox')!.split(' ').map(Number);
+        const [w, h] = [box[2]!, box[3]!];
+        svg.getBoundingClientRect = () =>
+            ({ width: w, height: h, x: 0, y: 0, top: 0, left: 0, right: w, bottom: h, toJSON: () => ({}) }) as DOMRect;
+        const before = originsOf(container)[1]!; // r1, which no one has arranged
+
+        const part = container.querySelector('[data-testid="symbol-r1"]')!;
+        fireEvent.pointerDown(part, { pointerId: 1, button: 0, clientX: 200, clientY: 200 });
+        for (const ev of [fireEvent.pointerMove, fireEvent.pointerUp])
+            ev(svg, { pointerId: 1, clientX: 200 + PIN_GRID, clientY: 200 + 2 * PIN_GRID });
+
+        expect(next?.positions?.r1).toEqual(
+            expect.objectContaining({ x: before.x + PIN_GRID, y: before.y + 2 * PIN_GRID }),
+        );
+    });
+});
