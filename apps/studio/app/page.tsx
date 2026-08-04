@@ -229,13 +229,21 @@ function Workspace() {
                             check, the robustness verdict and an orderable BOM all key on. */}
                         {circuit && <PartLibrary api={api} doc={doc} />}
                         {circuit && (
-                            // Keyed by project so React REMOUNTS it on a switch. The panel's selection and
-                            // collapse state are its own `useState`; unkeyed, they survived a project change
-                            // and the tree painted a row as selected while the Inspector said "Select an
-                            // object." Not a coincidence either — the paths are `root/nets/<id>`, and `gnd`
-                            // appears in nearly every design, so the stale selection usually lands on a real
-                            // row belonging to a different circuit.
-                            <ObjectTreePanel key={activeProject ?? 'none'} circuit={circuit} onSelect={setSelected} />
+                            // Selection is held HERE and passed down, so the tree and the canvas cannot
+                            // disagree about what is selected. The panel used to keep its own, which meant
+                            // clicking a symbol told the Inspector and left the tree painting some other
+                            // row — two views of one document, each right by its own lights.
+                            //
+                            // The remount-on-switch key went with it: a selection held above cannot outlive
+                            // a document it does not belong to, because whatever changes the document
+                            // clears it. (The key had to be there before: paths look like `root/nets/<id>`
+                            // and `gnd` appears in nearly every design, so a stale selection usually landed
+                            // on a real row belonging to a different circuit.)
+                            <ObjectTreePanel
+                                circuit={circuit}
+                                selectedPath={selected?.ref.path.join('/') ?? null}
+                                onSelect={setSelected}
+                            />
                         )}
                     </div>
                 </aside>
