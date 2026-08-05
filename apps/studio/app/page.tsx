@@ -8,7 +8,13 @@
  * which is the only way this harness is worth building inside the product's own workspace.
  */
 
-import { connectPins, disconnectPin, isPlaceablePart, type TreeNode } from '@circuit-forge/editor-core';
+import {
+    connectPins,
+    deleteComponent,
+    disconnectPin,
+    isPlaceablePart,
+    type TreeNode,
+} from '@circuit-forge/editor-core';
 import { useMemo, useState } from 'react';
 
 import { AddPart, Inspector } from '../components/Inspector';
@@ -288,6 +294,13 @@ function Workspace() {
                             // terminals and parting them again are two steps of one undo stack in the order
                             // they happened — not two stacks a user has to hold in their head.
                             onDisconnect={(pin) => doc.apply((c) => disconnectPin(c, pin))}
+                            onDelete={(id) => {
+                                doc.apply((c) => deleteComponent(c, id));
+                                // The selection cannot outlive the thing it names. Left alone it would point
+                                // at a path the tree no longer has, and the Inspector would go on offering
+                                // fields for a part that is gone.
+                                setSelected(null);
+                            }}
                         />
                     ) : (
                         <p className="empty">Open a project with a working copy to begin.</p>

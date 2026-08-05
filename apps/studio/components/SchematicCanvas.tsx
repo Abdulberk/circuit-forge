@@ -60,6 +60,7 @@ export function SchematicCanvas({
     onArrange,
     onConnect,
     onDisconnect,
+    onDelete,
 }: {
     circuit: CircuitJson;
     /**
@@ -87,6 +88,8 @@ export function SchematicCanvas({
      * how it was: you could join two terminals by dragging and could only part them through a side panel.
      */
     onDisconnect?: (pin: { componentId: string; pinId: string }) => void;
+    /** Remove a part from the design. Omitted leaves the canvas unable to delete, which a viewer should be. */
+    onDelete?: (componentId: string) => void;
 }) {
     const svgRef = useRef<SVGSVGElement | null>(null);
     /**
@@ -474,11 +477,19 @@ export function SchematicCanvas({
             if (parts.length === 5 && parts[3] === 'pins' && onDisconnect) {
                 event.preventDefault();
                 onDisconnect({ componentId: parts[2]!, pinId: parts[4]! });
+                return;
+            }
+            // A whole part. The kernel decides what goes with it: `deleteComponent` removes the nets THIS
+            // delete emptied and leaves alone any that were already unreferenced, because sweeping those
+            // would quietly remove things the user never touched and name them in a note they cannot place.
+            if (parts.length === 3 && parts[1] === 'components' && onDelete) {
+                event.preventDefault();
+                onDelete(parts[2]!);
             }
         };
         window.addEventListener('keydown', onKeyDown);
         return () => window.removeEventListener('keydown', onKeyDown);
-    }, [selectedPath, onDisconnect]);
+    }, [selectedPath, onDisconnect, onDelete]);
 
     /**
      * `R` turns the selected part — the convention every schematic editor shares.
@@ -503,13 +514,38 @@ export function SchematicCanvas({
             // No modifiers: Ctrl+R is reload, Alt+R belongs to the browser's menus. A bare letter is the
             // convention, and taking the chorded versions would break something the user expects.
             if (event.ctrlKey || event.metaKey || event.altKey) return;
-            if (event.key.toLowerCase() !== 'r') return;
-            // The SAME guard the undo shortcut uses, imported rather than restated. `R` is a letter: without
-            // it, typing a resistance of `4R7` in the Inspector would turn the part behind the panel.
+            const key = event.key.toLowerCase();
+            // R turns, X and Y mirror — the letters every schematic editor uses, taken rather than invented.
+            if (key !== 'r' && key !== 'x' && key !== 'y') return;
+            // The SAME guard the undo shortcut uses, imported rather than restated. These are letters:
+            // without it, typing a resistance of `4R7` in the Inspector would turn the part behind the panel.
             if (isTextEntry(event.target)) return;
 
             event.preventDefault();
             const at = ui?.positions?.[part.id];
+
+            if (key === 'x' || key === 'y') {
+                // MIRRORING WAS ALREADY BUILT. `Position.mirror` has been in the schema since it was written,
+                // `orientSymbol` applies it, and `pcb-core` reads it — and nothing anywhere could WRITE one.
+                // That is the same gap rotation had: a field, a renderer that honours it, and no key.
+                //
+                // Pressing the same letter again returns the part, and the field is DROPPED rather than set
+                // to anything: a part mirrored twice is the part, and leaving `mirror` behind would make the
+                // drawing structurally different from the one before the first press, so the commit kernel
+                // would mint a revision and a save for a part that visibly did not move.
+                const next = at?.mirror === key ? undefined : key;
+                const { mirror: _wasMirrored, x: _mx, y: _my, ...keep } = at ?? { x: part.x, y: part.y };
+                onArrange(`Mirror ${part.designator}`, {
+                    ...ui,
+                    schemaVersion: 1,
+                    positions: {
+                        ...ui?.positions,
+                        [part.id]: { x: part.x, y: part.y, ...keep, ...(next ? { mirror: next } : {}) },
+                    },
+                });
+                return;
+            }
+
             const turn = nextTurn(toDegrees(at?.rotation));
             // The rotation key is REPLACED, never merged past: `rotationField` returns `{}` at zero, and
             // spreading that over an existing `rotation: '270'` would leave the old value in place, so the
