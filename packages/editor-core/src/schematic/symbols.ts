@@ -58,6 +58,21 @@ export interface SymbolGeometry {
      */
     width: number;
     height: number;
+    /**
+     * WHERE the drawing lies, relative to the symbol's own origin.
+     *
+     * The extent alone is not enough, and one symbol proves it. Every producer here happens to be centred on
+     * its origin — a two-terminal part puts its pins at ±x with the body at y=0, a voltage source at ±20 in
+     * y, a derived box is centred by construction — except GROUND, whose bars run from y=0 down to y=6 while
+     * its terminal sits at y=-10. Its extent is sixteen units and the middle of that extent is at y=-2, not
+     * at the origin.
+     *
+     * So a consumer reconstructing the box as `centre ± height/2` gets it wrong by two units at each end for
+     * that one symbol — and the two units it loses at the top are the strip the TERMINAL occupies, which is
+     * the part a router most needs to know about. It went unnoticed for as long as every symbol was
+     * symmetric. Stated here so nobody has to reconstruct it, and so the next asymmetric symbol is free.
+     */
+    bounds: { minX: number; minY: number; maxX: number; maxY: number };
     strokes: SymbolStroke[];
     pins: SymbolPin[];
     /** Where the designator wants to sit relative to the centre. */
@@ -201,10 +216,10 @@ function twoTerminal(pins: string[], body: SymbolStroke[]): SymbolGeometry {
 function measured(
     strokes: SymbolStroke[],
     pins: SymbolPin[],
-): { width: number; height: number; strokes: SymbolStroke[] } {
+): { width: number; height: number; bounds: SymbolGeometry['bounds']; strokes: SymbolStroke[] } {
     const all = [...strokes, { points: pins.map((p) => [p.x, p.y] as [number, number]) }];
     const b = boundsOf(all);
-    return { width: b.maxX - b.minX, height: b.maxY - b.minY, strokes };
+    return { width: b.maxX - b.minX, height: b.maxY - b.minY, bounds: b, strokes };
 }
 
 /**

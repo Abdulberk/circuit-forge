@@ -81,6 +81,9 @@ export function orientSymbol(geometry: SymbolGeometry, at: Orientation | undefin
         pins,
         width: Math.max(...xs) - Math.min(...xs),
         height: Math.max(...ys) - Math.min(...ys),
+        // The bounds are scanned by the SAME rule as the extents, from the same points — so a turned or
+        // mirrored symbol reports where it actually lies rather than where an unturned one used to.
+        bounds: { minX: Math.min(...xs), minY: Math.min(...ys), maxX: Math.max(...xs), maxY: Math.max(...ys) },
         labelAnchor: { x: lx, y: ly },
     };
 }

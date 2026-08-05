@@ -50,3 +50,43 @@ if (typeof window !== 'undefined' && typeof window.PointerEvent === 'undefined')
 }
 
 export {};
+
+/**
+ * A React error printed to the console FAILS the test that printed it.
+ *
+ * The defect that bought this rule: `key` was being carried inside a props object and spread onto an SVG
+ * element. React reads a key off the element, never out of a spread, so every stroke on every symbol was
+ * rendered WITHOUT one — re-created on each paint instead of matched to the element before it — and React
+ * said so, loudly, on every render. In a browser it filled the console. Here, 191 tests rendered that same
+ * component hundreds of times and every one of them passed, because a console error is not an exception.
+ *
+ * That is the shape this suite keeps finding in itself: a check that cannot fail is not a check. React's
+ * warnings are the framework reporting a real defect in terms nothing else will report — a missing key, a
+ * state update outside `act`, an invalid prop, an unknown DOM attribute — and a test run that renders the
+ * whole editor is exactly where they should be caught.
+ *
+ * Scoped to React's own diagnostics. A component that deliberately logs — a caught network error, a warning
+ * a user should see — is not the framework complaining, and failing on those would push tests to swallow
+ * output that belongs on screen.
+ */
+const REACT_DIAGNOSTIC =
+    /^(Warning:|Each child in a list|A props object containing a "key"|React (does not|keys)|Invalid|Received|Unknown|You provided a `value` prop)/;
+
+beforeEach(() => {
+    const complain = (label: 'error' | 'warn', original: (...args: unknown[]) => void) =>
+        jest.spyOn(console, label).mockImplementation((...args: unknown[]) => {
+            original(...args);
+            const first = typeof args[0] === 'string' ? args[0] : '';
+            if (REACT_DIAGNOSTIC.test(first)) {
+                throw new Error(
+                    `React reported a defect and the test would otherwise have passed:\n\n${String(args[0])}`,
+                );
+            }
+        });
+    complain('error', console.error.bind(console));
+    complain('warn', console.warn.bind(console));
+});
+
+afterEach(() => {
+    jest.restoreAllMocks();
+});

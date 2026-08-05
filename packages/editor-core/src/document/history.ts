@@ -151,7 +151,19 @@ export function commit(
     // user then has to press through, nor a save that conflicts with another tab for no reason.
     if (!changed) return { ok: true, history, changed: false };
 
-    const next: EditorDocument = { ...history.present, circuit };
+    // THE DRAWING FOLLOWS THE DESIGN, in the same revision. A position for a component the design no longer
+    // has is not a drawing, it is litter — and it is not harmless: positions are keyed by component id, and
+    // an id can come back. Delete a resistor and add another, and the new one silently inherits where the old
+    // one sat, which reads as the editor moving a part the user just created.
+    //
+    // Pruned HERE rather than at the call site because every path that removes a component asks the same
+    // question, and because it has to be the same revision: a separate commit would make undo restore the
+    // part without its place, or its place without the part.
+    const next: EditorDocument = {
+        ...history.present,
+        circuit,
+        ui: withoutOrphanPositions(history.present.ui, circuit),
+    };
     const revision: Revision = {
         snapshot: history.present, // the revision RECORDS what to go back to
         label,
@@ -283,3 +295,19 @@ export const isEmptyTouch = (touched: Touched): boolean =>
     touched.components.size === 0 && touched.nets.size === 0 && !touched.other;
 
 export { EMPTY_TOUCHED };
+
+/**
+ * The drawing with nothing in it that the design does not have.
+ *
+ * Returns the SAME object when there is nothing to drop, so an ordinary edit does not mint a new `ui` that
+ * the change-detector would then read as a change.
+ */
+function withoutOrphanPositions(ui: UiJson, circuit: CircuitJson): UiJson {
+    const positions = ui.positions;
+    if (!positions) return ui;
+    const alive = new Set((circuit.components ?? []).map((c) => c.id));
+    const orphans = Object.keys(positions).filter((id) => !alive.has(id));
+    if (orphans.length === 0) return ui;
+    const kept = Object.fromEntries(Object.entries(positions).filter(([id]) => alive.has(id)));
+    return { ...ui, positions: kept };
+}

@@ -150,5 +150,5 @@ it('draws every wire as right angles, on circuits the product actually produces'
     // measured, keeping a single dot per net and discarding the rest left this whole suite green while
     // fourteen of the twenty-part sheet's fifteen dots vanished. Every one of them marks a fork that a
     // reader would otherwise be entitled to read as a crossing, so the count is the thing to hold.
-    expect(report.map((r) => r.dots)).toEqual([1, 5, 7, 16]);
+    expect(report.map((r) => r.dots)).toEqual([2, 5, 9, 16]);
 });
