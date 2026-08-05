@@ -27,6 +27,11 @@ export function isTextEntry(target: EventTarget | null): boolean {
     if (target.isContentEditable) return true;
     const tag = target.tagName;
     if (tag === 'TEXTAREA') return true;
+    // A <select> types too. Its own type-ahead jumps to the option whose label starts with the letter, so a
+    // bare shortcut fired from one both steals the keystroke and does something elsewhere: pressing R while
+    // the project picker had focus turned a part behind the panel instead of finding the project beginning
+    // with R, and F threw away the view the user was looking at.
+    if (tag === 'SELECT') return true;
     if (tag !== 'INPUT') return false;
     // A checkbox or a button has no text history of its own, so the document shortcut still applies.
     const type = (target as HTMLInputElement).type;
