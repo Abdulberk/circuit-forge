@@ -7,8 +7,10 @@
  * measurements — proving the verdict ("verified means meets-the-spec") is correct on actual simulation
  * numbers, not hand-fed ones.
  *
- * Gated on NGSPICE_PATH (skips in CI / when ngspice isn't configured). Run locally with, e.g.:
- *   NGSPICE_PATH="C:/.../ngspice_con.exe" pnpm --filter api test -- spec-satisfaction-live
+ * Gated on a WORKING ngspice, found the way every live spec here finds one — not on NGSPICE_PATH having been
+ * exported by hand. This file used to demand the variable while its sibling searched the install locations,
+ * so on a developer machine with ngspice present one of them ran and this one reported itself skipped: three
+ * tests over real simulator output, quietly not running, on a machine that could run them.
  */
 import type { CircuitJson } from '@circuit-forge/eda-core';
 import type { ConfigService } from '@nestjs/config';
@@ -16,8 +18,10 @@ import type { ConfigService } from '@nestjs/config';
 import { evaluateAssertions } from '../assertions';
 import { CircuitSimulatorService } from '../circuit-simulator.service';
 
-const NGSPICE_PATH = process.env.NGSPICE_PATH;
-const live = NGSPICE_PATH ? describe : describe.skip;
+import { describeWithNgspice, ngspiceBinary } from './ngspice';
+
+const NGSPICE_PATH = ngspiceBinary();
+const live = describeWithNgspice('spec-satisfaction over REAL ngspice');
 
 // SIM_SANDBOX=none → spawn ngspice directly (no bash/rlimit wrapper) so this runs on the dev host (Windows).
 const cfg = {
