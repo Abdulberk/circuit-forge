@@ -35,6 +35,7 @@ import {
     PIN_GRID,
     placeParts,
     bodiesOf,
+    groundGlyphs,
     netsOf,
     routeSheet,
     type PlacedPart,
@@ -125,7 +126,7 @@ export function SchematicCanvas({
         moved: boolean;
     } | null>(null);
 
-    const { placed, routed, extent, byPath } = useMemo(() => {
+    const { placed, glyphs, routed, extent, byPath } = useMemo(() => {
         const placed = placeParts(circuit, ui?.positions);
 
         /**
@@ -142,7 +143,14 @@ export function SchematicCanvas({
          * Nets with a single terminal are drawn as nothing, and that is the correct depiction: the bare pin
          * IS the symbol for an unconnected terminal, and ERC reports it in those words.
          */
-        const routed = routeSheet(netsOf(circuit, placed), bodiesOf(placed));
+        // THE REFERENCE IS MARKED, NOT WIRED. A ground symbol on each pin that reaches the reference is what
+        // every schematic does, and the measurement says why: ground was between a third and a half of all
+        // the wire on the sheet, crossing everything else. Drawn this way the twenty-part circuit's wire
+        // drops from 12,820 units to 5,980, and no wire becomes illegible in the process.
+        //
+        // The glyphs are obstacles like any other symbol, so wires go round them rather than through.
+        const glyphs = groundGlyphs(circuit, placed);
+        const routed = routeSheet(netsOf(circuit, placed), bodiesOf([...placed, ...glyphs]));
 
         // HALF the extent on each side of the centre, because `width`/`height` are FULL extents — the size
         // of the whole symbol, scanned from its own strokes and pins. This file used to read them both
@@ -150,8 +158,12 @@ export function SchematicCanvas({
         // which inflated the sheet by a factor of two in each axis and drew everything at half size inside
         // a viewBox with dead margin on two sides. The library's docstring said half while every producer
         // returned full, so both readings had something to point at. There is one meaning now.
-        const xs = placed.flatMap((p) => [p.x - p.symbol.width / 2, p.x + p.symbol.width / 2]);
-        const ys = placed.flatMap((p) => [p.y - p.symbol.height / 2, p.y + p.symbol.height / 2]);
+        // FROM THE SYMBOL'S OWN BOUNDS, not its extent about its centre — the same correction the obstacle
+        // boxes needed, and for the same reason: ground is not centred on its origin, so reconstructing the
+        // box from the extent left part of the drawing outside the view.
+        const drawn = [...placed, ...glyphs];
+        const xs = drawn.flatMap((p) => [p.x + p.symbol.bounds.minX, p.x + p.symbol.bounds.maxX]);
+        const ys = drawn.flatMap((p) => [p.y + p.symbol.bounds.minY, p.y + p.symbol.bounds.maxY]);
         // From the true MINIMUM, not from zero. A part dragged to a negative coordinate — which stored
         // positions make ordinary — sat outside a viewBox anchored at the origin and was simply not on
         // screen, with nothing to indicate the sheet had been cropped.
@@ -167,7 +179,7 @@ export function SchematicCanvas({
         // The tree is the selection authority; the canvas resolves through it rather than minting its own
         // node shape, so clicking a symbol and clicking its row select the identical object.
         const byPath = buildObjectTree(circuit).byPath;
-        return { placed, routed, extent, byPath };
+        return { placed, glyphs, routed, extent, byPath };
     }, [circuit, ui?.positions]);
 
     /**
@@ -780,6 +792,24 @@ export function SchematicCanvas({
                     r={2}
                     fill="var(--text-faint)"
                 />
+            ))}
+
+            {/* THE REFERENCE, MARKED AT EVERY PIN THAT REACHES IT. Not selectable and not draggable, because
+                these are not objects in the design — they are how the drawing SPELLS a connection the netlist
+                already has, the way a schematic always has. The author's own ground components are drawn with
+                the parts above and stay selectable, movable and deletable like anything else. */}
+            {glyphs.map((g) => (
+                <g key={g.id} data-testid="ground-glyph" transform={`translate(${g.x} ${g.y})`} aria-hidden>
+                    {g.symbol.strokes.map((st, i) => (
+                        <polyline
+                            key={i}
+                            points={st.points.map(([x, y]) => `${x},${y}`).join(' ')}
+                            fill="none"
+                            stroke="var(--text, #ccc)"
+                            strokeWidth={1.4}
+                        />
+                    ))}
+                </g>
             ))}
 
             {placed.map((p) => {

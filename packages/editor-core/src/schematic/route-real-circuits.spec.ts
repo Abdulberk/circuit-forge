@@ -14,7 +14,7 @@
  */
 import type { CircuitJson } from '@circuit-forge/eda-core';
 
-import { bodiesOf, netsOf, placeParts } from './layout';
+import { bodiesOf, groundGlyphs, netsOf, placeParts } from './layout';
 import { routeSheet, type Box, type RouteNet } from './route';
 
 const R = (id: string, a: string, b: string) => ({
@@ -117,7 +117,8 @@ const BIG: CircuitJson = {
  */
 const laidOut = (circuit: CircuitJson): { nets: RouteNet[]; bodies: Box[] } => {
     const placed = placeParts(circuit);
-    return { nets: netsOf(circuit, placed), bodies: bodiesOf(placed) };
+    // The ground glyphs are obstacles like any other symbol, so the sheet the router is given includes them.
+    return { nets: netsOf(circuit, placed), bodies: bodiesOf([...placed, ...groundGlyphs(circuit, placed)]) };
 };
 
 it('draws every wire as right angles, on circuits the product actually produces', () => {
@@ -145,10 +146,14 @@ it('draws every wire as right angles, on circuits the product actually produces'
         report.map((r) => ({ circuit: r.circuit, diagonal: 0, illegible: 0 })),
     );
     // And it must have drawn something. A layout that produced no wires would satisfy the line above.
-    expect(report.map((r) => r.wires)).toEqual([4, 10, 11, 27]);
+    // FEWER WIRES THAN TERMINALS, because the reference is not wired. Ground was between a third and a half
+    // of every sheet's wire — 38%, 46%, 35% and 53% of total length — all of it crossing everything else. It
+    // is marked at each pin instead, which is what a schematic does and what these numbers argue for: the
+    // twenty-part circuit went from 12,820 units of wire to 5,980, with nothing becoming illegible.
+    expect(report.map((r) => r.wires)).toEqual([2, 6, 7, 18]);
     // JUNCTION DOTS, COUNTED. `dots > 0` was the assertion here, and one surviving dot satisfied it:
     // measured, keeping a single dot per net and discarding the rest left this whole suite green while
     // fourteen of the twenty-part sheet's fifteen dots vanished. Every one of them marks a fork that a
     // reader would otherwise be entitled to read as a crossing, so the count is the thing to hold.
-    expect(report.map((r) => r.dots)).toEqual([2, 5, 9, 16]);
+    expect(report.map((r) => r.dots)).toEqual([0, 2, 4, 8]);
 });
