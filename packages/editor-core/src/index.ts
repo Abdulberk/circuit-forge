@@ -74,3 +74,12 @@ export type {
     RoutePin,
     RouteShape,
 } from './schematic/route';
+
+/**
+ * Where the parts sit, and the sheet the router is given.
+ *
+ * One authority. A renderer that computed its own placement, or a test that reproduced it by hand, would be
+ * pinning a sheet nobody sees — which is exactly what happened when the canvas owned this.
+ */
+export { placeParts, bodiesOf, netsOf } from './schematic/layout';
+export type { PlacedPart } from './schematic/layout';

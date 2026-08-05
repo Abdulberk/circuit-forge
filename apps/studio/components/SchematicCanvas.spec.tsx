@@ -566,8 +566,10 @@ describe('the wires read as a schematic', () => {
     });
 
     it('marks a branch with a dot, so a fork is not read as a crossing', () => {
-        // GND joins the source, R2 and the ground marker's net. Where the net forks, a reader needs the dot:
-        // without it the same picture is two wires that merely cross, which is a different circuit.
+        // COUNTED BY WHAT THEY ARE, not by the element that draws them. The first version of this asserted
+        // that the sheet contained at least one <circle> — and the canvas draws a <circle> for every pin, so
+        // parts alone satisfied it. Measured: deleting every junction dot from the kernel left all 32 tests
+        // in this file green, on a sheet with ten circles of which eight were pins.
         const withFork: CircuitJson = {
             ...CIRCUIT,
             components: [
@@ -585,6 +587,81 @@ describe('the wires read as a schematic', () => {
             ],
         };
         const { container } = render(<SchematicCanvas circuit={withFork} />);
-        expect(container.querySelectorAll('circle').length).toBeGreaterThan(0);
+        expect(container.querySelectorAll('[data-testid="junction"]').length).toBeGreaterThan(0);
+    });
+
+    it('marks a wire the router says is not trustworthy, so the warning reaches the screen', () => {
+        // The kernel reports a wire whose every possible line states something the netlist does not, and
+        // calls that report "the only reason this case is not a silent bug". Nothing read it: the lying wire
+        // was drawn as an ordinary grey diagonal, identical to an honest one, so on screen the report did
+        // not exist. Here a foreign terminal sits exactly on the only terminal a wire can reach.
+        const trapped: CircuitJson = {
+            version: '1.0',
+            components: [
+                {
+                    id: 'r1',
+                    type: 'resistor',
+                    designator: 'R1',
+                    value: '1k',
+                    pins: [
+                        { pinId: '1', netId: 'a' },
+                        { pinId: '2', netId: 'b' },
+                    ],
+                },
+                {
+                    id: 'r2',
+                    type: 'resistor',
+                    designator: 'R2',
+                    value: '1k',
+                    pins: [
+                        { pinId: '1', netId: 'a' },
+                        { pinId: '2', netId: 'b' },
+                    ],
+                },
+                {
+                    id: 'r3',
+                    type: 'resistor',
+                    designator: 'R3',
+                    value: '1k',
+                    pins: [
+                        { pinId: '1', netId: 'c' },
+                        { pinId: '2', netId: 'd' },
+                    ],
+                },
+                {
+                    id: 'r4',
+                    type: 'resistor',
+                    designator: 'R4',
+                    value: '1k',
+                    pins: [
+                        { pinId: '1', netId: 'c' },
+                        { pinId: '2', netId: 'd' },
+                    ],
+                },
+            ],
+            nets: [
+                { id: 'a', name: 'A' },
+                { id: 'b', name: 'B' },
+                { id: 'c', name: 'C' },
+                { id: 'd', name: 'D' },
+            ],
+        };
+        // R4 is placed so that its terminals land exactly on R3's, which are a different node. No line from
+        // R4 to anywhere states only what the netlist says, and the router reports both of its wires.
+        const { container } = render(
+            <SchematicCanvas
+                circuit={trapped}
+                ui={{
+                    schemaVersion: 1,
+                    positions: {
+                        r1: { x: 100, y: 100 },
+                        r2: { x: 100, y: 140 },
+                        r3: { x: 100, y: 120 },
+                        r4: { x: 140, y: 120 },
+                    },
+                }}
+            />,
+        );
+        expect(container.querySelectorAll('[data-trust="unverified"]').length).toBeGreaterThan(0);
     });
 });

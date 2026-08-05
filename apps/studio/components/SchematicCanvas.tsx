@@ -13,99 +13,44 @@
  * drew its own resistor would be a second authority about what a resistor looks like, and the one place the
  * two disagreed would be the part nobody could find.
  *
+ * NOR DOES IT DECIDE WHERE ANYTHING GOES. Placement and routing both live in the kernel: `placeParts` says
+ * where each symbol sits, `routeSheet` says where every wire runs and where a junction needs a dot. Those
+ * are claims about the NETLIST — which terminals are one node, and what a drawing is allowed to state — and
+ * they belong where the netlist rules live, not in the part of the product that gets rewritten for the next
+ * renderer. This file turns them into SVG and handles the pointer. That is the whole of its job.
+ *
  * WHAT IT DELIBERATELY IS NOT, so nobody reads more into it than it says:
  *
- *   • It is not a schematic ROUTER. Wires are drawn straight from pin to pin, as a star from the first pin
- *     on each net. A real schematic routes orthogonally, breaks crossings and places junction dots, and
- *     pretending to do that badly would be worse than doing it plainly: a user would read a crossing as a
- *     connection. Straight lines are unambiguous about being a topology view.
- *   • Positions come from `ui.positions` when the document carries them, and from a deterministic grid when
- *     it does not — which is the ordinary case for a design a machine wrote and nobody has arranged. The
- *     grid is derived by scanning, never randomised, so the same document draws the same way on every render
- *     and in every test. What it is NOT yet is a placement the user can change: nothing here drags. That is
- *     the next slice; this one is about the arrangement surviving once something does write it.
  *   • It shows the SCHEMATIC, not the board. Board geometry is a different document with its own frame, and
  *     conflating the two is the confusion this codebase already documents in `UiJson.positions`.
+ *   • It does not re-route while a part is being dragged. Routing a whole sheet takes tens of milliseconds
+ *     and a gesture is sixty frames a second, so during a drag the wires that touch the moved part are
+ *     RUBBER-BANDED — the end that moved follows the pointer and the rest stays put — and the sheet is
+ *     routed properly once, on drop. They used to stay where they were for the whole gesture, so a part
+ *     could be dragged clear across the sheet while its wires pointed at where it had been.
  */
-import {
-    nextTurn,
-    rotationField,
-    toDegrees,
-    type CircuitJson,
-    type Position,
-    type UiJson,
-} from '@circuit-forge/eda-core';
+import { nextTurn, rotationField, toDegrees, type CircuitJson, type UiJson } from '@circuit-forge/eda-core';
 import {
     buildObjectTree,
-    isPlaceablePart,
-    orientSymbol,
     PIN_GRID,
+    placeParts,
+    bodiesOf,
+    netsOf,
     routeSheet,
-    symbolFor,
+    type PlacedPart,
     type TreeNode,
 } from '@circuit-forge/editor-core';
 import { useEffect, useMemo, useRef, useState } from 'react';
 
 import { isTextEntry } from '../lib/useUndoShortcuts';
 
-/** Room around a symbol before the next one starts, in the same units `symbolFor` uses. */
-const CELL_PAD = 44;
-const MARGIN = 24;
+/** Clear sheet around the drawing, so nothing is drawn hard against the edge of the view. */
+const VIEW_MARGIN = 24;
 
 /** Snap a sheet coordinate onto the pin lattice, so a dropped part lands where a wire can reach it. */
 const snapToGrid = (v: number): number => Math.round(v / PIN_GRID) * PIN_GRID;
 
-interface Placed {
-    id: string;
-    designator: string;
-    x: number;
-    y: number;
-    symbol: ReturnType<typeof symbolFor>;
-}
-
-/**
- * Where each part sits.
- *
- * A stored position wins; otherwise a grid, ordered by the component array, with the cell sized to the
- * LARGEST symbol so nothing overlaps whatever mix of parts a design happens to contain. Deterministic by
- * construction: no clock, no randomness, no dependence on render order.
- */
-function layOut(circuit: CircuitJson, positions: Record<string, Position> | undefined): Placed[] {
-    const parts = (circuit.components ?? []).filter((c) => isPlaceablePart(c));
-    // TURNED as well as placed. `Position` has carried `rotation` and `mirror` since it was written and
-    // nothing has ever applied them: measured, the same diode rendered with `rotation:'90'` produced SVG
-    // byte-identical to the upright one, because this function read only x and y. That is not a missing
-    // feature — `pcb-core`'s adapter DOES read the field and emits `pcbRotation={90}`, so the sheet was
-    // quietly disagreeing with the board about the same design, with nothing comparing the two.
-    //
-    // `orientSymbol` returns the SAME object for an upright, unmirrored part, so the overwhelmingly common
-    // case — every design a machine wrote — costs one comparison rather than a rebuilt symbol.
-    const symbols = parts.map((c) => orientSymbol(symbolFor(c), positions?.[c.id]));
-    const cellW = Math.max(CELL_PAD, ...symbols.map((s) => s.width)) + CELL_PAD;
-    const cellH = Math.max(CELL_PAD, ...symbols.map((s) => s.height)) + CELL_PAD;
-    const cols = Math.max(1, Math.ceil(Math.sqrt(parts.length)));
-
-    return parts.map((c, i) => {
-        const stored = positions?.[c.id];
-        return {
-            id: c.id,
-            designator: c.designator,
-            // SNAPPED, and this is where the lattice actually has to hold. `symbolFor` guarantees every pin
-            // is on the PIN_GRID lattice in the symbol's OWN frame, and placing that symbol at an off-grid
-            // origin destroys the guarantee in the frame that matters — the one wires are drawn in. The
-            // fallback used to put centres at 68, 156, 244, so pins landed on residues 4, 6 and 8 mod 10
-            // and no lattice contained them; two parts side by side had pins at heights that could not be
-            // joined by a straight line, which is the one thing the grid exists to make possible.
-            //
-            // It also made a part JUMP the first time it was dragged: the drop snaps to the lattice, so a
-            // part sitting at 68 landed at 70 without the pointer having moved. Measured 9 out of 9 on a
-            // nine-part fallback layout.
-            x: snapToGrid(stored?.x ?? MARGIN + (i % cols) * cellW + cellW / 2),
-            y: snapToGrid(stored?.y ?? MARGIN + Math.floor(i / cols) * cellH + cellH / 2),
-            symbol: symbols[i]!,
-        };
-    });
-}
+type Placed = PlacedPart;
 
 export function SchematicCanvas({
     circuit,
@@ -157,8 +102,7 @@ export function SchematicCanvas({
     } | null>(null);
 
     const { placed, routed, extent, byPath } = useMemo(() => {
-        const placed = layOut(circuit, ui?.positions);
-        const byComponent = new Map((circuit.components ?? []).map((c) => [c.id, c]));
+        const placed = placeParts(circuit, ui?.positions);
 
         /**
          * The wires, ROUTED IN THE KERNEL rather than drawn here.
@@ -174,28 +118,7 @@ export function SchematicCanvas({
          * Nets with a single terminal are drawn as nothing, and that is the correct depiction: the bare pin
          * IS the symbol for an unconnected terminal, and ERC reports it in those words.
          */
-        const routed = routeSheet(
-            (circuit.nets ?? []).map((net) => ({
-                id: net.id,
-                name: net.name,
-                pins: placed.flatMap((p) =>
-                    (byComponent.get(p.id)?.pins ?? [])
-                        .filter((pin) => pin.netId === net.id)
-                        .flatMap((pin) => {
-                            const sp = p.symbol.pins.find((s) => s.pinId === pin.pinId);
-                            return sp
-                                ? [{ x: p.x + sp.x, y: p.y + sp.y, side: sp.side, label: `${p.id}.${pin.pinId}` }]
-                                : [];
-                        }),
-                ),
-            })),
-            placed.map((p) => ({
-                minX: p.x - p.symbol.width / 2,
-                minY: p.y - p.symbol.height / 2,
-                maxX: p.x + p.symbol.width / 2,
-                maxY: p.y + p.symbol.height / 2,
-            })),
-        );
+        const routed = routeSheet(netsOf(circuit, placed), bodiesOf(placed));
 
         // HALF the extent on each side of the centre, because `width`/`height` are FULL extents — the size
         // of the whole symbol, scanned from its own strokes and pins. This file used to read them both
@@ -211,10 +134,10 @@ export function SchematicCanvas({
         const minX = Math.min(...xs, 0);
         const minY = Math.min(...ys, 0);
         const extent = {
-            x: minX - MARGIN,
-            y: minY - MARGIN,
-            w: Math.max(200, Math.max(...xs) - minX + MARGIN * 2),
-            h: Math.max(160, Math.max(...ys) - minY + MARGIN * 2),
+            x: minX - VIEW_MARGIN,
+            y: minY - VIEW_MARGIN,
+            w: Math.max(200, Math.max(...xs) - minX + VIEW_MARGIN * 2),
+            h: Math.max(160, Math.max(...ys) - minY + VIEW_MARGIN * 2),
         };
 
         // The tree is the selection authority; the canvas resolves through it rather than minting its own
@@ -367,6 +290,37 @@ export function SchematicCanvas({
         onArrange(label, { ...ui, schemaVersion: 1, positions });
     };
 
+    // Which wires the router says are not to be trusted. Built once per drawing rather than searched per
+    // wire, because 'is this key in a list' inside a render loop is how a linear cost becomes a quadratic one.
+    const untrustworthy = new Set(routed.fellBack.filter((f) => f.reason === 'no-legible-route').map((f) => f.key));
+
+    /**
+     * A wire's points as they should be drawn RIGHT NOW, which during a gesture is not where the document
+     * says.
+     *
+     * Only the ends matter. A wire ends on a terminal, so an end sitting on a terminal of the part being
+     * dragged follows the pointer while everything else holds still — the wire stretches from where it is
+     * anchored to where the pin now is. That is the ordinary rubber band every editor uses, and it is the
+     * honest thing to draw: the drawing is mid-gesture, and it says so by not being at right angles.
+     *
+     * Re-routing instead would be correct and unusable: a sheet takes tens of milliseconds to route and a
+     * drag is sixty frames a second. Before this the wires did not move at all, so a part could be dragged
+     * clear across the sheet with its wires still pointing at where it used to be.
+     */
+    const rubberBand = (points: readonly (readonly [number, number])[]): Array<readonly [number, number]> => {
+        if (!drag?.moved) return [...points];
+        const moved = new Set(
+            placed
+                .filter((p) => drag.ids.includes(p.id))
+                .flatMap((p) => p.symbol.pins.map((s) => `${p.x + s.x},${p.y + s.y}`)),
+        );
+        return points.map((q, i) =>
+            (i === 0 || i === points.length - 1) && moved.has(`${q[0]},${q[1]}`)
+                ? ([q[0] + drag.dx, q[1] + drag.dy] as const)
+                : q,
+        );
+    };
+
     if (placed.length === 0) return <p className="empty">Nothing to draw yet — this design has no placeable parts.</p>;
 
     return (
@@ -380,26 +334,53 @@ export function SchematicCanvas({
             onPointerUp={drag ? endDrag : undefined}
             onPointerCancel={drag ? endDrag : undefined}
         >
-            {routed.wires.map((w) => (
-                <polyline
-                    key={w.key}
-                    points={w.points.map(([x, y]) => `${x},${y}`).join(' ')}
-                    fill="none"
-                    stroke="var(--text-faint)"
-                    strokeWidth={1}
-                    data-net={w.netName}
-                    // Stated so a reader can tell the difference. A diagonal here is not a style: it is the
-                    // router saying it could not draw this wire at right angles without the drawing claiming
-                    // something the netlist does not, and it means the placement is worth improving.
-                    data-shape={w.shape}
-                />
-            ))}
+            {routed.wires.map((w) => {
+                // THE ROUTER'S OWN WARNING, ON THE SCREEN. `fellBack` distinguishes a wire that is merely a
+                // diagonal because the sheet is crowded from one the module says states something FALSE —
+                // and it called that report "the only reason this case is not a silent bug". It was not read
+                // by anything: both came out as an identical grey diagonal, so on screen the report did not
+                // exist and the promise was empty. An untrustworthy wire is now drawn as one: dashed, in the
+                // warning colour, and titled with the reason.
+                const lies = untrustworthy.has(w.key);
+                return (
+                    <polyline
+                        key={w.key}
+                        points={rubberBand(w.points)
+                            .map(([x, y]) => `${x},${y}`)
+                            .join(' ')}
+                        fill="none"
+                        stroke={lies ? 'var(--warn)' : 'var(--text-faint)'}
+                        strokeWidth={1}
+                        strokeDasharray={lies ? '4 3' : undefined}
+                        data-net={w.netName}
+                        // Stated so a reader can tell the difference. A diagonal here is not a style: it is
+                        // the router saying it could not draw this wire at right angles without the drawing
+                        // claiming something the netlist does not.
+                        data-shape={w.shape}
+                        data-trust={lies ? 'unverified' : undefined}
+                    >
+                        {lies && (
+                            <title>
+                                {w.netName}: no line between these terminals shows only what the netlist says — move a
+                                part to fix it
+                            </title>
+                        )}
+                    </polyline>
+                );
+            })}
 
             {/* THE DOTS, which are not decoration. A dot means these wires are one node; its absence means
                 they merely cross. Without them a branch and a crossing look identical, and a reader has to
                 guess which circuit they are looking at. */}
             {routed.junctions.map((j) => (
-                <circle key={`${j.netId}@${j.x},${j.y}`} cx={j.x} cy={j.y} r={2} fill="var(--text-faint)" />
+                <circle
+                    key={`${j.netId}@${j.x},${j.y}`}
+                    data-testid="junction"
+                    cx={j.x}
+                    cy={j.y}
+                    r={2}
+                    fill="var(--text-faint)"
+                />
             ))}
 
             {placed.map((p) => {
