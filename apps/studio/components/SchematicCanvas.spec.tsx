@@ -1320,3 +1320,114 @@ describe('a connection can be taken back from the drawing', () => {
         expect(container.querySelector('svg')).not.toBeNull();
     });
 });
+
+/**
+ * The two verbs the canvas was missing, and the field that had nowhere to be written from.
+ */
+describe('mirroring, which was built and unreachable', () => {
+    const mirrorOf = (next: UiJson | undefined): string | undefined => next?.positions?.r1?.mirror;
+
+    it('X mirrors the selected part, and X again returns it', () => {
+        // `Position.mirror` has been in the schema since it was written, `orientSymbol` applies it and
+        // `pcb-core` reads it — and nothing anywhere could WRITE one. The same gap rotation had: a field, a
+        // renderer that honours it, and no key.
+        let next: UiJson | undefined;
+        const { rerender } = render(
+            <SchematicCanvas circuit={CIRCUIT} selectedPath="root/components/r1" onArrange={(_l, n) => (next = n)} />,
+        );
+        fireEvent.keyDown(window, { key: 'x' });
+        expect(mirrorOf(next)).toBe('x');
+
+        rerender(
+            <SchematicCanvas
+                circuit={CIRCUIT}
+                ui={next}
+                selectedPath="root/components/r1"
+                onArrange={(_l, n) => (next = n)}
+            />,
+        );
+        fireEvent.keyDown(window, { key: 'x' });
+        // DROPPED, not set to anything. A part mirrored twice is the part, and leaving the field behind would
+        // make the drawing structurally different from the one before the first press — so the commit kernel
+        // would mint a revision and a save for a part that visibly did not move.
+        expect(next?.positions?.r1).not.toHaveProperty('mirror');
+    });
+
+    it('Y mirrors the other way, and replaces an X rather than stacking on it', () => {
+        let next: UiJson | undefined;
+        render(
+            <SchematicCanvas
+                circuit={CIRCUIT}
+                ui={{ schemaVersion: 1, positions: { r1: { x: 100, y: 100, mirror: 'x' } } }}
+                selectedPath="root/components/r1"
+                onArrange={(_l, n) => (next = n)}
+            />,
+        );
+        fireEvent.keyDown(window, { key: 'y' });
+        expect(mirrorOf(next)).toBe('y');
+    });
+
+    it('KEEPS the rotation it already had', () => {
+        // Two independent fields. Mirroring a part that is turned must not straighten it — the drawing and
+        // the board both read `rotation`, and losing it here would make the sheet disagree with the layout.
+        let next: UiJson | undefined;
+        render(
+            <SchematicCanvas
+                circuit={CIRCUIT}
+                ui={{ schemaVersion: 1, positions: { r1: { x: 100, y: 100, rotation: '90' } } }}
+                selectedPath="root/components/r1"
+                onArrange={(_l, n) => (next = n)}
+            />,
+        );
+        fireEvent.keyDown(window, { key: 'x' });
+        expect(next?.positions?.r1).toEqual(expect.objectContaining({ rotation: '90', mirror: 'x' }));
+    });
+
+    it('does NOT fire while the user is typing', () => {
+        // `x` and `y` are letters, and the Inspector is full of text fields — a part number with an x in it
+        // would otherwise flip the part behind the panel.
+        let fired = 0;
+        render(<SchematicCanvas circuit={CIRCUIT} selectedPath="root/components/r1" onArrange={() => (fired += 1)} />);
+        const field = document.createElement('input');
+        document.body.appendChild(field);
+        for (const key of ['x', 'y', 'r']) fireEvent.keyDown(field, { key });
+        expect(fired).toBe(0);
+        field.remove();
+    });
+});
+
+describe('deleting a part from the drawing', () => {
+    it('Delete removes the selected PART, not just a terminal', () => {
+        // The other half of one verb: a terminal comes off its net, a part comes off the design. Both were in
+        // the kernel with tests, and only the terminal could be reached from the sheet.
+        const removed: string[] = [];
+        render(
+            <SchematicCanvas circuit={CIRCUIT} selectedPath="root/components/r1" onDelete={(id) => removed.push(id)} />,
+        );
+        fireEvent.keyDown(window, { key: 'Delete' });
+        expect(removed).toEqual(['r1']);
+    });
+
+    it('leaves a terminal selection to the disconnect verb', () => {
+        // One key, two objects, and they must not both answer.
+        const removed: string[] = [];
+        const parted: unknown[] = [];
+        render(
+            <SchematicCanvas
+                circuit={CIRCUIT}
+                selectedPath="root/components/r1/pins/2"
+                onDelete={(id) => removed.push(id)}
+                onDisconnect={(pin) => parted.push(pin)}
+            />,
+        );
+        fireEvent.keyDown(window, { key: 'Delete' });
+        expect({ removed, parted }).toEqual({ removed: [], parted: [{ componentId: 'r1', pinId: '2' }] });
+    });
+
+    it('does nothing when the selection is a net', () => {
+        const removed: string[] = [];
+        render(<SchematicCanvas circuit={CIRCUIT} selectedPath="root/nets/gnd" onDelete={(id) => removed.push(id)} />);
+        fireEvent.keyDown(window, { key: 'Delete' });
+        expect(removed).toEqual([]);
+    });
+});
