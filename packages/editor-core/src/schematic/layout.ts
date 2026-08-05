@@ -15,7 +15,7 @@
 
 import type { CircuitJson, Position } from '@circuit-forge/eda-core';
 
-import { isDrawnOnSheet } from '../tree/object-tree';
+import { isDrawnOnSheet, isPlaceablePart } from '../tree/object-tree';
 
 import { orientSymbol } from './orient';
 import type { Box, RouteNet, RoutePin } from './route';
@@ -36,6 +36,9 @@ const GAP = LANES * PIN_GRID;
 const MARGIN = GAP / 2;
 
 const snapToGrid = (v: number): number => Math.round(v / PIN_GRID) * PIN_GRID;
+
+/** How far below the terminal a net marker sits: two lanes, which is one short wire and no crowding. */
+const MARKER_DROP = 2 * PIN_GRID;
 
 export interface PlacedPart {
     id: string;
@@ -69,24 +72,87 @@ export function placeParts(circuit: CircuitJson, positions?: Record<string, Posi
     const symbols = parts.map((c) => orientSymbol(symbolFor(c), positions?.[c.id]));
     const cellW = Math.max(GAP, ...symbols.map((s) => s.width)) + GAP;
     const cellH = Math.max(GAP, ...symbols.map((s) => s.height)) + GAP;
-    const cols = Math.max(1, Math.ceil(Math.sqrt(parts.length)));
+    // Markers do not take a cell of their own: they are placed against the terminal they annotate, so
+    // counting them here would spread the real parts out around gaps nothing occupies.
+    const inGrid = parts.filter((c) => isPlaceablePart(c));
+    const cols = Math.max(1, Math.ceil(Math.sqrt(inGrid.length)));
 
-    return parts.map((c, i) => ({
+    let cell = 0;
+    const placed = parts.map((c, i) => ({
         id: c.id,
         designator: c.designator,
-        x: snapToGrid(positions?.[c.id]?.x ?? MARGIN + (i % cols) * cellW + cellW / 2),
-        y: snapToGrid(positions?.[c.id]?.y ?? MARGIN + Math.floor(i / cols) * cellH + cellH / 2),
+        x: snapToGrid(positions?.[c.id]?.x ?? MARGIN + (cell % cols) * cellW + cellW / 2),
+        y: snapToGrid(positions?.[c.id]?.y ?? MARGIN + Math.floor(cell / cols) * cellH + cellH / 2),
         symbol: symbols[i]!,
+        // A marker with no stored position is placed below, against the terminal it annotates.
+        ...(isPlaceablePart(c) ? (cell++, {}) : {}),
     }));
+
+    return attachMarkers(circuit, placed, positions);
 }
 
-/** The symbols as obstacles: what a wire may not be drawn through. */
+/**
+ * A net marker belongs BESIDE THE TERMINAL IT ANNOTATES, not in a cell of the grid.
+ *
+ * That is the whole point of the symbol: a ground mark next to a pin says "this pin is the reference" in the
+ * space of one wire, which is why schematics use it instead of running a wire to every ground pin. Drawn at
+ * whatever cell its position in the components array happened to land on, it becomes one more distant spoke
+ * of the same star — MEASURED on the product's own four regression circuits, the ground net got longer on
+ * all four. Against the terminal it is shorter on all four: 470→350, 1520→1430, 1280→1160, 7390→6840.
+ *
+ * IT IS STILL LONGER THAN NOT DRAWING THE MARKER AT ALL (180, 1070, 910, 6300), and that is not a defect to
+ * fix but the truth about what a marker is: an extra terminal on the net, and a wire to reach it. The saving
+ * a schematic actually gets comes from giving EVERY ground pin its own marker, which is a question about
+ * what the design contains rather than about where this function puts things.
+ *
+ * The lowest terminal wins, because down is where a reader looks for ground, and each marker takes a
+ * different one so that several markers annotate several pins rather than crowding one.
+ */
+function attachMarkers(circuit: CircuitJson, placed: PlacedPart[], positions?: Record<string, Position>): PlacedPart[] {
+    const byId = new Map((circuit.components ?? []).map((c) => [c.id, c]));
+    const markers = placed.filter((p) => !isPlaceablePart(byId.get(p.id) ?? { type: 'resistor' }));
+    if (markers.length === 0) return placed;
+
+    const taken = new Set<string>();
+    const moved = new Map<string, { x: number; y: number }>();
+    for (const marker of markers) {
+        if (positions?.[marker.id]) continue; // somebody arranged it; that always wins
+        const net = byId.get(marker.id)?.pins[0]?.netId;
+        const at = placed
+            .filter((p) => isPlaceablePart(byId.get(p.id) ?? { type: 'ground' }))
+            .flatMap((p) =>
+                (byId.get(p.id)?.pins ?? [])
+                    .filter((pin) => pin.netId === net)
+                    .flatMap((pin) => {
+                        const sp = p.symbol.pins.find((q) => q.pinId === pin.pinId);
+                        return sp ? [{ key: `${p.id}.${pin.pinId}`, x: p.x + sp.x, y: p.y + sp.y }] : [];
+                    }),
+            )
+            .filter((t) => !taken.has(t.key))
+            // Lowest first, then leftmost, then by name — a total order, so the same document always draws
+            // the same sheet however the parts arrived.
+            .sort((u, v) => v.y - u.y || u.x - v.x || u.key.localeCompare(v.key))[0];
+        if (!at) continue;
+        taken.add(at.key);
+        moved.set(marker.id, { x: at.x, y: at.y + MARKER_DROP });
+    }
+    return placed.map((p) => ({ ...p, ...(moved.get(p.id) ?? {}) }));
+}
+
+/**
+ * The symbols as obstacles: what a wire may not be drawn through.
+ *
+ * FROM THE SYMBOL'S OWN BOUNDS, not from its extent about its centre. Those are the same thing for every
+ * symbol that happens to be centred on its origin, which was all of them until ground arrived: its bars run
+ * y=0…6 and its terminal sits at y=-10, so `centre ± height/2` missed the top two units of the drawing —
+ * including the strip the terminal itself occupies — and declared two units of blank sheet solid below it.
+ */
 export const bodiesOf = (placed: readonly PlacedPart[]): Box[] =>
     placed.map((p) => ({
-        minX: p.x - p.symbol.width / 2,
-        minY: p.y - p.symbol.height / 2,
-        maxX: p.x + p.symbol.width / 2,
-        maxY: p.y + p.symbol.height / 2,
+        minX: p.x + p.symbol.bounds.minX,
+        minY: p.y + p.symbol.bounds.minY,
+        maxX: p.x + p.symbol.bounds.maxX,
+        maxY: p.y + p.symbol.bounds.maxY,
     }));
 
 /**

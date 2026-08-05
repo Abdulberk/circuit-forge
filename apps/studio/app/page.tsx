@@ -9,13 +9,14 @@
  */
 
 import {
+    buildObjectTree,
     connectPins,
     deleteComponent,
     disconnectPin,
     isPlaceablePart,
     type TreeNode,
 } from '@circuit-forge/editor-core';
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 
 import { AddPart, Inspector } from '../components/Inspector';
 import { ObjectTreePanel } from '../components/ObjectTreePanel';
@@ -132,6 +133,18 @@ function Workspace() {
     // The loader fetches; the document OWNS what is on screen and writes it back. Splitting them is what
     // keeps a local edit instant while the save is debounced, refusable and one-at-a-time.
     const doc = useDocument(api, activeProject, opened.data, opened.reload);
+    /**
+     * A SELECTION CANNOT OUTLIVE THE THING IT NAMES.
+     *
+     * Deleting from the canvas cleared it and deleting from the Inspector did not, so the Inspector's button
+     * left the selection pointing at a part that was gone — and the next Delete key then acted on a ghost.
+     * An undo that removes a part does the same. Checked against the document itself rather than patched at
+     * each call site: there is one question here, and every path that changes the design asks it.
+     */
+    useEffect(() => {
+        if (!selected || !doc.circuit) return;
+        if (!buildObjectTree(doc.circuit).byPath.has(selected.ref.path.join('/'))) setSelected(null);
+    }, [doc.circuit, selected]);
     useUndoShortcuts({ undo: doc.undo, redo: doc.redo });
     const circuit = doc.circuit;
     const counts = useMemo(
@@ -294,13 +307,7 @@ function Workspace() {
                             // terminals and parting them again are two steps of one undo stack in the order
                             // they happened — not two stacks a user has to hold in their head.
                             onDisconnect={(pin) => doc.apply((c) => disconnectPin(c, pin))}
-                            onDelete={(id) => {
-                                doc.apply((c) => deleteComponent(c, id));
-                                // The selection cannot outlive the thing it names. Left alone it would point
-                                // at a path the tree no longer has, and the Inspector would go on offering
-                                // fields for a part that is gone.
-                                setSelected(null);
-                            }}
+                            onDelete={(id) => doc.apply((c) => deleteComponent(c, id))}
                         />
                     ) : (
                         <p className="empty">Open a project with a working copy to begin.</p>

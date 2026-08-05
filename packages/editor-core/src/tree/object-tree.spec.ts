@@ -126,15 +126,38 @@ describe('buildObjectTree — Root › Components › C › Pins / Footprint / P
         expect(group(buildObjectTree(circuit, layout))).toContain('laid out');
     });
 
-    it('omits ground markers — they are net annotations, not parts to place', () => {
+    it('INCLUDES a ground marker, because it is on the drawing and a click has to resolve to something', () => {
+        // This tree is the SELECTION AUTHORITY: the canvas resolves every click through it. While it skipped
+        // net markers and the sheet drew them, the ground symbol was the one object a user could see, drag
+        // and wire — and never select. Clicking it destroyed whatever WAS selected and put nothing in its
+        // place, so it could not be turned, mirrored, deleted or inspected by any surface in the app.
         const withGround = {
             ...circuit,
             components: [...circuit.components, { id: 'g1', type: 'ground', designator: 'GND1', pins: [] }],
         } as unknown as CircuitJson;
         const tree = buildObjectTree(withGround);
-        expect(kinds(tree, 'component').map((n) => n.label)).not.toContain('GND1');
-        // …and it is not reported as a gap either, because it was never supposed to be placed.
+        expect(kinds(tree, 'component').map((n) => n.label)).toContain('GND1');
+        expect(tree.byPath.get('root/components/g1')).toBeTruthy();
+        // …and it is still not a PART. The row says which it is rather than leaving a reader to count.
+        expect(kinds(tree, 'component').find((n) => n.label === 'GND1')?.detail).toBe('net marker');
         expect(tree.unplaced).toEqual([]);
+    });
+
+    it('names BOTH numbers on the group, so neither has to be inferred', () => {
+        // A single count would leave a reader working out which question it answers — the same confusion that
+        // once had the tree saying 26 while the status bar beside it said 27, for the same design.
+        const withGround = {
+            ...circuit,
+            components: [...circuit.components, { id: 'g1', type: 'ground', designator: 'GND1', pins: [] }],
+        } as unknown as CircuitJson;
+        const parts = circuit.components.length;
+        expect(buildObjectTree(withGround).root.children.find((n) => n.ref.kind === 'components')?.detail).toBe(
+            `${parts} parts · 1 markers`,
+        );
+        // With no markers there is only one number to give, so it is given plainly.
+        expect(buildObjectTree(circuit).root.children.find((n) => n.ref.kind === 'components')?.detail).toBe(
+            String(parts),
+        );
     });
 
     it('names the loser when two objects claim one address', () => {

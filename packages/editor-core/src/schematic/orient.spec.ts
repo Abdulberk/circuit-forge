@@ -122,6 +122,9 @@ describe('what a turn must preserve', () => {
             basis: 'drawn',
             width: 40,
             height: 10,
+            // Deliberately NOT centred on its origin — which is the whole point of this fixture, and is
+            // now stated rather than left for a consumer to reconstruct from the extent.
+            bounds: { minX: 0, minY: 0, maxX: 40, maxY: 10 },
             strokes: [
                 {
                     points: [

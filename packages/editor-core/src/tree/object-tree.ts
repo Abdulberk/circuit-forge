@@ -189,8 +189,17 @@ export function buildObjectTree(circuit: CircuitJson, layout?: LayoutGeometry): 
     const componentNodes: TreeNode[] = [];
     const layoutById = new Map((layout?.components ?? []).map((lc) => [lc.id, lc]));
 
+    // EVERYTHING THAT IS DRAWN, because this tree is the SELECTION AUTHORITY and the canvas resolves every
+    // click through it. Skipping the net markers here while the sheet drew them made the ground symbol the
+    // one object a user could see, drag and wire — and never select: clicking it destroyed whatever WAS
+    // selected and put nothing in its place, so it could not be turned, mirrored, deleted or inspected by
+    // any surface in the app. A tree that omits something on the drawing is a tree that says it is not there.
+    //
+    // A marker is still not a PART, and the row says so rather than leaving a reader to count: its detail
+    // reads "net marker", and the group's own count names both numbers so nobody has to work out which one
+    // answers their question.
     for (const c of circuit.components ?? []) {
-        if (!isPlaceablePart(c)) continue; // a net marker, not a part anyone places or inspects
+        if (!isDrawnOnSheet(c)) continue;
 
         const lc = layoutById.get(c.id);
         const compRef = ref('component', c.id, componentsRef.path);
@@ -263,7 +272,7 @@ export function buildObjectTree(circuit: CircuitJson, layout?: LayoutGeometry): 
             add({
                 ref: compRef,
                 label: c.designator,
-                detail: layout && !lc ? `${c.type} · not on the board` : c.type,
+                detail: !isPlaceablePart(c) ? 'net marker' : layout && !lc ? `${c.type} · not on the board` : c.type,
                 children,
             }),
         );
@@ -282,7 +291,15 @@ export function buildObjectTree(circuit: CircuitJson, layout?: LayoutGeometry): 
             label: 'Components',
             // Says whether a board exists, on the row a reader is already looking at. "12 · laid out" and
             // "12" are different facts, and the difference decides whether Pads mean anything.
-            detail: layout ? `${componentNodes.length} · laid out` : String(componentNodes.length),
+            // BOTH NUMBERS, named. The group holds every drawn object and only some of them are parts, and a
+            // single count would leave a reader to work out which question it answers — the same confusion
+            // that once had the tree saying 26 while the status bar beside it said 27.
+            detail: (() => {
+                const parts = (circuit.components ?? []).filter((c) => isPlaceablePart(c)).length;
+                const markers = componentNodes.length - parts;
+                const counted = markers > 0 ? `${parts} parts · ${markers} markers` : String(parts);
+                return layout ? `${counted} · laid out` : counted;
+            })(),
             children: componentNodes,
         }),
     );

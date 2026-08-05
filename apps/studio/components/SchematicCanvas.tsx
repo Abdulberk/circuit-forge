@@ -473,23 +473,29 @@ export function SchematicCanvas({
             // the keystroke keeps it — the same guard the undo shortcut uses, imported rather than restated.
             if (isTextEntry(event.target)) return;
 
-            const parts = selectedPath.split('/');
-            if (parts.length === 5 && parts[3] === 'pins' && onDisconnect) {
+            // ASKED OF THE TREE, not cut out of the path string. A path is a JOIN of ids, so reading ids back
+            // out of it by counting separators is only right while no id contains one — and ids are ordinary
+            // data: a design merged from two sub-sheets, or written by something else, can carry a slash. The
+            // node already holds what its address means, in fields, which is why it has them.
+            const node = byPath.get(selectedPath);
+            if (!node) return;
+
+            if (node.ref.kind === 'pin' && node.ref.componentId && onDisconnect) {
                 event.preventDefault();
-                onDisconnect({ componentId: parts[2]!, pinId: parts[4]! });
+                onDisconnect({ componentId: node.ref.componentId, pinId: node.ref.id });
                 return;
             }
             // A whole part. The kernel decides what goes with it: `deleteComponent` removes the nets THIS
             // delete emptied and leaves alone any that were already unreferenced, because sweeping those
             // would quietly remove things the user never touched and name them in a note they cannot place.
-            if (parts.length === 3 && parts[1] === 'components' && onDelete) {
+            if (node.ref.kind === 'component' && onDelete) {
                 event.preventDefault();
-                onDelete(parts[2]!);
+                onDelete(node.ref.id);
             }
         };
         window.addEventListener('keydown', onKeyDown);
         return () => window.removeEventListener('keydown', onKeyDown);
-    }, [selectedPath, onDisconnect, onDelete]);
+    }, [selectedPath, byPath, onDisconnect, onDelete]);
 
     /**
      * `R` turns the selected part — the convention every schematic editor shares.
@@ -506,8 +512,10 @@ export function SchematicCanvas({
      */
     useEffect(() => {
         if (!onArrange || !selectedPath) return;
-        const id = selectedPath.split('/').pop();
-        const part = placed.find((p) => p.id === id);
+        // The same rule: the tree says which object this is, rather than the last segment of a joined string
+        // — which for a pin selection is the PIN's name and would find a part called '1' if one existed.
+        const node = byPath.get(selectedPath);
+        const part = node?.ref.kind === 'component' ? placed.find((p) => p.id === node.ref.id) : undefined;
         if (!part) return; // the selection is a net, a pin, or something with no orientation
 
         const onKeyDown = (event: KeyboardEvent) => {
@@ -566,7 +574,7 @@ export function SchematicCanvas({
 
         window.addEventListener('keydown', onKeyDown);
         return () => window.removeEventListener('keydown', onKeyDown);
-    }, [onArrange, selectedPath, placed, ui]);
+    }, [onArrange, selectedPath, byPath, placed, ui]);
 
     /**
      * Where a part is RIGHT NOW, which during a gesture is not where the document says.
@@ -801,28 +809,43 @@ export function SchematicCanvas({
                             had nothing behind them. A fallback that silently succeeds is how a typo in a
                             colour name survives review: it renders, so it looks intentional. */}
                         {p.symbol.strokes.map((s, i) => {
+                            // `key` is NOT in here, and that is not a style choice. React reads a key off the
+                            // element, not out of a spread props object, so carrying it in `shape` meant the
+                            // key was silently absent — every stroke re-created on each render instead of
+                            // being matched to the one before it, and a console error on every paint. It is
+                            // written on the element, where React looks for it.
                             const shape = {
-                                key: i,
                                 points: s.points.map(([x, y]) => `${x},${y}`).join(' '),
                                 stroke: isSelected ? 'var(--accent, #d99a5c)' : 'var(--text, #ccc)',
                                 strokeWidth: isSelected ? 2 : 1.4,
                             };
                             return s.closed ? (
-                                <polygon {...shape} fill="var(--panel-raised, #222)" />
+                                <polygon key={i} {...shape} fill="var(--panel-raised, #222)" />
                             ) : (
-                                <polyline {...shape} fill="none" />
+                                <polyline key={i} {...shape} fill="none" />
                             );
                         })}
                         {p.symbol.pins.map((pin) => {
                             const live = wire?.to?.componentId === p.id && wire.to.pinId === pin.pinId;
                             const source = wire?.from.componentId === p.id && wire.from.pinId === pin.pinId;
+                            // A SELECTED TERMINAL HAS TO LOOK SELECTED. Clicking one changes what Delete does
+                            // and what the Inspector shows, and the drawing was byte-identical to having
+                            // nothing selected — so the user pressed the key and could only find out by
+                            // watching what disappeared.
+                            const chosen = selectedPath === `root/components/${p.id}/pins/${pin.pinId}`;
                             return (
                                 <g key={pin.pinId}>
                                     <circle
                                         cx={pin.x}
                                         cy={pin.y}
-                                        r={live || source ? 4 : 2}
-                                        fill={live || source ? 'var(--good)' : 'var(--text-faint, #888)'}
+                                        r={live || source || chosen ? 4 : 2}
+                                        fill={
+                                            live || source
+                                                ? 'var(--good)'
+                                                : chosen
+                                                  ? 'var(--accent, #6cf)'
+                                                  : 'var(--text-faint, #888)'
+                                        }
                                     />
                                     {/* THE PART YOU CAN ACTUALLY HIT. A terminal is drawn two units across and a
                                         person cannot reliably put a pointer on two units of anything — least of
