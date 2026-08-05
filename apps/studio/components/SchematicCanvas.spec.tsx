@@ -9,6 +9,7 @@
  * present in the netlist, and a layout that shuffles between renders so a user cannot point at anything.
  */
 import type { CircuitJson, Component, UiJson } from '@circuit-forge/eda-core';
+import { isDrawnOnSheet, isPlaceablePart } from '@circuit-forge/editor-core';
 import { render, screen, fireEvent } from '@testing-library/react';
 
 import { SchematicCanvas } from './SchematicCanvas';
@@ -69,10 +70,23 @@ describe('what the canvas draws', () => {
         expect(container.textContent).toContain('V1');
     });
 
-    it('does NOT draw a net marker as a part', () => {
-        // A ground symbol annotates a net; it has no footprint, appears on no BOM and nothing places it.
-        // The same rule the tree and the BOM use, imported rather than re-decided here.
-        expect(screen.queryByTestId('symbol-g1')).toBeNull();
+    it('DRAWS the ground symbol, because a schematic draws one', () => {
+        // Two different questions used to share one answer. Nobody buys a ground symbol or places it on a
+        // board — and every schematic in the world draws one. Deciding what goes on the SHEET with the
+        // board-and-BOM predicate meant it was never drawn, so the commonest connection in any circuit had no
+        // terminal on screen and no gesture could make it; the ground net was instead drawn as long wires
+        // reaching across the sheet to everything that touches it, which is what the symbol exists to avoid.
+        //
+        // RENDERED HERE, and that matters: the test this replaces asserted `queryByTestId(...)` was null
+        // WITHOUT rendering anything, which an empty document satisfies. It could not have failed.
+        const { container } = render(<SchematicCanvas circuit={CIRCUIT} />);
+        expect(container.querySelector('[data-testid="symbol-g1"]')).not.toBeNull();
+    });
+
+    it('still counts it as a net annotation rather than a part', () => {
+        // The other question keeps its own answer: the tree and the BOM must not gain a component.
+        expect(isPlaceablePart({ type: 'ground' })).toBe(false);
+        expect(isDrawnOnSheet({ type: 'ground' })).toBe(true);
     });
 
     it('draws a wire for every CONNECTION and none where there is no net', () => {
@@ -82,7 +96,8 @@ describe('what the canvas draws', () => {
         const nets = wires(container).map((l) => l.getAttribute('data-net'));
         expect(nets.filter((n) => n === 'VIN')).toHaveLength(1);
         expect(nets.filter((n) => n === 'MID')).toHaveLength(1);
-        expect(nets.filter((n) => n === 'GND')).toHaveLength(1); // V1.- to R2.2; the marker has no symbol
+        // Three terminals on GND now — V1.-, R2.2 and the ground symbol's own — so two wires from the hub.
+        expect(nets.filter((n) => n === 'GND')).toHaveLength(2);
     });
 
     it('draws NO wire for a net with a single pin — an unconnected pin must look unconnected', () => {
@@ -914,6 +929,26 @@ describe('a wire can be drawn from one terminal to another', () => {
         });
     });
 
+    it('can be drawn TO GROUND, which is the commonest connection there is', () => {
+        // The whole point of putting the ground symbol on the sheet. Before it, this gesture did not exist:
+        // the symbol was not drawn, so it had no terminal, so the connection every circuit needs most could
+        // only be made through a dropdown in a side panel.
+        const joined: unknown[] = [];
+        const { container } = render(
+            <SchematicCanvas circuit={CIRCUIT} onConnect={(from, to) => joined.push({ from, to })} />,
+        );
+        const svg = sized(container);
+
+        fireEvent.pointerDown(container.querySelector('[data-testid="pin-r1-2"]')!, {
+            pointerId: 21,
+            button: 0,
+            ...clientAt(svg, ...pinAt(container, 'r1', '2')),
+        });
+        fireEvent.pointerUp(svg, { pointerId: 21, ...clientAt(svg, ...pinAt(container, 'g1', '1')) });
+
+        expect(joined).toEqual([{ from: { componentId: 'r1', pinId: '2' }, to: { componentId: 'g1', pinId: '1' } }]);
+    });
+
     it('is not offered at all when the canvas cannot change the design', () => {
         // A viewer of somebody else's design should not be handed a gesture that goes nowhere — and the grab
         // targets are not free either: one invisible circle per terminal is half again as many DOM nodes as
@@ -1130,7 +1165,13 @@ describe('the view and the gestures, at the edges where they actually broke', ()
 
         for (let i = 0; i < 12; i++) fireEvent.wheel(svg, { deltaY: -100, clientX: 400, clientY: 300 });
         fireEvent.pointerMove(svg, { pointerId: 14, clientX: 400, clientY: 300 }); // the hand has not moved
-        expect(translateOf(container.querySelector('[data-testid="symbol-r1"]')!)).toEqual(moved);
+        // To a millionth of a grid step. Converting a point through a changed scale leaves a residue in the
+        // last bits of a double — three parts in a hundred thousand billion, which is not movement, and the
+        // committed value snaps to the lattice regardless. Demanding bit-equality here would be demanding
+        // something arithmetic cannot give, and would fail for a reason that has nothing to do with the part.
+        const now = translateOf(container.querySelector('[data-testid="symbol-r1"]')!);
+        expect(now[0]).toBeCloseTo(moved[0]!, 6);
+        expect(now[1]).toBeCloseTo(moved[1]!, 6);
 
         fireEvent.pointerUp(svg, { pointerId: 14, clientX: 400, clientY: 300 });
         expect(committed?.positions?.r1).toEqual(

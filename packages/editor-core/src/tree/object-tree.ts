@@ -108,6 +108,23 @@ const ref = (kind: ObjectKind, id: string, parent: string[], componentId?: strin
 export const isPlaceablePart = (component: Pick<Component, 'type'>): boolean => component.type !== 'ground';
 
 /**
+ * Is it DRAWN ON THE SCHEMATIC? A different question, with a different answer.
+ *
+ * The two were one predicate for a while, and the ground symbol is exactly where they part company: nobody
+ * buys one or places it on a board, and every schematic in the world draws one. Using the board-and-BOM
+ * question to decide what appears on the sheet meant the ground symbol was never drawn — so the commonest
+ * connection in any circuit had no terminal on screen and no gesture could make it, and the ground net was
+ * drawn instead as long wires reaching across the sheet to everything that touches it, which is precisely
+ * what the symbol exists to avoid.
+ *
+ * Everything is drawn. `symbolFor` has a conventional shape for the types it knows and derives a labelled box
+ * from the part's own pins for the rest, so there is no component a sheet cannot show. The predicate stays a
+ * function rather than becoming nothing at all, because the QUESTION is what the callers need to name: a
+ * renderer asking "should I draw this?" must not reach for the BOM's answer again.
+ */
+export const isDrawnOnSheet = (component: Pick<Component, 'type'>): boolean => component.type !== undefined;
+
+/**
  * Project the two documents into one tree.
  *
  * `layout` is optional, and its absence is the COMMON case — an editor spends most of its life on a design
