@@ -25,9 +25,12 @@
  */
 import { existsSync } from 'fs';
 
-import { noopGround } from '../grounding';
-import { makeLocalSim } from '../local-sim';
-import { runMultiCandidateDesign } from '../multi-candidate';
+// NOTHING FROM THE WORKER IS IMPORTED AT FILE SCOPE, and that is not tidiness. `describe.skip` still
+// evaluates a module's imports, and importing the design path pulls in the worker's config — which validates
+// its environment on load — and the global resource pools. In CI, where none of that environment exists, the
+// jest child process died before a single test was reported: "Jest worker encountered 4 child process
+// exceptions, exceeding retry limit". A suite that is skipped must load nothing, so the imports live inside
+// the test that needs them.
 
 /** The same resolution the API's live specs use: an explicit path, then the usual install locations. */
 const ngspice = (): string => {
@@ -62,6 +65,10 @@ const CONSTRAINTS = 'Use standard E24 resistor values. Keep quiescent current un
     });
 
     it('fans out to four and leaves the runners-up behind, which a single-candidate run does not', async () => {
+        const { runMultiCandidateDesign } = await import('../multi-candidate');
+        const { noopGround } = await import('../grounding');
+        const { makeLocalSim } = await import('../local-sim');
+
         const result = await runMultiCandidateDesign(
             { prompt: PROMPT, constraints: CONSTRAINTS, maxRounds: 2 },
             {
