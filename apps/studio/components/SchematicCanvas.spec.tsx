@@ -253,7 +253,7 @@ describe('selection is shared with the tree, not invented here', () => {
     });
 
     it('marks the selected part differently from the rest', () => {
-        const { container } = render(<SchematicCanvas circuit={CIRCUIT} selectedPath="root/components/r1" />);
+        const { container } = render(<SchematicCanvas circuit={CIRCUIT} selectedPaths={['root/components/r1']} />);
         const selected = container.querySelector('[data-testid="symbol-r1"] polyline');
         const other = container.querySelector('[data-testid="symbol-r2"] polyline');
         expect(selected?.getAttribute('stroke')).not.toBe(other?.getAttribute('stroke'));
@@ -406,7 +406,7 @@ describe('rotating the selected part', () => {
             <SchematicCanvas
                 circuit={CIRCUIT}
                 ui={{ positions: { r1: { x: 100, y: 100 } } }}
-                selectedPath={R1}
+                selectedPaths={[R1]}
                 onArrange={(l, n) => calls.push([l, n])}
             />,
         );
@@ -422,11 +422,13 @@ describe('rotating the selected part', () => {
         // `rotation: '0'` explicitly would leave a revision and a save for a part that visibly did not move.
         let ui: UiJson = { positions: { r1: { x: 100, y: 100 } } };
         const { rerender } = render(
-            <SchematicCanvas circuit={CIRCUIT} ui={ui} selectedPath={R1} onArrange={(_l, n) => (ui = n)} />,
+            <SchematicCanvas circuit={CIRCUIT} ui={ui} selectedPaths={[R1]} onArrange={(_l, n) => (ui = n)} />,
         );
         for (const expected of ['90', '180', '270', undefined]) {
             fireEvent.keyDown(window, { key: 'r' });
-            rerender(<SchematicCanvas circuit={CIRCUIT} ui={ui} selectedPath={R1} onArrange={(_l, n) => (ui = n)} />);
+            rerender(
+                <SchematicCanvas circuit={CIRCUIT} ui={ui} selectedPaths={[R1]} onArrange={(_l, n) => (ui = n)} />,
+            );
             expect(ui.positions!.r1!.rotation).toBe(expected);
         }
     });
@@ -439,7 +441,7 @@ describe('rotating the selected part', () => {
             <SchematicCanvas
                 circuit={CIRCUIT}
                 ui={{ positions: { r1: { x: 100, y: 100 } } }}
-                selectedPath={R1}
+                selectedPaths={[R1]}
                 onArrange={(...a) => calls.push(a)}
             />,
         );
@@ -456,7 +458,7 @@ describe('rotating the selected part', () => {
             <SchematicCanvas
                 circuit={CIRCUIT}
                 ui={{ positions: { r1: { x: 100, y: 100 } } }}
-                selectedPath={R1}
+                selectedPaths={[R1]}
                 onArrange={(...a) => calls.push(a)}
             />,
         );
@@ -472,7 +474,7 @@ describe('rotating the selected part', () => {
             <SchematicCanvas
                 circuit={CIRCUIT}
                 ui={{ positions: { r1: { x: 100, y: 100 } } }}
-                selectedPath="root/nets/VIN"
+                selectedPaths={['root/nets/VIN']}
                 onArrange={(...a) => calls.push(a)}
             />,
         );
@@ -486,7 +488,7 @@ describe('rotating the selected part', () => {
         // is ON SCREEN, so nothing moves.
         let next: UiJson | undefined;
         const { container } = render(
-            <SchematicCanvas circuit={CIRCUIT} selectedPath={R1} onArrange={(_l, n) => (next = n)} />,
+            <SchematicCanvas circuit={CIRCUIT} selectedPaths={[R1]} onArrange={(_l, n) => (next = n)} />,
         );
         const before = container.querySelector('[data-testid="symbol-r1"]')!.getAttribute('transform');
         fireEvent.keyDown(window, { key: 'r' });
@@ -1258,7 +1260,7 @@ describe('a connection can be taken back from the drawing', () => {
         render(
             <SchematicCanvas
                 circuit={CIRCUIT}
-                selectedPath={pinPath('r1', '2')}
+                selectedPaths={[pinPath('r1', '2')]}
                 onDisconnect={(pin) => parted.push(pin)}
             />,
         );
@@ -1273,7 +1275,7 @@ describe('a connection can be taken back from the drawing', () => {
         render(
             <SchematicCanvas
                 circuit={CIRCUIT}
-                selectedPath={pinPath('r2', '1')}
+                selectedPaths={[pinPath('r2', '1')]}
                 onDisconnect={(pin) => parted.push(pin)}
             />,
         );
@@ -1294,7 +1296,7 @@ describe('a connection can be taken back from the drawing', () => {
         render(
             <SchematicCanvas
                 circuit={CIRCUIT}
-                selectedPath="root/components/r1"
+                selectedPaths={['root/components/r1']}
                 onDisconnect={(pin) => parted.push(pin)}
             />,
         );
@@ -1307,7 +1309,7 @@ describe('a connection can be taken back from the drawing', () => {
         render(
             <SchematicCanvas
                 circuit={CIRCUIT}
-                selectedPath={pinPath('r1', '2')}
+                selectedPaths={[pinPath('r1', '2')]}
                 onDisconnect={(pin) => parted.push(pin)}
             />,
         );
@@ -1317,7 +1319,7 @@ describe('a connection can be taken back from the drawing', () => {
     });
 
     it('is not offered when the canvas cannot change the design', () => {
-        const { container } = render(<SchematicCanvas circuit={CIRCUIT} selectedPath={pinPath('r1', '2')} />);
+        const { container } = render(<SchematicCanvas circuit={CIRCUIT} selectedPaths={[pinPath('r1', '2')]} />);
         // No handler, so nothing to fire — and the assertion that matters is that the keystroke does not
         // throw on the way to doing nothing.
         expect(() => fireEvent.keyDown(window, { key: 'Delete' })).not.toThrow();
@@ -1337,7 +1339,11 @@ describe('mirroring, which was built and unreachable', () => {
         // renderer that honours it, and no key.
         let next: UiJson | undefined;
         const { rerender } = render(
-            <SchematicCanvas circuit={CIRCUIT} selectedPath="root/components/r1" onArrange={(_l, n) => (next = n)} />,
+            <SchematicCanvas
+                circuit={CIRCUIT}
+                selectedPaths={['root/components/r1']}
+                onArrange={(_l, n) => (next = n)}
+            />,
         );
         fireEvent.keyDown(window, { key: 'x' });
         expect(mirrorOf(next)).toBe('x');
@@ -1346,7 +1352,7 @@ describe('mirroring, which was built and unreachable', () => {
             <SchematicCanvas
                 circuit={CIRCUIT}
                 ui={next}
-                selectedPath="root/components/r1"
+                selectedPaths={['root/components/r1']}
                 onArrange={(_l, n) => (next = n)}
             />,
         );
@@ -1363,7 +1369,7 @@ describe('mirroring, which was built and unreachable', () => {
             <SchematicCanvas
                 circuit={CIRCUIT}
                 ui={{ schemaVersion: 1, positions: { r1: { x: 100, y: 100, mirror: 'x' } } }}
-                selectedPath="root/components/r1"
+                selectedPaths={['root/components/r1']}
                 onArrange={(_l, n) => (next = n)}
             />,
         );
@@ -1379,7 +1385,7 @@ describe('mirroring, which was built and unreachable', () => {
             <SchematicCanvas
                 circuit={CIRCUIT}
                 ui={{ schemaVersion: 1, positions: { r1: { x: 100, y: 100, rotation: '90' } } }}
-                selectedPath="root/components/r1"
+                selectedPaths={['root/components/r1']}
                 onArrange={(_l, n) => (next = n)}
             />,
         );
@@ -1391,7 +1397,9 @@ describe('mirroring, which was built and unreachable', () => {
         // `x` and `y` are letters, and the Inspector is full of text fields — a part number with an x in it
         // would otherwise flip the part behind the panel.
         let fired = 0;
-        render(<SchematicCanvas circuit={CIRCUIT} selectedPath="root/components/r1" onArrange={() => (fired += 1)} />);
+        render(
+            <SchematicCanvas circuit={CIRCUIT} selectedPaths={['root/components/r1']} onArrange={() => (fired += 1)} />,
+        );
         const field = document.createElement('input');
         document.body.appendChild(field);
         for (const key of ['x', 'y', 'r']) fireEvent.keyDown(field, { key });
@@ -1406,7 +1414,11 @@ describe('deleting a part from the drawing', () => {
         // the kernel with tests, and only the terminal could be reached from the sheet.
         const removed: string[] = [];
         render(
-            <SchematicCanvas circuit={CIRCUIT} selectedPath="root/components/r1" onDelete={(id) => removed.push(id)} />,
+            <SchematicCanvas
+                circuit={CIRCUIT}
+                selectedPaths={['root/components/r1']}
+                onDelete={(ids) => removed.push(...ids)}
+            />,
         );
         fireEvent.keyDown(window, { key: 'Delete' });
         expect(removed).toEqual(['r1']);
@@ -1419,8 +1431,8 @@ describe('deleting a part from the drawing', () => {
         render(
             <SchematicCanvas
                 circuit={CIRCUIT}
-                selectedPath="root/components/r1/pins/2"
-                onDelete={(id) => removed.push(id)}
+                selectedPaths={['root/components/r1/pins/2']}
+                onDelete={(ids) => removed.push(...ids)}
                 onDisconnect={(pin) => parted.push(pin)}
             />,
         );
@@ -1430,8 +1442,155 @@ describe('deleting a part from the drawing', () => {
 
     it('does nothing when the selection is a net', () => {
         const removed: string[] = [];
-        render(<SchematicCanvas circuit={CIRCUIT} selectedPath="root/nets/gnd" onDelete={(id) => removed.push(id)} />);
+        render(
+            <SchematicCanvas
+                circuit={CIRCUIT}
+                selectedPaths={['root/nets/gnd']}
+                onDelete={(ids) => removed.push(...ids)}
+            />,
+        );
         fireEvent.keyDown(window, { key: 'Delete' });
         expect(removed).toEqual([]);
+    });
+});
+
+/**
+ * Selecting more than one thing, which is what turns twenty gestures back into one.
+ */
+describe('more than one object can be selected', () => {
+    const sized = (container: HTMLElement): SVGSVGElement => {
+        const svg = container.querySelector('svg')!;
+        svg.getBoundingClientRect = () =>
+            ({
+                width: 800,
+                height: 600,
+                x: 0,
+                y: 0,
+                top: 0,
+                left: 0,
+                right: 800,
+                bottom: 600,
+                toJSON: () => ({}),
+            }) as DOMRect;
+        return svg;
+    };
+    const translateOf = (el: Element): number[] =>
+        /translate\(([-\d.]+) ([-\d.]+)\)/.exec(el.getAttribute('transform')!)!.slice(1).map(Number);
+
+    it('reports whether Shift was held, and decides nothing itself', () => {
+        // The canvas says WHICH object and WHETHER the key was down. What that means — add, remove, replace
+        // — is one decision, made once, above both surfaces. Two surfaces each interpreting the key is the
+        // defect this codebase already paid for: one told the Inspector and the other painted a different row.
+        const seen: Array<{ id: string | undefined; additive: boolean | undefined }> = [];
+        const { container } = render(
+            <SchematicCanvas circuit={CIRCUIT} onSelect={(n, a) => seen.push({ id: n?.ref.id, additive: a })} />,
+        );
+        fireEvent.click(container.querySelector('[data-testid="symbol-r1"]')!);
+        fireEvent.click(container.querySelector('[data-testid="symbol-r2"]')!, { shiftKey: true });
+        expect(seen).toEqual([
+            { id: 'r1', additive: false },
+            { id: 'r2', additive: true },
+        ]);
+    });
+
+    it('marks every selected part, not just the last one', () => {
+        const { container } = render(
+            <SchematicCanvas circuit={CIRCUIT} selectedPaths={['root/components/r1', 'root/components/r2']} />,
+        );
+        const strokeOf = (id: string) =>
+            container
+                .querySelector(`[data-testid="symbol-${id}"] polyline, [data-testid="symbol-${id}"] polygon`)!
+                .getAttribute('stroke');
+        expect(strokeOf('r1')).toBe(strokeOf('r2'));
+        expect(strokeOf('r1')).not.toBe(strokeOf('v1'));
+    });
+
+    it('drags the WHOLE selection when one of it is grabbed', () => {
+        // The behaviour that makes selecting things worth doing. Dragging one of two selected parts and
+        // having the other stay put is how people learn not to bother selecting.
+        let next: UiJson | undefined;
+        const { container } = render(
+            <SchematicCanvas
+                circuit={CIRCUIT}
+                selectedPaths={['root/components/r1', 'root/components/r2']}
+                onArrange={(_l, n) => (next = n)}
+            />,
+        );
+        const svg = sized(container);
+        const before = {
+            r1: translateOf(container.querySelector('[data-testid="symbol-r1"]')!),
+            r2: translateOf(container.querySelector('[data-testid="symbol-r2"]')!),
+        };
+
+        fireEvent.pointerDown(container.querySelector('[data-testid="symbol-r1"]')!, {
+            pointerId: 31,
+            button: 0,
+            clientX: 300,
+            clientY: 300,
+        });
+        for (const ev of [fireEvent.pointerMove, fireEvent.pointerUp])
+            ev(svg, { pointerId: 31, clientX: 380, clientY: 300 });
+
+        // Both moved, by the same amount, in one revision.
+        const moved = {
+            r1: next?.positions?.r1,
+            r2: next?.positions?.r2,
+        };
+        expect(moved.r1!.x - before.r1[0]!).toBe(moved.r2!.x - before.r2[0]!);
+        expect(moved.r1!.x).not.toBe(before.r1[0]);
+    });
+
+    it('drags a part that is NOT in the selection alone', () => {
+        // Grabbing something outside the selection plainly means that thing, and moving four other parts
+        // because they happened to be selected would be the editor doing something nobody asked for.
+        let next: UiJson | undefined;
+        const { container } = render(
+            <SchematicCanvas
+                circuit={CIRCUIT}
+                selectedPaths={['root/components/r2', 'root/components/v1']}
+                onArrange={(_l, n) => (next = n)}
+            />,
+        );
+        const svg = sized(container);
+        fireEvent.pointerDown(container.querySelector('[data-testid="symbol-r1"]')!, {
+            pointerId: 32,
+            button: 0,
+            clientX: 300,
+            clientY: 300,
+        });
+        for (const ev of [fireEvent.pointerMove, fireEvent.pointerUp])
+            ev(svg, { pointerId: 32, clientX: 380, clientY: 300 });
+
+        expect(Object.keys(next?.positions ?? {})).toEqual(['r1']);
+    });
+
+    it('Delete removes every selected part, in ONE action', () => {
+        // Five parts deleted one call at a time would be five undo steps for one gesture, and every
+        // intermediate document is one nobody asked for.
+        const removed: string[][] = [];
+        render(
+            <SchematicCanvas
+                circuit={CIRCUIT}
+                selectedPaths={['root/components/r1', 'root/components/r2']}
+                onDelete={(ids) => removed.push([...ids])}
+            />,
+        );
+        fireEvent.keyDown(window, { key: 'Delete' });
+        expect(removed).toEqual([['r1', 'r2']]);
+    });
+
+    it('clicking the bare sheet selects nothing', () => {
+        // The way OUT of a selection. Without it a selection can be replaced and never dropped, and with a
+        // key that acts on all of them that is a question a user should not answer with a lucky click.
+        const seen: Array<string | null> = [];
+        const { container } = render(
+            <SchematicCanvas
+                circuit={CIRCUIT}
+                selectedPaths={['root/components/r1']}
+                onSelect={(n) => seen.push(n?.ref.id ?? null)}
+            />,
+        );
+        fireEvent.click(container.querySelector('svg')!);
+        expect(seen).toEqual([null]);
     });
 });

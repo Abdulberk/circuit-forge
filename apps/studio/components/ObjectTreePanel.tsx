@@ -27,9 +27,9 @@ interface RowProps {
     node: TreeNode;
     depth: number;
     collapsed: Set<string>;
-    selected: string | null;
+    selected: ReadonlySet<string>;
     onToggle: (path: string) => void;
-    onSelect: (path: string) => void;
+    onSelect: (path: string, additive: boolean) => void;
 }
 
 function Row({ node, depth, collapsed, selected, onToggle, onSelect }: RowProps) {
@@ -42,18 +42,20 @@ function Row({ node, depth, collapsed, selected, onToggle, onSelect }: RowProps)
             <div
                 className="tree-row"
                 role="treeitem"
-                aria-selected={selected === path}
+                aria-selected={selected.has(path)}
                 aria-expanded={hasChildren ? !isCollapsed : undefined}
                 aria-level={depth + 1}
                 tabIndex={0}
                 style={{ paddingLeft: 6 + depth * 13 }}
-                onClick={() => onSelect(path)}
+                // Shift extends the selection. WHAT that means — add, remove, replace — is decided one layer
+                // up, so this panel and the canvas cannot come to different conclusions about the same key.
+                onClick={(e) => onSelect(path, e.shiftKey)}
                 onKeyDown={(e) => {
                     // Enter and Space select; the arrows expand and collapse. A tree that can only be driven
                     // by mouse is unusable for the one task it exists for — finding a part in a long list.
                     if (e.key === 'Enter' || e.key === ' ') {
                         e.preventDefault();
-                        onSelect(path);
+                        onSelect(path, e.shiftKey);
                     } else if (e.key === 'ArrowRight' && hasChildren && isCollapsed) {
                         onToggle(path);
                     } else if (e.key === 'ArrowLeft' && hasChildren && !isCollapsed) {
@@ -93,7 +95,7 @@ function Row({ node, depth, collapsed, selected, onToggle, onSelect }: RowProps)
 export function ObjectTreePanel({
     circuit,
     layout,
-    selectedPath = null,
+    selectedPaths = [],
     onSelect,
 }: {
     circuit: CircuitJson | null;
@@ -109,12 +111,13 @@ export function ObjectTreePanel({
      * The remount-on-project-switch that used to be necessary goes with it: a selection held above cannot
      * survive a document it does not belong to, because the same thing that changes the document clears it.
      */
-    selectedPath?: string | null;
-    onSelect?: (node: TreeNode | null) => void;
+    selectedPaths?: readonly string[];
+    onSelect?: (node: TreeNode | null, additive?: boolean) => void;
 }) {
     // Collapse state stays private, and the difference is the point: which rows are folded is about this
     // panel's own appearance, and no other view has an opinion about it. Selection is about the DOCUMENT.
     const [collapsed, setCollapsed] = useState<Set<string>>(COLLAPSED_BY_DEFAULT);
+    const chosen = useMemo(() => new Set(selectedPaths), [selectedPaths]);
 
     // Rebuilt only when a document actually changes. The kernel builds a 400-part board in single-digit
     // milliseconds, but this runs on every keystroke in the editor, and "fast enough" times 60 per second is
@@ -126,7 +129,7 @@ export function ObjectTreePanel({
 
     if (!tree) return <p className="empty">No design loaded.</p>;
 
-    const select = (path: string) => onSelect?.(nodeAt(tree, path.split('/')) ?? null);
+    const select = (path: string, additive: boolean) => onSelect?.(nodeAt(tree, path.split('/')) ?? null, additive);
 
     return (
         <div className="tree" role="tree" aria-label="Design objects">
@@ -134,7 +137,7 @@ export function ObjectTreePanel({
                 node={tree.root}
                 depth={0}
                 collapsed={collapsed}
-                selected={selectedPath}
+                selected={chosen}
                 onToggle={(path) =>
                     setCollapsed((prev) => {
                         const next = new Set(prev);

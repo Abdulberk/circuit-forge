@@ -8,6 +8,7 @@
  * which is the only way this harness is worth building inside the product's own workspace.
  */
 
+import type { CircuitJson } from '@circuit-forge/eda-core';
 import {
     buildObjectTree,
     connectPins,
@@ -106,7 +107,33 @@ function Workspace() {
     const { api, client } = useSession();
     const [orgId, setOrgId] = useState<string | null>(null);
     const [projectId, setProjectId] = useState<string | null>(null);
-    const [selected, setSelected] = useState<TreeNode | null>(null);
+    /**
+     * WHAT IS SELECTED — a list, because an editor without one is an editor you use twenty times to do a
+     * thing you meant once.
+     *
+     * The DECISION lives here rather than in either surface. The canvas and the tree report a gesture — this
+     * row, with or without Shift — and this decides what the selection becomes. Two surfaces each keeping
+     * their own idea of it is the defect this codebase already paid for once: clicking a symbol told the
+     * Inspector and left the tree painting some other row.
+     *
+     * Ordered, and the LAST one is the primary: it is what the Inspector shows, because a panel of fields
+     * has to be about one object, and the one you most recently pointed at is the one you meant.
+     */
+    const [selected, setSelected] = useState<TreeNode[]>([]);
+
+    /** One rule for what a click means, so neither surface has to know. */
+    const select = (node: TreeNode | null, additive = false): void =>
+        setSelected((was) => {
+            if (!node) return [];
+            const path = node.ref.path.join('/');
+            if (!additive) return [node];
+            // Shift on something already selected takes it OUT — the same key adds and removes, which is
+            // what every editor does and what a user tries first when they overshoot.
+            const without = was.filter((n) => n.ref.path.join('/') !== path);
+            return without.length === was.length ? [...was, node] : without;
+        });
+    const primary = selected[selected.length - 1] ?? null;
+    const selectedPaths = selected.map((n) => n.ref.path.join('/'));
 
     const orgs = useAsync((signal) => api.orgs(signal), []);
     // The first org is adopted only until the user picks one; `?? ''` keeps the <select> controlled.
@@ -142,8 +169,10 @@ function Workspace() {
      * each call site: there is one question here, and every path that changes the design asks it.
      */
     useEffect(() => {
-        if (!selected || !doc.circuit) return;
-        if (!buildObjectTree(doc.circuit).byPath.has(selected.ref.path.join('/'))) setSelected(null);
+        if (selected.length === 0 || !doc.circuit) return;
+        const { byPath } = buildObjectTree(doc.circuit);
+        const alive = selected.filter((n) => byPath.has(n.ref.path.join('/')));
+        if (alive.length !== selected.length) setSelected(alive);
     }, [doc.circuit, selected]);
     useUndoShortcuts({ undo: doc.undo, redo: doc.redo });
     const circuit = doc.circuit;
@@ -174,7 +203,7 @@ function Workspace() {
                     onChange={(e) => {
                         setOrgId(e.target.value);
                         setProjectId(null); // a project id from another org would 404
-                        setSelected(null);
+                        setSelected([]);
                     }}
                 >
                     {(orgs.data ?? []).map((o) => (
@@ -191,7 +220,7 @@ function Workspace() {
                     value={activeProject ?? ''}
                     onChange={(e) => {
                         setProjectId(e.target.value);
-                        setSelected(null);
+                        setSelected([]);
                     }}
                 >
                     {(projects.data?.items ?? []).map((p) => (
@@ -258,11 +287,7 @@ function Workspace() {
                             // clears it. (The key had to be there before: paths look like `root/nets/<id>`
                             // and `gnd` appears in nearly every design, so a stale selection usually landed
                             // on a real row belonging to a different circuit.)
-                            <ObjectTreePanel
-                                circuit={circuit}
-                                selectedPath={selected?.ref.path.join('/') ?? null}
-                                onSelect={setSelected}
-                            />
+                            <ObjectTreePanel circuit={circuit} selectedPaths={selectedPaths} onSelect={select} />
                         )}
                     </div>
                 </aside>
@@ -290,8 +315,8 @@ function Workspace() {
                             // back to its derived grid on every render no matter what anyone arranged — the
                             // stored-position branch below it has been unreachable since it was written.
                             ui={doc.ui}
-                            selectedPath={selected?.ref.path.join('/') ?? null}
-                            onSelect={setSelected}
+                            selectedPaths={selectedPaths}
+                            onSelect={select}
                             // Arranging goes through the SAME commit kernel as any other edit, so a move
                             // lands in the undo stack in the same order as the rename that followed it. Two
                             // stacks would let Ctrl+Z un-move something without un-deleting what was deleted
@@ -307,7 +332,16 @@ function Workspace() {
                             // terminals and parting them again are two steps of one undo stack in the order
                             // they happened — not two stacks a user has to hold in their head.
                             onDisconnect={(pin) => doc.apply((c) => disconnectPin(c, pin))}
-                            onDelete={(id) => doc.apply((c) => deleteComponent(c, id))}
+                            // ALL OF THEM, AS ONE REVISION. Deleting five parts one commit at a time would
+                            // be five undo steps for one action, and each intermediate document is one a user
+                            // never asked for — the fourth of them missing four parts and still holding the
+                            // nets of the fifth.
+                            onDelete={(ids) =>
+                                doc.applyMany(
+                                    ids.length === 1 ? 'Delete' : `Delete ${ids.length} parts`,
+                                    ids.map((id) => (c: CircuitJson) => deleteComponent(c, id)),
+                                )
+                            }
                         />
                     ) : (
                         <p className="empty">Open a project with a working copy to begin.</p>
@@ -317,7 +351,7 @@ function Workspace() {
                 <aside className="pane">
                     <div className="pane-head">Inspector</div>
                     <div className="pane-body">
-                        <Inspector selected={selected} circuit={circuit} doc={doc} />
+                        <Inspector selected={primary} selectedCount={selected.length} circuit={circuit} doc={doc} />
                     </div>
                 </aside>
             </div>
