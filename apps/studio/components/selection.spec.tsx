@@ -53,11 +53,11 @@ const CIRCUIT: CircuitJson = {
 /** The two panels wired the way the workspace wires them: one selection, held above both. */
 function Workspace() {
     const [selected, setSelected] = useState<TreeNode | null>(null);
-    const path = selected?.ref.path.join('/') ?? null;
+    const paths = selected ? [selected.ref.path.join('/')] : [];
     return (
         <div>
-            <ObjectTreePanel circuit={CIRCUIT} selectedPath={path} onSelect={setSelected} />
-            <SchematicCanvas circuit={CIRCUIT} selectedPath={path} onSelect={setSelected} />
+            <ObjectTreePanel circuit={CIRCUIT} selectedPaths={paths} onSelect={setSelected} />
+            <SchematicCanvas circuit={CIRCUIT} selectedPaths={paths} onSelect={setSelected} />
         </div>
     );
 }

@@ -124,10 +124,19 @@ export function AddPart({ doc }: { doc: DocumentState }): React.JSX.Element {
 
 export function Inspector({
     selected,
+    selectedCount = selected ? 1 : 0,
     circuit,
     doc,
 }: {
     selected: TreeNode | null;
+    /**
+     * How many objects are selected, when the panel can only be about one.
+     *
+     * A panel of fields has to address a single object, so it shows the primary — the one most recently
+     * pointed at. Saying nothing about the others would make an edit here look like it applied to all of
+     * them, which is the kind of surprise that costs a user a design.
+     */
+    selectedCount?: number;
     circuit: CircuitJson | null;
     doc: DocumentState;
 }) {
@@ -249,6 +258,12 @@ export function Inspector({
                 </>
             )}
 
+            {selectedCount > 1 && (
+                <div className="notice" role="status" style={{ marginTop: 8 }}>
+                    {selectedCount} objects selected. These fields are about {selected.label}; Delete and the keyboard
+                    verbs act on all of them.
+                </div>
+            )}
             <EditableField label="Id" value={selected.ref.id} readOnly />
             <EditableField label="Path" value={selected.ref.path.join(' / ')} readOnly />
 

@@ -45,6 +45,9 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 
 import { isTextEntry } from '../lib/useUndoShortcuts';
 
+/** A stable empty list, so a canvas with no selection does not rebuild its set on every render. */
+const EMPTY: readonly string[] = [];
+
 /** Clear sheet around the drawing, so nothing is drawn hard against the edge of the view. */
 const VIEW_MARGIN = 24;
 
@@ -56,7 +59,7 @@ type Placed = PlacedPart;
 export function SchematicCanvas({
     circuit,
     ui,
-    selectedPath,
+    selectedPaths = EMPTY,
     onSelect,
     onArrange,
     onConnect,
@@ -72,8 +75,15 @@ export function SchematicCanvas({
      * against a shape that no longer matches the one being stored.
      */
     ui?: UiJson;
-    selectedPath?: string | null;
-    onSelect?: (node: TreeNode | null) => void;
+    /** Every selected object, by path. A list because an editor needs one; ordered, primary last. */
+    selectedPaths?: readonly string[];
+    /**
+     * A click, reported rather than interpreted.
+     *
+     * `additive` is the Shift key and nothing more: what it MEANS — add, remove, replace — is decided in one
+     * place above, so the canvas and the tree cannot drift about what a modified click does.
+     */
+    onSelect?: (node: TreeNode | null, additive?: boolean) => void;
     /**
      * Commit a new drawing as ONE revision. Omitted makes the canvas read-only, which is what every test
      * that is not about dragging wants.
@@ -89,10 +99,19 @@ export function SchematicCanvas({
      * how it was: you could join two terminals by dragging and could only part them through a side panel.
      */
     onDisconnect?: (pin: { componentId: string; pinId: string }) => void;
-    /** Remove a part from the design. Omitted leaves the canvas unable to delete, which a viewer should be. */
-    onDelete?: (componentId: string) => void;
+    /**
+     * Remove parts from the design — ALL of them, as one action.
+     *
+     * A list rather than one id, because deleting five parts one call at a time would be five undo steps for
+     * one gesture, and every intermediate document is one nobody asked for.
+     */
+    onDelete?: (componentIds: readonly string[]) => void;
 }) {
     const svgRef = useRef<SVGSVGElement | null>(null);
+    // Asked many times per render — by every symbol, every terminal and every key handler — so it is a set
+    // rather than a scan. `chosen` is the primary: the one the single-object verbs act on.
+    const selection = useMemo(() => new Set(selectedPaths), [selectedPaths]);
+    const chosen = selectedPaths[selectedPaths.length - 1] ?? null;
     /**
      * The gesture in flight, and it lives HERE rather than in the document — measured, not preferred.
      *
@@ -477,7 +496,7 @@ export function SchematicCanvas({
      * error and not a change, and `disconnectPin` says so rather than minting a revision for nothing.
      */
     useEffect(() => {
-        if (!selectedPath) return;
+        if (!chosen) return;
         const onKeyDown = (event: KeyboardEvent) => {
             if (event.ctrlKey || event.metaKey || event.altKey) return;
             if (event.key !== 'Delete' && event.key !== 'Backspace') return;
@@ -489,7 +508,7 @@ export function SchematicCanvas({
             // out of it by counting separators is only right while no id contains one — and ids are ordinary
             // data: a design merged from two sub-sheets, or written by something else, can carry a slash. The
             // node already holds what its address means, in fields, which is why it has them.
-            const node = byPath.get(selectedPath);
+            const node = byPath.get(chosen);
             if (!node) return;
 
             if (node.ref.kind === 'pin' && node.ref.componentId && onDisconnect) {
@@ -502,12 +521,18 @@ export function SchematicCanvas({
             // would quietly remove things the user never touched and name them in a note they cannot place.
             if (node.ref.kind === 'component' && onDelete) {
                 event.preventDefault();
-                onDelete(node.ref.id);
+                // EVERY selected part, not just the primary one. The other surfaces already show them all as
+                // selected, and a key that acts on one of five is a key that lost the other four silently.
+                const ids = selectedPaths
+                    .map((path) => byPath.get(path))
+                    .filter((n): n is TreeNode => n?.ref.kind === 'component')
+                    .map((n) => n.ref.id);
+                onDelete(ids.length > 0 ? ids : [node.ref.id]);
             }
         };
         window.addEventListener('keydown', onKeyDown);
         return () => window.removeEventListener('keydown', onKeyDown);
-    }, [selectedPath, byPath, onDisconnect, onDelete]);
+    }, [chosen, selectedPaths, byPath, onDisconnect, onDelete]);
 
     /**
      * `R` turns the selected part — the convention every schematic editor shares.
@@ -523,10 +548,10 @@ export function SchematicCanvas({
      * and a save behind for a part that visibly did not move.
      */
     useEffect(() => {
-        if (!onArrange || !selectedPath) return;
+        if (!onArrange || !chosen) return;
         // The same rule: the tree says which object this is, rather than the last segment of a joined string
         // — which for a pin selection is the PIN's name and would find a part called '1' if one existed.
-        const node = byPath.get(selectedPath);
+        const node = byPath.get(chosen);
         const part = node?.ref.kind === 'component' ? placed.find((p) => p.id === node.ref.id) : undefined;
         if (!part) return; // the selection is a net, a pin, or something with no orientation
 
@@ -586,7 +611,7 @@ export function SchematicCanvas({
 
         window.addEventListener('keydown', onKeyDown);
         return () => window.removeEventListener('keydown', onKeyDown);
-    }, [onArrange, selectedPath, byPath, placed, ui]);
+    }, [onArrange, chosen, byPath, placed, ui]);
 
     /**
      * Where a part is RIGHT NOW, which during a gesture is not where the document says.
@@ -611,10 +636,19 @@ export function SchematicCanvas({
         const start = placed.find((p) => p.id === id);
         const at = pointOnSheet(e.clientX, e.clientY);
         if (!start || !at) return;
+
+        // THE WHOLE SELECTION MOVES, if the part under the pointer is part of it. Dragging one of five
+        // selected parts and having the other four stay put is the behaviour that makes people stop
+        // selecting things — and a part that is NOT selected drags alone, because grabbing something
+        // outside the selection plainly means that thing.
+        const group = selection.has(`root/components/${id}`)
+            ? placed.filter((q) => selection.has(`root/components/${q.id}`))
+            : [start];
+
         setDrag({
             pointerId: e.pointerId,
-            ids: [id],
-            origin: { [id]: { x: start.x, y: start.y } },
+            ids: group.map((q) => q.id),
+            origin: Object.fromEntries(group.map((q) => [q.id, { x: q.x, y: q.y }])),
             from: { x: at[0], y: at[1] },
             dx: 0,
             dy: 0,
@@ -712,6 +746,12 @@ export function SchematicCanvas({
             viewBox={`${box.x} ${box.y} ${box.w} ${box.h}`}
             style={{ width: '100%', height: '100%', touchAction: 'none' }}
             onPointerDown={beginPan}
+            // A CLICK ON NOTHING SELECTS NOTHING. Without it a selection could only be replaced, never
+            // dropped — and with several things selected and a key that acts on all of them, "how do I stop
+            // this being selected" is a question a user should not have to answer with a lucky click.
+            onClick={(e) => {
+                if (e.target === e.currentTarget) onSelect?.(null);
+            }}
             onPointerMove={wire ? moveWire : pan ? movePan : drag ? moveDrag : undefined}
             onPointerUp={wire ? endWire : pan ? endPan : drag ? endDrag : undefined}
             // CANCELLED, NOT FINISHED. This used to route to the same function as pointerup, so a gesture the
@@ -814,14 +854,16 @@ export function SchematicCanvas({
 
             {placed.map((p) => {
                 const path = `root/components/${p.id}`;
-                const isSelected = selectedPath === path;
+                const isSelected = selection.has(path);
                 return (
                     <g
                         key={p.id}
                         data-testid={`symbol-${p.id}`}
                         transform={`translate(${dragged(p).x} ${dragged(p).y})`}
                         onPointerDown={(e) => beginDrag(e, p.id)}
-                        onClick={() => onSelect?.(byPath.get(path) ?? null)}
+                        // Shift extends the selection; what that MEANS is decided one layer up, so this
+                        // canvas and the tree cannot come to different conclusions about the same key.
+                        onClick={(e) => onSelect?.(byPath.get(path) ?? null, e.shiftKey)}
                         style={{ cursor: 'pointer' }}
                     >
                         {/* A CLOSED shape is drawn with <polygon>, an open one with <polyline>, and the
@@ -862,17 +904,17 @@ export function SchematicCanvas({
                             // and what the Inspector shows, and the drawing was byte-identical to having
                             // nothing selected — so the user pressed the key and could only find out by
                             // watching what disappeared.
-                            const chosen = selectedPath === `root/components/${p.id}/pins/${pin.pinId}`;
+                            const marked = selection.has(`root/components/${p.id}/pins/${pin.pinId}`);
                             return (
                                 <g key={pin.pinId}>
                                     <circle
                                         cx={pin.x}
                                         cy={pin.y}
-                                        r={live || source || chosen ? 4 : 2}
+                                        r={live || source || marked ? 4 : 2}
                                         fill={
                                             live || source
                                                 ? 'var(--good)'
-                                                : chosen
+                                                : marked
                                                   ? 'var(--accent, #6cf)'
                                                   : 'var(--text-faint, #888)'
                                         }
@@ -898,6 +940,7 @@ export function SchematicCanvas({
                                                 e.stopPropagation();
                                                 onSelect?.(
                                                     byPath.get(`root/components/${p.id}/pins/${pin.pinId}`) ?? null,
+                                                    e.shiftKey,
                                                 );
                                             }}
                                         />
