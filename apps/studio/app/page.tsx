@@ -8,7 +8,7 @@
  * which is the only way this harness is worth building inside the product's own workspace.
  */
 
-import { isPlaceablePart, type TreeNode } from '@circuit-forge/editor-core';
+import { connectPins, isPlaceablePart, type TreeNode } from '@circuit-forge/editor-core';
 import { useMemo, useState } from 'react';
 
 import { AddPart, Inspector } from '../components/Inspector';
@@ -249,8 +249,23 @@ function Workspace() {
                 </aside>
 
                 <main className="stage">
+                    {/* WHY IT IS HERE AND NOT ONLY IN THE INSPECTOR. A refusal is the kernel explaining that an
+                        edit was not made — joining a declared ground to a declared rail, for instance, which is
+                        a dead short. The Inspector renders it at the bottom of the SELECTED object's panel, so
+                        an edit made on the canvas with nothing selected was refused in silence: the wire simply
+                        did not appear and nothing said why. Beside the drawing, it is where the edit happened. */}
+                    {doc.refusal && (
+                        <div className="notice bad" role="alert">
+                            {doc.refusal.message}
+                        </div>
+                    )}
                     {circuit ? (
                         <SchematicCanvas
+                            // REMOUNTED PER PROJECT, so the canvas starts fresh. Zoom and pan are the viewer's
+                            // own state and rightly survive an edit — but not a different document: opening
+                            // another project while zoomed into a corner showed a blank patch of sheet with no
+                            // indication that the drawing was elsewhere.
+                            key={activeProject ?? 'none'}
                             circuit={circuit}
                             // The drawing the document actually carries. Without this line the canvas falls
                             // back to its derived grid on every render no matter what anyone arranged — the
@@ -263,6 +278,12 @@ function Workspace() {
                             // stacks would let Ctrl+Z un-move something without un-deleting what was deleted
                             // after it — an order a user cannot hold in their head.
                             onArrange={doc.commitUi}
+                            // DRAWING A WIRE goes through the same kernel edit the Inspector's dropdown uses,
+                            // and through the same `apply`, so it lands in one undo stack in the order it
+                            // happened. `connectPins` decides what the gesture MEANS — a change, a no-op when
+                            // the two terminals are already one node, or a refusal with the reason named — and
+                            // the canvas is told none of it: it reports two terminals and nothing more.
+                            onConnect={(from, to) => doc.apply((c) => connectPins(c, from, to))}
                         />
                     ) : (
                         <p className="empty">Open a project with a working copy to begin.</p>

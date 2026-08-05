@@ -58,6 +58,7 @@ export function SchematicCanvas({
     selectedPath,
     onSelect,
     onArrange,
+    onConnect,
 }: {
     circuit: CircuitJson;
     /**
@@ -75,6 +76,11 @@ export function SchematicCanvas({
      * that is not about dragging wants.
      */
     onArrange?: (label: string, next: UiJson) => void;
+    /**
+     * Join two terminals. Omitted makes the canvas read-only about topology, which is what every test that
+     * is not about wiring wants — and what a viewer of somebody else's design should get.
+     */
+    onConnect?: (from: { componentId: string; pinId: string }, to: { componentId: string; pinId: string }) => void;
 }) {
     const svgRef = useRef<SVGSVGElement | null>(null);
     /**
@@ -94,7 +100,16 @@ export function SchematicCanvas({
         pointerId: number;
         ids: readonly string[];
         origin: Record<string, { x: number; y: number }>;
-        /** Where the pointer went DOWN, in client pixels — the delta is measured from here, every frame. */
+        /**
+         * Where the pointer went down, ON THE SHEET.
+         *
+         * Not in client pixels, and that is the whole of a defect worth naming. A pixel origin has to be
+         * converted through the CURRENT mapping on every move — so zooming or pressing F mid-drag rescaled a
+         * distance the hand had already travelled, and the part jumped out from under the pointer by the
+         * zoom factor. Measured: twelve wheel notches during a drag moved a stationary part seven and a half
+         * grid steps, and that position is what the release committed. A sheet origin cannot drift, because
+         * both ends of the subtraction are in the same frame however the view moves underneath them.
+         */
         from: { x: number; y: number };
         dx: number;
         dy: number;
@@ -147,18 +162,287 @@ export function SchematicCanvas({
     }, [circuit, ui?.positions]);
 
     /**
-     * Screen pixels to sheet units.
+     * WHAT IS ON SCREEN, which is not the same question as what is in the document.
      *
-     * The viewBox scales, so a pointer delta in pixels is not a delta in sheet units. Computed from the
-     * viewBox and the element's own box rather than from `getScreenCTM`, which is exact for the uniform
-     * scaling `preserveAspectRatio` defaults to and — unlike the CTM — actually exists under jsdom, so the
-     * drag can be tested at all rather than only demonstrated.
+     * `null` means "show all of it", and it stays null until the user says otherwise. That is the right
+     * default for a sheet a machine just wrote — you want to see the circuit, not a corner of it — and it
+     * keeps working as the design grows, because a null view re-fits to whatever the drawing now covers.
+     * The moment anyone zooms or pans it becomes an explicit rectangle and stays exactly where they put it;
+     * an edit must not throw away the part of the sheet somebody was looking at.
+     *
+     * It is NOT in the document. Where a viewer is looking is not a property of the circuit — two people
+     * with the same drawing open are entitled to be looking at different halves of it — and writing it
+     * through the commit kernel would put a revision and a save behind every scroll wheel.
      */
-    const toSheet = (px: number, py: number): [number, number] => {
+    const [view, setView] = useState<{ x: number; y: number; w: number; h: number } | null>(null);
+    const box = view ?? extent;
+
+    /**
+     * The ONE place screen coordinates and sheet coordinates meet.
+     *
+     * Everything that has to cross that boundary — dragging a part, zooming about the pointer, panning,
+     * dropping a wire on a terminal — goes through here. Two of these would drift, and the drift would show
+     * up as a part landing a few units from where it was dropped, which is the kind of defect that gets
+     * explained away as "snapping" for months.
+     *
+     * The arithmetic is the mapping SVG actually performs. `preserveAspectRatio` defaults to `meet`, so the
+     * viewBox is scaled uniformly by the SMALLER of the two ratios and centred, leaving a letterbox on one
+     * axis. Computed rather than read from `getScreenCTM`, which is exact but does not exist under jsdom —
+     * so this way the behaviour can be tested rather than only demonstrated.
+     */
+    const mapping = (): { perPixel: number; left: number; top: number } | null => {
         const rect = svgRef.current?.getBoundingClientRect();
-        if (!rect || rect.width === 0 || rect.height === 0) return [px, py];
-        const scale = Math.max(extent.w / rect.width, extent.h / rect.height);
-        return [px * scale, py * scale];
+        if (!rect || rect.width === 0 || rect.height === 0) return null;
+        const pixelsPerUnit = Math.min(rect.width / box.w, rect.height / box.h);
+        return {
+            perPixel: 1 / pixelsPerUnit,
+            left: rect.left + (rect.width - box.w * pixelsPerUnit) / 2,
+            top: rect.top + (rect.height - box.h * pixelsPerUnit) / 2,
+        };
+    };
+
+    /** A distance in pixels as a distance on the sheet. */
+    const toSheet = (px: number, py: number): [number, number] => {
+        const m = mapping();
+        return m ? [px * m.perPixel, py * m.perPixel] : [px, py];
+    };
+
+    /** A point on the screen as a point on the sheet — the inverse of what the browser just drew. */
+    const pointOnSheet = (clientX: number, clientY: number): [number, number] | null => {
+        const m = mapping();
+        return m ? [box.x + (clientX - m.left) * m.perPixel, box.y + (clientY - m.top) * m.perPixel] : null;
+    };
+
+    /**
+     * How far in and how far out, derived rather than picked.
+     *
+     * The tightest view shows four grid steps across, which is a single symbol filling the screen — past
+     * that there is nothing left to look at. The widest shows the whole drawing eight times over, which is
+     * as lost as anyone needs to get. Both are stated against the sheet's own units, so they mean the same
+     * thing on a two-part circuit and on a four-hundred-part one.
+     */
+    const zoomLimits = { tightest: PIN_GRID * 4, widest: Math.max(extent.w, extent.h) * 8 };
+
+    /**
+     * Zoom about the pointer: whatever is under the cursor stays under the cursor.
+     *
+     * That is the whole specification, and it is the only thing worth testing about zooming. A wheel that
+     * scales the view about its CENTRE instead feels broken in a way people describe as "it runs away from
+     * me" — you point at the part you want to look at and it slides off the screen.
+     */
+    const zoomAt = (clientX: number, clientY: number, factor: number): void => {
+        const rect = svgRef.current?.getBoundingClientRect();
+        if (!rect || rect.width === 0 || rect.height === 0) return;
+        // FROM THE PREVIOUS VIEW, not from the one this render was drawn with. A wheel sends several events
+        // before React paints, and computing each from the rendered box made every notch in a burst start
+        // from the same place — so five notches moved the view as far as one.
+        setView((was) => {
+            const b = was ?? extent;
+            const perPixel = 1 / Math.min(rect.width / b.w, rect.height / b.h);
+            const [ax, ay] = [
+                b.x + (clientX - (rect.left + (rect.width - b.w / perPixel) / 2)) * perPixel,
+                b.y + (clientY - (rect.top + (rect.height - b.h / perPixel) / 2)) * perPixel,
+            ];
+            const scale = allowedZoom(b, factor);
+            return { x: ax - (ax - b.x) * scale, y: ay - (ay - b.y) * scale, w: b.w * scale, h: b.h * scale };
+        });
+    };
+
+    /**
+     * How much of the asked-for zoom the limits allow, and IN WHICH DIRECTION.
+     *
+     * Two things went wrong when this clamped the width alone. A tall sheet's HEIGHT was unbounded, so it
+     * kept zooming in past the point of showing anything and out until the drawing was a fifth of a pixel
+     * across. And clamping a value rather than a direction can move the view the WRONG WAY: when the drawing
+     * shrinks after an edit, the current view can already be wider than the new limit, and a zoom-OUT notch
+     * then snapped it back inside — zooming IN by up to eighteen times on a gesture asking for the opposite.
+     *
+     * So the limits are applied to the SCALE and only ever in the direction that tightens the request. A
+     * zoom-in can be refused; it can never be turned into a zoom-out.
+     */
+    const allowedZoom = (b: { w: number; h: number }, factor: number): number => {
+        if (factor < 1) {
+            // Going in: neither side may end up narrower than the tightest view, and refusing means 1.
+            const floor = zoomLimits.tightest / Math.min(b.w, b.h);
+            return Math.max(factor, Math.min(1, floor));
+        }
+        // Going out: neither side may end up wider than the widest view, and refusing means 1.
+        const ceiling = zoomLimits.widest / Math.max(b.w, b.h);
+        return Math.min(factor, Math.max(1, ceiling));
+    };
+
+    /**
+     * The wheel, attached by hand rather than through React.
+     *
+     * React registers `onWheel` passively, and a passive listener may not call `preventDefault` — so a page
+     * that zooms on the wheel would also scroll behind the zoom. This is the one place where going around
+     * the framework is the plain solution rather than a workaround.
+     */
+    useEffect(() => {
+        const svg = svgRef.current;
+        if (!svg) return;
+        const onWheel = (event: WheelEvent) => {
+            // A HORIZONTAL swipe is not a zoom. A trackpad sends deltaY exactly zero for one, and taking the
+            // sign of zero gave a factor of one — which changed nothing on screen and yet replaced the
+            // fit-to-content view with an explicit rectangle, so the drawing silently stopped following the
+            // design as it grew. Nothing to do here is nothing to do.
+            if (event.deltaY === 0) return;
+            event.preventDefault();
+            // A tenth per notch, compounding, so the gesture feels the same however far it goes and holding
+            // the wheel down never overshoots by a factor of a hundred.
+            zoomAt(event.clientX, event.clientY, Math.pow(1.1, Math.sign(event.deltaY)));
+        };
+        svg.addEventListener('wheel', onWheel, { passive: false });
+        return () => svg.removeEventListener('wheel', onWheel);
+    });
+
+    /**
+     * `F` shows the whole drawing again.
+     *
+     * The way back. Without it a user who zooms into a corner of a four-hundred-part sheet has no way to
+     * find the rest of it except by scrolling blind, and the letter is what every editor in this shape uses.
+     */
+    useEffect(() => {
+        const onKeyDown = (event: KeyboardEvent) => {
+            if (event.ctrlKey || event.metaKey || event.altKey) return;
+            if (event.key.toLowerCase() !== 'f') return;
+            if (isTextEntry(event.target)) return; // `f` is a letter, and the Inspector has text fields
+            setView(null);
+        };
+        window.addEventListener('keydown', onKeyDown);
+        return () => window.removeEventListener('keydown', onKeyDown);
+    }, []);
+
+    /**
+     * Dragging the sheet itself pans it.
+     *
+     * Started on the SVG rather than on a symbol, and a symbol's own pointerdown stops the event before it
+     * gets here — so "drag a part" and "drag the sheet" cannot both fire from one press.
+     */
+    const [pan, setPan] = useState<{ pointerId: number; from: { x: number; y: number }; box: typeof extent } | null>(
+        null,
+    );
+    const beginPan = (e: React.PointerEvent): void => {
+        if ((e.button ?? 0) > 0 || drag || wire || pan) return; // one gesture at a time, and the first wins
+        (e.currentTarget as Element).setPointerCapture?.(e.pointerId);
+        setPan({ pointerId: e.pointerId, from: { x: e.clientX, y: e.clientY }, box });
+    };
+    const movePan = (e: React.PointerEvent): void => {
+        const { clientX, clientY } = e;
+        // Measured from where the gesture STARTED, like the part drag: a dropped frame then costs nothing,
+        // because the next one recomputes the whole offset instead of adding to a total that lost something.
+        const [dx, dy] = toSheet(clientX - (pan?.from.x ?? 0), clientY - (pan?.from.y ?? 0));
+        setPan((g) => {
+            if (!g || g.pointerId !== e.pointerId) return g;
+            setView({ x: g.box.x - dx, y: g.box.y - dy, w: g.box.w, h: g.box.h });
+            return g;
+        });
+    };
+    const endPan = (e: React.PointerEvent): void => {
+        if (pan && pan.pointerId !== e.pointerId) return; // a different pointer's release is not this one's
+        setPan(null);
+    };
+
+    /**
+     * DRAWING A WIRE, which is the act that makes this an editor rather than a viewer.
+     *
+     * Connecting two terminals was possible before this — through a dropdown in the Inspector, one pin at a
+     * time. That is a form for describing a connection, not a way of making one: the gesture an engineer
+     * reaches for is a line from one terminal to another, and everything about a schematic is arranged to
+     * make that gesture obvious. The kernel has had `connectPins` since long before anything could call it.
+     *
+     * WHAT THE CANVAS DECIDES IS NOTHING. It reports two terminals; `connectPins` decides whether that is a
+     * connection, a no-op, or a refusal — including the one that matters, joining a declared ground to a
+     * declared rail, which is a dead short and is refused with the remedy named. A canvas that made that
+     * call itself would be the second authority this codebase keeps paying for.
+     */
+    const [wire, setWire] = useState<{
+        pointerId: number;
+        from: { componentId: string; pinId: string };
+        at: { x: number; y: number };
+        /** The terminal under the pointer, so the drop target is visible before the pointer comes up. */
+        to: { componentId: string; pinId: string } | null;
+    } | null>(null);
+
+    /**
+     * How near counts as ON a terminal.
+     *
+     * BOUNDED AT BOTH ENDS, and both bounds are about a real failure. A terminal is drawn two units across
+     * and nobody can reliably put a pointer on two units of anything, so the target is nine pixels' worth of
+     * sheet — except that "nine pixels' worth" is measured from the element, and on the FIRST paint there is
+     * no element yet: the fallback made it nine SHEET units, which on a four-hundred-part sheet is under two
+     * pixels, and the first gesture on a freshly opened design aimed at a target five times too small.
+     *
+     * The upper bound is the one that matters more. Zoomed out, nine pixels can be tens of sheet units — and
+     * these circles sit on top of the symbols, so they swallowed whole parts and dragging stopped working
+     * entirely. Half a grid step is the most a terminal may ever claim: it cannot reach its neighbour, and it
+     * cannot cover a body. Past that the answer is to zoom in, which is now possible.
+     */
+    const grabRadius = Math.max(2, Math.min(PIN_GRID / 2, 9 * (mapping()?.perPixel ?? PIN_GRID / 18)));
+
+    const beginWire = (e: React.PointerEvent, componentId: string, pinId: string): void => {
+        if (!onConnect || (e.button ?? 0) > 0 || drag || wire || pan) return;
+        e.stopPropagation(); // not a part drag, and not a pan
+        (e.target as Element).setPointerCapture?.(e.pointerId);
+        const at = pointOnSheet(e.clientX, e.clientY);
+        if (!at) return;
+        // THE SAME QUESTION AT BOTH ENDS. The start used to be whichever circle the browser's hit-testing
+        // reported and the finish used nearest-by-geometry — two rules for one gesture, which disagree
+        // exactly where the circles overlap. Asking the geometry both times means a wire always starts at the
+        // terminal it would have finished on.
+        const from = pinUnder(e.clientX, e.clientY) ?? { componentId, pinId };
+        setWire({ pointerId: e.pointerId, from, at: { x: at[0], y: at[1] }, to: null });
+    };
+    const moveWire = (e: React.PointerEvent): void => {
+        const at = pointOnSheet(e.clientX, e.clientY);
+        const over = pinUnder(e.clientX, e.clientY);
+        setWire((g) => (g && g.pointerId === e.pointerId && at ? { ...g, at: { x: at[0], y: at[1] }, to: over } : g));
+    };
+
+    const endWire = (e: React.PointerEvent): void => {
+        const g = wire;
+        if (!g || g.pointerId !== e.pointerId) return; // somebody else's pointer: not ours to end
+        setWire(null);
+        if (!onConnect) return;
+        // Dropped on nothing is a cancelled gesture, not a failed one. Making an unfinished wire into an
+        // error message would punish the ordinary act of changing your mind halfway across the sheet.
+        const target = pinUnder(e.clientX, e.clientY);
+        // A CLICK IS NOT A CONNECTION. Pressing and releasing on one terminal reported it joined to itself,
+        // which the kernel correctly refuses — so selecting a pin, or thinking better of a wire before moving,
+        // put an error banner on screen for an action the user never took. Ending where you started is a
+        // gesture that did not happen.
+        if (!target || (target.componentId === g.from.componentId && target.pinId === g.from.pinId)) return;
+        onConnect(g.from, target);
+    };
+
+    /**
+     * Which terminal the pointer is over, asked of the GEOMETRY rather than of the DOM.
+     *
+     * The obvious way is to let each terminal report its own `pointerenter` — and it does not work, for a
+     * reason that has nothing to do with this code: a gesture holds pointer CAPTURE, and a captured pointer
+     * sends every event to the element it started on. The terminal being dragged towards never hears about
+     * it. `document.elementFromPoint` asks the browser instead, which is a second mechanism with its own
+     * rules and no implementation under jsdom, so that behaviour could only be demonstrated and never tested.
+     *
+     * The terminals are already at known places on the sheet and the pointer is already convertible to a
+     * point on the sheet. Nearest-within-the-grab-radius is the same question the visible target expresses,
+     * answered from the same numbers, and it behaves identically in a browser and in a test.
+     */
+    const pinUnder = (clientX: number, clientY: number): { componentId: string; pinId: string } | null => {
+        const at = pointOnSheet(clientX, clientY);
+        if (!at) return null;
+        let best: { componentId: string; pinId: string } | null = null;
+        let nearest = grabRadius * grabRadius;
+        for (const part of placed)
+            for (const s of part.symbol.pins) {
+                const [dx, dy] = [part.x + s.x - at[0], part.y + s.y - at[1]];
+                const d = dx * dx + dy * dy;
+                if (d <= nearest) {
+                    nearest = d;
+                    best = { componentId: part.id, pinId: s.pinId };
+                }
+            }
+        return best;
     };
 
     /**
@@ -228,18 +512,19 @@ export function SchematicCanvas({
         // event that carries no `button` at all — a synthetic one, or a touch — is a primary press, and
         // `!== 0` silently refuses it. That is not a test artefact: it is the same class of guard that
         // refuses a real touch on a tablet, where nothing would report why dragging simply did not work.
-        if (!onArrange || (e.button ?? 0) > 0) return;
+        if (!onArrange || (e.button ?? 0) > 0 || drag || wire || pan) return;
         e.stopPropagation();
         (e.target as Element).setPointerCapture?.(e.pointerId);
         // Only the part under the pointer. Group drag arrives with multi-select; until then, moving one part
         // must not move anything else — and a selection the user cannot see is not a selection.
         const start = placed.find((p) => p.id === id);
-        if (!start) return;
+        const at = pointOnSheet(e.clientX, e.clientY);
+        if (!start || !at) return;
         setDrag({
             pointerId: e.pointerId,
             ids: [id],
             origin: { [id]: { x: start.x, y: start.y } },
-            from: { x: e.clientX, y: e.clientY },
+            from: { x: at[0], y: at[1] },
             dx: 0,
             dy: 0,
             moved: false,
@@ -253,18 +538,23 @@ export function SchematicCanvas({
         // on it works in one browser, drifts in another, and cannot be tested at all. Measuring from the
         // origin also makes the gesture self-correcting: a dropped frame costs nothing, because the next
         // one recomputes the whole offset rather than adding to a total that has already lost something.
-        const { clientX, clientY } = e;
+        const at = pointOnSheet(e.clientX, e.clientY);
+        if (!at) return;
         setDrag((g) => {
             if (!g || g.pointerId !== e.pointerId) return g;
-            const [dx, dy] = toSheet(clientX - g.from.x, clientY - g.from.y);
+            const [dx, dy] = [at[0] - g.from.x, at[1] - g.from.y];
             return { ...g, dx, dy, moved: g.moved || dx !== 0 || dy !== 0 };
         });
     };
 
     const endDrag = (e: React.PointerEvent) => {
+        // OWNERSHIP FIRST, then clear. Clearing before the check meant a release by ANY pointer destroyed the
+        // gesture another pointer was still performing — the id comparison only suppressed the commit, so two
+        // fingers on a tablet produced two real drags and nothing committed, with no indication why.
         const g = drag;
+        if (!g || g.pointerId !== e.pointerId) return;
         setDrag(null);
-        if (!g || g.pointerId !== e.pointerId || !onArrange) return;
+        if (!onArrange) return;
         // A plain CLICK must not write geometry. Selecting a part in a design nobody has arranged would
         // otherwise materialise its fallback position — and that position is not neutral: `pcb-core`'s
         // adapter seeds board placement from `positions` as soon as EVERY part has one, so a click could
@@ -328,12 +618,42 @@ export function SchematicCanvas({
             ref={svgRef}
             role="img"
             aria-label="Schematic"
-            viewBox={`${extent.x} ${extent.y} ${extent.w} ${extent.h}`}
+            viewBox={`${box.x} ${box.y} ${box.w} ${box.h}`}
             style={{ width: '100%', height: '100%', touchAction: 'none' }}
-            onPointerMove={drag ? moveDrag : undefined}
-            onPointerUp={drag ? endDrag : undefined}
-            onPointerCancel={drag ? endDrag : undefined}
+            onPointerDown={beginPan}
+            onPointerMove={wire ? moveWire : pan ? movePan : drag ? moveDrag : undefined}
+            onPointerUp={wire ? endWire : pan ? endPan : drag ? endDrag : undefined}
+            // CANCELLED, NOT FINISHED. This used to route to the same function as pointerup, so a gesture the
+            // BROWSER aborted — a device removed, an OS interruption, a touch becoming a two-finger gesture —
+            // wrote geometry, minted a revision and scheduled a save. The file's own docstring said the
+            // opposite: a cancelled drag is a piece of state that stopped existing.
+            onPointerCancel={() => {
+                setWire(null);
+                setPan(null);
+                setDrag(null);
+            }}
         >
+            {/* THE WIRE BEING DRAWN, which is not a wire yet. Dashed and in the accent colour so it cannot be
+                mistaken for one the document carries, and drawn straight to the pointer rather than routed:
+                routing it would say the connection exists, and it does not until the pointer comes up. */}
+            {wire &&
+                (() => {
+                    const p = placed.find((q) => q.id === wire.from.componentId);
+                    const s = p?.symbol.pins.find((q) => q.pinId === wire.from.pinId);
+                    return p && s ? (
+                        <line
+                            data-testid="wire-in-flight"
+                            x1={p.x + s.x}
+                            y1={p.y + s.y}
+                            x2={wire.at.x}
+                            y2={wire.at.y}
+                            stroke="var(--accent, #6cf)"
+                            strokeWidth={1}
+                            strokeDasharray="5 3"
+                        />
+                    ) : null;
+                })()}
+
             {routed.wires.map((w) => {
                 // THE ROUTER'S OWN WARNING, ON THE SCREEN. `fellBack` distinguishes a wire that is merely a
                 // diagonal because the sheet is crowded from one the module says states something FALSE —
@@ -422,9 +742,36 @@ export function SchematicCanvas({
                                 <polyline {...shape} fill="none" />
                             );
                         })}
-                        {p.symbol.pins.map((pin) => (
-                            <circle key={pin.pinId} cx={pin.x} cy={pin.y} r={2} fill="var(--text-faint, #888)" />
-                        ))}
+                        {p.symbol.pins.map((pin) => {
+                            const live = wire?.to?.componentId === p.id && wire.to.pinId === pin.pinId;
+                            const source = wire?.from.componentId === p.id && wire.from.pinId === pin.pinId;
+                            return (
+                                <g key={pin.pinId}>
+                                    <circle
+                                        cx={pin.x}
+                                        cy={pin.y}
+                                        r={live || source ? 4 : 2}
+                                        fill={live || source ? 'var(--good)' : 'var(--text-faint, #888)'}
+                                    />
+                                    {/* THE PART YOU CAN ACTUALLY HIT. A terminal is drawn two units across and a
+                                        person cannot reliably put a pointer on two units of anything — least of
+                                        all zoomed out, where two units is less than a pixel. This is invisible,
+                                        it is sized in PIXELS rather than sheet units so it stays the same size to
+                                        the hand at every zoom, and it is what carries the gesture. */}
+                                    {onConnect && (
+                                        <circle
+                                            data-testid={`pin-${p.id}-${pin.pinId}`}
+                                            cx={pin.x}
+                                            cy={pin.y}
+                                            r={grabRadius}
+                                            fill="transparent"
+                                            style={{ cursor: 'crosshair' }}
+                                            onPointerDown={(e) => beginWire(e, p.id, pin.pinId)}
+                                        />
+                                    )}
+                                </g>
+                            );
+                        })}
                         <text
                             x={p.symbol.labelAnchor.x}
                             y={p.symbol.labelAnchor.y}
