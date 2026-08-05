@@ -14,9 +14,8 @@
  */
 import type { CircuitJson } from '@circuit-forge/eda-core';
 
-import { orientSymbol } from './orient';
-import { routeSheet, type Box, type RouteNet, type RoutePin } from './route';
-import { PIN_GRID, symbolFor } from './symbols';
+import { bodiesOf, netsOf, placeParts } from './layout';
+import { routeSheet, type Box, type RouteNet } from './route';
 
 const R = (id: string, a: string, b: string) => ({
     id,
@@ -108,38 +107,18 @@ const BIG: CircuitJson = {
     nets: nets('rail', ...Array.from({ length: 10 }, (_, i) => `n${i}`), 'gnd'),
 };
 
-/** The canvas's own fallback layout, reproduced: what every design gets before anyone arranges it. */
-function layOut(circuit: CircuitJson): { nets: RouteNet[]; bodies: Box[] } {
-    const MARGIN = 40;
-    const snapTo = (v: number): number => Math.round(v / PIN_GRID) * PIN_GRID;
-    const parts = (circuit.components ?? []).filter((c) => c.type !== 'ground');
-    const symbols = parts.map((c) => orientSymbol(symbolFor(c), undefined));
-    const cols = Math.max(1, Math.ceil(Math.sqrt(parts.length)));
-    const cellW = Math.max(...symbols.map((s) => s.width)) + 48;
-    const cellH = Math.max(...symbols.map((s) => s.height)) + 48;
-
-    const bodies: Box[] = [];
-    const placed = parts.map((c, i) => {
-        const x = snapTo(MARGIN + (i % cols) * cellW + cellW / 2);
-        const y = snapTo(MARGIN + Math.floor(i / cols) * cellH + cellH / 2);
-        const s = symbols[i]!;
-        bodies.push({ minX: x - s.width / 2, minY: y - s.height / 2, maxX: x + s.width / 2, maxY: y + s.height / 2 });
-        return { c, x, y, s };
-    });
-
-    const routeNets: RouteNet[] = [];
-    for (const net of circuit.nets ?? []) {
-        const pins: RoutePin[] = [];
-        for (const p of placed)
-            for (const pin of p.c.pins) {
-                if (pin.netId !== net.id) continue;
-                const sp = p.s.pins.find((q) => q.pinId === pin.pinId);
-                if (sp) pins.push({ x: p.x + sp.x, y: p.y + sp.y, side: sp.side, label: `${p.c.id}.${pin.pinId}` });
-            }
-        if (pins.length >= 2) routeNets.push({ id: net.id, name: net.name, pins });
-    }
-    return { nets: routeNets, bodies };
-}
+/**
+ * THE SHEET THE PRODUCT ACTUALLY DRAWS, imported rather than reproduced.
+ *
+ * This file used to re-implement the canvas's fallback layout with its own margin and its own cell padding,
+ * and the two drifted: every part sat one full grid step from where the product put it, so the sheets being
+ * pinned here were sheets nobody would ever see. A regression test that measures a different sheet from the
+ * product is not a weaker test, it is a test of something else.
+ */
+const laidOut = (circuit: CircuitJson): { nets: RouteNet[]; bodies: Box[] } => {
+    const placed = placeParts(circuit);
+    return { nets: netsOf(circuit, placed), bodies: bodiesOf(placed) };
+};
 
 it('draws every wire as right angles, on circuits the product actually produces', () => {
     const report = [
@@ -148,7 +127,7 @@ it('draws every wire as right angles, on circuits the product actually produces'
         ['bridge', BRIDGE],
         ['twenty-parts', BIG],
     ].map(([name, circuit]) => {
-        const { nets: rn, bodies } = layOut(circuit as CircuitJson);
+        const { nets: rn, bodies } = laidOut(circuit as CircuitJson);
         const out = routeSheet(rn, bodies);
         const diag = out.wires.filter((w) => w.shape === 'diagonal').length;
         return {
@@ -167,7 +146,9 @@ it('draws every wire as right angles, on circuits the product actually produces'
     );
     // And it must have drawn something. A layout that produced no wires would satisfy the line above.
     expect(report.map((r) => r.wires)).toEqual([3, 9, 10, 26]);
-    // Junction dots where nets branch — the twenty-part sheet hangs eight capacitors off one ground, so its
-    // ground node forks repeatedly and every fork needs marking.
-    expect(report.map((r) => r.dots > 0)).toEqual([false, true, true, true]);
+    // JUNCTION DOTS, COUNTED. `dots > 0` was the assertion here, and one surviving dot satisfied it:
+    // measured, keeping a single dot per net and discarding the rest left this whole suite green while
+    // fourteen of the twenty-part sheet's fifteen dots vanished. Every one of them marks a fork that a
+    // reader would otherwise be entitled to read as a crossing, so the count is the thing to hold.
+    expect(report.map((r) => r.dots)).toEqual([0, 4, 6, 15]);
 });
