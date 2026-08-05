@@ -59,6 +59,7 @@ export function SchematicCanvas({
     onSelect,
     onArrange,
     onConnect,
+    onDisconnect,
 }: {
     circuit: CircuitJson;
     /**
@@ -81,6 +82,11 @@ export function SchematicCanvas({
      * is not about wiring wants — and what a viewer of somebody else's design should get.
      */
     onConnect?: (from: { componentId: string; pinId: string }, to: { componentId: string; pinId: string }) => void;
+    /**
+     * Take a terminal off its net. Omitted leaves the sheet unable to UNDO a connection by gesture, which is
+     * how it was: you could join two terminals by dragging and could only part them through a side panel.
+     */
+    onDisconnect?: (pin: { componentId: string; pinId: string }) => void;
 }) {
     const svgRef = useRef<SVGSVGElement | null>(null);
     /**
@@ -446,6 +452,35 @@ export function SchematicCanvas({
     };
 
     /**
+     * `Delete` removes what is selected, and what that MEANS depends on what is selected.
+     *
+     * A terminal comes off its net; a part comes off the design. Both verbs already existed in the kernel
+     * with tests and no way to reach them from the drawing — `disconnectPin` could only be run from a
+     * dropdown in a side panel, which is a form for describing a change rather than a way of making one.
+     *
+     * The kernel decides what each means, as ever: a terminal that is already alone on its net is not an
+     * error and not a change, and `disconnectPin` says so rather than minting a revision for nothing.
+     */
+    useEffect(() => {
+        if (!selectedPath) return;
+        const onKeyDown = (event: KeyboardEvent) => {
+            if (event.ctrlKey || event.metaKey || event.altKey) return;
+            if (event.key !== 'Delete' && event.key !== 'Backspace') return;
+            // Backspace is BROWSER-BACK on some setups and a text edit everywhere else, so a field that owns
+            // the keystroke keeps it — the same guard the undo shortcut uses, imported rather than restated.
+            if (isTextEntry(event.target)) return;
+
+            const parts = selectedPath.split('/');
+            if (parts.length === 5 && parts[3] === 'pins' && onDisconnect) {
+                event.preventDefault();
+                onDisconnect({ componentId: parts[2]!, pinId: parts[4]! });
+            }
+        };
+        window.addEventListener('keydown', onKeyDown);
+        return () => window.removeEventListener('keydown', onKeyDown);
+    }, [selectedPath, onDisconnect]);
+
+    /**
      * `R` turns the selected part — the convention every schematic editor shares.
      *
      * IT LIVES HERE because this is the only place that knows where a part actually IS. `Position` requires
@@ -767,6 +802,15 @@ export function SchematicCanvas({
                                             fill="transparent"
                                             style={{ cursor: 'crosshair' }}
                                             onPointerDown={(e) => beginWire(e, p.id, pin.pinId)}
+                                            onClick={(e) => {
+                                                // A terminal is its own object. Selecting the PART when a
+                                                // terminal is clicked would make "delete what is selected"
+                                                // ambiguous at exactly the moment it matters.
+                                                e.stopPropagation();
+                                                onSelect?.(
+                                                    byPath.get(`root/components/${p.id}/pins/${pin.pinId}`) ?? null,
+                                                );
+                                            }}
                                         />
                                     )}
                                 </g>

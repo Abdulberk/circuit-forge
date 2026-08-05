@@ -8,7 +8,7 @@
  * which is the only way this harness is worth building inside the product's own workspace.
  */
 
-import { connectPins, isPlaceablePart, type TreeNode } from '@circuit-forge/editor-core';
+import { connectPins, disconnectPin, isPlaceablePart, type TreeNode } from '@circuit-forge/editor-core';
 import { useMemo, useState } from 'react';
 
 import { AddPart, Inspector } from '../components/Inspector';
@@ -284,6 +284,10 @@ function Workspace() {
                             // the two terminals are already one node, or a refusal with the reason named — and
                             // the canvas is told none of it: it reports two terminals and nothing more.
                             onConnect={(from, to) => doc.apply((c) => connectPins(c, from, to))}
+                            // The other half of the same verb. Both go through `apply`, so joining two
+                            // terminals and parting them again are two steps of one undo stack in the order
+                            // they happened — not two stacks a user has to hold in their head.
+                            onDisconnect={(pin) => doc.apply((c) => disconnectPin(c, pin))}
                         />
                     ) : (
                         <p className="empty">Open a project with a working copy to begin.</p>

@@ -9,7 +9,7 @@
  * present in the netlist, and a layout that shuffles between renders so a user cannot point at anything.
  */
 import type { CircuitJson, Component, UiJson } from '@circuit-forge/eda-core';
-import { isDrawnOnSheet, isPlaceablePart } from '@circuit-forge/editor-core';
+import { isDrawnOnSheet, isPlaceablePart, type TreeNode } from '@circuit-forge/editor-core';
 import { render, screen, fireEvent } from '@testing-library/react';
 
 import { SchematicCanvas } from './SchematicCanvas';
@@ -1226,5 +1226,97 @@ describe('the view and the gestures, at the edges where they actually broke', ()
             inFlight: container.querySelector('[data-testid="wire-in-flight"]'),
             view: svg.getAttribute('viewBox'),
         }).toEqual({ joined: [], inFlight: null, view: before });
+    });
+});
+
+/**
+ * Taking a connection back, which is the half of wiring that was missing.
+ *
+ * You could join two terminals by dragging and could only part them through a dropdown in a side panel.
+ * `disconnectPin` had been in the kernel with its own tests and nothing on the drawing could reach it.
+ */
+describe('a connection can be taken back from the drawing', () => {
+    const pinPath = (part: string, pin: string): string => `root/components/${part}/pins/${pin}`;
+
+    it('selects the TERMINAL when a terminal is clicked, not the part it belongs to', () => {
+        // "Delete what is selected" is ambiguous unless a terminal is its own object. Clicking one used to
+        // select the symbol, which is the wrong answer at exactly the moment it matters.
+        let selected: TreeNode | null = null;
+        const { container } = render(
+            <SchematicCanvas circuit={CIRCUIT} onConnect={() => {}} onSelect={(n) => (selected = n)} />,
+        );
+        fireEvent.click(container.querySelector('[data-testid="pin-r1-2"]')!);
+        expect(selected).toEqual(expect.objectContaining({ ref: expect.objectContaining({ kind: 'pin', id: '2' }) }));
+    });
+
+    it('Delete takes the selected terminal off its net', () => {
+        const parted: unknown[] = [];
+        render(
+            <SchematicCanvas
+                circuit={CIRCUIT}
+                selectedPath={pinPath('r1', '2')}
+                onDisconnect={(pin) => parted.push(pin)}
+            />,
+        );
+        fireEvent.keyDown(window, { key: 'Delete' });
+        expect(parted).toEqual([{ componentId: 'r1', pinId: '2' }]);
+    });
+
+    it('Backspace does the same, and neither fires while the user is typing', () => {
+        // Backspace is browser-back on some setups and a text edit everywhere else, so a field that owns the
+        // keystroke keeps it — the same guard the undo shortcut uses.
+        const parted: unknown[] = [];
+        render(
+            <SchematicCanvas
+                circuit={CIRCUIT}
+                selectedPath={pinPath('r2', '1')}
+                onDisconnect={(pin) => parted.push(pin)}
+            />,
+        );
+        const field = document.createElement('input');
+        document.body.appendChild(field);
+        fireEvent.keyDown(field, { key: 'Backspace' });
+        expect(parted).toEqual([]);
+
+        fireEvent.keyDown(window, { key: 'Backspace' });
+        expect(parted).toEqual([{ componentId: 'r2', pinId: '1' }]);
+        field.remove();
+    });
+
+    it('does nothing when the selection is not a terminal', () => {
+        // A part is selected: this verb has no meaning for it yet, and doing something surprising instead of
+        // nothing is worse than doing nothing.
+        const parted: unknown[] = [];
+        render(
+            <SchematicCanvas
+                circuit={CIRCUIT}
+                selectedPath="root/components/r1"
+                onDisconnect={(pin) => parted.push(pin)}
+            />,
+        );
+        fireEvent.keyDown(window, { key: 'Delete' });
+        expect(parted).toEqual([]);
+    });
+
+    it('ignores the chorded versions, which belong to the browser', () => {
+        const parted: unknown[] = [];
+        render(
+            <SchematicCanvas
+                circuit={CIRCUIT}
+                selectedPath={pinPath('r1', '2')}
+                onDisconnect={(pin) => parted.push(pin)}
+            />,
+        );
+        for (const mod of [{ ctrlKey: true }, { metaKey: true }, { altKey: true }])
+            fireEvent.keyDown(window, { key: 'Delete', ...mod });
+        expect(parted).toEqual([]);
+    });
+
+    it('is not offered when the canvas cannot change the design', () => {
+        const { container } = render(<SchematicCanvas circuit={CIRCUIT} selectedPath={pinPath('r1', '2')} />);
+        // No handler, so nothing to fire — and the assertion that matters is that the keystroke does not
+        // throw on the way to doing nothing.
+        expect(() => fireEvent.keyDown(window, { key: 'Delete' })).not.toThrow();
+        expect(container.querySelector('svg')).not.toBeNull();
     });
 });
