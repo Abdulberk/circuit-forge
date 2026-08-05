@@ -145,10 +145,10 @@ it('draws every wire as right angles, on circuits the product actually produces'
         report.map((r) => ({ circuit: r.circuit, diagonal: 0, illegible: 0 })),
     );
     // And it must have drawn something. A layout that produced no wires would satisfy the line above.
-    expect(report.map((r) => r.wires)).toEqual([3, 9, 10, 26]);
+    expect(report.map((r) => r.wires)).toEqual([4, 10, 11, 27]);
     // JUNCTION DOTS, COUNTED. `dots > 0` was the assertion here, and one surviving dot satisfied it:
     // measured, keeping a single dot per net and discarding the rest left this whole suite green while
     // fourteen of the twenty-part sheet's fifteen dots vanished. Every one of them marks a fork that a
     // reader would otherwise be entitled to read as a crossing, so the count is the thing to hold.
-    expect(report.map((r) => r.dots)).toEqual([0, 4, 6, 15]);
+    expect(report.map((r) => r.dots)).toEqual([1, 5, 7, 16]);
 });

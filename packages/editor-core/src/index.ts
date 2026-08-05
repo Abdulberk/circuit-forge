@@ -10,7 +10,7 @@
  * VERBATIM, and a promise like that only holds if it is enforced from the first commit — checked at the
  * end, the fix is a rewrite.
  */
-export { buildObjectTree, nodeAt, isPlaceablePart } from './tree/object-tree';
+export { buildObjectTree, nodeAt, isPlaceablePart, isDrawnOnSheet } from './tree/object-tree';
 export type { ObjectKind, ObjectRef, TreeNode, ObjectTree } from './tree/object-tree';
 
 /**

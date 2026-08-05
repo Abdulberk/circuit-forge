@@ -15,7 +15,7 @@
 
 import type { CircuitJson, Position } from '@circuit-forge/eda-core';
 
-import { isPlaceablePart } from '../tree/object-tree';
+import { isDrawnOnSheet } from '../tree/object-tree';
 
 import { orientSymbol } from './orient';
 import type { Box, RouteNet, RoutePin } from './route';
@@ -65,7 +65,7 @@ export interface PlacedPart {
  * made a part jump the first time it was dragged, since the drop snaps and the fallback did not.
  */
 export function placeParts(circuit: CircuitJson, positions?: Record<string, Position>): PlacedPart[] {
-    const parts = (circuit.components ?? []).filter((c) => isPlaceablePart(c));
+    const parts = (circuit.components ?? []).filter((c) => isDrawnOnSheet(c));
     const symbols = parts.map((c) => orientSymbol(symbolFor(c), positions?.[c.id]));
     const cellW = Math.max(GAP, ...symbols.map((s) => s.width)) + GAP;
     const cellH = Math.max(GAP, ...symbols.map((s) => s.height)) + GAP;
