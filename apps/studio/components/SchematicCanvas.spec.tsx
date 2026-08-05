@@ -665,3 +665,265 @@ describe('the wires read as a schematic', () => {
         expect(container.querySelectorAll('[data-trust="unverified"]').length).toBeGreaterThan(0);
     });
 });
+
+/**
+ * Looking at a sheet, which is the difference between a picture and an editor.
+ *
+ * A viewBox pinned to the content means a four-hundred-part design is drawn at a size where nothing can be
+ * read and nothing can be pointed at. These are the properties that make zooming usable rather than present:
+ * the point under the cursor does not move, the sheet can be found again, and — the one that actually breaks
+ * — a part dropped while zoomed lands where it was dropped.
+ */
+describe('the view can be moved and the drawing still lands where it is dropped', () => {
+    const PIN_GRID = 10;
+
+    const sized = (container: HTMLElement, w = 800, h = 600): SVGSVGElement => {
+        const svg = container.querySelector('svg')!;
+        svg.getBoundingClientRect = () =>
+            ({ width: w, height: h, x: 0, y: 0, top: 0, left: 0, right: w, bottom: h, toJSON: () => ({}) }) as DOMRect;
+        return svg;
+    };
+    const viewBox = (svg: SVGSVGElement): number[] => svg.getAttribute('viewBox')!.split(' ').map(Number);
+
+    it('zooms about the pointer: what is under the cursor stays under the cursor', () => {
+        // The whole specification of a wheel zoom. Scaling about the view's CENTRE instead passes any test
+        // that only checks "the box got smaller", and feels broken in the way people describe as "it runs
+        // away from me" — you point at the part you want and it slides off the screen.
+        const { container } = render(<SchematicCanvas circuit={CIRCUIT} />);
+        const svg = sized(container);
+        const [x0, y0, w0, h0] = viewBox(svg) as [number, number, number, number];
+
+        // The mapping the browser performs: uniform scale, centred, letterboxed on one axis.
+        const perPixel = 1 / Math.min(800 / w0, 600 / h0);
+        const left = (800 - w0 / perPixel) / 2;
+        const top = (600 - h0 / perPixel) / 2;
+        const [cx, cy] = [520, 190];
+        const under = [x0 + (cx - left) * perPixel, y0 + (cy - top) * perPixel];
+
+        fireEvent.wheel(svg, { deltaY: -100, clientX: cx, clientY: cy });
+
+        const [x1, y1, w1, h1] = viewBox(svg) as [number, number, number, number];
+        expect(w1).toBeLessThan(w0); // it did zoom IN
+        const perPixel2 = 1 / Math.min(800 / w1, 600 / h1);
+        const left2 = (800 - w1 / perPixel2) / 2;
+        const top2 = (600 - h1 / perPixel2) / 2;
+        const stillUnder = [x1 + (cx - left2) * perPixel2, y1 + (cy - top2) * perPixel2];
+        expect(stillUnder[0]).toBeCloseTo(under[0]!, 6);
+        expect(stillUnder[1]).toBeCloseTo(under[1]!, 6);
+    });
+
+    it('cannot be zoomed past the point of showing anything', () => {
+        const { container } = render(<SchematicCanvas circuit={CIRCUIT} />);
+        const svg = sized(container);
+        for (let i = 0; i < 200; i++) fireEvent.wheel(svg, { deltaY: -100, clientX: 400, clientY: 300 });
+        expect(viewBox(svg)[2]).toBeGreaterThanOrEqual(40); // four grid steps: one symbol, filling the screen
+        for (let i = 0; i < 400; i++) fireEvent.wheel(svg, { deltaY: 100, clientX: 400, clientY: 300 });
+        expect(viewBox(svg)[2]).toBeLessThan(1e5); // and not lost in empty space either
+    });
+
+    it('pans by exactly what the pointer travelled, and F brings the drawing back', () => {
+        const { container } = render(<SchematicCanvas circuit={CIRCUIT} />);
+        const svg = sized(container);
+        const before = viewBox(svg);
+        const perPixel = 1 / Math.min(800 / before[2]!, 600 / before[3]!);
+
+        fireEvent.pointerDown(svg, { pointerId: 9, button: 0, clientX: 400, clientY: 300 });
+        fireEvent.pointerMove(svg, { pointerId: 9, clientX: 460, clientY: 340 });
+        fireEvent.pointerUp(svg, { pointerId: 9, clientX: 460, clientY: 340 });
+
+        const after = viewBox(svg);
+        // Dragging the sheet right moves the WINDOW left, by the sheet-distance the hand covered.
+        expect(after[0]).toBeCloseTo(before[0]! - 60 * perPixel, 6);
+        expect(after[1]).toBeCloseTo(before[1]! - 40 * perPixel, 6);
+
+        fireEvent.keyDown(window, { key: 'f' });
+        expect(viewBox(svg)).toEqual(before);
+    });
+
+    it('drops a dragged part where it was dropped, at ANY zoom', () => {
+        // The property the whole mapping exists for, and the one that breaks when there are two of them: the
+        // pointer delta is in pixels and the document is in sheet units, so a wrong conversion moves the part
+        // by the zoom factor. At fit it is invisible, because the factor is near one.
+        let next: UiJson | undefined;
+        const { container } = render(<SchematicCanvas circuit={CIRCUIT} onArrange={(_l, n) => (next = n)} />);
+        const svg = sized(container);
+        // Far enough in that a wrong conversion is a wrong ANSWER. Two notches leaves the scale within about
+        // twenty percent of one, and at twenty units of travel a twenty percent error snaps straight back to
+        // the right lattice point — so a test built that way passes against a mapping that ignores the zoom
+        // entirely. Measured: it did.
+        for (let i = 0; i < 12; i++) fireEvent.wheel(svg, { deltaY: -100, clientX: 400, clientY: 300 });
+
+        const [, , w] = viewBox(svg) as [number, number, number, number];
+        const perPixel = 1 / Math.min(800 / w, 600 / viewBox(svg)[3]!);
+        const before = /translate\(([-\d.]+) ([-\d.]+)\)/
+            .exec(container.querySelector('[data-testid="symbol-r1"]')!.getAttribute('transform')!)!
+            .slice(1)
+            .map(Number);
+
+        // Travel a whole number of grid steps ON THE SHEET, expressed in the pixels that now means — and far
+        // enough that snapping cannot round a wrong answer back onto the right one.
+        const travel = 10 * PIN_GRID;
+        const pixels = travel / perPixel;
+        const part = container.querySelector('[data-testid="symbol-r1"]')!;
+        fireEvent.pointerDown(part, { pointerId: 3, button: 0, clientX: 300, clientY: 300 });
+        for (const ev of [fireEvent.pointerMove, fireEvent.pointerUp])
+            ev(svg, { pointerId: 3, clientX: 300 + pixels, clientY: 300 });
+
+        expect(next?.positions?.r1).toEqual(expect.objectContaining({ x: before[0]! + travel, y: before[1]! }));
+    });
+});
+
+/**
+ * Drawing a wire, which is the act that makes this an editor.
+ *
+ * Connecting two terminals was possible before this — through a dropdown in the Inspector, one pin at a
+ * time. That is a form for describing a connection, not a way of making one. `connectPins` had been in the
+ * kernel, tested, with no gesture that could reach it.
+ */
+describe('a wire can be drawn from one terminal to another', () => {
+    const sized = (container: HTMLElement): SVGSVGElement => {
+        const svg = container.querySelector('svg')!;
+        svg.getBoundingClientRect = () =>
+            ({
+                width: 800,
+                height: 600,
+                x: 0,
+                y: 0,
+                top: 0,
+                left: 0,
+                right: 800,
+                bottom: 600,
+                toJSON: () => ({}),
+            }) as DOMRect;
+        return svg;
+    };
+
+    /** Where a terminal actually is on the sheet, read off the drawing rather than assumed. */
+    const pinAt = (container: HTMLElement, part: string, pin: string): [number, number] => {
+        const circle = container.querySelector(`[data-testid="pin-${part}-${pin}"]`)!;
+        const [tx, ty] = /translate\(([-\d.]+) ([-\d.]+)\)/
+            .exec(circle.closest('g[data-testid^="symbol-"]')!.getAttribute('transform')!)!
+            .slice(1)
+            .map(Number);
+        return [tx! + Number(circle.getAttribute('cx')), ty! + Number(circle.getAttribute('cy'))];
+    };
+
+    /** The same mapping the browser performs, inverted: a point on the sheet as a point on the screen. */
+    const clientAt = (svg: SVGSVGElement, x: number, y: number): { clientX: number; clientY: number } => {
+        const [bx, by, bw, bh] = svg.getAttribute('viewBox')!.split(' ').map(Number) as [
+            number,
+            number,
+            number,
+            number,
+        ];
+        const perUnit = Math.min(800 / bw, 600 / bh);
+        return {
+            clientX: (800 - bw * perUnit) / 2 + (x - bx) * perUnit,
+            clientY: (600 - bh * perUnit) / 2 + (y - by) * perUnit,
+        };
+    };
+
+    it('reports the two terminals the hand joined, and nothing more', () => {
+        // The canvas decides NOTHING about what a connection means. It says which two terminals; the kernel
+        // says whether that is a change, a no-op, or a refusal — including the ground-to-rail short, which is
+        // refused with the remedy named. A canvas that judged it would be the second authority this codebase
+        // keeps paying for.
+        const joined: unknown[] = [];
+        const { container } = render(
+            <SchematicCanvas circuit={CIRCUIT} onConnect={(from, to) => joined.push({ from, to })} />,
+        );
+        const svg = sized(container);
+
+        fireEvent.pointerDown(container.querySelector('[data-testid="pin-r1-2"]')!, {
+            pointerId: 5,
+            button: 0,
+            ...clientAt(svg, ...pinAt(container, 'r1', '2')),
+        });
+        fireEvent.pointerUp(svg, { pointerId: 5, ...clientAt(svg, ...pinAt(container, 'r2', '1')) });
+
+        expect(joined).toEqual([{ from: { componentId: 'r1', pinId: '2' }, to: { componentId: 'r2', pinId: '1' } }]);
+    });
+
+    it('shows the wire while it is being drawn, and only while', () => {
+        // The line has to be visibly NOT a wire yet: drawn straight to the pointer, dashed, in the accent
+        // colour. Routing it would state that the connection exists, and it does not until the pointer is up.
+        const { container } = render(<SchematicCanvas circuit={CIRCUIT} onConnect={() => {}} />);
+        const svg = sized(container);
+        expect(container.querySelector('[data-testid="wire-in-flight"]')).toBeNull();
+
+        fireEvent.pointerDown(container.querySelector('[data-testid="pin-r1-2"]')!, {
+            pointerId: 6,
+            button: 0,
+            ...clientAt(svg, ...pinAt(container, 'r1', '2')),
+        });
+        fireEvent.pointerMove(svg, { pointerId: 6, clientX: 250, clientY: 180 });
+        expect(container.querySelector('[data-testid="wire-in-flight"]')).not.toBeNull();
+
+        fireEvent.pointerUp(svg, { pointerId: 6, clientX: 250, clientY: 180 });
+        expect(container.querySelector('[data-testid="wire-in-flight"]')).toBeNull();
+    });
+
+    it('dropped on empty sheet, joins nothing — changing your mind is not an error', () => {
+        const joined: unknown[] = [];
+        const { container } = render(
+            <SchematicCanvas circuit={CIRCUIT} onConnect={(from, to) => joined.push({ from, to })} />,
+        );
+        const svg = sized(container);
+        const [px, py] = pinAt(container, 'r1', '2');
+        fireEvent.pointerDown(container.querySelector('[data-testid="pin-r1-2"]')!, {
+            pointerId: 7,
+            button: 0,
+            ...clientAt(svg, px, py),
+        });
+        // A long way from any terminal, on the empty sheet below the drawing.
+        fireEvent.pointerUp(svg, { pointerId: 7, ...clientAt(svg, px + 37, py + 41) });
+        expect(joined).toEqual([]);
+    });
+
+    it('starting a wire does not drag the part, and does not pan the sheet', () => {
+        // Three gestures share one pointer press and each has to refuse the other two. A terminal that also
+        // dragged its symbol would move the part every time somebody tried to wire it.
+        let arranged = 0;
+        const { container } = render(
+            <SchematicCanvas circuit={CIRCUIT} onConnect={() => {}} onArrange={() => (arranged += 1)} />,
+        );
+        const svg = sized(container);
+        const before = svg.getAttribute('viewBox');
+
+        fireEvent.pointerDown(container.querySelector('[data-testid="pin-r1-2"]')!, {
+            pointerId: 8,
+            button: 0,
+            ...clientAt(svg, ...pinAt(container, 'r1', '2')),
+        });
+        fireEvent.pointerMove(svg, { pointerId: 8, clientX: 400, clientY: 300 });
+        fireEvent.pointerUp(svg, { pointerId: 8, clientX: 400, clientY: 300 });
+
+        // AND NOTHING IS LEFT RUNNING. If the press had also started a part drag, the wire gesture would end
+        // and the drag would still be in flight — so the next time the pointer moved anywhere, the part would
+        // follow it, with no button held. Asserting only "nothing was committed during the gesture" misses
+        // that entirely: measured, deleting the guard that stops the press reaching the symbol left every
+        // assertion here green.
+        const at = pinAt(container, 'r1', '2');
+        fireEvent.pointerMove(svg, { pointerId: 8, clientX: 600, clientY: 500 });
+        fireEvent.pointerUp(svg, { pointerId: 8, clientX: 600, clientY: 500 });
+
+        expect({ arranged, view: svg.getAttribute('viewBox'), pin: pinAt(container, 'r1', '2') }).toEqual({
+            arranged: 0,
+            view: before,
+            pin: at,
+        });
+    });
+
+    it('is not offered at all when the canvas cannot change the design', () => {
+        // A viewer of somebody else's design should not be handed a gesture that goes nowhere.
+        const { container } = render(<SchematicCanvas circuit={CIRCUIT} />);
+        const svg = sized(container);
+        fireEvent.pointerDown(container.querySelector('[data-testid="pin-r1-2"]')!, {
+            pointerId: 9,
+            button: 0,
+            ...clientAt(svg, ...pinAt(container, 'r1', '2')),
+        });
+        fireEvent.pointerMove(svg, { pointerId: 9, clientX: 300, clientY: 200 });
+        expect(container.querySelector('[data-testid="wire-in-flight"]')).toBeNull();
+    });
+});

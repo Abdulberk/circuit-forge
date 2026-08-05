@@ -8,7 +8,7 @@
  * which is the only way this harness is worth building inside the product's own workspace.
  */
 
-import { isPlaceablePart, type TreeNode } from '@circuit-forge/editor-core';
+import { connectPins, isPlaceablePart, type TreeNode } from '@circuit-forge/editor-core';
 import { useMemo, useState } from 'react';
 
 import { AddPart, Inspector } from '../components/Inspector';
@@ -263,6 +263,12 @@ function Workspace() {
                             // stacks would let Ctrl+Z un-move something without un-deleting what was deleted
                             // after it — an order a user cannot hold in their head.
                             onArrange={doc.commitUi}
+                            // DRAWING A WIRE goes through the same kernel edit the Inspector's dropdown uses,
+                            // and through the same `apply`, so it lands in one undo stack in the order it
+                            // happened. `connectPins` decides what the gesture MEANS — a change, a no-op when
+                            // the two terminals are already one node, or a refusal with the reason named — and
+                            // the canvas is told none of it: it reports two terminals and nothing more.
+                            onConnect={(from, to) => doc.apply((c) => connectPins(c, from, to))}
                         />
                     ) : (
                         <p className="empty">Open a project with a working copy to begin.</p>
