@@ -96,8 +96,12 @@ describe('what the canvas draws', () => {
         const nets = wires(container).map((l) => l.getAttribute('data-net'));
         expect(nets.filter((n) => n === 'VIN')).toHaveLength(1);
         expect(nets.filter((n) => n === 'MID')).toHaveLength(1);
-        // Three terminals on GND now — V1.-, R2.2 and the ground symbol's own — so two wires from the hub.
-        expect(nets.filter((n) => n === 'GND')).toHaveLength(2);
+        // NO WIRE FOR GND AT ALL. The reference is marked at each pin that reaches it rather than wired
+        // between them, which is what every schematic does and what the measurement argues for: ground was
+        // between a third and a half of all the wire on the sheet, crossing everything else. There is a
+        // symbol on each of its terminals instead.
+        expect(nets.filter((n) => n === 'GND')).toHaveLength(0);
+        expect(container.querySelectorAll('[data-testid="ground-glyph"]').length).toBeGreaterThan(0);
     });
 
     it('draws NO wire for a net with a single pin — an unconnected pin must look unconnected', () => {

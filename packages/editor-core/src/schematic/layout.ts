@@ -172,7 +172,80 @@ export function netsOf(circuit: CircuitJson, placed: readonly PlacedPart[]): Rou
                 const sp = p.symbol.pins.find((q) => q.pinId === pin.pinId);
                 if (sp) pins.push({ x: p.x + sp.x, y: p.y + sp.y, side: sp.side, label: `${p.id}.${pin.pinId}` });
             }
+        // THE REFERENCE IS NOT WIRED, IT IS MARKED. Every schematic in the world draws a ground symbol at
+        // each pin that reaches the reference rather than running a wire from one to the next, for a reason
+        // the measurements here make plain: ground was between a third and a HALF of every wire on the sheet
+        // (38%, 46%, 35%, 53% of total length on the four regression circuits), and all of it crossing
+        // everything else. A reader does not follow those wires; they read the symbol and know.
+        //
+        // So a ground net is left out of the routing entirely and `groundGlyphs` draws it instead. The
+        // netlist is unchanged and still says what is connected — this is about how the drawing SPELLS it.
+        if (net.isGround) continue;
         if (pins.length >= 2) out.push({ id: net.id, name: net.name, pins });
     }
     return out;
 }
+
+/**
+ * A ground symbol on every terminal that reaches the reference.
+ *
+ * PLACED SO ITS OWN TERMINAL COINCIDES WITH THE PIN, which is why no wire is needed: the symbol attaches to
+ * the pin the way it does on paper. It is turned so it hangs AWAY from the part — a pin that leaves downward
+ * gets a symbol below it, one that leaves left gets a symbol to its left — so the bars never sit on the body.
+ *
+ * A design that already carries ground COMPONENTS keeps them: those are the author's own marks, they are in
+ * the netlist and the tree, and they can be selected and moved. Their pins are skipped here so a marker does
+ * not get a second symbol drawn on top of it.
+ */
+export function groundGlyphs(circuit: CircuitJson, placed: readonly PlacedPart[]): PlacedPart[] {
+    const byId = new Map((circuit.components ?? []).map((c) => [c.id, c]));
+    const ground = new Set((circuit.nets ?? []).filter((n) => n.isGround).map((n) => n.id));
+    if (ground.size === 0) return [];
+
+    const glyphs: PlacedPart[] = [];
+    for (const part of placed) {
+        const component = byId.get(part.id);
+        if (!component || !isPlaceablePart(component)) continue; // a marker already IS the symbol
+        for (const pin of component.pins) {
+            if (!ground.has(pin.netId)) continue;
+            const sp = part.symbol.pins.find((q) => q.pinId === pin.pinId);
+            if (!sp) continue;
+            // Turned so the symbol's own terminal points back at the pin it is attached to.
+            const symbol = orientSymbol(symbolFor(GROUND_SYMBOL), { rotation: GLYPH_TURN[sp.side] });
+            const own = symbol.pins[0];
+            if (!own) continue;
+            glyphs.push({
+                id: `${part.id}.${pin.pinId}#gnd`,
+                designator: '',
+                x: part.x + sp.x - own.x,
+                y: part.y + sp.y - own.y,
+                symbol,
+            });
+        }
+    }
+    return glyphs;
+}
+
+/**
+ * Which way to turn the symbol so it hangs away from the part.
+ *
+ * Its terminal points UP when upright — the bars are below it — so a pin that leaves downward needs no turn
+ * at all, and the others follow from that one fact rather than from four separate decisions.
+ */
+/**
+ * The component a ground glyph is drawn from.
+ *
+ * ONE PIN, and it has to be there. `symbolFor` compares the drawn shape's pin count against the component's
+ * own and derives a plain labelled box when they disagree — which is the right rule (a "resistor" with four
+ * pins is not the two-terminal part that shape describes) and it means a component with NO pins gets a box
+ * with no terminal. Asking for a ground symbol without giving it a terminal returned exactly that: an empty
+ * box, no pin, and every glyph silently skipped.
+ */
+const GROUND_SYMBOL = { type: 'ground', pins: [{ pinId: '1', netId: '' }] } as Parameters<typeof symbolFor>[0];
+
+const GLYPH_TURN: Record<RoutePin['side'], Position['rotation']> = {
+    bottom: undefined,
+    top: '180',
+    left: '90',
+    right: '270',
+};
