@@ -1947,3 +1947,63 @@ describe('a box selects, and Ctrl+D copies', () => {
         field.remove();
     });
 });
+
+/**
+ * The rule check, shown ON the drawing.
+ *
+ * ERC has been in the kernel since long before there was a canvas, and nothing in this app had ever shown
+ * it: a design with no ground, a floating node, two parts sharing a designator — every one reported, every
+ * one invisible. It is the check that says whether a drawing is a CIRCUIT, and the product's whole claim is
+ * about designs that are verified.
+ */
+describe('what the rule check found is marked where it is', () => {
+    const problems = [
+        { code: 'ERC037', severity: 'error', message: 'R1 and R2 share a designator.', relatedIds: ['r1', 'r2'] },
+        { code: 'ERC036', severity: 'warning', message: 'MID is not an E-series value.', relatedIds: ['mid'] },
+    ];
+
+    it('rings the parts an issue names', () => {
+        const { container } = render(<SchematicCanvas circuit={CIRCUIT} problems={problems} />);
+        expect(container.querySelector('[data-testid="problem-r1"]')).not.toBeNull();
+        expect(container.querySelector('[data-testid="problem-r2"]')).not.toBeNull();
+        // …and nothing else. A mark on a part with no issue is worse than no mark at all.
+        expect(container.querySelector('[data-testid="problem-v1"]')).toBeNull();
+    });
+
+    it('marks the WIRES of a net an issue names', () => {
+        // Half the codes name a net rather than a part — a floating node, a shorted source — and a ring
+        // round a symbol cannot say that.
+        const { container } = render(<SchematicCanvas circuit={CIRCUIT} problems={problems} />);
+        const mid = [...container.querySelectorAll('[data-net="MID"]')];
+        expect(mid.length).toBeGreaterThan(0);
+        expect(mid.every((w) => w.getAttribute('data-problem') === 'warning')).toBe(true);
+    });
+
+    it('says how BADLY, and an error outranks a warning on the same object', () => {
+        // A part that is both duplicated and out of the E-series should read as the more serious of the two,
+        // and a reader should not have to know which mark won.
+        const both = [
+            { code: 'ERC036', severity: 'warning', message: 'w', relatedIds: ['r1'] },
+            { code: 'ERC037', severity: 'error', message: 'e', relatedIds: ['r1'] },
+        ];
+        const { container } = render(<SchematicCanvas circuit={CIRCUIT} problems={both} />);
+        expect(container.querySelector('[data-testid="symbol-r1"]')!.getAttribute('data-problem')).toBe('error');
+    });
+
+    it('marks nothing when there is nothing wrong', () => {
+        const { container } = render(<SchematicCanvas circuit={CIRCUIT} />);
+        expect(container.querySelectorAll('[data-problem]')).toHaveLength(0);
+    });
+
+    it('does not change the SYMBOL, only adds a mark about it', () => {
+        // Recolouring a flagged resistor's own strokes would make it a different-looking resistor, and a
+        // reader has to be able to tell a mark about a part from the part itself.
+        const plain = render(<SchematicCanvas circuit={CIRCUIT} />).container.querySelector(
+            '[data-testid="symbol-r1"] polyline',
+        )!.outerHTML;
+        const flagged = render(<SchematicCanvas circuit={CIRCUIT} problems={problems} />).container.querySelector(
+            '[data-testid="symbol-r1"] polyline',
+        )!.outerHTML;
+        expect(flagged).toBe(plain);
+    });
+});

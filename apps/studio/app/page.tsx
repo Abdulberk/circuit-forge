@@ -8,7 +8,7 @@
  * which is the only way this harness is worth building inside the product's own workspace.
  */
 
-import type { CircuitJson } from '@circuit-forge/eda-core';
+import { runErc, type CircuitJson } from '@circuit-forge/eda-core';
 import {
     buildObjectTree,
     connectPins,
@@ -180,6 +180,19 @@ function Workspace() {
     }, [doc.circuit, selected]);
     useUndoShortcuts({ undo: doc.undo, redo: doc.redo });
     const circuit = doc.circuit;
+    /**
+     * WHAT THE RULE CHECK FOUND, run here and shown in two places at once.
+     *
+     * ERC has been in the kernel since long before there was a canvas and nothing in this app has ever shown
+     * it: a design with no ground, a floating node, two parts sharing a designator — every one of them
+     * reported, every one invisible. It is the check that says whether a drawing is a CIRCUIT, and the
+     * product's whole claim is about designs that are verified.
+     *
+     * Recomputed only when the design changes. It runs on every keystroke otherwise, and a rule check is not
+     * free on a four-hundred-part sheet.
+     */
+    const problems = useMemo(() => (circuit ? runErc(circuit).issues : []), [circuit]);
+
     const counts = useMemo(
         () => ({
             // Counted the way the TREE counts, which means net markers are not parts. The raw array length
@@ -280,6 +293,47 @@ function Workspace() {
                             part with an MPN, a footprint and a tolerance — which is what the package
                             check, the robustness verdict and an orderable BOM all key on. */}
                         {circuit && <PartLibrary api={api} doc={doc} />}
+                        {/* THE LIST, beside the drawing that carries the marks. A mark says WHERE and this says
+                            WHAT, and clicking one selects what it names — which is the whole reason to have
+                            both: a reader should not have to hunt a four-hundred-part sheet for the part an
+                            error mentions. */}
+                        {problems.length > 0 && (
+                            <div className={`notice ${problems.some((p) => p.severity === 'error') ? 'bad' : 'warn'}`}>
+                                <h4>
+                                    {problems.filter((p) => p.severity === 'error').length} errors ·{' '}
+                                    {problems.filter((p) => p.severity !== 'error').length} warnings
+                                </h4>
+                                <ul>
+                                    {problems.slice(0, 12).map((issue, i) => (
+                                        <li key={`${issue.code}:${issue.relatedIds.join(',')}:${i}`}>
+                                            <button
+                                                type="button"
+                                                data-testid={`erc-${issue.code}`}
+                                                style={{ textAlign: 'left' }}
+                                                onClick={() => {
+                                                    if (!circuit) return;
+                                                    const { byPath } = buildObjectTree(circuit);
+                                                    // An id may name a part or a net, and the issue does not
+                                                    // say which — so both addresses are tried and whatever
+                                                    // exists is selected.
+                                                    setSelected(
+                                                        issue.relatedIds.flatMap(
+                                                            (id) =>
+                                                                byPath.get(`root/components/${id}`) ??
+                                                                byPath.get(`root/nets/${id}`) ??
+                                                                [],
+                                                        ),
+                                                    );
+                                                }}
+                                            >
+                                                {issue.message}
+                                            </button>
+                                        </li>
+                                    ))}
+                                    {problems.length > 12 && <li>…and {problems.length - 12} more</li>}
+                                </ul>
+                            </div>
+                        )}
                         {circuit && (
                             // Selection is held HERE and passed down, so the tree and the canvas cannot
                             // disagree about what is selected. The panel used to keep its own, which meant
@@ -378,6 +432,7 @@ function Workspace() {
                                     );
                                 }
                             }}
+                            problems={problems}
                             onDelete={(ids) =>
                                 doc.applyMany(
                                     ids.length === 1 ? 'Delete' : `Delete ${ids.length} parts`,
