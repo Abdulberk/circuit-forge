@@ -132,7 +132,10 @@ export function ObjectTreePanel({
     const select = (path: string, additive: boolean) => onSelect?.(nodeAt(tree, path.split('/')) ?? null, additive);
 
     return (
-        <div className="tree" role="tree" aria-label="Design objects">
+        // DECLARED multi-selectable. A `role="tree"` says single-select unless it says otherwise, so marking
+        // several rows `aria-selected` inside one told a screen reader something the tree denied — the reader
+        // announces one selection while the user has five.
+        <div className="tree" role="tree" aria-label="Design objects" aria-multiselectable="true">
             <Row
                 node={tree.root}
                 depth={0}

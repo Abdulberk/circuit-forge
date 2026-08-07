@@ -37,15 +37,21 @@ const MARGIN = GAP / 2;
 
 const snapToGrid = (v: number): number => Math.round(v / PIN_GRID) * PIN_GRID;
 
-/** How far below the terminal a net marker sits: two lanes, which is one short wire and no crowding. */
-const MARKER_DROP = 2 * PIN_GRID;
-
 export interface PlacedPart {
     id: string;
     designator: string;
     x: number;
     y: number;
     symbol: SymbolGeometry;
+    /**
+     * For a net marker placed against a terminal: which terminal, as `componentId.pinId`.
+     *
+     * Recorded where the claim is MADE so nothing has to work it out again. `groundGlyphs` skips these pins,
+     * and without that it drew a second ground symbol on top of the author's own — the two interpenetrating,
+     * the marker's terminal landing on the middle of the glyph's widest bar, and the marker joined to nothing
+     * because a ground net is no longer wired. Reproducible on this product's own divider after one drag.
+     */
+    annotates?: string;
 }
 
 /**
@@ -114,7 +120,7 @@ function attachMarkers(circuit: CircuitJson, placed: PlacedPart[], positions?: R
     if (markers.length === 0) return placed;
 
     const taken = new Set<string>();
-    const moved = new Map<string, { x: number; y: number }>();
+    const moved = new Map<string, Partial<PlacedPart>>();
     for (const marker of markers) {
         if (positions?.[marker.id]) continue; // somebody arranged it; that always wins
         const net = byId.get(marker.id)?.pins[0]?.netId;
@@ -125,7 +131,7 @@ function attachMarkers(circuit: CircuitJson, placed: PlacedPart[], positions?: R
                     .filter((pin) => pin.netId === net)
                     .flatMap((pin) => {
                         const sp = p.symbol.pins.find((q) => q.pinId === pin.pinId);
-                        return sp ? [{ key: `${p.id}.${pin.pinId}`, x: p.x + sp.x, y: p.y + sp.y }] : [];
+                        return sp ? [{ key: `${p.id}.${pin.pinId}`, x: p.x + sp.x, y: p.y + sp.y, side: sp.side }] : [];
                     }),
             )
             .filter((t) => !taken.has(t.key))
@@ -134,7 +140,14 @@ function attachMarkers(circuit: CircuitJson, placed: PlacedPart[], positions?: R
             .sort((u, v) => v.y - u.y || u.x - v.x || u.key.localeCompare(v.key))[0];
         if (!at) continue;
         taken.add(at.key);
-        moved.set(marker.id, { x: at.x, y: at.y + MARKER_DROP });
+        // ITS OWN TERMINAL ON THE PIN, exactly like the glyphs — because it IS one. It used to be parked a
+        // fixed drop below the pin, which assumed a wire would be drawn from one to the other; once ground
+        // stopped being wired, that assumption left the author's symbol dangling twenty units from a pin
+        // that had grown a second ground symbol of its own, the two drawn through each other.
+        const symbol = orientSymbol(symbolFor(GROUND_SYMBOL), { rotation: GLYPH_TURN[at.side] });
+        const own = symbol.pins[0];
+        if (!own) continue;
+        moved.set(marker.id, { x: at.x - own.x, y: at.y - own.y, symbol, annotates: at.key });
     }
     return placed.map((p) => ({ ...p, ...(moved.get(p.id) ?? {}) }));
 }
@@ -202,12 +215,17 @@ export function groundGlyphs(circuit: CircuitJson, placed: readonly PlacedPart[]
     const ground = new Set((circuit.nets ?? []).filter((n) => n.isGround).map((n) => n.id));
     if (ground.size === 0) return [];
 
+    const claimed = new Set(placed.flatMap((p) => (p.annotates ? [p.annotates] : [])));
     const glyphs: PlacedPart[] = [];
     for (const part of placed) {
         const component = byId.get(part.id);
         if (!component || !isPlaceablePart(component)) continue; // a marker already IS the symbol
         for (const pin of component.pins) {
             if (!ground.has(pin.netId)) continue;
+            // A pin the author's own marker is attached to already HAS its symbol. Drawing another would put
+            // two ground marks on one terminal, which is what happened before the marker was made to sit on
+            // the pin rather than below it.
+            if (claimed.has(`${part.id}.${pin.pinId}`)) continue;
             const sp = part.symbol.pins.find((q) => q.pinId === pin.pinId);
             if (!sp) continue;
             // Turned so the symbol's own terminal points back at the pin it is attached to.
@@ -220,6 +238,9 @@ export function groundGlyphs(circuit: CircuitJson, placed: readonly PlacedPart[]
                 x: part.x + sp.x - own.x,
                 y: part.y + sp.y - own.y,
                 symbol,
+                // The terminal this symbol IS the mark for. A renderer needs it to keep the symbol with the
+                // part while it is being dragged, and it is the same field the author's own markers carry.
+                annotates: `${part.id}.${pin.pinId}`,
             });
         }
     }

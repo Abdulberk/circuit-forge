@@ -69,8 +69,18 @@ export {};
  * a user should see — is not the framework complaining, and failing on those would push tests to swallow
  * output that belongs on screen.
  */
+/**
+ * ANCHORED PATTERNS ARE HOW THIS RULE QUIETLY STOPS WORKING.
+ *
+ * The first version of it listed "a state update outside `act`" among the defects it claimed to catch, and
+ * could not match one: React's message begins "An update to X inside a test was not wrapped in act(...)",
+ * while every alternative here was anchored at the start of the string. A rule that names what it catches
+ * and does not catch it is the same shape as the tests it exists to police.
+ *
+ * So the distinctive PHRASE is matched wherever it appears, and each entry is one React actually emits.
+ */
 const REACT_DIAGNOSTIC =
-    /^(Warning:|Each child in a list|A props object containing a "key"|React (does not|keys)|Invalid|Received|Unknown|You provided a `value` prop)/;
+    /(^Warning:|Each child in a list|A props object containing a "key"|not wrapped in act|React (does not|keys)|^Invalid|^Received|^Unknown|You provided a `value` prop|cannot appear as a (child|descendant)|Encountered two children with the same key)/;
 
 beforeEach(() => {
     const complain = (label: 'error' | 'warn', original: (...args: unknown[]) => void) =>
