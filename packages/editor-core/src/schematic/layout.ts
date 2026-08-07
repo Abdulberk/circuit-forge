@@ -193,7 +193,14 @@ export function netsOf(circuit: CircuitJson, placed: readonly PlacedPart[]): Rou
         //
         // So a ground net is left out of the routing entirely and `groundGlyphs` draws it instead. The
         // netlist is unchanged and still says what is connected — this is about how the drawing SPELLS it.
-        if (net.isGround) continue;
+        // A SUPPLY RAIL IS THE SAME ARGUMENT, and now there is something to make it about: nothing had ever
+        // written `isPower` — the model was never told the field existed — so a rail could not be drawn as a
+        // rail. It is marked now, and a rail is the second-largest net in most designs after the reference.
+        //
+        // The difference is that a rail needs its NAME. Every ground symbol means the same node and can go
+        // unlabelled; VCC and +3V3 are different nodes drawn with the same mark, so a reader who cannot see
+        // which is which is worse off than with a wire.
+        if (net.isGround || net.isPower) continue;
         if (pins.length >= 2) out.push({ id: net.id, name: net.name, pins });
     }
     return out;
@@ -269,4 +276,81 @@ const GLYPH_TURN: Record<RoutePin['side'], Position['rotation']> = {
     top: '180',
     left: '90',
     right: '270',
+};
+
+/**
+ * The symbol for a supply rail, on every terminal that reaches one.
+ *
+ * THE SAME ARGUMENT AS GROUND, with one difference that changes the drawing. A rail is the second-largest
+ * net in most designs, it crosses everything on its way to each consumer, and no schematic wires it: it puts
+ * a supply symbol on each pin. But every ground symbol means the SAME node, so it needs no label, while VCC
+ * and +3V3 are different nodes drawn with the same mark — so a rail symbol carries its net's NAME, and a
+ * reader who cannot see which rail a pin reaches is worse off than with a wire.
+ *
+ * A BAR AND A STEM, which is the conventional supply port: the stem rises out of the terminal and the bar
+ * caps it. Drawn here rather than in `symbols.ts` because it is notation about a NET rather than a component
+ * anybody places — there is no `type: 'power'` to look up, and inventing one would put a part in the tree
+ * and on the BOM that nobody buys.
+ */
+export function railGlyphs(circuit: CircuitJson, placed: readonly PlacedPart[]): Array<PlacedPart & { label: string }> {
+    const byId = new Map((circuit.components ?? []).map((c) => [c.id, c]));
+    const rails = new Map(
+        (circuit.nets ?? []).filter((n) => n.isPower && !n.isGround).map((n) => [n.id, n.name ?? n.id]),
+    );
+    if (rails.size === 0) return [];
+
+    const out: Array<PlacedPart & { label: string }> = [];
+    for (const part of placed) {
+        const component = byId.get(part.id);
+        if (!component || !isPlaceablePart(component)) continue;
+        for (const pin of component.pins) {
+            const name = rails.get(pin.netId);
+            if (name === undefined) continue;
+            const sp = part.symbol.pins.find((q) => q.pinId === pin.pinId);
+            if (!sp) continue;
+            const symbol = orientSymbol(railSymbol(), { rotation: RAIL_TURN[sp.side] });
+            const own = symbol.pins[0]!;
+            out.push({
+                id: `${part.id}.${pin.pinId}#rail`,
+                designator: '',
+                x: part.x + sp.x - own.x,
+                y: part.y + sp.y - own.y,
+                symbol,
+                annotates: `${part.id}.${pin.pinId}`,
+                label: name,
+            });
+        }
+    }
+    return out;
+}
+
+/**
+ * The supply port: a stem from the terminal to a bar across the top.
+ *
+ * Its pin points DOWN, because a rail is drawn above what it feeds — which is the opposite of ground and is
+ * why the turn table below is the mirror of the ground one rather than the same.
+ */
+function railSymbol(): SymbolGeometry {
+    const strokes = [
+        { points: [[0, 0] as [number, number], [0, -10] as [number, number]] },
+        { points: [[-8, -10] as [number, number], [8, -10] as [number, number]] },
+    ];
+    const pins = [{ pinId: '1', x: 0, y: 0, side: 'bottom' as const }];
+    return {
+        basis: 'drawn',
+        width: 16,
+        height: 10,
+        bounds: { minX: -8, minY: -10, maxX: 8, maxY: 0 },
+        strokes,
+        pins,
+        labelAnchor: { x: 0, y: -14 },
+    };
+}
+
+/** Turned so the bar sits AWAY from the part, the mirror of the ground table for the opposite reason. */
+const RAIL_TURN: Record<RoutePin['side'], Position['rotation']> = {
+    top: undefined,
+    bottom: '180',
+    left: '270',
+    right: '90',
 };

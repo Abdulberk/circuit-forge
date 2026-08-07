@@ -36,6 +36,7 @@ import {
     placeParts,
     bodiesOf,
     groundGlyphs,
+    railGlyphs,
     netsOf,
     routeSheet,
     type PlacedPart,
@@ -188,7 +189,7 @@ export function SchematicCanvas({
         moved: boolean;
     } | null>(null);
 
-    const { placed, glyphs, routed, extent, byPath } = useMemo(() => {
+    const { placed, glyphs, rails, routed, extent, byPath } = useMemo(() => {
         const placed = placeParts(circuit, ui?.positions);
 
         /**
@@ -212,7 +213,11 @@ export function SchematicCanvas({
         //
         // The glyphs are obstacles like any other symbol, so wires go round them rather than through.
         const glyphs = groundGlyphs(circuit, placed);
-        const routed = routeSheet(netsOf(circuit, placed), bodiesOf([...placed, ...glyphs]));
+        // A SUPPLY RAIL, marked the same way and for the same reason — it is the second-largest net in most
+        // designs and it crosses everything on its way to each consumer. With its NAME, because every ground
+        // symbol means one node while VCC and +3V3 are different nodes drawn with the same mark.
+        const rails = railGlyphs(circuit, placed);
+        const routed = routeSheet(netsOf(circuit, placed), bodiesOf([...placed, ...glyphs, ...rails]));
 
         // HALF the extent on each side of the centre, because `width`/`height` are FULL extents — the size
         // of the whole symbol, scanned from its own strokes and pins. This file used to read them both
@@ -223,7 +228,7 @@ export function SchematicCanvas({
         // FROM THE SYMBOL'S OWN BOUNDS, not its extent about its centre — the same correction the obstacle
         // boxes needed, and for the same reason: ground is not centred on its origin, so reconstructing the
         // box from the extent left part of the drawing outside the view.
-        const drawn = [...placed, ...glyphs];
+        const drawn = [...placed, ...glyphs, ...rails];
         const xs = drawn.flatMap((p) => [p.x + p.symbol.bounds.minX, p.x + p.symbol.bounds.maxX]);
         const ys = drawn.flatMap((p) => [p.y + p.symbol.bounds.minY, p.y + p.symbol.bounds.maxY]);
         // From the true MINIMUM, not from zero. A part dragged to a negative coordinate — which stored
@@ -241,7 +246,7 @@ export function SchematicCanvas({
         // The tree is the selection authority; the canvas resolves through it rather than minting its own
         // node shape, so clicking a symbol and clicking its row select the identical object.
         const byPath = buildObjectTree(circuit).byPath;
-        return { placed, glyphs, routed, extent, byPath };
+        return { placed, glyphs, rails, routed, extent, byPath };
     }, [circuit, ui?.positions]);
 
     /**
@@ -1080,6 +1085,37 @@ export function SchematicCanvas({
                     strokeDasharray="4 3"
                 />
             )}
+
+            {/* The supply ports. Same treatment as the reference, and each carries the rail's name — the
+                one thing a ground symbol never needs and a rail always does. */}
+            {rails.map((r) => (
+                <g
+                    key={r.id}
+                    data-testid="rail-glyph"
+                    data-rail={r.label}
+                    transform={`translate(${draggedGlyph(r).x} ${draggedGlyph(r).y})`}
+                    aria-hidden
+                >
+                    {r.symbol.strokes.map((st, i) => (
+                        <polyline
+                            key={i}
+                            points={st.points.map(([x, y]) => `${x},${y}`).join(' ')}
+                            fill="none"
+                            stroke="var(--text, #ccc)"
+                            strokeWidth={1.4}
+                        />
+                    ))}
+                    <text
+                        x={r.symbol.labelAnchor.x}
+                        y={r.symbol.labelAnchor.y}
+                        textAnchor="middle"
+                        fill="var(--text-dim, #9ad)"
+                        fontSize={8}
+                    >
+                        {r.label}
+                    </text>
+                </g>
+            ))}
 
             {placed.map((p) => {
                 const path = `root/components/${p.id}`;

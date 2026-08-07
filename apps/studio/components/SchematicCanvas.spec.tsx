@@ -2007,3 +2007,86 @@ describe('what the rule check found is marked where it is', () => {
         expect(flagged).toBe(plain);
     });
 });
+
+/**
+ * Supply rails, marked rather than wired — and named, which is the one thing ground never needs.
+ *
+ * `Net.isPower` had been in the schema, validated, and read by the robustness run for a long time, and
+ * NOTHING had ever written one: the model was never told the field existed. So a shipped capability
+ * reported "not run" on every design the product ever produced, and a rail could not be drawn as a rail.
+ */
+describe('a supply rail is marked, not wired', () => {
+    const WITH_RAIL: CircuitJson = {
+        ...CIRCUIT,
+        nets: [
+            { id: 'vin', name: 'VCC', isPower: true },
+            { id: 'mid', name: 'MID' },
+            { id: 'gnd', name: 'GND', isGround: true },
+        ],
+    };
+
+    it('draws a supply symbol on each terminal that reaches the rail', () => {
+        const { container } = render(<SchematicCanvas circuit={WITH_RAIL} />);
+        expect(container.querySelectorAll('[data-testid="rail-glyph"]').length).toBeGreaterThan(0);
+    });
+
+    it('carries the rail’s NAME, because two rails are drawn with the same mark', () => {
+        // Every ground symbol means the same node and needs no label. VCC and +3V3 are different nodes drawn
+        // identically, so a reader who cannot see which is which is worse off than with a wire.
+        const { container } = render(<SchematicCanvas circuit={WITH_RAIL} />);
+        const marks = [...container.querySelectorAll('[data-testid="rail-glyph"]')];
+        expect(marks.every((m) => m.getAttribute('data-rail') === 'VCC')).toBe(true);
+        expect(marks[0]!.textContent).toContain('VCC');
+    });
+
+    it('does not wire the rail at all', () => {
+        const { container } = render(<SchematicCanvas circuit={WITH_RAIL} />);
+        expect(
+            [...container.querySelectorAll('[data-net]')].filter((w) => w.getAttribute('data-net') === 'VCC'),
+        ).toEqual([]);
+    });
+
+    it('leaves an ordinary net wired', () => {
+        // The rule is about rails, not about nets in general — a change that quietly stopped drawing wires
+        // would pass every assertion above.
+        const { container } = render(<SchematicCanvas circuit={WITH_RAIL} />);
+        expect(
+            [...container.querySelectorAll('[data-net]')].filter((w) => w.getAttribute('data-net') === 'MID').length,
+        ).toBeGreaterThan(0);
+    });
+
+    it('marks nothing when no net is a rail', () => {
+        const { container } = render(<SchematicCanvas circuit={CIRCUIT} />);
+        expect(container.querySelectorAll('[data-testid="rail-glyph"]')).toHaveLength(0);
+    });
+
+    it('follows the part it marks while that part is dragged', () => {
+        const { container } = render(<SchematicCanvas circuit={WITH_RAIL} onArrange={() => {}} />);
+        const svg = container.querySelector('svg')!;
+        svg.getBoundingClientRect = () =>
+            ({
+                width: 800,
+                height: 600,
+                x: 0,
+                y: 0,
+                top: 0,
+                left: 0,
+                right: 800,
+                bottom: 600,
+                toJSON: () => ({}),
+            }) as DOMRect;
+        const before = [...container.querySelectorAll('[data-testid="rail-glyph"]')].map((g) =>
+            g.getAttribute('transform'),
+        );
+        fireEvent.pointerDown(container.querySelector('[data-testid="symbol-r1"]')!, {
+            pointerId: 61,
+            button: 0,
+            clientX: 300,
+            clientY: 300,
+        });
+        fireEvent.pointerMove(svg, { pointerId: 61, clientX: 430, clientY: 300 });
+        expect(
+            [...container.querySelectorAll('[data-testid="rail-glyph"]')].map((g) => g.getAttribute('transform')),
+        ).not.toEqual(before);
+    });
+});
