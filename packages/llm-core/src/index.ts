@@ -606,7 +606,8 @@ CircuitJson schema (every field validated; invalid output is rejected):
   "nets": [                                  // every netId referenced by a pin MUST exist here
     { "id": "in",  "name": "IN" },
     { "id": "out", "name": "OUT" },
-    { "id": "gnd", "name": "GND", "isGround": true }   // include exactly one ground net
+    { "id": "gnd", "name": "GND", "isGround": true },  // include exactly one ground net
+    { "id": "vcc", "name": "VCC", "isPower": true }    // mark each supply rail a DC source drives directly
   ],
   "metadata": { "name": "RC low-pass", "description": "..." }   // optional
 }
@@ -734,6 +735,7 @@ Rules:
 - Use a unique id and a unique, type-appropriate designator (R*/C*/L*/V*/I*/D*) per component.
 - Connect components only through nets: every pin.netId must match a nets[].id. Avoid floating nodes (every non-ground net should connect to >= 2 pins).
 - Include exactly one net with "isGround": true and tie the circuit's reference/ground node to it (via a ground component or a source's "-" pin).
+- Mark each SUPPLY RAIL with "isPower": true — a net that a DC voltage source drives directly and that other parts draw from (VCC, VDD, +5V, +3V3). Mark only genuine rails: not a divider tap, not a bias point, not a signal, and never the ground net itself. Leave it off when a net is not a rail; an unmarked rail is a missed check, a wrongly marked one is a false claim.
 - Pick a source and an analysis that actually excite the circuit (a transient on a purely-DC circuit just shows a flat line — use a SIN/PULSE source or an "op" analysis instead).
 - Keep the circuit minimal and physically sensible; pick reasonable real-world values.
 - Transistors (bjt/mosfet/jfet), op-amps (OPAMPGEN), thyristors/SCR (SCRGEN) and IGBTs (IGBTGEN) ARE supported, plus switches, zeners, transformers, transmission lines and behavioral (B) sources. Digital LOGIC — the logic gates and the D flip-flop above — IS supported and mixes freely with analog (see "Digital & mixed-signal"). Whole logic ICs (counters, registers, 74-series parts), microcontrollers/CPUs and other complex programmable parts are NOT simulatable primitives — source them as real catalog parts where possible and build the simulatable behavior from the supported gates/flip-flops + analog parts, explaining any simplification in "explanation"; never invent unsupported component types or model names.`;
