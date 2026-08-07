@@ -2090,3 +2090,75 @@ describe('a supply rail is marked, not wired', () => {
         ).not.toEqual(before);
     });
 });
+
+/**
+ * The keyboard's way to do the one thing this editor exists for.
+ *
+ * Wiring was pointer-only: a drag from one terminal to another, with no path to it at all without a mouse.
+ * The tree is already keyboard-navigable and terminals are already selectable, so the only thing missing was
+ * the verb — and the canvas was declared `role="img"`, which tells a screen reader it is a picture and that
+ * everything in it, and every verb behind it, is not there.
+ */
+describe('the editor can be driven without a pointer', () => {
+    it('W joins two selected terminals', () => {
+        const joined: unknown[] = [];
+        render(
+            <SchematicCanvas
+                circuit={CIRCUIT}
+                selectedPaths={['root/components/r1/pins/2', 'root/components/r2/pins/1']}
+                onConnect={(from, to) => joined.push({ from, to })}
+            />,
+        );
+        fireEvent.keyDown(window, { key: 'w' });
+        expect(joined).toEqual([{ from: { componentId: 'r1', pinId: '2' }, to: { componentId: 'r2', pinId: '1' } }]);
+    });
+
+    it('needs EXACTLY two terminals, and nothing else', () => {
+        // Three is ambiguous — a net is a set, so joining them is a sensible thing to want, and it is not
+        // what the pointer gesture does. Two surfaces doing different things under one name is the drift
+        // this codebase keeps paying for.
+        const joined: unknown[] = [];
+        const render3 = (paths: string[]) =>
+            render(
+                <SchematicCanvas circuit={CIRCUIT} selectedPaths={paths} onConnect={(f, t) => joined.push({ f, t })} />,
+            );
+        for (const paths of [
+            ['root/components/r1/pins/2'],
+            ['root/components/r1/pins/2', 'root/components/r2/pins/1', 'root/components/v1/pins/+'],
+            ['root/components/r1', 'root/components/r2'],
+            ['root/components/r1/pins/2', 'root/components/r2'],
+        ]) {
+            render3(paths);
+            fireEvent.keyDown(window, { key: 'w' });
+        }
+        expect(joined).toEqual([]);
+    });
+
+    it('does not fire while the user is typing', () => {
+        const joined: unknown[] = [];
+        render(
+            <SchematicCanvas
+                circuit={CIRCUIT}
+                selectedPaths={['root/components/r1/pins/2', 'root/components/r2/pins/1']}
+                onConnect={(f, t) => joined.push({ f, t })}
+            />,
+        );
+        const field = document.createElement('input');
+        document.body.appendChild(field);
+        fireEvent.keyDown(field, { key: 'w' });
+        expect(joined).toEqual([]);
+        field.remove();
+    });
+
+    it('is reachable by a keyboard and describes itself to one', () => {
+        // `role="img"` announces one label and stops: the parts, the terminals and every verb behind them
+        // are not there at all. It is a thing you DO something to, and it has to take focus to be reached.
+        const { container } = render(<SchematicCanvas circuit={CIRCUIT} />);
+        const svg = container.querySelector('svg')!;
+        expect(svg.getAttribute('role')).toBe('application');
+        expect(svg.getAttribute('tabindex')).toBe('0');
+        // …and what the keys do is written where a screen reader can read it, not only in a menu.
+        const described = svg.getAttribute('aria-describedby')!;
+        expect(container.querySelector(`#${described}`)!.textContent).toMatch(/W joins them/);
+    });
+});

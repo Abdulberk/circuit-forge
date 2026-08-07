@@ -516,6 +516,16 @@ function Workspace() {
                         keys: 'Y',
                         run: selectedParts.length > 0 ? () => dispatchKey('y') : undefined,
                     },
+                    {
+                        // The keyboard's way to wire, shown where the other verbs are — a menu is where
+                        // people learn the keys, and this is the one that had no other way to be found.
+                        label: 'Join terminals',
+                        keys: 'W',
+                        run:
+                            selected.filter((n) => n.ref.kind === 'pin').length === 2
+                                ? () => dispatchKey('w')
+                                : undefined,
+                    },
                     'separator',
                     {
                         label: 'Duplicate',
