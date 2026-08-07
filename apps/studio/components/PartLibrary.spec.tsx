@@ -78,16 +78,26 @@ const type = (value: string) => fireEvent.change(screen.getByLabelText('Search p
 beforeEach(() => jest.useFakeTimers({ advanceTimers: true }));
 afterEach(() => jest.useRealTimers());
 
+/**
+ * Advance the clock and let everything it started FINISH, inside `act`.
+ *
+ * Two microtask ticks were not enough and the shortfall was invisible. A search is a timer, then a promise,
+ * then a `.then` that sets the results, then a `.finally` that clears the busy flag — and that last one
+ * landed a tick after the act block closed, so React updated with nothing wrapping it. Every assertion still
+ * passed; the only sign was a warning nothing was reading.
+ *
+ * Drained until quiet rather than a fixed number of ticks, because "how many" is a fact about a promise
+ * chain in another file and would go stale the moment that chain grew a link.
+ */
 const settle = async (ms = 600) => {
     await act(async () => {
         jest.advanceTimersByTime(ms);
-        await Promise.resolve();
-        await Promise.resolve();
+        for (let i = 0; i < 10; i++) await Promise.resolve();
     });
 };
 
 describe('searching the catalogue', () => {
-    it('waits for a pause in typing — the search is METERED per request', () => {
+    it('waits for a pause in typing — the search is METERED per request', async () => {
         // A search per keystroke spends the user's quota on words they were still typing.
         const { api, calls } = fakeApi();
         const { doc } = fakeDoc();
@@ -97,6 +107,12 @@ describe('searching the catalogue', () => {
         expect(calls).toEqual([]); // nothing yet
         act(() => void jest.advanceTimersByTime(500));
         expect(calls).toEqual(['search:10k']);
+
+        // AND THE SEARCH IT STARTED IS LET FINISH. Asserting the call was made and walking away leaves a
+        // promise chain in flight; it resolves during whichever test runs next, updating React with nothing
+        // wrapping it, and the warning is attributed to that innocent test. A test that leaves work running
+        // is a test that can fail its neighbour — the same shape as a gesture that outlives its own pointer.
+        await settle();
     });
 
     it('does not search a fragment too short to mean anything', () => {
@@ -114,7 +130,15 @@ describe('searching the catalogue', () => {
         render(<PartLibrary api={api} doc={doc} />);
         type('10k');
         await settle();
-        await waitFor(() => expect(screen.getByText('RC0603FR-0710KL')).toBeTruthy());
+        // SETTLED, not waited for. This row needs a SECOND round trip — a search result carries no price or
+        // stock, and the catalogue fills those in on a detail call — and `waitFor` under fake timers advances
+        // the clock OUTSIDE `act`, so React was updating while nothing was wrapping it. The warning said so
+        // and every assertion still passed, which is the shape this suite keeps finding in itself.
+        //
+        // `settle` is this file's own act-wrapped advance. Two of them: one for the search, one for the
+        // detail that follows it.
+        await settle();
+        expect(screen.getByText('RC0603FR-0710KL')).toBeTruthy();
         expect(screen.getByText(/YAGEO · 0603 · 0\.01 EUR · 4200 in stock/)).toBeTruthy();
     });
 

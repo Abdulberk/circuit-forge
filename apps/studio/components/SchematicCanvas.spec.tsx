@@ -1594,3 +1594,205 @@ describe('more than one object can be selected', () => {
         expect(seen).toEqual([null]);
     });
 });
+
+/**
+ * What an audit found the multi-select work getting wrong, every one of which the suite passed.
+ *
+ * These are not edge cases. Four of them fire on the second gesture a user makes.
+ */
+describe('a gesture is not a click, and a selection is not a click order', () => {
+    const sized = (container: HTMLElement): SVGSVGElement => {
+        const svg = container.querySelector('svg')!;
+        svg.getBoundingClientRect = () =>
+            ({
+                width: 800,
+                height: 600,
+                x: 0,
+                y: 0,
+                top: 0,
+                left: 0,
+                right: 800,
+                bottom: 600,
+                toJSON: () => ({}),
+            }) as DOMRect;
+        return svg;
+    };
+
+    it('panning the sheet does NOT clear the selection', () => {
+        // A browser fires `click` after a press and release on the same element however far the pointer
+        // travelled between them. A pan starts and ends on the svg, so every pan destroyed the selection the
+        // user had just assembled — and the click-away is the only way to clear one deliberately, so the
+        // feature and its escape hatch were the same gesture.
+        const seen: Array<string | null> = [];
+        const { container } = render(
+            <SchematicCanvas
+                circuit={CIRCUIT}
+                selectedPaths={['root/components/r1']}
+                onSelect={(n) => seen.push(n?.ref.id ?? null)}
+            />,
+        );
+        const svg = sized(container);
+        fireEvent.pointerDown(svg, { pointerId: 41, button: 0, clientX: 400, clientY: 300 });
+        fireEvent.pointerMove(svg, { pointerId: 41, clientX: 500, clientY: 360 });
+        fireEvent.pointerUp(svg, { pointerId: 41, clientX: 500, clientY: 360 });
+        fireEvent.click(svg);
+        expect(seen).toEqual([]);
+    });
+
+    it('a click on bare sheet that did NOT travel still clears it', () => {
+        // The other half. Suppressing the click after a gesture must not suppress the gesture that is only a
+        // click, or there is no way out of a selection at all.
+        const seen: Array<string | null> = [];
+        const { container } = render(
+            <SchematicCanvas
+                circuit={CIRCUIT}
+                selectedPaths={['root/components/r1']}
+                onSelect={(n) => seen.push(n?.ref.id ?? null)}
+            />,
+        );
+        const svg = sized(container);
+        fireEvent.pointerDown(svg, { pointerId: 42, button: 0, clientX: 400, clientY: 300 });
+        fireEvent.pointerUp(svg, { pointerId: 42, clientX: 400, clientY: 300 });
+        fireEvent.click(svg);
+        expect(seen).toEqual([null]);
+    });
+
+    it('a group drag does not collapse the selection onto the part that was grabbed', () => {
+        // The drag ends with a click on the dragged symbol, and treating that as a selection replaced the
+        // whole group with the one part just moved — so a group could be dragged exactly once.
+        const seen: Array<string | null> = [];
+        const { container } = render(
+            <SchematicCanvas
+                circuit={CIRCUIT}
+                selectedPaths={['root/components/r1', 'root/components/r2']}
+                onArrange={() => {}}
+                onSelect={(n) => seen.push(n?.ref.id ?? null)}
+            />,
+        );
+        const svg = sized(container);
+        const part = container.querySelector('[data-testid="symbol-r1"]')!;
+        fireEvent.pointerDown(part, { pointerId: 43, button: 0, clientX: 300, clientY: 300 });
+        fireEvent.pointerMove(svg, { pointerId: 43, clientX: 400, clientY: 300 });
+        fireEvent.pointerUp(svg, { pointerId: 43, clientX: 400, clientY: 300 });
+        fireEvent.click(part);
+        expect(seen).toEqual([]);
+    });
+
+    it('R turns EVERY selected part, which is what the Inspector promises', () => {
+        // The panel says in so many words that the keyboard verbs act on all of them. This acted on one, so
+        // pressing R with several selected turned one and left the rest, with nothing saying why.
+        let next: UiJson | undefined;
+        render(
+            <SchematicCanvas
+                circuit={CIRCUIT}
+                selectedPaths={['root/components/r1', 'root/components/r2']}
+                onArrange={(_l, n) => (next = n)}
+            />,
+        );
+        fireEvent.keyDown(window, { key: 'r' });
+        expect(next?.positions?.r1?.rotation).toBe('90');
+        expect(next?.positions?.r2?.rotation).toBe('90');
+    });
+
+    it('each part turns from ITS OWN angle, not from the primary’s', () => {
+        // A group at different angles must all advance a quarter. Deciding once from the primary and
+        // applying it to everyone would snap them together — a different edit from the one the key means.
+        let next: UiJson | undefined;
+        render(
+            <SchematicCanvas
+                circuit={CIRCUIT}
+                ui={{ schemaVersion: 1, positions: { r1: { x: 100, y: 100, rotation: '90' }, r2: { x: 200, y: 100 } } }}
+                selectedPaths={['root/components/r1', 'root/components/r2']}
+                onArrange={(_l, n) => (next = n)}
+            />,
+        );
+        fireEvent.keyDown(window, { key: 'r' });
+        expect(next?.positions?.r1?.rotation).toBe('180');
+        expect(next?.positions?.r2?.rotation).toBe('90');
+    });
+
+    it('X mirrors each part according to ITS OWN state', () => {
+        // One already mirrored is returned; one that is not is mirrored. A single decision taken from the
+        // primary would flip a part that was already flipped — the opposite of what the key does to it alone.
+        let next: UiJson | undefined;
+        render(
+            <SchematicCanvas
+                circuit={CIRCUIT}
+                ui={{ schemaVersion: 1, positions: { r1: { x: 100, y: 100, mirror: 'x' }, r2: { x: 200, y: 100 } } }}
+                selectedPaths={['root/components/r1', 'root/components/r2']}
+                onArrange={(_l, n) => (next = n)}
+            />,
+        );
+        fireEvent.keyDown(window, { key: 'x' });
+        expect(next?.positions?.r1).not.toHaveProperty('mirror');
+        expect(next?.positions?.r2?.mirror).toBe('x');
+    });
+
+    it('Delete acts on what is SELECTED, whatever was clicked last', () => {
+        // It used to branch on the kind of the most recent click before looking at anything else: three
+        // parts selected with a net row clicked last matched neither branch, and the key did nothing at all
+        // — no deletion, no refusal, no banner.
+        const removed: string[][] = [];
+        render(
+            <SchematicCanvas
+                circuit={CIRCUIT}
+                selectedPaths={['root/components/r1', 'root/components/r2', 'root/nets/gnd']}
+                onDelete={(ids) => removed.push([...ids])}
+            />,
+        );
+        fireEvent.keyDown(window, { key: 'Delete' });
+        expect(removed).toEqual([['r1', 'r2']]);
+    });
+
+    it('takes several terminals off their nets when only terminals are selected', () => {
+        const parted: unknown[] = [];
+        render(
+            <SchematicCanvas
+                circuit={CIRCUIT}
+                selectedPaths={['root/components/r1/pins/2', 'root/components/r2/pins/1']}
+                onDisconnect={(pin) => parted.push(pin)}
+            />,
+        );
+        fireEvent.keyDown(window, { key: 'Delete' });
+        expect(parted).toEqual([
+            { componentId: 'r1', pinId: '2' },
+            { componentId: 'r2', pinId: '1' },
+        ]);
+    });
+
+    it('prefers the parts when both parts and terminals are selected', () => {
+        // Deleting a part takes its terminals with it, so doing both would be one of them twice.
+        const removed: string[][] = [];
+        const parted: unknown[] = [];
+        render(
+            <SchematicCanvas
+                circuit={CIRCUIT}
+                selectedPaths={['root/components/r1', 'root/components/r2/pins/1']}
+                onDelete={(ids) => removed.push([...ids])}
+                onDisconnect={(pin) => parted.push(pin)}
+            />,
+        );
+        fireEvent.keyDown(window, { key: 'Delete' });
+        expect({ removed, parted }).toEqual({ removed: [['r1']], parted: [] });
+    });
+
+    it('a ground symbol follows the part it marks while that part is dragged', () => {
+        // Ground is not wired, so the symbol is the ONLY depiction of that connection. Leaving it behind
+        // showed the reference detached from the part for the whole gesture.
+        const { container } = render(<SchematicCanvas circuit={CIRCUIT} onArrange={() => {}} />);
+        const svg = sized(container);
+        const glyphAt = () =>
+            [...container.querySelectorAll('[data-testid="ground-glyph"]')].map((g) => g.getAttribute('transform'));
+        const before = glyphAt();
+
+        fireEvent.pointerDown(container.querySelector('[data-testid="symbol-v1"]')!, {
+            pointerId: 44,
+            button: 0,
+            clientX: 300,
+            clientY: 300,
+        });
+        fireEvent.pointerMove(svg, { pointerId: 44, clientX: 420, clientY: 300 });
+        // At least one moved with it, and the ones belonging to parts that did not move stayed put.
+        expect(glyphAt()).not.toEqual(before);
+    });
+});

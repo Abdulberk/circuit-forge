@@ -260,8 +260,8 @@ export function Inspector({
 
             {selectedCount > 1 && (
                 <div className="notice" role="status" style={{ marginTop: 8 }}>
-                    {selectedCount} objects selected. These fields are about {selected.label}; Delete and the keyboard
-                    verbs act on all of them.
+                    {selectedCount} objects selected. These fields are about {selected.label}; the keyboard verbs act on
+                    all of them.
                 </div>
             )}
             <EditableField label="Id" value={selected.ref.id} readOnly />

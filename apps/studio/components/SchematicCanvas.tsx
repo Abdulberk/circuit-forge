@@ -363,6 +363,7 @@ export function SchematicCanvas({
         null,
     );
     const beginPan = (e: React.PointerEvent): void => {
+        gestured.current = false; // every fresh press starts out a click until it travels
         if ((e.button ?? 0) > 0 || drag || wire || pan) return; // one gesture at a time, and the first wins
         (e.currentTarget as Element).setPointerCapture?.(e.pointerId);
         setPan({ pointerId: e.pointerId, from: { x: e.clientX, y: e.clientY }, box });
@@ -371,6 +372,7 @@ export function SchematicCanvas({
         const { clientX, clientY } = e;
         // Measured from where the gesture STARTED, like the part drag: a dropped frame then costs nothing,
         // because the next one recomputes the whole offset instead of adding to a total that lost something.
+        gestured.current = true; // a pan is a gesture, and the click that ends it is not a click
         const [dx, dy] = toSheet(clientX - (pan?.from.x ?? 0), clientY - (pan?.from.y ?? 0));
         setPan((g) => {
             if (!g || g.pointerId !== e.pointerId) return g;
@@ -378,6 +380,17 @@ export function SchematicCanvas({
             return g;
         });
     };
+    /**
+     * Whether the last press turned into a gesture rather than a click.
+     *
+     * A browser fires `click` after a press and release on the same element HOWEVER FAR the pointer travelled
+     * in between — so panning the sheet ended on the svg and the click-away handler destroyed the whole
+     * selection, and dragging a part ended on that part and replaced the selection with just it. Both are the
+     * opposite of what the gesture meant. A ref rather than state: it is read in the click that follows the
+     * same tick, and a re-render would be a frame too late.
+     */
+    const gestured = useRef(false);
+
     const endPan = (e: React.PointerEvent): void => {
         if (pan && pan.pointerId !== e.pointerId) return; // a different pointer's release is not this one's
         setPan(null);
@@ -508,26 +521,28 @@ export function SchematicCanvas({
             // out of it by counting separators is only right while no id contains one — and ids are ordinary
             // data: a design merged from two sub-sheets, or written by something else, can carry a slash. The
             // node already holds what its address means, in fields, which is why it has them.
-            const node = byPath.get(chosen);
-            if (!node) return;
+            // WHAT IS SELECTED, not what happened to be clicked last. This used to branch on the kind of
+            // the PRIMARY before it looked at anything else, so a selection of three parts with a net row
+            // clicked most recently matched neither branch and the key did nothing at all — no deletion, no
+            // refusal, no banner. The selection is what the user can see; the order they built it in is not.
+            const nodes = selectedPaths.map((path) => byPath.get(path)).filter((n): n is TreeNode => !!n);
+            const parts = nodes.filter((n) => n.ref.kind === 'component').map((n) => n.ref.id);
+            const pins = nodes.filter((n) => n.ref.kind === 'pin' && n.ref.componentId);
 
-            if (node.ref.kind === 'pin' && node.ref.componentId && onDisconnect) {
-                event.preventDefault();
-                onDisconnect({ componentId: node.ref.componentId, pinId: node.ref.id });
-                return;
-            }
             // A whole part. The kernel decides what goes with it: `deleteComponent` removes the nets THIS
             // delete emptied and leaves alone any that were already unreferenced, because sweeping those
             // would quietly remove things the user never touched and name them in a note they cannot place.
-            if (node.ref.kind === 'component' && onDelete) {
+            if (parts.length > 0 && onDelete) {
                 event.preventDefault();
-                // EVERY selected part, not just the primary one. The other surfaces already show them all as
-                // selected, and a key that acts on one of five is a key that lost the other four silently.
-                const ids = selectedPaths
-                    .map((path) => byPath.get(path))
-                    .filter((n): n is TreeNode => n?.ref.kind === 'component')
-                    .map((n) => n.ref.id);
-                onDelete(ids.length > 0 ? ids : [node.ref.id]);
+                onDelete(parts);
+                return;
+            }
+            // Only terminals selected: the verb is to take them off their nets. Parts win when both are
+            // selected, because deleting a part takes its terminals with it and doing both would be one of
+            // them twice.
+            if (pins.length > 0 && onDisconnect) {
+                event.preventDefault();
+                for (const pin of pins) onDisconnect({ componentId: pin.ref.componentId!, pinId: pin.ref.id });
             }
         };
         window.addEventListener('keydown', onKeyDown);
@@ -548,12 +563,19 @@ export function SchematicCanvas({
      * and a save behind for a part that visibly did not move.
      */
     useEffect(() => {
-        if (!onArrange || !chosen) return;
-        // The same rule: the tree says which object this is, rather than the last segment of a joined string
-        // — which for a pin selection is the PIN's name and would find a part called '1' if one existed.
-        const node = byPath.get(chosen);
-        const part = node?.ref.kind === 'component' ? placed.find((p) => p.id === node.ref.id) : undefined;
-        if (!part) return; // the selection is a net, a pin, or something with no orientation
+        if (!onArrange) return;
+        // EVERY selected part, not just the primary one. The Inspector tells the user in so many words that
+        // the keyboard verbs act on all of them, and this acted on one — so pressing R with five parts
+        // selected turned one and left four, with nothing on screen saying why. A panel that promises and a
+        // key that does not is worse than either alone.
+        //
+        // Resolved through the TREE rather than by cutting the path apart: a path is a join of ids, and ids
+        // are ordinary data that can contain a separator.
+        const parts = selectedPaths
+            .map((path) => byPath.get(path))
+            .filter((node) => node?.ref.kind === 'component')
+            .flatMap((node) => placed.filter((p) => p.id === node!.ref.id));
+        if (parts.length === 0) return; // nets, pins, or nothing with an orientation
 
         const onKeyDown = (event: KeyboardEvent) => {
             // No modifiers: Ctrl+R is reload, Alt+R belongs to the browser's menus. A bare letter is the
@@ -567,7 +589,6 @@ export function SchematicCanvas({
             if (isTextEntry(event.target)) return;
 
             event.preventDefault();
-            const at = ui?.positions?.[part.id];
 
             if (key === 'x' || key === 'y') {
                 // MIRRORING WAS ALREADY BUILT. `Position.mirror` has been in the schema since it was written,
@@ -578,40 +599,55 @@ export function SchematicCanvas({
                 // to anything: a part mirrored twice is the part, and leaving `mirror` behind would make the
                 // drawing structurally different from the one before the first press, so the commit kernel
                 // would mint a revision and a save for a part that visibly did not move.
-                const next = at?.mirror === key ? undefined : key;
-                const { mirror: _wasMirrored, x: _mx, y: _my, ...keep } = at ?? { x: part.x, y: part.y };
-                onArrange(`Mirror ${part.designator}`, {
+                //
+                // EACH part answers for itself: one already mirrored this way is returned, one that is not
+                // is mirrored. Deciding once from the primary and applying it to all would flip a part that
+                // was already flipped, which is the opposite of what the key does to it alone.
+                onArrange(parts.length === 1 ? `Mirror ${parts[0]!.designator}` : `Mirror ${parts.length} parts`, {
                     ...ui,
                     schemaVersion: 1,
                     positions: {
                         ...ui?.positions,
-                        [part.id]: { x: part.x, y: part.y, ...keep, ...(next ? { mirror: next } : {}) },
+                        ...Object.fromEntries(
+                            parts.map((p) => {
+                                const at = ui?.positions?.[p.id];
+                                const next = at?.mirror === key ? undefined : key;
+                                const { mirror: _was, x: _mx, y: _my, ...keep } = at ?? { x: p.x, y: p.y };
+                                return [p.id, { x: p.x, y: p.y, ...keep, ...(next ? { mirror: next } : {}) }];
+                            }),
+                        ),
                     },
                 });
                 return;
             }
 
-            const turn = nextTurn(toDegrees(at?.rotation));
-            // The rotation key is REPLACED, never merged past: `rotationField` returns `{}` at zero, and
-            // spreading that over an existing `rotation: '270'` would leave the old value in place, so the
-            // part would turn three times and then stick.
-            const { rotation: _dropped, x: _x, y: _y, ...rest } = at ?? { x: part.x, y: part.y };
-            onArrange(`Rotate ${part.designator}`, {
+            onArrange(parts.length === 1 ? `Rotate ${parts[0]!.designator}` : `Rotate ${parts.length} parts`, {
                 ...ui,
                 schemaVersion: 1,
                 positions: {
                     ...ui?.positions,
-                    // x and y come from where the part is ON SCREEN, which for an un-arranged design is the
-                    // computed fallback. The schema requires them, so turning a part necessarily places it —
-                    // exactly as dragging one does.
-                    [part.id]: { x: part.x, y: part.y, ...rest, ...rotationField(turn) },
+                    ...Object.fromEntries(
+                        parts.map((p) => {
+                            const at = ui?.positions?.[p.id];
+                            // Each from ITS OWN rotation, so a group of parts at different angles all advance
+                            // a quarter rather than snapping to whatever the primary happened to be at.
+                            const turn = nextTurn(toDegrees(at?.rotation));
+                            // The rotation key is REPLACED, never merged past: `rotationField` returns `{}` at
+                            // zero, and spreading that over an existing `rotation: '270'` would leave the old
+                            // value in place, so the part would turn three times and then stick.
+                            const { rotation: _dropped, x: _x, y: _y, ...rest } = at ?? { x: p.x, y: p.y };
+                            // x and y come from where the part is ON SCREEN, which for an un-arranged design
+                            // is the computed fallback. The schema requires them, so turning a part places it.
+                            return [p.id, { x: p.x, y: p.y, ...rest, ...rotationField(turn) }];
+                        }),
+                    ),
                 },
             });
         };
 
         window.addEventListener('keydown', onKeyDown);
         return () => window.removeEventListener('keydown', onKeyDown);
-    }, [onArrange, chosen, byPath, placed, ui]);
+    }, [onArrange, selectedPaths, byPath, placed, ui]);
 
     /**
      * Where a part is RIGHT NOW, which during a gesture is not where the document says.
@@ -623,7 +659,23 @@ export function SchematicCanvas({
     const dragged = (p: Placed): { x: number; y: number } =>
         drag?.ids.includes(p.id) ? { x: p.x + drag.dx, y: p.y + drag.dy } : { x: p.x, y: p.y };
 
+    /**
+     * A ground symbol goes where its terminal goes.
+     *
+     * It is drawn from a memoised layout, which cannot change while a gesture is in flight — the drag lives
+     * in local state on purpose, so the document is untouched until the pointer comes up. The symbols and the
+     * wires already apply the offset at render time; the glyphs did not, so dragging a part left its ground
+     * symbol behind on empty sheet. That is worse here than it would be anywhere else: a ground net is not
+     * wired at all, so the symbol is the ONLY thing depicting that connection, and the drawing showed the
+     * reference detached from the part for the whole gesture.
+     */
+    const draggedGlyph = (g: Placed): { x: number; y: number } => {
+        const owner = g.annotates?.split('.')[0];
+        return owner && drag?.ids.includes(owner) ? { x: g.x + drag.dx, y: g.y + drag.dy } : { x: g.x, y: g.y };
+    };
+
     const beginDrag = (e: React.PointerEvent, id: string) => {
+        gestured.current = false;
         // Any button that is NOT a secondary one. Written as `> 0` rather than `!== 0` because a pointer
         // event that carries no `button` at all — a synthetic one, or a touch — is a primary press, and
         // `!== 0` silently refuses it. That is not a test artefact: it is the same class of guard that
@@ -668,6 +720,7 @@ export function SchematicCanvas({
         setDrag((g) => {
             if (!g || g.pointerId !== e.pointerId) return g;
             const [dx, dy] = [at[0] - g.from.x, at[1] - g.from.y];
+            if (dx !== 0 || dy !== 0) gestured.current = true;
             return { ...g, dx, dy, moved: g.moved || dx !== 0 || dy !== 0 };
         });
     };
@@ -750,6 +803,8 @@ export function SchematicCanvas({
             // dropped — and with several things selected and a key that acts on all of them, "how do I stop
             // this being selected" is a question a user should not have to answer with a lucky click.
             onClick={(e) => {
+                // A pan ends here too, and a pan is not a click on the sheet.
+                if (gestured.current) return;
                 if (e.target === e.currentTarget) onSelect?.(null);
             }}
             onPointerMove={wire ? moveWire : pan ? movePan : drag ? moveDrag : undefined}
@@ -839,7 +894,12 @@ export function SchematicCanvas({
                 already has, the way a schematic always has. The author's own ground components are drawn with
                 the parts above and stay selectable, movable and deletable like anything else. */}
             {glyphs.map((g) => (
-                <g key={g.id} data-testid="ground-glyph" transform={`translate(${g.x} ${g.y})`} aria-hidden>
+                <g
+                    key={g.id}
+                    data-testid="ground-glyph"
+                    transform={`translate(${draggedGlyph(g).x} ${draggedGlyph(g).y})`}
+                    aria-hidden
+                >
                     {g.symbol.strokes.map((st, i) => (
                         <polyline
                             key={i}
@@ -863,7 +923,13 @@ export function SchematicCanvas({
                         onPointerDown={(e) => beginDrag(e, p.id)}
                         // Shift extends the selection; what that MEANS is decided one layer up, so this
                         // canvas and the tree cannot come to different conclusions about the same key.
-                        onClick={(e) => onSelect?.(byPath.get(path) ?? null, e.shiftKey)}
+                        onClick={(e) => {
+                            // A drag ends with a click on the part that was grabbed. Treating that as a
+                            // selection replaced the whole group with the one part just moved, so a group
+                            // drag could only ever be done once.
+                            if (gestured.current) return;
+                            onSelect?.(byPath.get(path) ?? null, e.shiftKey);
+                        }}
                         style={{ cursor: 'pointer' }}
                     >
                         {/* A CLOSED shape is drawn with <polygon>, an open one with <polyline>, and the
