@@ -192,3 +192,104 @@ export function deleteComponent(circuit: CircuitJson, componentId: string): Edit
             : `${target.designator} removed.`,
     };
 }
+
+/**
+ * Copy parts, with the connections that are ENTIRELY among them.
+ *
+ * WHAT A COPY MEANS, decided here rather than in a canvas. Two questions have to be answered and neither is
+ * obvious from the word "duplicate":
+ *
+ * WIRING BETWEEN THE COPIES IS KEPT, on nets of its own. Copying a divider and getting two loose resistors
+ * would make the gesture useless for the thing people copy — a sub-circuit they want another of. So a net
+ * with two or more of the copied terminals on it is reproduced as a FRESH net joining the copies, and the
+ * originals keep theirs untouched.
+ *
+ * WIRING TO EVERYTHING ELSE IS DROPPED. A copied terminal whose net reaches outside the selection gets a
+ * fresh net of its own: the copy arrives unconnected there. Keeping it would silently join the new parts to
+ * the existing circuit — five parts pasted and five connections nobody asked for, in a document where a
+ * connection is the whole meaning — and a user cannot see what they did not ask for in order to undo it.
+ *
+ * EXCEPT THE REFERENCE, which is shared rather than copied. Ground is one node for the whole design; minting
+ * a second ground net would produce two references that are drawn identically — every ground symbol looks
+ * like every other — and no reader could tell them apart. The same will hold for a declared power rail when
+ * anything authors one.
+ *
+ * The copies are returned in `created`, in the order they were asked for, because a caller that has just
+ * pasted five parts needs to select and place them and cannot derive their ids: designators are allocated
+ * against a document that is changing as each one lands.
+ */
+export function duplicateComponents(circuit: CircuitJson, ids: readonly string[]): EditResult {
+    const originals = ids.map((id) => (circuit.components ?? []).find((c) => c.id === id));
+    const missing = ids.filter((_id, i) => !originals[i]);
+    if (missing.length > 0) return refuse('no-such-component', `No component with id "${missing[0]}".`);
+    if (originals.length === 0) return { ok: true, circuit, changed: false };
+
+    const shared = new Set((circuit.nets ?? []).filter((n) => n.isGround).map((n) => n.id));
+
+    // How many terminals of each net are inside the selection: two or more means the connection is between
+    // copies and travels with them.
+    const inside = new Map<string, number>();
+    for (const c of originals)
+        for (const pin of c!.pins) if (!shared.has(pin.netId)) inside.set(pin.netId, (inside.get(pin.netId) ?? 0) + 1);
+
+    let next = circuit;
+    const created: string[] = [];
+    const netFor = new Map<string, string>();
+
+    for (const original of originals) {
+        // Through `addComponent`, so a copy is validated, named and given fresh nets by the same rule any
+        // other new part is. A second creation path here would be a second set of answers to "what is a
+        // legal part", and the two would drift.
+        const spec: NewPart = {
+            type: original!.type,
+            ...(original!.value !== undefined ? { value: original!.value } : {}),
+            ...(original!.model !== undefined ? { model: original!.model } : {}),
+            ...(original!.mpn !== undefined ? { mpn: original!.mpn } : {}),
+            ...(original!.manufacturer !== undefined ? { manufacturer: original!.manufacturer } : {}),
+            ...(original!.footprint !== undefined ? { footprint: original!.footprint } : {}),
+            ...(original!.tolerance !== undefined ? { tolerance: original!.tolerance } : {}),
+            ...(original!.toleranceSource !== undefined ? { toleranceSource: original!.toleranceSource } : {}),
+            ...(original!.sourcing !== undefined
+                ? { sourcing: original!.sourcing as unknown as Record<string, unknown> }
+                : {}),
+        };
+        const added = addComponent(next, spec);
+        if (!added.ok) return added;
+        next = added.circuit;
+        const copy = (next.components ?? [])[(next.components ?? []).length - 1]!;
+        created.push(copy.id);
+
+        // Re-point the copy's pins: shared nets as they were, internal ones onto one fresh net per original
+        // net, and everything else left on the private net `addComponent` already gave it.
+        const pins = copy.pins.map((pin, i) => {
+            const was = original!.pins[i]!.netId;
+            if (shared.has(was)) return { ...pin, netId: was };
+            if ((inside.get(was) ?? 0) < 2) return pin;
+            const mapped = netFor.get(was) ?? pin.netId;
+            netFor.set(was, mapped);
+            return { ...pin, netId: mapped };
+        });
+        next = {
+            ...next,
+            components: (next.components ?? []).map((c) => (c.id === copy.id ? { ...c, pins } : c)),
+            // A net `addComponent` minted and nothing now references is not a node.
+            nets: (next.nets ?? []).filter(
+                (n) =>
+                    (next.components ?? []).some((c) =>
+                        (c.id === copy.id ? pins : c.pins).some((p) => p.netId === n.id),
+                    ) || shared.has(n.id),
+            ),
+        };
+    }
+
+    return {
+        ok: true,
+        changed: true,
+        circuit: next,
+        created,
+        note:
+            created.length === 1
+                ? undefined
+                : `Copied ${created.length} parts; connections among them were kept, connections to the rest of the design were not.`,
+    };
+}

@@ -40,6 +40,14 @@ export type EditResult =
            * happen; this is for edits that should, and that cost something on the way.
            */
           note?: string;
+          /**
+           * Ids the edit BROUGHT INTO EXISTENCE, in the order they were asked for.
+           *
+           * A caller that has just pasted five parts has to select and place them, and cannot work out
+           * which ones they are: designators are allocated against a document that changes as each lands.
+           * Absent for every edit that creates nothing, which is nearly all of them.
+           */
+          created?: readonly string[];
       }
     /** The edit was valid but changed nothing — re-typing the same value. Never a save, never an undo entry. */
     | { ok: true; circuit: CircuitJson; changed: false }

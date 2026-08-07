@@ -65,6 +65,7 @@ export function SchematicCanvas({
     onConnect,
     onDisconnect,
     onDelete,
+    onDuplicate,
 }: {
     circuit: CircuitJson;
     /**
@@ -106,6 +107,13 @@ export function SchematicCanvas({
      * one gesture, and every intermediate document is one nobody asked for.
      */
     onDelete?: (componentIds: readonly string[]) => void;
+    /**
+     * Copy the selected parts. Omitted leaves the canvas unable to, which a viewer should be.
+     *
+     * The canvas says WHICH parts; what a copy means — what wiring travels with it, what is dropped, what is
+     * shared — is the kernel's answer, because those are claims about the netlist.
+     */
+    onDuplicate?: (componentIds: readonly string[]) => void;
 }) {
     const svgRef = useRef<SVGSVGElement | null>(null);
     // Asked many times per render — by every symbol, every terminal and every key handler — so it is a set
@@ -362,9 +370,32 @@ export function SchematicCanvas({
     const [pan, setPan] = useState<{ pointerId: number; from: { x: number; y: number }; box: typeof extent } | null>(
         null,
     );
+    /**
+     * A box drawn on empty sheet, and everything whose symbol it touches.
+     *
+     * THE ONLY WAY TO SELECT MANY THINGS AT ONCE was shift-clicking each of them, which is the same number of
+     * gestures as not having multi-select at all for anything above about four parts. Dragging a box is what
+     * every editor does and what a hand reaches for first.
+     *
+     * Held on SHIFT because a bare drag on the sheet already pans, and panning is the more common act by a
+     * long way. Touching counts rather than enclosing: a box that only takes what it fully contains makes a
+     * user draw it twice, once too small and once right.
+     */
+    const [marquee, setMarquee] = useState<{ pointerId: number; from: [number, number]; to: [number, number] } | null>(
+        null,
+    );
+
     const beginPan = (e: React.PointerEvent): void => {
         gestured.current = false; // every fresh press starts out a click until it travels
-        if ((e.button ?? 0) > 0 || drag || wire || pan) return; // one gesture at a time, and the first wins
+        if ((e.button ?? 0) > 0 || drag || wire || pan || marquee) return; // one gesture at a time, first wins
+
+        if (e.shiftKey && onSelect) {
+            const at = pointOnSheet(e.clientX, e.clientY);
+            if (!at) return;
+            (e.currentTarget as Element).setPointerCapture?.(e.pointerId);
+            setMarquee({ pointerId: e.pointerId, from: at, to: at });
+            return;
+        }
         (e.currentTarget as Element).setPointerCapture?.(e.pointerId);
         setPan({ pointerId: e.pointerId, from: { x: e.clientX, y: e.clientY }, box });
     };
@@ -390,6 +421,43 @@ export function SchematicCanvas({
      * same tick, and a re-render would be a frame too late.
      */
     const gestured = useRef(false);
+
+    const moveMarquee = (e: React.PointerEvent): void => {
+        const at = pointOnSheet(e.clientX, e.clientY);
+        if (!at) return;
+        gestured.current = true;
+        setMarquee((m) => (m && m.pointerId === e.pointerId ? { ...m, to: at } : m));
+    };
+
+    const endMarquee = (e: React.PointerEvent): void => {
+        const m = marquee;
+        if (!m || m.pointerId !== e.pointerId) return;
+        setMarquee(null);
+        if (!onSelect) return;
+
+        const box = {
+            minX: Math.min(m.from[0], m.to[0]),
+            maxX: Math.max(m.from[0], m.to[0]),
+            minY: Math.min(m.from[1], m.to[1]),
+            maxY: Math.max(m.from[1], m.to[1]),
+        };
+        // A press with no travel is a shift-click on empty sheet, which means nothing — and must not clear a
+        // selection the user just built.
+        if (box.maxX === box.minX && box.maxY === box.minY) return;
+
+        const caught = placed.filter((p) => {
+            const b = p.symbol.bounds;
+            return (
+                p.x + b.minX <= box.maxX &&
+                p.x + b.maxX >= box.minX &&
+                p.y + b.minY <= box.maxY &&
+                p.y + b.maxY >= box.minY
+            );
+        });
+        // ADDED to what is already selected, because the key that starts the box is the key that extends a
+        // selection everywhere else on this canvas. Replacing instead would make Shift mean two things.
+        for (const p of caught) onSelect(byPath.get(`root/components/${p.id}`) ?? null, true);
+    };
 
     const endPan = (e: React.PointerEvent): void => {
         if (pan && pan.pointerId !== e.pointerId) return; // a different pointer's release is not this one's
@@ -509,8 +577,26 @@ export function SchematicCanvas({
      * error and not a change, and `disconnectPin` says so rather than minting a revision for nothing.
      */
     useEffect(() => {
-        if (!chosen) return;
+        // NO EARLY RETURN ON AN EMPTY SELECTION. It read as an optimisation and made the guards below
+        // unreachable: with nothing selected the listener was never registered, so the check for "nothing to
+        // copy" was dead code and the test covering it passed because no handler ran at all. Each verb now
+        // decides for itself, where a reader can see it decide.
         const onKeyDown = (event: KeyboardEvent) => {
+            // COPY IS CHORDED, on purpose. Ctrl+D is what every editor uses for it, and a bare letter here
+            // would collide with the turn and mirror keys a hand is already resting on.
+            if ((event.ctrlKey || event.metaKey) && !event.altKey && event.key.toLowerCase() === 'd') {
+                if (isTextEntry(event.target) || !onDuplicate) return;
+                const ids = selectedPaths
+                    .map((path) => byPath.get(path))
+                    .filter((n): n is TreeNode => n?.ref.kind === 'component')
+                    .map((n) => n.ref.id);
+                if (ids.length === 0) return;
+                // Ctrl+D is "bookmark this page" in a browser. Taking it is only defensible because there is
+                // something selected to copy — with nothing selected the browser keeps it.
+                event.preventDefault();
+                onDuplicate(ids);
+                return;
+            }
             if (event.ctrlKey || event.metaKey || event.altKey) return;
             if (event.key !== 'Delete' && event.key !== 'Backspace') return;
             // Backspace is BROWSER-BACK on some setups and a text edit everywhere else, so a field that owns
@@ -547,7 +633,7 @@ export function SchematicCanvas({
         };
         window.addEventListener('keydown', onKeyDown);
         return () => window.removeEventListener('keydown', onKeyDown);
-    }, [chosen, selectedPaths, byPath, onDisconnect, onDelete]);
+    }, [chosen, selectedPaths, byPath, onDisconnect, onDelete, onDuplicate]);
 
     /**
      * `R` turns the selected part — the convention every schematic editor shares.
@@ -807,8 +893,8 @@ export function SchematicCanvas({
                 if (gestured.current) return;
                 if (e.target === e.currentTarget) onSelect?.(null);
             }}
-            onPointerMove={wire ? moveWire : pan ? movePan : drag ? moveDrag : undefined}
-            onPointerUp={wire ? endWire : pan ? endPan : drag ? endDrag : undefined}
+            onPointerMove={marquee ? moveMarquee : wire ? moveWire : pan ? movePan : drag ? moveDrag : undefined}
+            onPointerUp={marquee ? endMarquee : wire ? endWire : pan ? endPan : drag ? endDrag : undefined}
             // CANCELLED, NOT FINISHED. This used to route to the same function as pointerup, so a gesture the
             // BROWSER aborted — a device removed, an OS interruption, a touch becoming a two-finger gesture —
             // wrote geometry, minted a revision and scheduled a save. The file's own docstring said the
@@ -817,6 +903,7 @@ export function SchematicCanvas({
                 setWire(null);
                 setPan(null);
                 setDrag(null);
+                setMarquee(null);
             }}
         >
             {/* THE WIRE BEING DRAWN, which is not a wire yet. Dashed and in the accent colour so it cannot be
@@ -911,6 +998,23 @@ export function SchematicCanvas({
                     ))}
                 </g>
             ))}
+
+            {/* The box, while it is being drawn. Dashed and unfilled at the edges so it never hides what it
+                is being drawn over — the parts a user is deciding about are the ones underneath it. */}
+            {marquee && (
+                <rect
+                    data-testid="marquee"
+                    x={Math.min(marquee.from[0], marquee.to[0])}
+                    y={Math.min(marquee.from[1], marquee.to[1])}
+                    width={Math.abs(marquee.to[0] - marquee.from[0])}
+                    height={Math.abs(marquee.to[1] - marquee.from[1])}
+                    fill="var(--accent, #6cf)"
+                    fillOpacity={0.08}
+                    stroke="var(--accent, #6cf)"
+                    strokeWidth={1}
+                    strokeDasharray="4 3"
+                />
+            )}
 
             {placed.map((p) => {
                 const path = `root/components/${p.id}`;
