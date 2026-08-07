@@ -638,6 +638,29 @@ export function SchematicCanvas({
                 return;
             }
             if (event.ctrlKey || event.metaKey || event.altKey) return;
+
+            // W JOINS TWO SELECTED TERMINALS — the keyboard's way to do the one thing this editor exists
+            // for. Wiring was pointer-only: a drag from one terminal to another, and no path to it at all
+            // without a mouse. The tree is already keyboard-navigable and terminals are already selectable,
+            // so the only thing missing was the verb.
+            //
+            // Exactly two, and only terminals. Three is ambiguous — a net is a set, so joining them is a
+            // sensible thing to want, but it is not what the pointer gesture does, and two surfaces that do
+            // different things under one name is the drift this codebase keeps paying for.
+            if (event.key.toLowerCase() === 'w' && onConnect) {
+                if (isTextEntry(event.target)) return; // `w` is a letter, and the Inspector is full of fields
+                const pins = selectedPaths
+                    .map((path) => byPath.get(path))
+                    .filter((n): n is TreeNode => n?.ref.kind === 'pin' && !!n.ref.componentId);
+                if (pins.length !== 2) return;
+                event.preventDefault();
+                onConnect(
+                    { componentId: pins[0]!.ref.componentId!, pinId: pins[0]!.ref.id },
+                    { componentId: pins[1]!.ref.componentId!, pinId: pins[1]!.ref.id },
+                );
+                return;
+            }
+
             if (event.key !== 'Delete' && event.key !== 'Backspace') return;
             // Backspace is BROWSER-BACK on some setups and a text edit everywhere else, so a field that owns
             // the keystroke keeps it — the same guard the undo shortcut uses, imported rather than restated.
@@ -673,7 +696,7 @@ export function SchematicCanvas({
         };
         window.addEventListener('keydown', onKeyDown);
         return () => window.removeEventListener('keydown', onKeyDown);
-    }, [chosen, selectedPaths, byPath, onDisconnect, onDelete, onDuplicate]);
+    }, [chosen, selectedPaths, byPath, onConnect, onDisconnect, onDelete, onDuplicate]);
 
     /**
      * `R` turns the selected part — the convention every schematic editor shares.
@@ -920,8 +943,14 @@ export function SchematicCanvas({
     return (
         <svg
             ref={svgRef}
-            role="img"
-            aria-label="Schematic"
+            // NOT `role="img"`. A picture is what this was declared as, and a screen reader then announces one
+            // label and stops: the parts, the terminals and every verb behind them are not there at all. It
+            // is a thing you DO something to, which is what `application` means, and it takes focus so a
+            // keyboard can reach it in the first place.
+            role="application"
+            aria-label="Schematic editor"
+            aria-describedby="schematic-keys"
+            tabIndex={0}
             viewBox={`${box.x} ${box.y} ${box.w} ${box.h}`}
             style={{ width: '100%', height: '100%', touchAction: 'none' }}
             onPointerDown={beginPan}
@@ -1068,6 +1097,14 @@ export function SchematicCanvas({
                     ))}
                 </g>
             ))}
+
+            {/* WHAT THE KEYS DO, said out loud rather than left to be discovered. Every verb here is a key
+                and none of them was written down anywhere a screen reader could read; the context menu shows
+                them to a sighted user and this is the same courtesy. */}
+            <desc id="schematic-keys">
+                Arrow keys and Tab move between objects in the tree. R turns the selection, X and Y mirror it, Ctrl+D
+                copies it, Delete removes it. With two terminals selected, W joins them into one net.
+            </desc>
 
             {/* The box, while it is being drawn. Dashed and unfilled at the edges so it never hides what it
                 is being drawn over — the parts a user is deciding about are the ones underneath it. */}
