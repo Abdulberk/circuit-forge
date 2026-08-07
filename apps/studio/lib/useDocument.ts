@@ -125,7 +125,18 @@ export interface DocumentState {
      */
     apply: (edit: (circuit: CircuitJson) => EditResult) => void;
     /** Apply several edits as ONE revision — one undo step, and impossible to half-apply. */
-    applyMany: (label: string, edits: ReadonlyArray<(circuit: CircuitJson) => EditResult>) => void;
+    /**
+     * Several edits as ONE revision, optionally with the drawing change that finishes them.
+     *
+     * `drawing` is handed what the edits created, and lands in the same revision — so an action that both
+     * changes the design and says where the result went is one step of the undo stack rather than two, the
+     * first of which is a document the user never asked for.
+     */
+    applyMany: (
+        label: string,
+        edits: ReadonlyArray<(circuit: CircuitJson) => EditResult>,
+        drawing?: (ui: UiJson, created: readonly string[]) => UiJson,
+    ) => void;
     /**
      * Replace the drawing as ONE revision — a symbol moved, a symbol turned, a wire drawn.
      *
@@ -544,10 +555,14 @@ export function useDocument(
      * if any member is refused, so there is no partial state for this hook to clean up.
      */
     const applyMany = useCallback(
-        (label: string, edits: ReadonlyArray<(c: CircuitJson) => EditResult>) => {
+        (
+            label: string,
+            edits: ReadonlyArray<(c: CircuitJson) => EditResult>,
+            drawing?: (ui: UiJson, created: readonly string[]) => UiJson,
+        ) => {
             setHistory((current) => {
                 if (!current) return current;
-                const result = commit(current, label, edits);
+                const result = commit(current, label, edits, drawing);
                 if (!result.ok) {
                     setRefusal({ reason: result.reason, message: result.message });
                     return current;

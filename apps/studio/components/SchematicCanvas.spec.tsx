@@ -1796,3 +1796,154 @@ describe('a gesture is not a click, and a selection is not a click order', () =>
         expect(glyphAt()).not.toEqual(before);
     });
 });
+
+/**
+ * Selecting many at once, and making another of what is already right.
+ *
+ * Shift-clicking each part is the same number of gestures as not having multi-select at all once there are
+ * more than about four; copying is the gesture people reach for when they have got something right and want
+ * another of it. Neither existed.
+ */
+describe('a box selects, and Ctrl+D copies', () => {
+    const translateOf = (el: Element): number[] =>
+        /translate\(([-\d.]+) ([-\d.]+)\)/.exec(el.getAttribute('transform')!)!.slice(1).map(Number);
+
+    const sized = (container: HTMLElement): SVGSVGElement => {
+        const svg = container.querySelector('svg')!;
+        svg.getBoundingClientRect = () =>
+            ({
+                width: 800,
+                height: 600,
+                x: 0,
+                y: 0,
+                top: 0,
+                left: 0,
+                right: 800,
+                bottom: 600,
+                toJSON: () => ({}),
+            }) as DOMRect;
+        return svg;
+    };
+
+    it('takes everything the box TOUCHES, not only what it encloses', () => {
+        // A box that takes only what it fully contains makes a user draw it twice — once too small, once
+        // right — which is the whole cost the gesture was meant to remove.
+        const picked: string[] = [];
+        const { container } = render(
+            <SchematicCanvas circuit={CIRCUIT} onSelect={(n) => picked.push(n?.ref.id ?? 'null')} />,
+        );
+        const svg = sized(container);
+        // A box that CLIPS r1 rather than containing it: from outside the sheet to a point inside the
+        // symbol's own bounds. Enclosing and touching give different answers here, which a box drawn over
+        // the whole sheet cannot tell apart — and that is what the first version of this test did.
+        const r1 = translateOf(container.querySelector('[data-testid="symbol-r1"]')!);
+        const [bx, by, bw, bh] = svg.getAttribute('viewBox')!.split(' ').map(Number) as [
+            number,
+            number,
+            number,
+            number,
+        ];
+        const perUnit = Math.min(800 / bw, 600 / bh);
+        const at = (x: number, y: number) => ({
+            clientX: (800 - bw * perUnit) / 2 + (x - bx) * perUnit,
+            clientY: (600 - bh * perUnit) / 2 + (y - by) * perUnit,
+        });
+        fireEvent.pointerDown(svg, { pointerId: 51, button: 0, shiftKey: true, ...at(r1[0]! - 200, r1[1]! - 200) });
+        fireEvent.pointerMove(svg, { pointerId: 51, ...at(r1[0]!, r1[1]!) });
+        fireEvent.pointerUp(svg, { pointerId: 51, ...at(r1[0]!, r1[1]!) });
+        expect(picked).toContain('r1');
+    });
+
+    it('shows the box while it is being drawn, and only while', () => {
+        const { container } = render(<SchematicCanvas circuit={CIRCUIT} onSelect={() => {}} />);
+        const svg = sized(container);
+        expect(container.querySelector('[data-testid="marquee"]')).toBeNull();
+        fireEvent.pointerDown(svg, { pointerId: 52, button: 0, shiftKey: true, clientX: 100, clientY: 100 });
+        fireEvent.pointerMove(svg, { pointerId: 52, clientX: 300, clientY: 250 });
+        expect(container.querySelector('[data-testid="marquee"]')).not.toBeNull();
+        fireEvent.pointerUp(svg, { pointerId: 52, clientX: 300, clientY: 250 });
+        expect(container.querySelector('[data-testid="marquee"]')).toBeNull();
+    });
+
+    it('a bare drag on the sheet still PANS rather than selecting', () => {
+        // Panning is the more common act by a long way, so the box is the modified gesture and not the other
+        // way round. Getting this backwards would make the sheet feel stuck.
+        const picked: string[] = [];
+        const { container } = render(
+            <SchematicCanvas circuit={CIRCUIT} onSelect={(n) => picked.push(n?.ref.id ?? 'null')} />,
+        );
+        const svg = sized(container);
+        const before = svg.getAttribute('viewBox');
+        fireEvent.pointerDown(svg, { pointerId: 53, button: 0, clientX: 100, clientY: 100 });
+        fireEvent.pointerMove(svg, { pointerId: 53, clientX: 300, clientY: 250 });
+        fireEvent.pointerUp(svg, { pointerId: 53, clientX: 300, clientY: 250 });
+        expect({ picked, moved: svg.getAttribute('viewBox') !== before }).toEqual({ picked: [], moved: true });
+    });
+
+    it('a shift-press that does not travel changes nothing', () => {
+        // An empty box must not read as "select nothing" and destroy a selection the user just built.
+        const picked: string[] = [];
+        const { container } = render(
+            <SchematicCanvas
+                circuit={CIRCUIT}
+                selectedPaths={['root/components/r1']}
+                onSelect={(n) => picked.push(n?.ref.id ?? 'null')}
+            />,
+        );
+        const svg = sized(container);
+        // ON a part, so an empty box would otherwise CATCH something: "the box did not travel" and "the box
+        // caught nothing" are different reasons for the same outcome, and only one of them is being tested.
+        const r1 = translateOf(container.querySelector('[data-testid="symbol-r1"]')!);
+        const [bx, by, bw, bh] = svg.getAttribute('viewBox')!.split(' ').map(Number) as [
+            number,
+            number,
+            number,
+            number,
+        ];
+        const perUnit = Math.min(800 / bw, 600 / bh);
+        const on = {
+            clientX: (800 - bw * perUnit) / 2 + (r1[0]! - bx) * perUnit,
+            clientY: (600 - bh * perUnit) / 2 + (r1[1]! - by) * perUnit,
+        };
+        fireEvent.pointerDown(svg, { pointerId: 54, button: 0, shiftKey: true, ...on });
+        fireEvent.pointerUp(svg, { pointerId: 54, ...on });
+        expect(picked).toEqual([]);
+    });
+
+    it('Ctrl+D asks for a copy of every selected part', () => {
+        const asked: string[][] = [];
+        render(
+            <SchematicCanvas
+                circuit={CIRCUIT}
+                selectedPaths={['root/components/r1', 'root/components/r2']}
+                onDuplicate={(ids) => asked.push([...ids])}
+            />,
+        );
+        fireEvent.keyDown(window, { key: 'd', ctrlKey: true });
+        expect(asked).toEqual([['r1', 'r2']]);
+    });
+
+    it('leaves Ctrl+D to the browser when there is nothing to copy', () => {
+        // It is "bookmark this page" out there. Taking it is only defensible when there is a selection.
+        const asked: string[][] = [];
+        render(<SchematicCanvas circuit={CIRCUIT} onDuplicate={(ids) => asked.push([...ids])} />);
+        fireEvent.keyDown(window, { key: 'd', ctrlKey: true });
+        expect(asked).toEqual([]);
+    });
+
+    it('does not copy while the user is typing', () => {
+        const asked: string[][] = [];
+        render(
+            <SchematicCanvas
+                circuit={CIRCUIT}
+                selectedPaths={['root/components/r1']}
+                onDuplicate={(ids) => asked.push([...ids])}
+            />,
+        );
+        const field = document.createElement('input');
+        document.body.appendChild(field);
+        fireEvent.keyDown(field, { key: 'd', ctrlKey: true });
+        expect(asked).toEqual([]);
+        field.remove();
+    });
+});

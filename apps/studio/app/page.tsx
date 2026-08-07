@@ -13,6 +13,7 @@ import {
     buildObjectTree,
     connectPins,
     deleteComponent,
+    duplicateComponents,
     disconnectPin,
     isPlaceablePart,
     type TreeNode,
@@ -31,6 +32,9 @@ import { useDocument } from '../lib/useDocument';
 import { useUndoShortcuts } from '../lib/useUndoShortcuts';
 
 import { useSession } from './providers';
+
+/** How far a copy lands from what it was copied from: far enough to see, near enough to be obviously its. */
+const PASTE_OFFSET = 40;
 
 export default function Page() {
     const { signedIn } = useSession();
@@ -336,6 +340,44 @@ function Workspace() {
                             // be five undo steps for one action, and each intermediate document is one a user
                             // never asked for — the fourth of them missing four parts and still holding the
                             // nets of the fifth.
+                            // COPIES ARRIVE SELECTED AND OFFSET. Selected because the next thing anyone does
+                            // with a copy is put it somewhere, and hunting for it first is a step nobody
+                            // wanted; offset because a copy drawn exactly on top of its original is invisible
+                            // and reads as nothing having happened.
+                            onDuplicate={(ids) => {
+                                // RUN ONCE FOR THE IDS, ONCE FOR THE COMMIT, and both are the same answer:
+                                // `addComponent` derives an id from a designator allocated by scanning the
+                                // document, so the same document plus the same request is the same document
+                                // out. The preview is only read for WHICH parts to select afterwards — the
+                                // committed document is the one the kernel builds from the live circuit.
+                                const preview = doc.circuit ? duplicateComponents(doc.circuit, ids) : null;
+                                const created = preview?.ok && preview.changed ? (preview.created ?? []) : [];
+
+                                doc.applyMany('Copy', [(c: CircuitJson) => duplicateComponents(c, ids)], (ui, made) => {
+                                    // OFFSET, in the same revision. A copy drawn exactly on top of its
+                                    // original is invisible and reads as nothing having happened.
+                                    const positions = { ...(ui.positions ?? {}) };
+                                    made.forEach((id, k) => {
+                                        const from = positions[ids[k]!];
+                                        if (from)
+                                            positions[id] = {
+                                                ...from,
+                                                x: from.x + PASTE_OFFSET,
+                                                y: from.y + PASTE_OFFSET,
+                                            };
+                                    });
+                                    return { ...ui, schemaVersion: 1, positions };
+                                });
+
+                                // The copies arrive SELECTED, because the next thing anyone does with one is
+                                // put it somewhere, and hunting for it first is a step nobody wanted.
+                                if (created.length > 0 && preview?.ok && preview.changed) {
+                                    const tree = buildObjectTree(preview.circuit);
+                                    setSelected(
+                                        created.flatMap((id) => tree.byPath.get(`root/components/${id}`) ?? []),
+                                    );
+                                }
+                            }}
                             onDelete={(ids) =>
                                 doc.applyMany(
                                     ids.length === 1 ? 'Delete' : `Delete ${ids.length} parts`,

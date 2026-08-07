@@ -130,10 +130,23 @@ export function commit(
     history: History,
     label: string,
     edits: ReadonlyArray<(circuit: CircuitJson) => EditResult>,
+    /**
+     * An accompanying change to the DRAWING, committed in the same revision.
+     *
+     * Some edits are not finished until the drawing says where the result went. Copying five parts and
+     * placing them are ONE action to the person doing it, and two commits would be two undo steps — the
+     * first of which leaves five copies stacked exactly on their originals, a document nobody asked for that
+     * reads as nothing having happened.
+     *
+     * It is handed what the edits CREATED, because that is the one thing a caller cannot work out for
+     * itself: designators are allocated against a document that changes as each part lands.
+     */
+    drawing?: (ui: UiJson, created: readonly string[]) => UiJson,
 ): CommitResult {
     let circuit = history.present.circuit;
     let changed = false;
     const notes: string[] = [];
+    const created: string[] = [];
 
     for (const [index, edit] of edits.entries()) {
         const result = edit(circuit);
@@ -144,6 +157,7 @@ export function commit(
             circuit = result.circuit;
             changed = true;
             if (result.note) notes.push(result.note);
+            if (result.created) created.push(...result.created);
         }
     }
 
@@ -162,7 +176,7 @@ export function commit(
     const next: EditorDocument = {
         ...history.present,
         circuit,
-        ui: withoutOrphanPositions(history.present.ui, circuit),
+        ui: withoutOrphanPositions(drawing ? drawing(history.present.ui, created) : history.present.ui, circuit),
     };
     const revision: Revision = {
         snapshot: history.present, // the revision RECORDS what to go back to
