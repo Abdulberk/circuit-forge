@@ -66,17 +66,47 @@ const DIRS = [
 const RING = 4;
 
 /**
- * The largest lattice this module will build, in nodes.
+ * How much memory one sheet's lattice may take.
  *
- * A HARD CEILING, because the alternative is a crash inside a render. Stored positions are ordinary user
- * data — a part dragged a long way, or a document written by something else — and the lattice spans
- * whatever it is given, at about a hundred bytes a node. A position of forty thousand produced a four
- * thousand square lattice and one and a half gigabytes; sixty thousand threw `RangeError: Array buffer
- * allocation failed` from inside the component, and since the position is persisted, it threw again on
- * every reopen. Four million nodes is roughly four hundred megabytes and far past any real schematic; past
- * it, `buildLattice` returns null and every wire falls back to a diagonal and SAYS so.
+ * A HARD CEILING, because the alternative is a crash inside a render — and the first version of this had
+ * one and still crashed, which is the more useful half of the story. It was written as a node count, four
+ * million, described as "far past any real schematic". At the measured hundred and two bytes a node that is
+ * four hundred megabytes in one allocation, and a development server routing a real design died on it:
+ * `RangeError: Array buffer allocation failed`, thrown from `new Uint8Array` — the exact call below. A
+ * ceiling expressed in the wrong unit is a ceiling nobody can check against the thing that actually runs out.
+ *
+ * So the budget is stated in BYTES and the node count is derived from what a node really costs. Thirty-two
+ * megabytes is about five times the largest sheet this product draws — a four-hundred-part design is 58,000
+ * nodes, six megabytes — and it is an allocation a browser tab can afford without a thought. Past it,
+ * `buildLattice` returns null, every wire falls back to a diagonal and SAYS so, and the drawing is poor
+ * rather than absent.
  */
-const MAX_NODES = 4_000_000;
+const MAX_LATTICE_BYTES = 32 * 1024 * 1024;
+
+/**
+ * What one node costs, counted from the arrays below rather than guessed.
+ *
+ *   solid 1 · walled 2 · grazing 2 · heldBy 8 · nodeNet 4 · nodeMode 1 · terminal 4   = 22
+ *   scratch: five states per node × (Float64 8 + Int32 4 + Int32 4)                   = 80
+ *
+ * Adding an array here without changing this number is how the budget quietly stops meaning anything, so
+ * they are written next to each other.
+ */
+const BYTES_PER_NODE = 102;
+const MAX_NODES = Math.floor(MAX_LATTICE_BYTES / BYTES_PER_NODE);
+
+/**
+ * The budget, exported so a test can MEASURE it rather than restate it.
+ *
+ * `bytesPerNode` is the one hand-written number here, and a test adds up the actual buffers a lattice owns
+ * and compares. That is the difference between a comment claiming the arithmetic and a check that fails when
+ * an eighth array is added and this line is not.
+ */
+export const LATTICE_BUDGET = {
+    maxBytes: MAX_LATTICE_BYTES,
+    bytesPerNode: BYTES_PER_NODE,
+    maxNodes: MAX_NODES,
+} as const;
 
 /**
  * How far a search may look.
