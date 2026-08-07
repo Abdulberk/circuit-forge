@@ -8,18 +8,23 @@
  * which is the only way this harness is worth building inside the product's own workspace.
  */
 
-import { runErc, type CircuitJson } from '@circuit-forge/eda-core';
+import { runErc, type CircuitJson, type Position } from '@circuit-forge/eda-core';
 import {
+    alignParts,
     buildObjectTree,
     connectPins,
     deleteComponent,
     duplicateComponents,
     disconnectPin,
     isPlaceablePart,
+    placeParts,
+    spreadParts,
+    type PlacedPart,
     type TreeNode,
 } from '@circuit-forge/editor-core';
 import { useEffect, useMemo, useState } from 'react';
 
+import { ContextMenu } from '../components/ContextMenu';
 import { AddPart, Inspector } from '../components/Inspector';
 import { ObjectTreePanel } from '../components/ObjectTreePanel';
 import { PartLibrary } from '../components/PartLibrary';
@@ -192,6 +197,41 @@ function Workspace() {
      * free on a four-hundred-part sheet.
      */
     const problems = useMemo(() => (circuit ? runErc(circuit).issues : []), [circuit]);
+
+    /**
+     * THE MENU, and it is where the alignment commands live at all.
+     *
+     * Every verb this editor has was reachable only by a key, and none of them is written down anywhere: the
+     * way to find out what the editor can do was to already know. A right-click is where people look. It is
+     * also the only place alignment could go — there is no free letter left, and a command that lines up
+     * five parts is not one anybody would guess a chord for.
+     *
+     * The menu owns nothing. Each entry calls the same path the keyboard does, so the two cannot drift.
+     */
+    const [menu, setMenu] = useState<{ x: number; y: number } | null>(null);
+    const selectedParts = useMemo(
+        () => selected.filter((n) => n.ref.kind === 'component').map((n) => n.ref.id),
+        [selected],
+    );
+    /**
+     * A menu entry presses the key the entry names.
+     *
+     * Not a second implementation of the verb — the SAME one. A menu that reimplemented 'rotate' would be a
+     * second answer to a question the canvas already answers, and the day they disagreed the same design
+     * would turn one way from the keyboard and another from the menu.
+     */
+    const dispatchKey = (key: string, ctrl = false): void => {
+        window.dispatchEvent(new KeyboardEvent('keydown', { key, ctrlKey: ctrl, bubbles: true }));
+    };
+
+    const arrange = (label: string, next: Record<string, Position>): void => {
+        if (Object.keys(next).length === 0) return; // nothing moved: not a revision, not a save
+        doc.commitUi(label, { ...doc.ui, schemaVersion: 1, positions: { ...doc.ui.positions, ...next } });
+    };
+    const placedSelection = (): PlacedPart[] => {
+        const placed = circuit ? placeParts(circuit, doc.ui.positions) : [];
+        return placed.filter((p) => selectedParts.includes(p.id));
+    };
 
     const counts = useMemo(
         () => ({
@@ -433,6 +473,7 @@ function Workspace() {
                                 }
                             }}
                             problems={problems}
+                            onContextMenu={(at) => setMenu(at)}
                             onDelete={(ids) =>
                                 doc.applyMany(
                                     ids.length === 1 ? 'Delete' : `Delete ${ids.length} parts`,
@@ -452,6 +493,71 @@ function Workspace() {
                     </div>
                 </aside>
             </div>
+
+            <ContextMenu
+                at={menu}
+                onClose={() => setMenu(null)}
+                items={[
+                    // Each entry is the SAME path the keyboard takes, so the two cannot answer differently.
+                    // An entry with no `run` is shown greyed rather than hidden: a menu that changes shape
+                    // teaches nothing, and "why can I not align one part" is answered by seeing it disabled.
+                    {
+                        label: 'Rotate',
+                        keys: 'R',
+                        run: selectedParts.length > 0 ? () => dispatchKey('r') : undefined,
+                    },
+                    {
+                        label: 'Mirror across X',
+                        keys: 'X',
+                        run: selectedParts.length > 0 ? () => dispatchKey('x') : undefined,
+                    },
+                    {
+                        label: 'Mirror across Y',
+                        keys: 'Y',
+                        run: selectedParts.length > 0 ? () => dispatchKey('y') : undefined,
+                    },
+                    'separator',
+                    {
+                        label: 'Duplicate',
+                        keys: 'Ctrl+D',
+                        run: selectedParts.length > 0 ? () => dispatchKey('d', true) : undefined,
+                    },
+                    {
+                        label: 'Delete',
+                        keys: 'Del',
+                        run: selectedParts.length > 0 ? () => dispatchKey('Delete') : undefined,
+                    },
+                    'separator',
+                    ...(
+                        [
+                            ['Align left', 'left'],
+                            ['Align right', 'right'],
+                            ['Align top', 'top'],
+                            ['Align bottom', 'bottom'],
+                        ] as const
+                    ).map(([label, edge]) => ({
+                        label,
+                        run:
+                            selectedParts.length > 1
+                                ? () => arrange(label, alignParts(placedSelection(), edge, doc.ui.positions))
+                                : undefined,
+                    })),
+                    {
+                        label: 'Space evenly across',
+                        run:
+                            selectedParts.length > 2
+                                ? () => arrange('Space evenly', spreadParts(placedSelection(), 'x', doc.ui.positions))
+                                : undefined,
+                    },
+                    {
+                        label: 'Space evenly down',
+                        run:
+                            selectedParts.length > 2
+                                ? () => arrange('Space evenly', spreadParts(placedSelection(), 'y', doc.ui.positions))
+                                : undefined,
+                    },
+                ]}
+            />
 
             <footer className="statusbar">
                 <span>{API_BASE_URL}</span>
