@@ -47,6 +47,8 @@ import { isTextEntry } from '../lib/useUndoShortcuts';
 
 /** A stable empty list, so a canvas with no selection does not rebuild its set on every render. */
 const EMPTY: readonly string[] = [];
+/** A stable empty list, so a sheet with nothing wrong does not rebuild its index on every render. */
+const NO_PROBLEMS: readonly { code: string; severity: string; message: string; relatedIds: string[] }[] = [];
 
 /** Clear sheet around the drawing, so nothing is drawn hard against the edge of the view. */
 const VIEW_MARGIN = 24;
@@ -60,6 +62,7 @@ export function SchematicCanvas({
     circuit,
     ui,
     selectedPaths = EMPTY,
+    problems = NO_PROBLEMS,
     onSelect,
     onArrange,
     onConnect,
@@ -114,11 +117,35 @@ export function SchematicCanvas({
      * shared — is the kernel's answer, because those are claims about the netlist.
      */
     onDuplicate?: (componentIds: readonly string[]) => void;
+    /**
+     * What the electrical rule check found, marked ON the drawing.
+     *
+     * ERC has been in the kernel since long before there was a canvas, and nothing in this app has ever
+     * shown it: a design with no ground, a floating node, two parts sharing a designator — all reported, all
+     * invisible. A list in a panel is better than nothing and still asks the reader to find the part it
+     * names; the point of having a drawing is that a problem can be shown where it IS.
+     */
+    problems?: readonly { code: string; severity: string; message: string; relatedIds: string[] }[];
 }) {
     const svgRef = useRef<SVGSVGElement | null>(null);
     // Asked many times per render — by every symbol, every terminal and every key handler — so it is a set
     // rather than a scan. `chosen` is the primary: the one the single-object verbs act on.
     const selection = useMemo(() => new Set(selectedPaths), [selectedPaths]);
+    /**
+     * Which objects an issue names, and how badly, by id.
+     *
+     * An error outranks a warning on the same object: a part that is both duplicated and out of the E-series
+     * should read as the more serious of the two, and a reader should not have to know which mark won.
+     */
+    const flagged = useMemo(() => {
+        const worst = new Map<string, 'error' | 'warning'>();
+        for (const issue of problems)
+            for (const id of issue.relatedIds) {
+                const level = issue.severity === 'error' ? 'error' : 'warning';
+                if (level === 'error' || !worst.has(id)) worst.set(id, level);
+            }
+        return worst;
+    }, [problems]);
     const chosen = selectedPaths[selectedPaths.length - 1] ?? null;
     /**
      * The gesture in flight, and it lives HERE rather than in the document — measured, not preferred.
@@ -942,10 +969,19 @@ export function SchematicCanvas({
                             .map(([x, y]) => `${x},${y}`)
                             .join(' ')}
                         fill="none"
-                        stroke={lies ? 'var(--warn)' : 'var(--text-faint)'}
-                        strokeWidth={1}
+                        stroke={
+                            flagged.get(w.netId) === 'error'
+                                ? 'var(--bad, #e5484d)'
+                                : flagged.has(w.netId)
+                                  ? 'var(--warn, #e3a008)'
+                                  : lies
+                                    ? 'var(--warn)'
+                                    : 'var(--text-faint)'
+                        }
+                        strokeWidth={flagged.has(w.netId) ? 1.6 : 1}
                         strokeDasharray={lies ? '4 3' : undefined}
                         data-net={w.netName}
+                        data-problem={flagged.get(w.netId) ?? undefined}
                         // Stated so a reader can tell the difference. A diagonal here is not a style: it is
                         // the router saying it could not draw this wire at right angles without the drawing
                         // claiming something the netlist does not.
@@ -1027,6 +1063,7 @@ export function SchematicCanvas({
                         onPointerDown={(e) => beginDrag(e, p.id)}
                         // Shift extends the selection; what that MEANS is decided one layer up, so this
                         // canvas and the tree cannot come to different conclusions about the same key.
+                        data-problem={flagged.get(p.id) ?? undefined}
                         onClick={(e) => {
                             // A drag ends with a click on the part that was grabbed. Treating that as a
                             // selection replaced the whole group with the one part just moved, so a group
@@ -1050,6 +1087,24 @@ export function SchematicCanvas({
                             and `--panel-raised` — so it fell through to `transparent` and the missing edges
                             had nothing behind them. A fallback that silently succeeds is how a typo in a
                             colour name survives review: it renders, so it looks intentional. */}
+                        {/* A RING, not a recolour. Changing the symbol's own strokes would make a flagged
+                            resistor a different-looking resistor, and a reader has to be able to tell a mark
+                            ABOUT a part from the part itself. Sized from the symbol's real bounds so it fits
+                            whatever shape it is drawn around. */}
+                        {flagged.has(p.id) && (
+                            <rect
+                                data-testid={`problem-${p.id}`}
+                                x={p.symbol.bounds.minX - 4}
+                                y={p.symbol.bounds.minY - 4}
+                                width={p.symbol.bounds.maxX - p.symbol.bounds.minX + 8}
+                                height={p.symbol.bounds.maxY - p.symbol.bounds.minY + 8}
+                                fill="none"
+                                stroke={flagged.get(p.id) === 'error' ? 'var(--bad, #e5484d)' : 'var(--warn, #e3a008)'}
+                                strokeWidth={1.5}
+                                strokeDasharray="4 3"
+                                rx={3}
+                            />
+                        )}
                         {p.symbol.strokes.map((s, i) => {
                             // `key` is NOT in here, and that is not a style choice. React reads a key off the
                             // element, not out of a spread props object, so carrying it in `shape` meant the
