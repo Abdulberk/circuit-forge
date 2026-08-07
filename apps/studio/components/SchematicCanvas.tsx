@@ -63,6 +63,7 @@ export function SchematicCanvas({
     ui,
     selectedPaths = EMPTY,
     problems = NO_PROBLEMS,
+    onContextMenu,
     onSelect,
     onArrange,
     onConnect,
@@ -126,6 +127,13 @@ export function SchematicCanvas({
      * names; the point of having a drawing is that a problem can be shown where it IS.
      */
     problems?: readonly { code: string; severity: string; message: string; relatedIds: string[] }[];
+    /**
+     * A right-click, reported with WHAT was under it and WHERE on the screen.
+     *
+     * The canvas does not decide what a menu contains — that is a question about which verbs exist and which
+     * of them apply, and the answer lives with the verbs. This says only that somebody asked.
+     */
+    onContextMenu?: (at: { x: number; y: number }, node: TreeNode | null) => void;
 }) {
     const svgRef = useRef<SVGSVGElement | null>(null);
     // Asked many times per render — by every symbol, every terminal and every key handler — so it is a set
@@ -919,6 +927,27 @@ export function SchematicCanvas({
                 // A pan ends here too, and a pan is not a click on the sheet.
                 if (gestured.current) return;
                 if (e.target === e.currentTarget) onSelect?.(null);
+            }}
+            onContextMenu={(e) => {
+                if (!onContextMenu) return;
+                e.preventDefault();
+                // WHAT IS UNDER IT, resolved through the tree like every other selection — and a right-click
+                // on a part that is NOT selected selects it first, because a menu about something the user
+                // cannot see they picked is a menu that acts on a surprise.
+                const part = placed.find((q) => {
+                    const b = q.symbol.bounds;
+                    const at = pointOnSheet(e.clientX, e.clientY);
+                    return (
+                        at &&
+                        at[0] >= q.x + b.minX &&
+                        at[0] <= q.x + b.maxX &&
+                        at[1] >= q.y + b.minY &&
+                        at[1] <= q.y + b.maxY
+                    );
+                });
+                const node = part ? (byPath.get(`root/components/${part.id}`) ?? null) : null;
+                if (node && !selection.has(node.ref.path.join('/'))) onSelect?.(node);
+                onContextMenu({ x: e.clientX, y: e.clientY }, node);
             }}
             onPointerMove={marquee ? moveMarquee : wire ? moveWire : pan ? movePan : drag ? moveDrag : undefined}
             onPointerUp={marquee ? endMarquee : wire ? endWire : pan ? endPan : drag ? endDrag : undefined}

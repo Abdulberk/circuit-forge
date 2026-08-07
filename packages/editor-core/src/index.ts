@@ -82,4 +82,5 @@ export type {
  * pinning a sheet nobody sees — which is exactly what happened when the canvas owned this.
  */
 export { placeParts, bodiesOf, netsOf, groundGlyphs } from './schematic/layout';
+export { alignParts, spreadParts, type AlignEdge, type SpreadAxis } from './schematic/align';
 export type { PlacedPart } from './schematic/layout';
