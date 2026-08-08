@@ -19,7 +19,7 @@ import {
     SEQUENTIAL_TYPES,
     COMPONENT_PINS,
 } from '../types/circuit';
-import { ErcCode, ErcSeverity, ErcResult, ErcIssue } from '../types/erc';
+import { ErcCode, ErcSeverity, ErcResult, ErcIssue, type ErcSubject } from '../types/erc';
 import { isESeriesValue, snapValueString } from '../utils/eseries';
 import { parseSpiceValue } from '../utils/unit-parser';
 
@@ -93,12 +93,26 @@ export function runErc(circuit: CircuitJson): ErcResult {
 /**
  * Create an ERC issue
  */
-function createIssue(code: ErcCode, relatedIds: string[], details?: string, severityOverride?: ErcSeverity): ErcIssue {
+/** This issue is about a PART. */
+const ofComponent = (id: string): ErcSubject => ({ kind: 'component', id });
+/** This issue is about a NODE between parts. */
+const ofNet = (id: string): ErcSubject => ({ kind: 'net', id });
+
+/**
+ * Create an ERC issue.
+ *
+ * Subjects rather than bare ids, because only the check itself knows whether the string it is holding names
+ * a part or a net — and a reader that guesses by looking the id up in the components will mark the wrong
+ * object the first time a document holds one string as both. `relatedIds` is DERIVED from them, so every
+ * existing consumer, the API's DTO and the LLM prompt included, sees exactly what it saw before.
+ */
+function createIssue(code: ErcCode, related: ErcSubject[], details?: string, severityOverride?: ErcSeverity): ErcIssue {
     return {
         code,
         severity: severityOverride || ERC_SEVERITIES[code],
         message: details ? `${ERC_DESCRIPTIONS[code]}: ${details}` : ERC_DESCRIPTIONS[code],
-        relatedIds,
+        relatedIds: related.map((r) => r.id),
+        related,
     };
 }
 
@@ -151,7 +165,7 @@ function checkGround(circuit: CircuitJson): ErcIssue[] {
             issues.push(
                 createIssue(
                     ErcCode.MULTIPLE_GROUNDS,
-                    groundComponents.map((c) => c.id),
+                    groundComponents.map((c) => ofComponent(c.id)),
                     `Found on nets: ${Array.from(groundNetIds).join(', ')}`,
                 ),
             );
@@ -197,7 +211,7 @@ function checkFloatingNodes(circuit: CircuitJson): ErcIssue[] {
         }
 
         if (pinCount === 0) {
-            issues.push(createIssue(ErcCode.UNCONNECTED_NET, [net.id], `Net "${net.name || net.id}"`));
+            issues.push(createIssue(ErcCode.UNCONNECTED_NET, [ofNet(net.id)], `Net "${net.name || net.id}"`));
         } else if (pinCount === 1) {
             // A driven digital OUTPUT observed on its own net (a counter/register terminal output) is not a
             // dead end — planMixedSignal bridges it to an analog node for probing. Don't flag it.
@@ -208,7 +222,7 @@ function checkFloatingNodes(circuit: CircuitJson): ErcIssue[] {
             issues.push(
                 createIssue(
                     ErcCode.NET_HAS_SINGLE_PIN,
-                    [net.id, ...connectedComponents],
+                    [ofNet(net.id), ...connectedComponents.map(ofComponent)],
                     `Net "${net.name || net.id}" connected to only ${connectedComponents.join(', ')}`,
                 ),
             );
@@ -226,7 +240,7 @@ function checkFloatingNodes(circuit: CircuitJson): ErcIssue[] {
                 issues.push(
                     createIssue(
                         ErcCode.FLOATING_NODE,
-                        [net.id, ...connectedComponents],
+                        [ofNet(net.id), ...connectedComponents.map(ofComponent)],
                         `Net "${net.name || net.id}" has no DC path to ground (only capacitor/current-source connections); its operating point is undefined. Set analysis.initialConditions for this node for a clean, artifact-free start.`,
                     ),
                 );
@@ -249,7 +263,7 @@ function checkPinCounts(circuit: CircuitJson): ErcIssue[] {
             issues.push(
                 createIssue(
                     ErcCode.PIN_COUNT_MISMATCH,
-                    [component.id],
+                    [ofComponent(component.id)],
                     `${component.designator || component.id}: expected ${expected} pins, got ${component.pins.length}`,
                 ),
             );
@@ -294,7 +308,7 @@ function checkDigitalConnectivity(circuit: CircuitJson): ErcIssue[] {
                 issues.push(
                     createIssue(
                         ErcCode.DIGITAL_PIN_SHAPE,
-                        [c.id],
+                        [ofComponent(c.id)],
                         `${c.designator || c.id} (${c.type}): ${reason} (got ${inputs} input(s), ${distinctInputs} distinct, ${outputs} output(s))`,
                     ),
                 );
@@ -311,7 +325,7 @@ function checkDigitalConnectivity(circuit: CircuitJson): ErcIssue[] {
                     issues.push(
                         createIssue(
                             ErcCode.DIGITAL_PIN_SHAPE,
-                            [c.id],
+                            [ofComponent(c.id)],
                             `${c.designator || c.id} (${c.type}): missing required pin '${req}'`,
                         ),
                     );
@@ -324,7 +338,7 @@ function checkDigitalConnectivity(circuit: CircuitJson): ErcIssue[] {
                 issues.push(
                     createIssue(
                         ErcCode.DIGITAL_PIN_SHAPE,
-                        [c.id],
+                        [ofComponent(c.id)],
                         `${c.designator || c.id} (${c.type}): duplicate pin id(s) ${dups.join(', ')}`,
                     ),
                 );
@@ -334,7 +348,7 @@ function checkDigitalConnectivity(circuit: CircuitJson): ErcIssue[] {
                 issues.push(
                     createIssue(
                         ErcCode.DIGITAL_PIN_SHAPE,
-                        [c.id],
+                        [ofComponent(c.id)],
                         `${c.designator || c.id} (${c.type}): unexpected pin(s) ${strays.join(', ')} — ${c.type} pins are ${canonical.join('/')}`,
                     ),
                 );
@@ -395,18 +409,18 @@ function checkDigitalConnectivity(circuit: CircuitJson): ErcIssue[] {
             issues.push(
                 createIssue(
                     ErcCode.DIGITAL_BUS_CONTENTION,
-                    [netId],
+                    [ofNet(netId)],
                     `${label} is driven by ${x.src} digital outputs (${x.src - x.triSrc} non-tristate)`,
                 ),
             );
         }
         if (x.src >= 1 && x.analogSrc >= 1) {
-            issues.push(createIssue(ErcCode.MIXED_DRIVER_CONFLICT, [netId], label));
+            issues.push(createIssue(ErcCode.MIXED_DRIVER_CONFLICT, [ofNet(netId)], label));
         }
         // A digital input with no driver (no digital source, no analog connection) and not tied to ground
         // is an unknown 'U' state. (An analog connection bridges in via adc; ground ties it low.)
         if (x.sink >= 1 && x.src === 0 && x.analog === 0 && !net?.isGround) {
-            issues.push(createIssue(ErcCode.FLOATING_DIGITAL_INPUT, [netId], label));
+            issues.push(createIssue(ErcCode.FLOATING_DIGITAL_INPUT, [ofNet(netId)], label));
         }
     }
 
@@ -478,7 +492,7 @@ function checkDuplicateDesignators(circuit: CircuitJson): ErcIssue[] {
             issues.push(
                 createIssue(
                     ErcCode.DUPLICATE_DESIGNATOR,
-                    ids,
+                    ids.map(ofComponent),
                     `${ids.length} components share the designator "${key}" — designators must be unique (ngspice device names are case-insensitive)`,
                 ),
             );
@@ -515,7 +529,7 @@ function checkComponentValues(circuit: CircuitJson): ErcIssue[] {
             issues.push(
                 createIssue(
                     ErcCode.MISSING_VALUE,
-                    [component.id],
+                    [ofComponent(component.id)],
                     `${component.designator || component.id} (${component.type})`,
                 ),
             );
@@ -535,7 +549,7 @@ function checkComponentValues(circuit: CircuitJson): ErcIssue[] {
                 issues.push(
                     createIssue(
                         ErcCode.NON_STANDARD_VALUE,
-                        [component.id],
+                        [ofComponent(component.id)],
                         `${component.designator || component.id}: ${component.value}${nearest ? ` — nearest standard (E24) is ${nearest}` : ''}`,
                     ),
                 );
@@ -551,7 +565,7 @@ function checkComponentValues(circuit: CircuitJson): ErcIssue[] {
                 issues.push(
                     createIssue(
                         ErcCode.WRONG_VALUE_UNIT,
-                        [component.id],
+                        [ofComponent(component.id)],
                         `${component.designator || component.id}: value "${component.value}" is in ${name[u]}, but a ${component.type} is measured in ${name[expectedUnit]}`,
                     ),
                 );
@@ -565,7 +579,7 @@ function checkComponentValues(circuit: CircuitJson): ErcIssue[] {
             issues.push(
                 createIssue(
                     ErcCode.INVALID_VALUE,
-                    [component.id],
+                    [ofComponent(component.id)],
                     `${component.designator || component.id}: "${component.value}" is not a valid breakdown voltage`,
                 ),
             );
@@ -582,7 +596,7 @@ function checkComponentValues(circuit: CircuitJson): ErcIssue[] {
             issues.push(
                 createIssue(
                     ErcCode.INVALID_VALUE,
-                    [component.id],
+                    [ofComponent(component.id)],
                     `${component.designator || component.id}: "${component.value}" is not a valid gain (must be a single number)`,
                 ),
             );
@@ -598,7 +612,7 @@ function checkComponentValues(circuit: CircuitJson): ErcIssue[] {
             issues.push(
                 createIssue(
                     bothPresent ? ErcCode.INVALID_VALUE : ErcCode.MISSING_VALUE,
-                    [component.id],
+                    [ofComponent(component.id)],
                     `${component.designator || component.id} (transformer) needs positive primaryInductance + secondaryInductance (+ optional coupling 0..1)`,
                 ),
             );
@@ -613,7 +627,7 @@ function checkComponentValues(circuit: CircuitJson): ErcIssue[] {
             issues.push(
                 createIssue(
                     hasZ && hasSpec ? ErcCode.INVALID_VALUE : ErcCode.MISSING_VALUE,
-                    [component.id],
+                    [ofComponent(component.id)],
                     `${component.designator || component.id} (transmission line) needs positive z0 + (td or f)`,
                 ),
             );
@@ -626,7 +640,7 @@ function checkComponentValues(circuit: CircuitJson): ErcIssue[] {
                 issues.push(
                     createIssue(
                         ErcCode.MISSING_VALUE,
-                        [component.id],
+                        [ofComponent(component.id)],
                         `${component.designator || component.id} (behavioral source) needs a "V=<expr>" or "I=<expr>" value`,
                     ),
                 );
@@ -634,7 +648,7 @@ function checkComponentValues(circuit: CircuitJson): ErcIssue[] {
                 issues.push(
                     createIssue(
                         ErcCode.INVALID_VALUE,
-                        [component.id],
+                        [ofComponent(component.id)],
                         `${component.designator || component.id}: behavioral source value must be "V=<expr>" or "I=<expr>" (non-empty) on one line`,
                     ),
                 );
@@ -646,7 +660,7 @@ function checkComponentValues(circuit: CircuitJson): ErcIssue[] {
             issues.push(
                 createIssue(
                     ErcCode.MISSING_MODEL,
-                    [component.id],
+                    [ofComponent(component.id)],
                     `${component.designator || component.id} will use default model`,
                 ),
             );
@@ -657,7 +671,7 @@ function checkComponentValues(circuit: CircuitJson): ErcIssue[] {
             issues.push(
                 createIssue(
                     ErcCode.MODEL_REQUIRED,
-                    [component.id],
+                    [ofComponent(component.id)],
                     `${component.designator || component.id} (${component.type})`,
                 ),
             );
@@ -709,7 +723,7 @@ function checkModelResolution(circuit: CircuitJson): ErcIssue[] {
             issues.push(
                 createIssue(
                     ErcCode.UNRESOLVED_MODEL,
-                    [component.id],
+                    [ofComponent(component.id)],
                     `${component.designator || component.id} references model "${component.model}"`,
                 ),
             );
@@ -780,7 +794,7 @@ function checkVoltageSourceShorts(circuit: CircuitJson): ErcIssue[] {
             issues.push(
                 createIssue(
                     ErcCode.VOLTAGE_SOURCE_SHORT,
-                    [vs.id],
+                    [ofComponent(vs.id)],
                     `${vs.designator || vs.id} has both terminals on the same node`,
                 ),
             );
@@ -838,7 +852,7 @@ function checkVoltageSourceShorts(circuit: CircuitJson): ErcIssue[] {
             issues.push(
                 createIssue(
                     ErcCode.PARALLEL_VOLTAGE_SOURCES,
-                    drivers.map((d) => d.source.id),
+                    drivers.map((d) => ofComponent(d.source.id)),
                     allPlain
                         ? `Voltage sources (${labels}) force the same node pair to different voltages`
                         : `Multiple voltage drivers (${labels}) across the same node pair — they over-determine the node`,
@@ -925,7 +939,7 @@ function checkGroundReachability(circuit: CircuitJson): ErcIssue[] {
     return [
         createIssue(
             ErcCode.ISOLATED_SUBCIRCUIT,
-            [...islandNets.map((n) => n.id), ...compIds],
+            [...islandNets.map((n) => ofNet(n.id)), ...[...compIds].map(ofComponent)],
             `Net(s) ${names} have no connection back to ground — an isolated sub-circuit that floats (or makes the operating point singular)`,
         ),
     ];
@@ -950,7 +964,7 @@ function checkNetConnections(circuit: CircuitJson): ErcIssue[] {
     // Check for defined but unreferenced nets
     for (const net of circuit.nets) {
         if (!referencedNets.has(net.id) && !net.isGround && net.id !== '0') {
-            issues.push(createIssue(ErcCode.UNCONNECTED_NET, [net.id], `Net "${net.name || net.id}"`));
+            issues.push(createIssue(ErcCode.UNCONNECTED_NET, [ofNet(net.id)], `Net "${net.name || net.id}"`));
         }
     }
 

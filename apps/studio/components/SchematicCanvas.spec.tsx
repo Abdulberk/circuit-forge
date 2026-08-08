@@ -8,7 +8,14 @@
  * looks wrong": they are a wire drawn where there is no connection, a part missing from the picture that is
  * present in the netlist, and a layout that shuffles between renders so a user cannot point at anything.
  */
-import type { CircuitJson, Component, UiJson } from '@circuit-forge/eda-core';
+import {
+    ErcCode,
+    type CircuitJson,
+    type Component,
+    type ErcIssue,
+    type ErcSeverity,
+    type UiJson,
+} from '@circuit-forge/eda-core';
 import { isDrawnOnSheet, isPlaceablePart, type TreeNode, type SelectMode } from '@circuit-forge/editor-core';
 import { render, screen, fireEvent } from '@testing-library/react';
 
@@ -1974,10 +1981,83 @@ describe('a box selects, and Ctrl+D copies', () => {
  * about designs that are verified.
  */
 describe('what the rule check found is marked where it is', () => {
+    /**
+     * Built the way the kernel builds them — with a `related` list that says what each id IS.
+     *
+     * A bare id cannot be resolved: a component id and a net id are both strings, and one document may hold
+     * the same string as both. Fixtures without the kind would be testing a guess rather than the rule.
+     */
+    const about = (kind: 'component' | 'net', ...ids: string[]) => ({
+        relatedIds: ids,
+        related: ids.map((id) => ({ kind, id })),
+    });
+    const issue = (code: ErcCode, severity: ErcSeverity, message: string, subject: ReturnType<typeof about>) =>
+        ({ code, severity, message, ...subject }) as ErcIssue;
+
     const problems = [
-        { code: 'ERC037', severity: 'error', message: 'R1 and R2 share a designator.', relatedIds: ['r1', 'r2'] },
-        { code: 'ERC036', severity: 'warning', message: 'MID is not an E-series value.', relatedIds: ['mid'] },
+        issue(ErcCode.DUPLICATE_DESIGNATOR, 'error', 'R1 and R2 share a designator.', about('component', 'r1', 'r2')),
+        issue(ErcCode.NON_STANDARD_VALUE, 'warning', 'MID is not an E-series value.', about('net', 'mid')),
     ];
+
+    it('does NOT mark an advisory remark on the drawing', () => {
+        // The list beside the sheet counts these apart from warnings; this surface did not, so the two
+        // answered the same question differently — and this is the one that matters more, because a mark on
+        // a symbol is a claim about that part. A half-wired sheet is FULL of advisory remarks: every net
+        // nobody has got to yet is one. Marked, they ring parts and turn wires amber all through ordinary
+        // work, and a mark that is always on says nothing at the moment it means something.
+        const advisory = [
+            issue(ErcCode.UNCONNECTED_NET, 'info', 'Net MID is defined but not connected.', about('net', 'mid')),
+            issue(ErcCode.NON_STANDARD_VALUE, 'info', 'R1 is not an E-series value.', about('component', 'r1')),
+        ];
+        const { container } = render(<SchematicCanvas circuit={CIRCUIT} problems={advisory} />);
+        expect(container.querySelector('[data-testid="problem-r1"]')).toBeNull();
+        const wire = container.querySelector('polyline[data-net="MID"]');
+        expect(wire?.getAttribute('data-problem') ?? null).toBeNull();
+    });
+
+    it('still marks a WARNING, which is the whole point of the distinction', () => {
+        // The other half of that bargain: narrowing what gets marked must not turn the marking off.
+        const { container } = render(
+            <SchematicCanvas
+                circuit={CIRCUIT}
+                problems={[
+                    issue(ErcCode.NON_STANDARD_VALUE, 'warning', 'R1 is out of tolerance.', about('component', 'r1')),
+                ]}
+            />,
+        );
+        expect(container.querySelector('[data-testid="problem-r1"]')).not.toBeNull();
+    });
+
+    it('marks the object the issue is ABOUT, not everything sharing its id', () => {
+        // A component id and a net id are both just strings, and nothing stops one document holding the same
+        // one as both. Marking by bare id put a ring on the RESISTOR for three remarks about a spare NET
+        // called `r1` — measured — and a user opening R1 to see what was wrong found nothing wrong with it.
+        const collide: CircuitJson = {
+            ...CIRCUIT,
+            nets: [...(CIRCUIT.nets ?? []), { id: 'r1', name: 'SPARE' }],
+        };
+        const { container } = render(
+            <SchematicCanvas
+                circuit={collide}
+                problems={[
+                    issue(ErcCode.UNCONNECTED_NET, 'warning', 'Net SPARE is not connected.', about('net', 'r1')),
+                ]}
+            />,
+        );
+        expect(container.querySelector('[data-testid="problem-r1"]')).toBeNull();
+    });
+
+    it('falls back to marking both when an older issue does not say which', () => {
+        // `related` is optional so an issue built by hand — a fixture, a stored document, another version —
+        // is still a valid issue. Without it the id is taken to mean both, which is the guess this always
+        // used to make; the point was to stop guessing when the answer is available, not to start dropping
+        // marks when it is not.
+        const legacy = [
+            { code: ErcCode.DUPLICATE_DESIGNATOR, severity: 'error', message: 'e', relatedIds: ['r1'] } as ErcIssue,
+        ];
+        const { container } = render(<SchematicCanvas circuit={CIRCUIT} problems={legacy} />);
+        expect(container.querySelector('[data-testid="problem-r1"]')).not.toBeNull();
+    });
 
     it('rings the parts an issue names', () => {
         const { container } = render(<SchematicCanvas circuit={CIRCUIT} problems={problems} />);
@@ -2000,8 +2080,8 @@ describe('what the rule check found is marked where it is', () => {
         // A part that is both duplicated and out of the E-series should read as the more serious of the two,
         // and a reader should not have to know which mark won.
         const both = [
-            { code: 'ERC036', severity: 'warning', message: 'w', relatedIds: ['r1'] },
-            { code: 'ERC037', severity: 'error', message: 'e', relatedIds: ['r1'] },
+            issue(ErcCode.NON_STANDARD_VALUE, 'warning', 'w', about('component', 'r1')),
+            issue(ErcCode.DUPLICATE_DESIGNATOR, 'error', 'e', about('component', 'r1')),
         ];
         const { container } = render(<SchematicCanvas circuit={CIRCUIT} problems={both} />);
         expect(container.querySelector('[data-testid="symbol-r1"]')!.getAttribute('data-problem')).toBe('error');

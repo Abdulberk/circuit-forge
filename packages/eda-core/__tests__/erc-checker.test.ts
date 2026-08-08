@@ -554,3 +554,64 @@ describe('ErcChecker', () => {
         });
     });
 });
+
+describe('what an issue is ABOUT', () => {
+    /**
+     * A bare id cannot be resolved. A component id and a net id are both just strings, and nothing stops one
+     * document holding the same one as both — so a reader that guessed by looking the id up among the parts
+     * marked the WRONG OBJECT. Measured in the editor: a spare net called `r1` put three of its remarks on
+     * the resistor R1, and a user opening R1 to see what was wrong found nothing wrong with it.
+     *
+     * So every issue says what each id NAMES. `relatedIds` is derived from that and is unchanged, which is
+     * why nothing downstream — the API's DTO, the LLM prompt, every existing test — had to move.
+     */
+    const sheet: CircuitJson = {
+        version: '1.0',
+        components: [
+            createComponent('v1', 'voltage_source', 'V1', '5', [
+                { pinId: '+', netId: 'in' },
+                { pinId: '-', netId: 'gnd' },
+            ]),
+            createComponent('r1', 'resistor', 'R1', '1237', [
+                { pinId: '1', netId: 'in' },
+                { pinId: '2', netId: 'gnd' },
+            ]),
+        ],
+        // A spare net whose id is ALSO the resistor's id — which is the whole point.
+        nets: [createNet('in', 'IN'), createNet('gnd', 'GND', true), createNet('r1', 'SPARE')],
+    };
+
+    it('says which kind every id names', () => {
+        const { issues } = runErc(sheet);
+        expect(issues.length).toBeGreaterThan(0);
+        for (const issue of issues) {
+            expect(issue.related).toBeDefined();
+            // In the same order, and the same length — a caller reading them side by side must not slip.
+            expect(issue.related!.map((r) => r.id)).toEqual(issue.relatedIds);
+            for (const r of issue.related!) expect(['component', 'net']).toContain(r.kind);
+        }
+    });
+
+    it('calls a remark about a NET a remark about a net, even when a part shares the id', () => {
+        const { issues } = runErc(sheet);
+        const aboutSpare = issues.filter((i) => i.code === ErcCode.UNCONNECTED_NET);
+        expect(aboutSpare.length).toBeGreaterThan(0);
+        for (const issue of aboutSpare) expect(issue.related).toEqual([{ kind: 'net', id: 'r1' }]);
+    });
+
+    it('calls a remark about a PART a remark about a part, on the same document', () => {
+        // The other half: the value check is about R1 the resistor, and must not be readable as being about
+        // the net that happens to be called `r1`.
+        const { issues } = runErc(sheet);
+        const aboutValue = issues.filter((i) => i.code === ErcCode.NON_STANDARD_VALUE);
+        expect(aboutValue.length).toBeGreaterThan(0);
+        for (const issue of aboutValue) expect(issue.related).toEqual([{ kind: 'component', id: 'r1' }]);
+    });
+
+    it('keeps relatedIds byte-identical to what it always was', () => {
+        // The field is published: it reaches the API's DTO and the LLM prompt. Deriving it must not change
+        // it — this is the assertion that lets the change be additive rather than breaking.
+        const { issues } = runErc(sheet);
+        for (const issue of issues) expect(issue.relatedIds).toEqual(issue.related!.map((r) => r.id));
+    });
+});
