@@ -119,7 +119,7 @@ export function ObjectTreePanel({
      * survive a document it does not belong to, because the same thing that changes the document clears it.
      */
     selectedPaths?: readonly string[];
-    onSelect?: (node: TreeNode | null, mode?: SelectMode) => void;
+    onSelect?: (what: TreeNode | readonly TreeNode[] | null, mode?: SelectMode) => void;
 }) {
     // Collapse state stays private, and the difference is the point: which rows are folded is about this
     // panel's own appearance, and no other view has an opinion about it. Selection is about the DOCUMENT.

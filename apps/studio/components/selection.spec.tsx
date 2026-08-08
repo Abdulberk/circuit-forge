@@ -53,11 +53,15 @@ const CIRCUIT: CircuitJson = {
 /** The two panels wired the way the workspace wires them: one selection, held above both. */
 function Workspace() {
     const [selected, setSelected] = useState<TreeNode | null>(null);
+    // A click names one object and a box names its whole catch, so the callback carries either. This
+    // workspace is about the two panels AGREEING on one selection, so it keeps the last thing reported.
+    const pick = (what: TreeNode | readonly TreeNode[] | null) =>
+        setSelected(what === null ? null : Array.isArray(what) ? (what[what.length - 1] ?? null) : (what as TreeNode));
     const paths = selected ? [selected.ref.path.join('/')] : [];
     return (
         <div>
-            <ObjectTreePanel circuit={CIRCUIT} selectedPaths={paths} onSelect={setSelected} />
-            <SchematicCanvas circuit={CIRCUIT} selectedPaths={paths} onSelect={setSelected} />
+            <ObjectTreePanel circuit={CIRCUIT} selectedPaths={paths} onSelect={pick} />
+            <SchematicCanvas circuit={CIRCUIT} selectedPaths={paths} onSelect={pick} />
         </div>
     );
 }

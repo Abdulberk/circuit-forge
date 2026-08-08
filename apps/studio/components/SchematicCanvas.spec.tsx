@@ -21,6 +21,20 @@ import { render, screen, fireEvent } from '@testing-library/react';
 
 import { SchematicCanvas } from './SchematicCanvas';
 
+/**
+ * The one object a CLICK reports.
+ *
+ * A click names one thing and a box names everything it caught, so the callback carries either — reporting a
+ * box one part at a time made the selection rule re-filter itself once per part, which is quadratic in what
+ * was caught. Tests about clicking narrow here rather than each asserting the shape again.
+ */
+const one = (what: TreeNode | readonly TreeNode[] | null): TreeNode | null =>
+    what === null ? null : Array.isArray(what) ? (what[0] ?? null) : (what as TreeNode);
+
+/** Every id a report carried — a box names its whole catch in one call, a click names one thing. */
+const many = (what: TreeNode | readonly TreeNode[] | null): string[] =>
+    what === null ? ['null'] : Array.isArray(what) ? what.map((n) => n.ref.id) : [(what as TreeNode).ref.id];
+
 const CIRCUIT: CircuitJson = {
     version: '1.0',
     components: [
@@ -251,7 +265,7 @@ describe('what the canvas draws', () => {
 describe('selection is shared with the tree, not invented here', () => {
     it('selects the SAME object a tree row would', () => {
         const picked: Array<string | undefined> = [];
-        render(<SchematicCanvas circuit={CIRCUIT} onSelect={(n) => picked.push(n?.ref.path.join('/'))} />);
+        render(<SchematicCanvas circuit={CIRCUIT} onSelect={(w) => picked.push(one(w)?.ref.path.join('/'))} />);
 
         fireEvent.click(screen.getByTestId('symbol-r1'));
 
@@ -1262,7 +1276,7 @@ describe('a connection can be taken back from the drawing', () => {
         // select the symbol, which is the wrong answer at exactly the moment it matters.
         let selected: TreeNode | null = null;
         const { container } = render(
-            <SchematicCanvas circuit={CIRCUIT} onConnect={() => {}} onSelect={(n) => (selected = n)} />,
+            <SchematicCanvas circuit={CIRCUIT} onConnect={() => {}} onSelect={(w) => (selected = one(w))} />,
         );
         fireEvent.click(container.querySelector('[data-testid="pin-r1-2"]')!);
         expect(selected).toEqual(expect.objectContaining({ ref: expect.objectContaining({ kind: 'pin', id: '2' }) }));
@@ -1496,7 +1510,7 @@ describe('more than one object can be selected', () => {
         // codebase already paid for: one told the Inspector and the other painted a different row.
         const seen: Array<{ id: string | undefined; mode: SelectMode | undefined }> = [];
         const { container } = render(
-            <SchematicCanvas circuit={CIRCUIT} onSelect={(n, m) => seen.push({ id: n?.ref.id, mode: m })} />,
+            <SchematicCanvas circuit={CIRCUIT} onSelect={(w, m) => seen.push({ id: one(w)?.ref.id, mode: m })} />,
         );
         fireEvent.click(container.querySelector('[data-testid="symbol-r1"]')!);
         fireEvent.click(container.querySelector('[data-testid="symbol-r2"]')!, { shiftKey: true });
@@ -1617,7 +1631,7 @@ describe('more than one object can be selected', () => {
             <SchematicCanvas
                 circuit={CIRCUIT}
                 selectedPaths={['root/components/r1']}
-                onSelect={(n) => seen.push(n?.ref.id ?? null)}
+                onSelect={(w) => seen.push(one(w)?.ref.id ?? null)}
             />,
         );
         fireEvent.click(container.querySelector('svg')!);
@@ -1658,7 +1672,7 @@ describe('a gesture is not a click, and a selection is not a click order', () =>
             <SchematicCanvas
                 circuit={CIRCUIT}
                 selectedPaths={['root/components/r1']}
-                onSelect={(n) => seen.push(n?.ref.id ?? null)}
+                onSelect={(w) => seen.push(one(w)?.ref.id ?? null)}
             />,
         );
         const svg = sized(container);
@@ -1677,7 +1691,7 @@ describe('a gesture is not a click, and a selection is not a click order', () =>
             <SchematicCanvas
                 circuit={CIRCUIT}
                 selectedPaths={['root/components/r1']}
-                onSelect={(n) => seen.push(n?.ref.id ?? null)}
+                onSelect={(w) => seen.push(one(w)?.ref.id ?? null)}
             />,
         );
         const svg = sized(container);
@@ -1696,7 +1710,7 @@ describe('a gesture is not a click, and a selection is not a click order', () =>
                 circuit={CIRCUIT}
                 selectedPaths={['root/components/r1', 'root/components/r2']}
                 onArrange={() => {}}
-                onSelect={(n) => seen.push(n?.ref.id ?? null)}
+                onSelect={(w) => seen.push(one(w)?.ref.id ?? null)}
             />,
         );
         const svg = sized(container);
@@ -1866,9 +1880,7 @@ describe('a box selects, and Ctrl+D copies', () => {
         // A box that takes only what it fully contains makes a user draw it twice — once too small, once
         // right — which is the whole cost the gesture was meant to remove.
         const picked: string[] = [];
-        const { container } = render(
-            <SchematicCanvas circuit={CIRCUIT} onSelect={(n) => picked.push(n?.ref.id ?? 'null')} />,
-        );
+        const { container } = render(<SchematicCanvas circuit={CIRCUIT} onSelect={(w) => picked.push(...many(w))} />);
         const svg = sized(container);
         // A box that CLIPS r1 rather than containing it: from outside the sheet to a point inside the
         // symbol's own bounds. Enclosing and touching give different answers here, which a box drawn over
@@ -1906,9 +1918,7 @@ describe('a box selects, and Ctrl+D copies', () => {
         // Panning is the more common act by a long way, so the box is the modified gesture and not the other
         // way round. Getting this backwards would make the sheet feel stuck.
         const picked: string[] = [];
-        const { container } = render(
-            <SchematicCanvas circuit={CIRCUIT} onSelect={(n) => picked.push(n?.ref.id ?? 'null')} />,
-        );
+        const { container } = render(<SchematicCanvas circuit={CIRCUIT} onSelect={(w) => picked.push(...many(w))} />);
         const svg = sized(container);
         const before = svg.getAttribute('viewBox');
         fireEvent.pointerDown(svg, { pointerId: 53, button: 0, clientX: 100, clientY: 100 });
@@ -1924,7 +1934,7 @@ describe('a box selects, and Ctrl+D copies', () => {
             <SchematicCanvas
                 circuit={CIRCUIT}
                 selectedPaths={['root/components/r1']}
-                onSelect={(n) => picked.push(n?.ref.id ?? 'null')}
+                onSelect={(w) => picked.push(...many(w))}
             />,
         );
         const svg = sized(container);
@@ -2247,7 +2257,7 @@ describe('a part whose id looks like another object’s address', () => {
 
     it('is drawn, and clicking it selects IT', () => {
         const seen: Array<string | undefined> = [];
-        const { container } = render(<SchematicCanvas circuit={ODD} onSelect={(n) => seen.push(n?.ref.id)} />);
+        const { container } = render(<SchematicCanvas circuit={ODD} onSelect={(w) => seen.push(one(w)?.ref.id)} />);
         const symbol = container.querySelector('[data-testid="symbol-r1/pins/2"]');
         expect(symbol).not.toBeNull();
         fireEvent.click(symbol!);
@@ -2262,7 +2272,10 @@ describe('a part whose id looks like another object’s address', () => {
                 // The terminal's hit target exists only where wiring is possible — that is what `onConnect`
                 // being supplied means — so a test that omits it is testing a canvas with no terminals on it.
                 onConnect={() => {}}
-                onSelect={(n) => n && seen.push({ kind: n.ref.kind, id: n.ref.id })}
+                onSelect={(w) => {
+                    const n = one(w);
+                    if (n) seen.push({ kind: n.ref.kind, id: n.ref.id });
+                }}
             />,
         );
         // Both objects must be reachable — a fix that gave the part its address by taking the pin's would be

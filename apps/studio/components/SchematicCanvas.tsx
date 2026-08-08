@@ -101,7 +101,7 @@ export function SchematicCanvas({
      * The mode says what the gesture MEANT — replace, toggle, add — and what that does is decided in one
      * place above, so the canvas and the tree cannot drift about what a modified click does.
      */
-    onSelect?: (node: TreeNode | null, mode?: SelectMode) => void;
+    onSelect?: (what: TreeNode | readonly TreeNode[] | null, mode?: SelectMode) => void;
     /**
      * Take the named terminals off their net, ONTO ONE NEW NET TOGETHER.
      *
@@ -552,7 +552,15 @@ export function SchematicCanvas({
         // selection everywhere else on this canvas. Replacing instead would make Shift mean two things.
         // 'add', not 'toggle': a box GATHERS. Sent as a toggle it dropped every part the box caught that was
         // already selected, so dragging over your own selection cleared it.
-        for (const p of caught) onSelect(byPath.get(componentPath(p.id)) ?? null, 'add');
+        //
+        // ALL OF IT IN ONE REPORT. One call per caught part made the rule re-filter the whole selection once
+        // per part — quadratic in what the box caught, and measured at 20ms for 1600 parts where doing it
+        // once costs 0.16ms. Reporting a gesture piecemeal also means every intermediate state exists, and
+        // some of them are states the user never asked for.
+        onSelect(
+            caught.flatMap((p) => byPath.get(componentPath(p.id)) ?? []),
+            'add',
+        );
     };
 
     const endPan = (e: React.PointerEvent): void => {

@@ -138,8 +138,8 @@ function Workspace() {
     const [selected, setSelected] = useState<TreeNode[]>([]);
 
     /** One rule for what a gesture means, held apart from here so it can be tested on its own. */
-    const select = (node: TreeNode | null, mode: SelectMode = 'replace'): void =>
-        setSelected((was) => applySelection(was, node, mode));
+    const select = (what: TreeNode | readonly TreeNode[] | null, mode: SelectMode = 'replace'): void =>
+        setSelected((was) => applySelection(was, what, mode));
     const primary = selected[selected.length - 1] ?? null;
     const selectedPaths = selected.map((n) => pathKey(n.ref.path));
 
