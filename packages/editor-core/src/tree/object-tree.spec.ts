@@ -11,7 +11,7 @@ import { join } from 'node:path';
 import type { CircuitJson } from '@circuit-forge/eda-core';
 import type { LayoutGeometry } from '@circuit-forge/pcb-contract';
 
-import { buildObjectTree, nodeAt, type TreeNode } from './object-tree';
+import { buildObjectTree, componentPath, netPath, nodeAt, pathKey, pinPath, type TreeNode } from './object-tree';
 
 const FIXTURES = join(__dirname, '..', '..', '..', '..', 'apps', 'pcb-viewer', 'public');
 const layoutOf = (board: string): LayoutGeometry =>
@@ -267,5 +267,101 @@ describe('buildObjectTree — Root › Components › C › Pins / Footprint / P
             const unnamed = tree.unplaced.filter((u) => u.reason === 'no-source-pin').length;
             expect(unnamed).toBe(g.pads.filter((p) => p.sourcePin === null).length);
         }
+    });
+});
+
+describe('an object’s address', () => {
+    /**
+     * An id is ORDINARY DATA. This module already says so a few lines from the ambiguity report it keeps: a
+     * design can be machine-generated, imported, or merged from two sub-sheets, and any of those can produce
+     * an id with a slash in it. An address is a JOIN, and a join is only unambiguous while no segment can
+     * contain the separator.
+     */
+    const CIRCUIT: CircuitJson = {
+        version: '1.0',
+        components: [
+            {
+                id: 'r1',
+                type: 'resistor',
+                designator: 'R1',
+                value: '1k',
+                pins: [
+                    { pinId: '1', netId: 'a' },
+                    { pinId: '2', netId: 'b' },
+                ],
+            },
+            {
+                // The collision, exactly: joined naively this is the same string as r1's pin 2.
+                id: 'r1/pins/2',
+                type: 'resistor',
+                designator: 'R2',
+                value: '2k',
+                pins: [
+                    { pinId: '1', netId: 'b' },
+                    { pinId: '2', netId: 'a' },
+                ],
+            },
+        ] as never,
+        nets: [
+            { id: 'a', name: 'A' },
+            { id: 'b', name: 'B' },
+        ],
+    };
+
+    it('cannot be forged by an id that looks like one', () => {
+        // THE DEFECT. Both objects joined to `root/components/r1/pins/2`, so one of them lost its address:
+        // reported as an ADDRESS CLAIMED TWICE in a document with no repeated id anywhere, and unselectable
+        // on the sheet — visible, clickable, and every click selecting something else entirely.
+        const tree = buildObjectTree(CIRCUIT);
+        const part = tree.byPath.get(componentPath('r1/pins/2'));
+        const pin = tree.byPath.get(pinPath('r1', '2'));
+        expect(part?.ref.kind).toBe('component');
+        expect(part?.ref.id).toBe('r1/pins/2');
+        expect(pin?.ref.kind).toBe('pin');
+        expect(pin?.ref.componentId).toBe('r1');
+        expect(componentPath('r1/pins/2')).not.toBe(pinPath('r1', '2'));
+        // ...and nothing was reported as ambiguous, because nothing WAS.
+        expect(tree.ambiguous).toEqual([]);
+    });
+
+    it('cannot be forged by an id containing the escape either', () => {
+        // `%` is escaped first for this reason: without it, an id holding the literal text `%2F` would decode
+        // into a separator and the same collision would come back by a longer route.
+        // The pair that actually forges: one id PRODUCES the escape (`a/b` becomes `a%2Fb`) and the other
+        // one CONTAINS it already. Comparing an escaped id against a two-segment path instead — which is what
+        // this test did first — differs whether or not `%` is escaped, so it passed either way and proved
+        // nothing. Escaping `%` first is what keeps these two apart.
+        expect(pathKey(['x', 'a/b'])).not.toBe(pathKey(['x', 'a%2Fb']));
+        expect(pathKey(['x', 'a%b'])).not.toBe(pathKey(['x', 'a%25b']));
+    });
+
+    it('leaves ordinary addresses exactly as they read', () => {
+        // The escaping must be invisible for every id anybody actually has — a scheme that rewrote `r1` would
+        // churn every stored selection and every test that names a row.
+        expect(componentPath('r1')).toBe('root/components/r1');
+        expect(pinPath('r1', '2')).toBe('root/components/r1/pins/2');
+        expect(netPath('gnd')).toBe('root/nets/gnd');
+    });
+
+    it('round-trips through nodeAt for an id with a separator in it', () => {
+        // `nodeAt` takes SEGMENTS, so it must escape them the same way the map was keyed — otherwise the two
+        // halves of one mechanism disagree and only the awkward ids notice.
+        const tree = buildObjectTree(CIRCUIT);
+        const node = nodeAt(tree, ['root', 'components', 'r1/pins/2']);
+        expect(node?.ref.id).toBe('r1/pins/2');
+    });
+
+    it('still reports a genuinely duplicated id, which is a real document defect', () => {
+        // Narrowing what counts as an ambiguity must not switch the report off: two parts really sharing an
+        // id means one of them is unreachable, and the user has to be told which.
+        const twins: CircuitJson = {
+            version: '1.0',
+            components: [
+                { id: 'r1', type: 'resistor', designator: 'R1', value: '1k', pins: [{ pinId: '1', netId: 'a' }] },
+                { id: 'r1', type: 'resistor', designator: 'R2', value: '2k', pins: [{ pinId: '1', netId: 'a' }] },
+            ] as never,
+            nets: [{ id: 'a', name: 'A' }],
+        };
+        expect(buildObjectTree(twins).ambiguous.length).toBeGreaterThan(0);
     });
 });

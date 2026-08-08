@@ -23,6 +23,8 @@ import {
     type PlacedPart,
     type SelectMode,
     type TreeNode,
+    pathKey,
+    componentPath,
 } from '@circuit-forge/editor-core';
 import { useEffect, useMemo, useState } from 'react';
 
@@ -139,7 +141,7 @@ function Workspace() {
     const select = (node: TreeNode | null, mode: SelectMode = 'replace'): void =>
         setSelected((was) => applySelection(was, node, mode));
     const primary = selected[selected.length - 1] ?? null;
-    const selectedPaths = selected.map((n) => n.ref.path.join('/'));
+    const selectedPaths = selected.map((n) => pathKey(n.ref.path));
 
     const orgs = useAsync((signal) => api.orgs(signal), []);
     // The first org is adopted only until the user picks one; `?? ''` keeps the <select> controlled.
@@ -177,7 +179,7 @@ function Workspace() {
     useEffect(() => {
         if (selected.length === 0 || !doc.circuit) return;
         const { byPath } = buildObjectTree(doc.circuit);
-        const alive = selected.filter((n) => byPath.has(n.ref.path.join('/')));
+        const alive = selected.filter((n) => byPath.has(pathKey(n.ref.path)));
         if (alive.length !== selected.length) setSelected(alive);
     }, [doc.circuit, selected]);
     useUndoShortcuts({ undo: doc.undo, redo: doc.redo });
@@ -457,9 +459,7 @@ function Workspace() {
                                 // put it somewhere, and hunting for it first is a step nobody wanted.
                                 if (created.length > 0 && preview?.ok && preview.changed) {
                                     const tree = buildObjectTree(preview.circuit);
-                                    setSelected(
-                                        created.flatMap((id) => tree.byPath.get(`root/components/${id}`) ?? []),
-                                    );
+                                    setSelected(created.flatMap((id) => tree.byPath.get(componentPath(id)) ?? []));
                                 }
                             }}
                             problems={problems}
