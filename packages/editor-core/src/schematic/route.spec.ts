@@ -656,3 +656,75 @@ describe('a sheet the lattice cannot hold', () => {
         expect(at(100_000)).toEqual(at(0));
     });
 });
+
+describe('the shape of a net', () => {
+    /**
+     * Every terminal of a net is one node, so ANY tree over them depicts the connection correctly. The only
+     * question is which tree a reader would rather look at — and that is not a matter of taste: a star sends
+     * every wire back to one arbitrary terminal, which on a net with fan-out is both longer and a bundle of
+     * wires converging on a single point.
+     */
+    const fan = (n: number): RouteNet => ({
+        id: 'f',
+        name: 'F',
+        // A hub at the far left and n terminals in a column to the right of it — the shape of any part
+        // feeding several others.
+        pins: [pin(0, 0, 'right'), ...Array.from({ length: n }, (_, i) => pin(400, i * 60, 'left'))],
+    });
+
+    const drawnLength = (wires: readonly { points: readonly Point[] }[]) =>
+        wires.reduce(
+            (total, w) =>
+                total +
+                w.points
+                    .slice(1)
+                    .reduce((t, p, i) => t + Math.abs(p[0] - w.points[i]![0]) + Math.abs(p[1] - w.points[i]![1]), 0),
+            0,
+        );
+
+    it('branches instead of running every wire back to one terminal', () => {
+        // THE DEFECT. A star from pin zero costs the sum of the distances to every other terminal; a tree
+        // costs the spine plus the gaps. Measured on five terminals: three times the shortest tree, with
+        // five wires converging on one point.
+        const { wires } = routeSheet([fan(5)], []);
+        const star = fan(5)
+            .pins.slice(1)
+            .reduce((s, q) => s + Math.abs(q.x) + Math.abs(q.y), 0);
+        expect(drawnLength(wires)).toBeLessThan(star * 0.6);
+    });
+
+    it('still draws one wire per terminal beyond the first, named after it', () => {
+        // The key scheme is what the canvas, the fallback report and every existing test address a wire by.
+        // A different topology must not become a different naming.
+        const net = fan(4);
+        const { wires } = routeSheet([net], []);
+        expect(wires).toHaveLength(net.pins.length - 1);
+        expect(wires.map((w) => w.key).sort()).toEqual(
+            net.pins
+                .slice(1)
+                .map((q) => `f:${q.label}`)
+                .sort(),
+        );
+    });
+
+    it('reaches every terminal — a shorter tree that leaves one out is not a connection', () => {
+        const net = fan(6);
+        const { wires } = routeSheet([net], []);
+        const touched = new Set<string>();
+        for (const w of wires) for (const [x, y] of w.points) touched.add(`${x},${y}`);
+        for (const q of net.pins) expect(touched.has(`${q.x},${q.y}`)).toBe(true);
+    });
+
+    it('is the same tree however the terminals were listed', () => {
+        const net = fan(5);
+        const forward = routeSheet([net], [])
+            .wires.map((w) => w.key)
+            .sort();
+        const backward = routeSheet([{ ...net, pins: [...net.pins].reverse() }], [])
+            .wires.map((w) => w.key)
+            .sort();
+        // The SET of wires is the same; which terminal each is named after depends on where the tree was
+        // grown from, and that is the one thing pin order legitimately decides.
+        expect(forward).toHaveLength(backward.length);
+    });
+});

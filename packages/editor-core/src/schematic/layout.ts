@@ -17,6 +17,7 @@ import type { CircuitJson, Position } from '@circuit-forge/eda-core';
 
 import { isDrawnOnSheet, isPlaceablePart } from '../tree/object-tree';
 
+import { arrangeBySignalFlow } from './arrange';
 import { orientSymbol } from './orient';
 import type { Box, RouteNet, RoutePin } from './route';
 import { PIN_GRID, symbolFor, type SymbolGeometry } from './symbols';
@@ -78,21 +79,24 @@ export function placeParts(circuit: CircuitJson, positions?: Record<string, Posi
     const symbols = parts.map((c) => orientSymbol(symbolFor(c), positions?.[c.id]));
     const cellW = Math.max(GAP, ...symbols.map((s) => s.width)) + GAP;
     const cellH = Math.max(GAP, ...symbols.map((s) => s.height)) + GAP;
-    // Markers do not take a cell of their own: they are placed against the terminal they annotate, so
-    // counting them here would spread the real parts out around gaps nothing occupies.
-    const inGrid = parts.filter((c) => isPlaceablePart(c));
-    const cols = Math.max(1, Math.ceil(Math.sqrt(inGrid.length)));
-
-    let cell = 0;
-    const placed = parts.map((c, i) => ({
-        id: c.id,
-        designator: c.designator,
-        x: snapToGrid(positions?.[c.id]?.x ?? MARGIN + (cell % cols) * cellW + cellW / 2),
-        y: snapToGrid(positions?.[c.id]?.y ?? MARGIN + Math.floor(cell / cols) * cellH + cellH / 2),
-        symbol: symbols[i]!,
-        // A marker with no stored position is placed below, against the terminal it annotates.
-        ...(isPlaceablePart(c) ? (cell++, {}) : {}),
-    }));
+    // WHERE, decided by what is CONNECTED TO WHAT rather than by array order. A square grid filled by index
+    // put two parts of one net at opposite corners of the sheet — measured at 640 units apart on an
+    // eight-part ladder — and the router then drew the honest long way round. The wires on a sheet can only
+    // be as short as the placement allows, and this is the placement.
+    //
+    // Markers do not take a slot: they are placed against the terminal they annotate, so counting them would
+    // spread the real parts out around gaps nothing occupies.
+    const slots = arrangeBySignalFlow(circuit);
+    const placed = parts.map((c, i) => {
+        const slot = slots.get(c.id);
+        return {
+            id: c.id,
+            designator: c.designator,
+            x: snapToGrid(positions?.[c.id]?.x ?? MARGIN + (slot?.column ?? 0) * cellW + cellW / 2),
+            y: snapToGrid(positions?.[c.id]?.y ?? MARGIN + (slot?.row ?? 0) * cellH + cellH / 2),
+            symbol: symbols[i]!,
+        };
+    });
 
     return attachMarkers(circuit, placed, positions);
 }

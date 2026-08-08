@@ -1160,6 +1160,10 @@ export function SchematicCanvas({
                 <g
                     key={g.id}
                     data-testid="ground-glyph"
+                    // WHICH TERMINAL this marks. A mark is only meaningful as a statement about a
+                    // particular pin, and without saying so nothing outside can tell one from another —
+                    // including a test that means to check the mark follows the part it belongs to.
+                    data-annotates={g.annotates}
                     transform={`translate(${draggedGlyph(g).x} ${draggedGlyph(g).y})`}
                     aria-hidden
                 >
@@ -1207,6 +1211,7 @@ export function SchematicCanvas({
                 <g
                     key={r.id}
                     data-testid="rail-glyph"
+                    data-annotates={r.annotates}
                     data-rail={r.label}
                     transform={`translate(${draggedGlyph(r).x} ${draggedGlyph(r).y})`}
                     aria-hidden
