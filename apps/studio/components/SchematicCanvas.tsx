@@ -52,6 +52,8 @@ import {
     componentPath,
     pathKey,
     pinPath,
+    stretchWire,
+    type Point,
 } from '@circuit-forge/editor-core';
 import { useEffect, useMemo, useRef, useState } from 'react';
 
@@ -1016,11 +1018,12 @@ export function SchematicCanvas({
                 .filter((p) => drag.ids.includes(p.id))
                 .flatMap((p) => p.symbol.pins.map((s) => `${p.x + s.x},${p.y + s.y}`)),
         );
-        return points.map((q, i) =>
-            (i === 0 || i === points.length - 1) && moved.has(`${q[0]},${q[1]}`)
-                ? ([q[0] + drag.dx, q[1] + drag.dy] as const)
-                : q,
-        );
+        // THE BEND ABSORBS THE MOVEMENT, in the kernel where it can be tested. Moving only the end point —
+        // which is what this did — left the last segment at whatever angle the hand travelled, so dragging a
+        // part in a circle swept its wire through three hundred and sixty degrees, and the shape then jumped
+        // on release when the router ran for real. A drag that shows a picture the release will not produce
+        // is worse than one that shows nothing.
+        return stretchWire(points as Point[], moved, drag.dx, drag.dy);
     };
 
     if (placed.length === 0) return <p className="empty">Nothing to draw yet — this design has no placeable parts.</p>;
