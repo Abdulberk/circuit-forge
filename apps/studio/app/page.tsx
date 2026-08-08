@@ -14,17 +14,17 @@ import {
     buildObjectTree,
     connectPins,
     deleteComponent,
-    duplicateComponents,
     disconnectPin,
+    duplicateComponents,
     isPlaceablePart,
     placeParts,
+    splitNet,
     spreadParts,
     type PlacedPart,
     type SelectMode,
     type TreeNode,
 } from '@circuit-forge/editor-core';
 import { useEffect, useMemo, useState } from 'react';
-
 
 import { ContextMenu } from '../components/ContextMenu';
 import { ErcNotice } from '../components/ErcNotice';
@@ -391,6 +391,18 @@ function Workspace() {
                             // terminals and parting them again are two steps of one undo stack in the order
                             // they happened — not two stacks a user has to hold in their head.
                             onDisconnect={(pin) => doc.apply((c) => disconnectPin(c, pin))}
+                            // WHICH NET is read from the first terminal named, and `splitNet` checks that the
+                            // rest are on it — refusing by name if they are not. Deciding it here would be a
+                            // second opinion about connectivity, which is the drift this codebase keeps
+                            // paying for; the canvas reports terminals and the kernel says what that means.
+                            onSplit={(pins) =>
+                                doc.apply((c) => {
+                                    const first = (c.components ?? [])
+                                        .find((x) => x.id === pins[0]?.componentId)
+                                        ?.pins.find((q) => q.pinId === pins[0]?.pinId);
+                                    return splitNet(c, first?.netId ?? '', pins);
+                                })
+                            }
                             // ALL OF THEM, AS ONE REVISION. Deleting five parts one commit at a time would
                             // be five undo steps for one action, and each intermediate document is one a user
                             // never asked for — the fourth of them missing four parts and still holding the
@@ -496,6 +508,17 @@ function Workspace() {
                         run:
                             selected.filter((n) => n.ref.kind === 'pin').length === 2
                                 ? () => dispatchKey('w')
+                                : undefined,
+                    },
+                    {
+                        // The counterpart. Deleting terminals disconnects each of them and leaves every one
+                        // alone on its own net; this takes them off TOGETHER, onto one new node, which is
+                        // what "these belong on their own node" means and had no way to be said.
+                        label: 'Split onto a new net',
+                        keys: 'S',
+                        run:
+                            selected.filter((n) => n.ref.kind === 'pin').length > 0
+                                ? () => dispatchKey('s')
                                 : undefined,
                     },
                     'separator',
