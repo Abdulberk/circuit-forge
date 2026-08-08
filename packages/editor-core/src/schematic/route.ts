@@ -483,6 +483,14 @@ export function routeSheet(nets: readonly RouteNet[], bodies: readonly Box[]): R
         const mine: Seg[] = [];
         const drawn: Point[][] = [];
         for (const spoke of spokes) {
+            // TWO TERMINALS ON THE SAME POINT ARE ALREADY JOINED, and the right depiction of that is nothing
+            // at all. It happens the moment somebody drags one part onto another's pin, which is ordinary
+            // work — and the router used to answer it with a wire from a point to itself, then REPORT that
+            // wire as one it could not draw at right angles. So a connection that is perfect raised the
+            // module's own warning, and the drawing carried a segment of zero length: invisible today only
+            // because nothing sets a line cap, and a round cap would turn every one of them into a dot —
+            // which is the strongest claim this notation makes.
+            if (hub.x === spoke.x && hub.y === spoke.y) continue;
             const { points, shape, reason } = routeOne(hub, spoke, field, net, search);
             const key = `${net.id}:${spoke.label}`;
             wires.push({ key, netId: net.id, netName: net.name, points, shape });
