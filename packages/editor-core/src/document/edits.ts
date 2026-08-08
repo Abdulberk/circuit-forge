@@ -48,6 +48,15 @@ export type EditResult =
            * Absent for every edit that creates nothing, which is nearly all of them.
            */
           created?: readonly string[];
+          /**
+           * For each id in `created`, the EXISTING id it was derived from — where the edit had one.
+           *
+           * Copying is the only edit with this shape, and it needs saying because the two lists are not the
+           * selection. A selection can hold things that are not copied at all (a ground marker is notation,
+           * and is skipped), so a caller pairing them up by POSITION lands the offset on the wrong part —
+           * silently, and only on the sheets that happen to have a marker inside the box.
+           */
+          derivedFrom?: readonly string[];
       }
     /** The edit was valid but changed nothing — re-typing the same value. Never a save, never an undo entry. */
     | { ok: true; circuit: CircuitJson; changed: false }

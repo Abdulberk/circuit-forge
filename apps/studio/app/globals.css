@@ -276,6 +276,12 @@ code,
     border-color: var(--warn);
 }
 
+/* Nothing worse than an observation. It keeps the panel's neutral edge on purpose: a half-wired sheet is
+   full of these, and painting it amber for them is how a panel teaches people to stop reading it. */
+.notice.info {
+    border-color: var(--line-bright);
+}
+
 .notice h4 {
     margin: 0 0 4px;
     font-size: 12px;

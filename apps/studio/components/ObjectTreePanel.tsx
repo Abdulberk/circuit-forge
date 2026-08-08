@@ -14,7 +14,7 @@
  */
 
 import type { CircuitJson } from '@circuit-forge/eda-core';
-import { buildObjectTree, nodeAt, type ObjectTree, type TreeNode } from '@circuit-forge/editor-core';
+import { buildObjectTree, nodeAt, type ObjectTree, type SelectMode, type TreeNode } from '@circuit-forge/editor-core';
 import type { LayoutGeometry } from '@circuit-forge/pcb-contract';
 import { useMemo, useState } from 'react';
 
@@ -29,7 +29,7 @@ interface RowProps {
     collapsed: Set<string>;
     selected: ReadonlySet<string>;
     onToggle: (path: string) => void;
-    onSelect: (path: string, additive: boolean) => void;
+    onSelect: (path: string, mode: SelectMode) => void;
 }
 
 function Row({ node, depth, collapsed, selected, onToggle, onSelect }: RowProps) {
@@ -49,13 +49,13 @@ function Row({ node, depth, collapsed, selected, onToggle, onSelect }: RowProps)
                 style={{ paddingLeft: 6 + depth * 13 }}
                 // Shift extends the selection. WHAT that means — add, remove, replace — is decided one layer
                 // up, so this panel and the canvas cannot come to different conclusions about the same key.
-                onClick={(e) => onSelect(path, e.shiftKey)}
+                onClick={(e) => onSelect(path, e.shiftKey ? 'toggle' : 'replace')}
                 onKeyDown={(e) => {
                     // Enter and Space select; the arrows expand and collapse. A tree that can only be driven
                     // by mouse is unusable for the one task it exists for — finding a part in a long list.
                     if (e.key === 'Enter' || e.key === ' ') {
                         e.preventDefault();
-                        onSelect(path, e.shiftKey);
+                        onSelect(path, e.shiftKey ? 'toggle' : 'replace');
                     } else if (e.key === 'ArrowRight' && hasChildren && isCollapsed) {
                         onToggle(path);
                     } else if (e.key === 'ArrowLeft' && hasChildren && !isCollapsed) {
@@ -112,7 +112,7 @@ export function ObjectTreePanel({
      * survive a document it does not belong to, because the same thing that changes the document clears it.
      */
     selectedPaths?: readonly string[];
-    onSelect?: (node: TreeNode | null, additive?: boolean) => void;
+    onSelect?: (node: TreeNode | null, mode?: SelectMode) => void;
 }) {
     // Collapse state stays private, and the difference is the point: which rows are folded is about this
     // panel's own appearance, and no other view has an opinion about it. Selection is about the DOCUMENT.
@@ -129,7 +129,7 @@ export function ObjectTreePanel({
 
     if (!tree) return <p className="empty">No design loaded.</p>;
 
-    const select = (path: string, additive: boolean) => onSelect?.(nodeAt(tree, path.split('/')) ?? null, additive);
+    const select = (path: string, mode: SelectMode) => onSelect?.(nodeAt(tree, path.split('/')) ?? null, mode);
 
     return (
         // DECLARED multi-selectable. A `role="tree"` says single-select unless it says otherwise, so marking
