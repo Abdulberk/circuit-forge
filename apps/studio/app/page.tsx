@@ -27,6 +27,7 @@ import {
 import { useEffect, useMemo, useState } from 'react';
 
 import { ContextMenu } from '../components/ContextMenu';
+import { EditNotes } from '../components/EditNotes';
 import { ErcNotice } from '../components/ErcNotice';
 import { AddPart, Inspector } from '../components/Inspector';
 import { ObjectTreePanel } from '../components/ObjectTreePanel';
@@ -362,6 +363,11 @@ function Workspace() {
                             {doc.refusal.message}
                         </div>
                     )}
+                    {/* WHAT THE EDIT COST. The kernel has written these since the connectivity work and
+                        nothing displayed them — so joining two pins quietly took one of the user's net names
+                        with it, which is the exact loss the note exists to report. Beside the refusal, and
+                        deliberately not painted like one: these describe edits that were MADE. */}
+                    <EditNotes notes={doc.notes} />
                     {circuit ? (
                         <SchematicCanvas
                             // REMOUNTED PER PROJECT, so the canvas starts fresh. Zoom and pan are the viewer's

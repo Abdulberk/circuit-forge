@@ -568,9 +568,9 @@ export function useDocument(
                     return current;
                 }
                 setRefusal(null);
-                setNotes([]);
                 // Replaced, never appended: these describe what the LAST action cost, and a growing list
-                // would leave a user reading about a merge they made ten edits ago.
+                // would leave a user reading about a merge they made ten edits ago. Set ONCE — a clearing
+                // call above it was overwritten on the next line and did nothing but a second render.
                 setNotes(result.changed ? result.notes : []);
                 // A commit that changed nothing is not a save and not an undo step — re-typing the same value
                 // must not mint a revision that then conflicts with another tab for no reason.
