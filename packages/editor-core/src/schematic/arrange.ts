@@ -31,7 +31,7 @@
  * and a test can name the result.
  */
 
-import type { CircuitJson, Component } from '@circuit-forge/eda-core';
+import { digitalPinRole, type CircuitJson, type Component } from '@circuit-forge/eda-core';
 
 import { isPlaceablePart } from '../tree/object-tree';
 
@@ -43,6 +43,17 @@ export interface Slot {
 
 /** Types that START a signal rather than passing one along. They anchor the left edge. */
 const SOURCES = new Set(['voltage_source', 'current_source', 'bsource']);
+
+/**
+ * Whether a pin DRIVES its net rather than reading it — the only place a schematic states a direction.
+ *
+ * A resistor has no such pin: current goes either way and no arrangement can know which. A logic gate does,
+ * and so does a source, and that is enough to give a digital design its real depth. `digitalPinRole` is the
+ * kernel's own answer for the gates and is asked rather than restated — a second table of which pin is an
+ * output would be a second thing to keep in step with every part type ever added.
+ */
+const drivesTheNet = (type: Component['type'], pinId: string): boolean =>
+    digitalPinRole(type, pinId) === 'source' || (SOURCES.has(type) && pinId === '+');
 
 /**
  * The nets that JOIN parts, which is not all of them.
@@ -77,11 +88,22 @@ export function arrangeBySignalFlow(circuit: CircuitJson): Map<string, Slot> {
     const neighbours = new Map<string, Set<string>>(parts.map((c) => [c.id, new Set<string>()]));
     for (const ids of onNet.values()) for (const a of ids) for (const b of ids) if (a !== b) neighbours.get(a)!.add(b);
 
-    // ---- 1. Columns: distance from a source, along the wires that are actually drawn ----------------
+    // ---- 1. Columns: how far along the signal a part sits ------------------------------------------
     //
-    // Breadth-first, so a part sits one column right of the nearest thing feeding it. Sources first, in id
-    // order; then anything the sources never reach gets its own start, because an unconnected part still has
-    // to be somewhere and putting it in column 0 would claim it feeds the circuit.
+    // Two rules, and the answer is whichever says the part is FURTHER along. Neither is enough alone, which
+    // was measured on this product's own templates rather than argued:
+    //
+    //  - NEARNESS TO A SOURCE, breadth-first. It is all there is for an analogue circuit, where no pin
+    //    states a direction, and it reads a divider or a filter correctly.
+    //  - LONGEST PATH along the pins that DO state one. Breadth-first alone collapsed an 8-bit ALU — 135
+    //    gates with a real carry chain — into FOUR columns with fifty-nine parts stacked in one of them,
+    //    because its eighteen supplies touch everything and so everything looked one step from a source.
+    //    Longest path puts a gate after ALL of its inputs, which is what depth means: 23 columns, widest 24.
+    //
+    // Taken alone, longest path is worse than useless on an analogue sheet — a resistor has no output pin,
+    // so nothing has a predecessor and the whole design lands in column 0 (measured: the power amp went from
+    // five columns to two). The maximum of the two is never worse than either on any template here, and on
+    // the DDS it is better than both.
     const column = new Map<string, number>();
     const seeds = parts
         .filter((c) => SOURCES.has(c.type))
@@ -121,6 +143,43 @@ export function arrangeBySignalFlow(circuit: CircuitJson): Map<string, Slot> {
             }
         }
     }
+
+    // ---- 1b. And how deep the DIRECTED pins say it is ----------------------------------------------
+    //
+    // A part comes after everything feeding it, which is what depth means. Cycles are real — a flip-flop
+    // feeding back into its own logic is an ordinary circuit, not an error — so a node already being visited
+    // reports zero and the walk unwinds rather than recurring forever.
+    const drivenBy = new Map<string, string[]>();
+    for (const c of parts)
+        for (const pin of c.pins)
+            if (joining.has(pin.netId) && drivesTheNet(c.type, pin.pinId))
+                drivenBy.set(pin.netId, [...(drivenBy.get(pin.netId) ?? []), c.id]);
+
+    const feeders = new Map<string, Set<string>>(parts.map((c) => [c.id, new Set<string>()]));
+    for (const c of parts)
+        for (const pin of c.pins) {
+            if (!joining.has(pin.netId) || drivesTheNet(c.type, pin.pinId)) continue;
+            for (const source of drivenBy.get(pin.netId) ?? []) if (source !== c.id) feeders.get(c.id)!.add(source);
+        }
+
+    const flowDepth = new Map<string, number>();
+    const walking = new Set<string>();
+    const depthOf = (id: string): number => {
+        const known = flowDepth.get(id);
+        if (known !== undefined) return known;
+        if (walking.has(id)) return 0;
+        walking.add(id);
+        let deepest = 0;
+        for (const f of feeders.get(id) ?? []) deepest = Math.max(deepest, depthOf(f) + 1);
+        walking.delete(id);
+        flowDepth.set(id, deepest);
+        return deepest;
+    };
+    for (const c of parts) depthOf(c.id);
+
+    // WHICHEVER SAYS FURTHER ALONG. Never worse than either rule alone on any of this product's templates,
+    // and better than both on one of them.
+    for (const c of parts) column.set(c.id, Math.max(column.get(c.id) ?? 0, flowDepth.get(c.id) ?? 0));
 
     // ---- 2. Rows: order within each column so the wires between columns cross as little as possible ----
     const columns: string[][] = [];

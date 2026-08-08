@@ -21,7 +21,7 @@ export type {
     PinRef,
 } from './types/circuit';
 
-export { COMPONENT_PINS, SPICE_PREFIXES, COMPONENT_TYPES, isSimulatable } from './types/circuit';
+export { COMPONENT_PINS, SPICE_PREFIXES, COMPONENT_TYPES, isSimulatable, digitalPinRole } from './types/circuit';
 
 // Active-device model library (generic, license-clean SPICE models + resolvers)
 export {
