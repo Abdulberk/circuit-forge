@@ -2130,6 +2130,76 @@ describe('the editor can be driven without a pointer', () => {
         expect(joined).toEqual([{ from: { componentId: 'r1', pinId: '2' }, to: { componentId: 'r2', pinId: '1' } }]);
     });
 
+    it('S takes the selected terminals off their net TOGETHER', () => {
+        // The counterpart of W, and the last connectivity verb the kernel had with no way to reach it. What
+        // makes it a distinct verb rather than a shortcut is the word TOGETHER: the only way to express this
+        // before was to disconnect each terminal — which leaves each of them alone on a net of its own — and
+        // then wire them back up two at a time.
+        const split: unknown[] = [];
+        render(
+            <SchematicCanvas
+                circuit={CIRCUIT}
+                selectedPaths={['root/components/r1/pins/2', 'root/components/r2/pins/1']}
+                onSplit={(pins) => split.push(pins)}
+            />,
+        );
+        fireEvent.keyDown(window, { key: 's' });
+        expect(split).toEqual([
+            [
+                { componentId: 'r1', pinId: '2' },
+                { componentId: 'r2', pinId: '1' },
+            ],
+        ]);
+    });
+
+    it('S is NOT the same verb as deleting the same terminals', () => {
+        // The distinction the whole thing rests on, asserted by watching both. Delete reports each terminal
+        // on its own — one call per terminal, each meaning "take this one off" — while S reports them as one
+        // group. If these two ever collapsed into each other the verb would have no reason to exist.
+        const disconnected: unknown[] = [];
+        const split: unknown[] = [];
+        const paths = ['root/components/r1/pins/2', 'root/components/r2/pins/1'];
+        render(
+            <SchematicCanvas
+                circuit={CIRCUIT}
+                selectedPaths={paths}
+                onDisconnect={(pin) => disconnected.push(pin)}
+                onSplit={(pins) => split.push(pins)}
+            />,
+        );
+        fireEvent.keyDown(window, { key: 'Delete' });
+        fireEvent.keyDown(window, { key: 's' });
+        expect(disconnected).toHaveLength(2); // each terminal, separately
+        expect(split).toHaveLength(1); // the terminals, together
+        expect(split[0]).toHaveLength(2);
+    });
+
+    it('S does nothing without terminals selected, and never fires on a part', () => {
+        const split: unknown[] = [];
+        for (const paths of [[], ['root/components/r1'], ['root/components/r1', 'root/components/r2']]) {
+            render(<SchematicCanvas circuit={CIRCUIT} selectedPaths={paths} onSplit={(q) => split.push(q)} />);
+            fireEvent.keyDown(window, { key: 's' });
+        }
+        expect(split).toEqual([]);
+    });
+
+    it('S does not fire while the user is typing', () => {
+        // 's' is a letter and the Inspector is full of fields. A verb that fired mid-word would rewire the
+        // design out from under someone who was renaming a net.
+        const split: unknown[] = [];
+        const { container } = render(
+            <SchematicCanvas
+                circuit={CIRCUIT}
+                selectedPaths={['root/components/r1/pins/2']}
+                onSplit={(q) => split.push(q)}
+            />,
+        );
+        const field = document.createElement('input');
+        container.appendChild(field);
+        fireEvent.keyDown(field, { key: 's' });
+        expect(split).toEqual([]);
+    });
+
     it('needs EXACTLY two terminals, and nothing else', () => {
         // Three is ambiguous — a net is a set, so joining them is a sensible thing to want, and it is not
         // what the pointer gesture does. Two surfaces doing different things under one name is the drift
@@ -2176,6 +2246,10 @@ describe('the editor can be driven without a pointer', () => {
         expect(svg.getAttribute('tabindex')).toBe('0');
         // …and what the keys do is written where a screen reader can read it, not only in a menu.
         const described = svg.getAttribute('aria-describedby')!;
-        expect(container.querySelector(`#${described}`)!.textContent).toMatch(/W joins them/);
+        const text = container.querySelector(`#${described}`)!.textContent!;
+        // EVERY verb, not a sample. A key that works and is not described is unreachable to the reader who
+        // most needs it described — which is the same defect as a verb with no surface, one layer further in.
+        for (const verb of [/R turns/, /X and Y mirror/, /Ctrl\+D/, /Delete removes/, /W joins them/, /S takes/])
+            expect({ verb: String(verb), described: verb.test(text) }).toEqual({ verb: String(verb), described: true });
     });
 });

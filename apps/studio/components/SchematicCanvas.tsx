@@ -70,6 +70,7 @@ export function SchematicCanvas({
     onArrange,
     onConnect,
     onDisconnect,
+    onSplit,
     onDelete,
     onDuplicate,
 }: {
@@ -91,6 +92,13 @@ export function SchematicCanvas({
      * place above, so the canvas and the tree cannot drift about what a modified click does.
      */
     onSelect?: (node: TreeNode | null, mode?: SelectMode) => void;
+    /**
+     * Take the named terminals off their net, ONTO ONE NEW NET TOGETHER.
+     *
+     * Not the same as disconnecting each of them, which is what Delete does and leaves every terminal alone
+     * on a net of its own. The distinction is the whole point of the verb.
+     */
+    onSplit?: (pins: ReadonlyArray<{ componentId: string; pinId: string }>) => void;
     /**
      * Commit a new drawing as ONE revision. Omitted makes the canvas read-only, which is what every test
      * that is not about dragging wants.
@@ -664,6 +672,27 @@ export function SchematicCanvas({
                 return;
             }
 
+            // S TAKES THE SELECTED TERMINALS OFF THEIR NET, TOGETHER — the counterpart of W, and the last
+            // connectivity verb the kernel had with no way to reach it. It matters that they leave together:
+            // pressing Delete on three terminals disconnects each of them, which leaves three separate
+            // one-pin nets. Splitting leaves ONE new node with all three still joined to each other, which is
+            // what "these three belong on their own node" means and could not be expressed at all — you had
+            // to disconnect them and then wire them back up two at a time.
+            //
+            // The canvas decides nothing beyond WHICH terminals. Whether they are on one net, and whether
+            // taking them is a split rather than a rename, is `splitNet`'s to answer — it refuses both cases
+            // by name, and a second opinion here would be the drift this codebase keeps paying for.
+            if (event.key.toLowerCase() === 's' && onSplit) {
+                if (isTextEntry(event.target)) return; // a letter, and the Inspector is full of fields
+                const pins = selectedPaths
+                    .map((path) => byPath.get(path))
+                    .filter((n): n is TreeNode => n?.ref.kind === 'pin' && !!n.ref.componentId);
+                if (pins.length === 0) return;
+                event.preventDefault();
+                onSplit(pins.map((q) => ({ componentId: q.ref.componentId!, pinId: q.ref.id })));
+                return;
+            }
+
             if (event.key !== 'Delete' && event.key !== 'Backspace') return;
             // Backspace is BROWSER-BACK on some setups and a text edit everywhere else, so a field that owns
             // the keystroke keeps it — the same guard the undo shortcut uses, imported rather than restated.
@@ -699,7 +728,7 @@ export function SchematicCanvas({
         };
         window.addEventListener('keydown', onKeyDown);
         return () => window.removeEventListener('keydown', onKeyDown);
-    }, [chosen, selectedPaths, byPath, onConnect, onDisconnect, onDelete, onDuplicate]);
+    }, [chosen, selectedPaths, byPath, onConnect, onDisconnect, onSplit, onDelete, onDuplicate]);
 
     /**
      * `R` turns the selected part — the convention every schematic editor shares.
@@ -1106,7 +1135,8 @@ export function SchematicCanvas({
                 them to a sighted user and this is the same courtesy. */}
             <desc id="schematic-keys">
                 Arrow keys and Tab move between objects in the tree. R turns the selection, X and Y mirror it, Ctrl+D
-                copies it, Delete removes it. With two terminals selected, W joins them into one net.
+                copies it, Delete removes it. With two terminals selected, W joins them into one net; S takes the
+                selected terminals off their net onto a new one, together.
             </desc>
 
             {/* The box, while it is being drawn. Dashed and unfilled at the edges so it never hides what it
