@@ -40,6 +40,7 @@ import {
     netsOf,
     routeSheet,
     type PlacedPart,
+    type SelectMode,
     type TreeNode,
 } from '@circuit-forge/editor-core';
 import { useEffect, useMemo, useRef, useState } from 'react';
@@ -86,10 +87,10 @@ export function SchematicCanvas({
     /**
      * A click, reported rather than interpreted.
      *
-     * `additive` is the Shift key and nothing more: what it MEANS — add, remove, replace — is decided in one
+     * The mode says what the gesture MEANT — replace, toggle, add — and what that does is decided in one
      * place above, so the canvas and the tree cannot drift about what a modified click does.
      */
-    onSelect?: (node: TreeNode | null, additive?: boolean) => void;
+    onSelect?: (node: TreeNode | null, mode?: SelectMode) => void;
     /**
      * Commit a new drawing as ONE revision. Omitted makes the canvas read-only, which is what every test
      * that is not about dragging wants.
@@ -496,7 +497,9 @@ export function SchematicCanvas({
         });
         // ADDED to what is already selected, because the key that starts the box is the key that extends a
         // selection everywhere else on this canvas. Replacing instead would make Shift mean two things.
-        for (const p of caught) onSelect(byPath.get(`root/components/${p.id}`) ?? null, true);
+        // 'add', not 'toggle': a box GATHERS. Sent as a toggle it dropped every part the box caught that was
+        // already selected, so dragging over your own selection cleared it.
+        for (const p of caught) onSelect(byPath.get(`root/components/${p.id}`) ?? null, 'add');
     };
 
     const endPan = (e: React.PointerEvent): void => {
@@ -1145,7 +1148,9 @@ export function SchematicCanvas({
                     <text
                         x={r.symbol.labelAnchor.x}
                         y={r.symbol.labelAnchor.y}
-                        textAnchor="middle"
+                        // WHICH WAY THE NAME RUNS, decided with the geometry rather than fixed here. Always
+                        // centred, it was drawn across its own bar wherever the mark was turned sideways.
+                        textAnchor={r.labelRuns}
                         fill="var(--text-dim, #9ad)"
                         fontSize={8}
                     >
@@ -1171,7 +1176,7 @@ export function SchematicCanvas({
                             // selection replaced the whole group with the one part just moved, so a group
                             // drag could only ever be done once.
                             if (gestured.current) return;
-                            onSelect?.(byPath.get(path) ?? null, e.shiftKey);
+                            onSelect?.(byPath.get(path) ?? null, e.shiftKey ? 'toggle' : 'replace');
                         }}
                         style={{ cursor: 'pointer' }}
                     >
@@ -1267,7 +1272,7 @@ export function SchematicCanvas({
                                                 e.stopPropagation();
                                                 onSelect?.(
                                                     byPath.get(`root/components/${p.id}/pins/${pin.pinId}`) ?? null,
-                                                    e.shiftKey,
+                                                    e.shiftKey ? 'toggle' : 'replace',
                                                 );
                                             }}
                                         />

@@ -9,7 +9,7 @@
  * present in the netlist, and a layout that shuffles between renders so a user cannot point at anything.
  */
 import type { CircuitJson, Component, UiJson } from '@circuit-forge/eda-core';
-import { isDrawnOnSheet, isPlaceablePart, type TreeNode } from '@circuit-forge/editor-core';
+import { isDrawnOnSheet, isPlaceablePart, type TreeNode, type SelectMode } from '@circuit-forge/editor-core';
 import { render, screen, fireEvent } from '@testing-library/react';
 
 import { SchematicCanvas } from './SchematicCanvas';
@@ -1477,20 +1477,37 @@ describe('more than one object can be selected', () => {
     const translateOf = (el: Element): number[] =>
         /translate\(([-\d.]+) ([-\d.]+)\)/.exec(el.getAttribute('transform')!)!.slice(1).map(Number);
 
-    it('reports whether Shift was held, and decides nothing itself', () => {
-        // The canvas says WHICH object and WHETHER the key was down. What that means — add, remove, replace
-        // — is one decision, made once, above both surfaces. Two surfaces each interpreting the key is the
-        // defect this codebase already paid for: one told the Inspector and the other painted a different row.
-        const seen: Array<{ id: string | undefined; additive: boolean | undefined }> = [];
+    it('reports what the gesture MEANT, and decides nothing itself', () => {
+        // The canvas says WHICH object and WHAT THE GESTURE WAS. What that means for the selection is one
+        // decision, made once, above both surfaces. Two surfaces each interpreting the key is the defect this
+        // codebase already paid for: one told the Inspector and the other painted a different row.
+        const seen: Array<{ id: string | undefined; mode: SelectMode | undefined }> = [];
         const { container } = render(
-            <SchematicCanvas circuit={CIRCUIT} onSelect={(n, a) => seen.push({ id: n?.ref.id, additive: a })} />,
+            <SchematicCanvas circuit={CIRCUIT} onSelect={(n, m) => seen.push({ id: n?.ref.id, mode: m })} />,
         );
         fireEvent.click(container.querySelector('[data-testid="symbol-r1"]')!);
         fireEvent.click(container.querySelector('[data-testid="symbol-r2"]')!, { shiftKey: true });
         expect(seen).toEqual([
-            { id: 'r1', additive: false },
-            { id: 'r2', additive: true },
+            { id: 'r1', mode: 'replace' },
+            { id: 'r2', mode: 'toggle' },
         ]);
+    });
+
+    it('asks a box selection to GATHER, never to flip', () => {
+        // The mode a marquee sends is the whole reason the flag stopped being a boolean. Sent as a toggle it
+        // removed every part the box caught that was already selected, so dragging a box across your own
+        // selection emptied it — and the box is the gesture people use to select a lot of things at once.
+        const seen: SelectMode[] = [];
+        const { container } = render(<SchematicCanvas circuit={CIRCUIT} onSelect={(_n, m) => seen.push(m!)} />);
+        const svg = container.querySelector('svg')!;
+        svg.getBoundingClientRect = () => ({ left: 0, top: 0, width: 1000, height: 800 }) as DOMRect;
+        // A box drawn over PART OF the sheet, not all of it: a marquee covering everything cannot tell
+        // "caught what it touched" from "caught everything", and would pass whatever the rule was.
+        fireEvent.pointerDown(svg, { clientX: 5, clientY: 5, shiftKey: true, button: 0 });
+        fireEvent.pointerMove(svg, { clientX: 995, clientY: 795, shiftKey: true });
+        fireEvent.pointerUp(svg, { clientX: 995, clientY: 795, shiftKey: true });
+        expect(seen.length).toBeGreaterThan(0);
+        expect(new Set(seen)).toEqual(new Set(['add']));
     });
 
     it('marks every selected part, not just the last one', () => {

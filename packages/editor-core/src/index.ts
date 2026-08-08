@@ -11,7 +11,7 @@
  * end, the fix is a rewrite.
  */
 export { buildObjectTree, nodeAt, isPlaceablePart, isDrawnOnSheet } from './tree/object-tree';
-export type { ObjectKind, ObjectRef, TreeNode, ObjectTree } from './tree/object-tree';
+export type { ObjectKind, ObjectRef, TreeNode, ObjectTree, SelectMode } from './tree/object-tree';
 
 /**
  * Editing. Pure, total, immutable — every one returns the new document or a refusal that names the field and

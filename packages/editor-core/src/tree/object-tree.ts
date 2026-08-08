@@ -69,6 +69,22 @@ export interface TreeNode {
     children: TreeNode[];
 }
 
+/**
+ * What a selection gesture MEANT — which is not the same question as which keys were down.
+ *
+ * There was a boolean here once, called `additive`, and it cost a real defect: a box selection sent it once
+ * per part it caught, the one rule read it as "toggle", and so dragging a box across parts that were already
+ * selected took them OUT. The gesture that gathers and the gesture that flips are different intentions and
+ * now say so; the surface reports what the user meant and one rule decides what happens.
+ */
+export type SelectMode =
+    /** Only this, whatever was selected before. A plain click. */
+    | 'replace'
+    /** In if it was out, out if it was in. Shift-click, so overshooting is undoable with the same key. */
+    | 'toggle'
+    /** In, and leave everything else in. A box selection, which gathers rather than flips. */
+    | 'add';
+
 export interface ObjectTree {
     root: TreeNode;
     /** Every node by `path.join('/')`, so a selection can be resolved in one lookup rather than a walk. */

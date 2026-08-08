@@ -292,14 +292,29 @@ const GLYPH_TURN: Record<RoutePin['side'], Position['rotation']> = {
  * anybody places — there is no `type: 'power'` to look up, and inventing one would put a part in the tree
  * and on the BOM that nobody buys.
  */
-export function railGlyphs(circuit: CircuitJson, placed: readonly PlacedPart[]): Array<PlacedPart & { label: string }> {
+export interface RailGlyph extends PlacedPart {
+    /** The rail's name, drawn beside the bar — the one thing a ground symbol never needs and a rail always does. */
+    label: string;
+    /**
+     * Which way the name runs from its anchor, so it runs AWAY from the bar rather than across it.
+     *
+     * The symbol turns with the terminal it marks; the NAME does not, because text on a schematic is always
+     * read horizontally. Turning the anchor with the symbol — which is what happened — put the name beside a
+     * vertical bar, centred on it, and an 8pt "VCC" is wider than the four units of clearance it had: the
+     * name was drawn straight through the mark it was labelling. Anchoring it at the end that touches the
+     * bar and letting it run outward is exact, and costs no guess about how wide the text will be.
+     */
+    labelRuns: 'middle' | 'start' | 'end';
+}
+
+export function railGlyphs(circuit: CircuitJson, placed: readonly PlacedPart[]): RailGlyph[] {
     const byId = new Map((circuit.components ?? []).map((c) => [c.id, c]));
     const rails = new Map(
         (circuit.nets ?? []).filter((n) => n.isPower && !n.isGround).map((n) => [n.id, n.name ?? n.id]),
     );
     if (rails.size === 0) return [];
 
-    const out: Array<PlacedPart & { label: string }> = [];
+    const out: RailGlyph[] = [];
     for (const part of placed) {
         const component = byId.get(part.id);
         if (!component || !isPlaceablePart(component)) continue;
@@ -308,8 +323,13 @@ export function railGlyphs(circuit: CircuitJson, placed: readonly PlacedPart[]):
             if (name === undefined) continue;
             const sp = part.symbol.pins.find((q) => q.pinId === pin.pinId);
             if (!sp) continue;
-            const symbol = orientSymbol(railSymbol(), { rotation: RAIL_TURN[sp.side] });
-            const own = symbol.pins[0]!;
+            const turned = orientSymbol(railSymbol(), { rotation: RAIL_TURN[sp.side] });
+            const own = turned.pins[0]!;
+            // The NAME's place is worked out from the side, not inherited from the rotation. Text stays
+            // horizontal however the mark is turned, so an anchor that turned with it ended up beside the
+            // bar instead of past it — measured: the bar at x=90 and "VCC" centred at x=86, drawn across it.
+            const where = RAIL_LABEL[sp.side];
+            const symbol = { ...turned, labelAnchor: { x: where.x, y: where.y } };
             out.push({
                 id: `${part.id}.${pin.pinId}#rail`,
                 designator: '',
@@ -318,6 +338,7 @@ export function railGlyphs(circuit: CircuitJson, placed: readonly PlacedPart[]):
                 symbol,
                 annotates: `${part.id}.${pin.pinId}`,
                 label: name,
+                labelRuns: where.runs,
             });
         }
     }
@@ -346,6 +367,26 @@ function railSymbol(): SymbolGeometry {
         labelAnchor: { x: 0, y: -14 },
     };
 }
+
+/**
+ * Where the rail's NAME sits, per side — in the turned symbol's own frame, since the pin is at its origin.
+ *
+ * Read against `railSymbol()`: the stem is 10 long and the bar caps it, so after turning, the bar is 10 from
+ * the origin along the stem and spans 8 either side of it.
+ *
+ *  - STEM VERTICAL (the pin is on the part's top or bottom edge): the bar is horizontal, the name goes past
+ *    it along the stem, centred. 4 clear of the bar going up; going down it must also clear the text's own
+ *    height, because a baseline is the BOTTOM of the letters.
+ *  - STEM HORIZONTAL: the bar is vertical and the name would be drawn straight across it. Anchored at the
+ *    end nearest the bar and run outward instead, which needs no estimate of the text's width — the one
+ *    quantity this module cannot know. Nudged 3 down so the letters straddle the stem rather than sit on it.
+ */
+const RAIL_LABEL: Record<RoutePin['side'], { x: number; y: number; runs: 'middle' | 'start' | 'end' }> = {
+    top: { x: 0, y: -14, runs: 'middle' },
+    bottom: { x: 0, y: 22, runs: 'middle' },
+    left: { x: -14, y: 3, runs: 'end' },
+    right: { x: 14, y: 3, runs: 'start' },
+};
 
 /** Turned so the bar sits AWAY from the part, the mirror of the ground table for the opposite reason. */
 const RAIL_TURN: Record<RoutePin['side'], Position['rotation']> = {

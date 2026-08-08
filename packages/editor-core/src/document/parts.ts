@@ -30,6 +30,10 @@ import {
     type ComponentType,
 } from '@circuit-forge/eda-core';
 
+// The tree already answers "is this a part someone places, or an annotation" — imported rather than restated,
+// because a second answer here is a second thing to keep in step.
+import { isPlaceablePart } from '../tree/object-tree';
+
 import type { EditRefusal, EditResult } from './edits';
 
 const refuse = (reason: EditRefusal, message: string): EditResult => ({ ok: false, reason, message });
@@ -93,6 +97,21 @@ export interface NewPart {
     tolerance?: number;
     toleranceSource?: 'user' | 'catalog';
     sourcing?: Record<string, unknown>;
+    /**
+     * The pin shape to build, when the caller already knows it — copying an existing part.
+     *
+     * Omit it and the part gets the canonical shape for its type, which is what the palette wants. It is
+     * needed because the canonical shape is not always the right one:
+     *
+     *  - VARIABLE-ARITY types (a subckt, a logic gate, a catalogue generic) have no canonical shape at all,
+     *    so without this they cannot be created here and COPYING one was refused outright.
+     *  - OPTIONAL pins are real. A flip-flop authored without `set`/`rst` is auto-tied to the inactive rail
+     *    by the netlist generator; give its copy those two pins on fresh private nets and they become real
+     *    floating nodes. The copy would look identical on the sheet and behave differently.
+     *
+     * Every pin still gets its own fresh net: an authored SHAPE is not authored WIRING.
+     */
+    pins?: readonly string[];
 }
 
 /**
@@ -103,13 +122,24 @@ export interface NewPart {
  * makes the whole operation replayable: the same document plus the same request is the same document out.
  */
 export function addComponent(circuit: CircuitJson, spec: NewPart): EditResult {
-    const pins = COMPONENT_PINS[spec.type];
-    if (pins === undefined) return refuse('invalid-characters', `"${spec.type}" is not a component type.`);
-    if (isVariableArity(spec.type))
+    const canonical = COMPONENT_PINS[spec.type];
+    if (canonical === undefined) return refuse('invalid-characters', `"${spec.type}" is not a component type.`);
+    if (spec.pins === undefined && isVariableArity(spec.type))
         return refuse(
             'invalid-characters',
             `A ${spec.type} has no fixed pin list — its pins are authored to match its own port order, so it cannot be created blank. Add it through the design, not the part palette.`,
         );
+
+    const pins = spec.pins ?? canonical;
+    if (pins.length === 0) return refuse('empty', `A part needs at least one pin.`);
+    if (new Set(pins).size !== pins.length) return refuse('invalid-characters', `A pin is named twice.`);
+    // A fixed-arity type's pins are resolved BY NAME against the canonical list everywhere downstream — the
+    // netlist generator refuses a deck outright if one is missing — so an authored shape may leave OPTIONAL
+    // pins out but may not invent names. Unchecked, a copy could carry a pin no analysis will ever find.
+    if (spec.pins && !isVariableArity(spec.type)) {
+        const stray = spec.pins.find((id) => !canonical.includes(id));
+        if (stray !== undefined) return refuse('invalid-characters', `"${stray}" is not a pin of a ${spec.type}.`);
+    }
 
     const designator = (spec.designator ?? nextDesignator(circuit, spec.type) ?? '').trim();
     if (designator.length === 0) return refuse('empty', `No designator was given and none could be derived.`);
@@ -219,12 +249,31 @@ export function deleteComponent(circuit: CircuitJson, componentId: string): Edit
  * against a document that is changing as each one lands.
  */
 export function duplicateComponents(circuit: CircuitJson, ids: readonly string[]): EditResult {
-    const originals = ids.map((id) => (circuit.components ?? []).find((c) => c.id === id));
-    const missing = ids.filter((_id, i) => !originals[i]);
+    const asked = ids.map((id) => (circuit.components ?? []).find((c) => c.id === id));
+    const missing = ids.filter((_id, i) => !asked[i]);
     if (missing.length > 0) return refuse('no-such-component', `No component with id "${missing[0]}".`);
+
+    // NET MARKERS ARE SKIPPED, not refused. A ground symbol is notation — it has no designator prefix, so
+    // `addComponent` cannot name a copy of one and the whole call failed with "no designator could be
+    // derived" the moment a box selection happened to catch one. Copying it would be meaningless anyway: the
+    // drawing marks every ground terminal for itself, so the copy's reference is already drawn.
+    const originals = asked.filter((c) => isPlaceablePart(c!));
     if (originals.length === 0) return { ok: true, circuit, changed: false };
 
-    const shared = new Set((circuit.nets ?? []).filter((n) => n.isGround).map((n) => n.id));
+    // GROUND AND THE SUPPLY RAILS, for the same reason: these are the nets a sheet MARKS rather than wires.
+    // Every other connection out of the selection is deliberately cut, because a copy that silently joined
+    // the original's signal nets would be a second part on the same node rather than a second stage. A rail
+    // is not that — it is global by definition, drawn as a marker at each terminal that touches it, and a
+    // copy dropped onto a fresh private net would come back unpowered AND unmarked, since the marker follows
+    // the net's own flag. Ground behaved this way already; the rails did not, which made "copy this stage"
+    // mean two different things depending on which end of the part you looked at.
+    const shared = new Set((circuit.nets ?? []).filter((n) => n.isGround || n.isPower).map((n) => n.id));
+
+    // WHAT WAS ALREADY HERE IS NOT OURS TO REMOVE. The prune below exists to drop the private nets
+    // `addComponent` mints for a copy's unconnected pins — and it used to drop every unreferenced net, which
+    // meant copying one resistor silently deleted a net somebody had NAMED and not yet wired to anything.
+    // A copy is an addition; it must not be able to lose part of the design it was copied from.
+    const existing = new Set((circuit.nets ?? []).map((n) => n.id));
 
     // How many terminals of each net are inside the selection: two or more means the connection is between
     // copies and travels with them.
@@ -252,6 +301,13 @@ export function duplicateComponents(circuit: CircuitJson, ids: readonly string[]
             ...(original!.sourcing !== undefined
                 ? { sourcing: original!.sourcing as unknown as Record<string, unknown> }
                 : {}),
+            // THE ORIGINAL'S OWN SHAPE, which settles three things at once. A logic gate or a subckt has no
+            // canonical shape, so copying one was refused outright. A flip-flop authored without `set`/`rst`
+            // would have gained them on fresh private nets — real floating inputs where the generator had
+            // been auto-tying them to the inactive rail, a copy that looks identical and behaves otherwise.
+            // And the copy's pins now arrive in the original's order, so there is no question of matching
+            // them up afterwards.
+            pins: original!.pins.map((q) => q.pinId),
         };
         const added = addComponent(next, spec);
         if (!added.ok) return added;
@@ -259,10 +315,36 @@ export function duplicateComponents(circuit: CircuitJson, ids: readonly string[]
         const copy = (next.components ?? [])[(next.components ?? []).length - 1]!;
         created.push(copy.id);
 
+        // EVERYTHING ELSE THE PART CARRIED. `NewPart` names the fields the palette knows about, and a
+        // document can hold more — `properties` is where a transmission line's impedance and delay live, and
+        // a copy without them is a part the netlist generator cannot emit at all. Carried by DIFFERENCE
+        // rather than by another hand-written list, which is how the first list came to be short.
+        const {
+            id: _id,
+            designator: _designator,
+            pins: _pins,
+            ...rest
+        } = original as unknown as Record<string, unknown>;
+        // A key present with no value is a change nobody made — the working copy is compared and diffed to
+        // decide what is unsaved, so an `undefined` carried across would mark a document dirty on arrival.
+        const carried = Object.fromEntries(Object.entries(rest).filter(([, v]) => v !== undefined));
+        next = {
+            ...next,
+            components: (next.components ?? []).map((c) => (c.id === copy.id ? ({ ...carried, ...c } as typeof c) : c)),
+        };
+
         // Re-point the copy's pins: shared nets as they were, internal ones onto one fresh net per original
         // net, and everything else left on the private net `addComponent` already gave it.
-        const pins = copy.pins.map((pin, i) => {
-            const was = original!.pins[i]!.netId;
+        //
+        // BY PIN ID. The copy was built from the original's shape above, so the two agree pin for pin — but
+        // the lookup is by name rather than by position because that is the contract everything downstream
+        // uses (the netlist generator resolves `c b e` by name and refuses a deck missing one). Matched by
+        // POSITION, as it was, a diode stored cathode-first came back with its anode on the net its cathode
+        // had been on: the same part wired backwards, drawn identically, and nothing would have caught it.
+        const wasOn = new Map(original!.pins.map((q) => [q.pinId, q.netId]));
+        const pins = copy.pins.map((pin) => {
+            const was = wasOn.get(pin.pinId);
+            if (was === undefined) return pin; // a pin the original did not have: leave it on its own net
             if (shared.has(was)) return { ...pin, netId: was };
             if ((inside.get(was) ?? 0) < 2) return pin;
             const mapped = netFor.get(was) ?? pin.netId;
@@ -272,21 +354,25 @@ export function duplicateComponents(circuit: CircuitJson, ids: readonly string[]
         next = {
             ...next,
             components: (next.components ?? []).map((c) => (c.id === copy.id ? { ...c, pins } : c)),
-            // A net `addComponent` minted and nothing now references is not a node.
-            nets: (next.nets ?? []).filter(
-                (n) =>
-                    (next.components ?? []).some((c) =>
-                        (c.id === copy.id ? pins : c.pins).some((p) => p.netId === n.id),
-                    ) || shared.has(n.id),
-            ),
         };
     }
+
+    // ONCE, at the end, and against a set built in one pass. Pruning inside the loop re-read every net
+    // against every pin of every component for every part copied — quadratic in the size of the SHEET, not of
+    // the selection, so duplicating a handful of parts on a large design took over a second while the sheet
+    // sat still. The answer is the same either way; only the cost differed.
+    const referenced = new Set<string>();
+    for (const c of next.components ?? []) for (const pin of c.pins) referenced.add(pin.netId);
+    next = { ...next, nets: (next.nets ?? []).filter((n) => referenced.has(n.id) || existing.has(n.id)) };
 
     return {
         ok: true,
         changed: true,
         circuit: next,
         created,
+        // Said, not left to be inferred: the caller places each copy relative to the part it came from, and
+        // `created` no longer lines up with the ids it was ASKED about now that markers are skipped.
+        derivedFrom: originals.map((c) => c!.id),
         note:
             created.length === 1
                 ? undefined

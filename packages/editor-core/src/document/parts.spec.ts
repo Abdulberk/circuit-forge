@@ -165,3 +165,51 @@ describe('removing a part', () => {
         expect(JSON.stringify(back.circuit)).toBe(JSON.stringify(CIRCUIT));
     });
 });
+
+describe('a part built to an authored shape', () => {
+    // The escape hatch a COPY needs: it already knows the shape, because it is looking at one.
+
+    it('builds a variable-arity part, which has no shape of its own to fall back on', () => {
+        const r = addComponent(CIRCUIT, { type: 'logic_and', pins: ['in1', 'in2', 'in3', 'out'] });
+        expect(r.ok).toBe(true);
+        if (!r.ok || !r.changed) return;
+        expect(r.circuit.components!.at(-1)!.pins.map((q) => q.pinId)).toEqual(['in1', 'in2', 'in3', 'out']);
+    });
+
+    it('still refuses one with NO shape and nowhere to get one', () => {
+        const r = addComponent(CIRCUIT, { type: 'logic_and' });
+        expect(r.ok).toBe(false);
+    });
+
+    it('lets a fixed-arity part leave OPTIONAL pins off', () => {
+        // set/rst on a flip-flop. The generator ties an omitted one to the inactive rail; inventing them
+        // here would turn them into floating inputs.
+        const r = addComponent(CIRCUIT, { type: 'dff', pins: ['d', 'clk', 'q', 'qb'] });
+        expect(r.ok).toBe(true);
+        if (!r.ok || !r.changed) return;
+        expect(r.circuit.components!.at(-1)!.pins).toHaveLength(4);
+    });
+
+    it('REFUSES a pin name the type does not have', () => {
+        // Everything downstream resolves a fixed-arity part's pins BY NAME — the netlist generator refuses
+        // a whole deck over a missing one. A pin called `collector` on a BJT would be a connection the user
+        // can see on the sheet and no analysis will ever find, so it is stopped where it is written.
+        const r = addComponent(CIRCUIT, { type: 'bjt', model: '2N3904', pins: ['collector', 'b', 'e'] });
+        expect(r.ok).toBe(false);
+        if (r.ok) return;
+        expect(r.message).toContain('collector');
+    });
+
+    it('refuses a pin named twice, and a part with none', () => {
+        expect(addComponent(CIRCUIT, { type: 'resistor', value: '1k', pins: ['1', '1'] }).ok).toBe(false);
+        expect(addComponent(CIRCUIT, { type: 'resistor', value: '1k', pins: [] }).ok).toBe(false);
+    });
+
+    it('gives every authored pin its own net — a shape is not wiring', () => {
+        const r = addComponent(CIRCUIT, { type: 'logic_or', pins: ['in1', 'in2', 'out'] });
+        expect(r.ok).toBe(true);
+        if (!r.ok || !r.changed) return;
+        const pins = r.circuit.components!.at(-1)!.pins;
+        expect(new Set(pins.map((q) => q.netId)).size).toBe(3);
+    });
+});

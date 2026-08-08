@@ -20,11 +20,14 @@ import {
     placeParts,
     spreadParts,
     type PlacedPart,
+    type SelectMode,
     type TreeNode,
 } from '@circuit-forge/editor-core';
 import { useEffect, useMemo, useState } from 'react';
 
+
 import { ContextMenu } from '../components/ContextMenu';
+import { ErcNotice } from '../components/ErcNotice';
 import { AddPart, Inspector } from '../components/Inspector';
 import { ObjectTreePanel } from '../components/ObjectTreePanel';
 import { PartLibrary } from '../components/PartLibrary';
@@ -32,6 +35,7 @@ import { SaveStatus } from '../components/SaveStatus';
 import { SchematicCanvas } from '../components/SchematicCanvas';
 import { SignIn } from '../components/SignIn';
 import { API_BASE_URL, type ApiError, type OpenedProject } from '../lib/api';
+import { applySelection } from '../lib/selection';
 import { useAsync } from '../lib/useAsync';
 import { useDocument } from '../lib/useDocument';
 import { useUndoShortcuts } from '../lib/useUndoShortcuts';
@@ -130,17 +134,9 @@ function Workspace() {
      */
     const [selected, setSelected] = useState<TreeNode[]>([]);
 
-    /** One rule for what a click means, so neither surface has to know. */
-    const select = (node: TreeNode | null, additive = false): void =>
-        setSelected((was) => {
-            if (!node) return [];
-            const path = node.ref.path.join('/');
-            if (!additive) return [node];
-            // Shift on something already selected takes it OUT — the same key adds and removes, which is
-            // what every editor does and what a user tries first when they overshoot.
-            const without = was.filter((n) => n.ref.path.join('/') !== path);
-            return without.length === was.length ? [...was, node] : without;
-        });
+    /** One rule for what a gesture means, held apart from here so it can be tested on its own. */
+    const select = (node: TreeNode | null, mode: SelectMode = 'replace'): void =>
+        setSelected((was) => applySelection(was, node, mode));
     const primary = selected[selected.length - 1] ?? null;
     const selectedPaths = selected.map((n) => n.ref.path.join('/'));
 
@@ -333,47 +329,12 @@ function Workspace() {
                             part with an MPN, a footprint and a tolerance — which is what the package
                             check, the robustness verdict and an orderable BOM all key on. */}
                         {circuit && <PartLibrary api={api} doc={doc} />}
-                        {/* THE LIST, beside the drawing that carries the marks. A mark says WHERE and this says
-                            WHAT, and clicking one selects what it names — which is the whole reason to have
-                            both: a reader should not have to hunt a four-hundred-part sheet for the part an
-                            error mentions. */}
-                        {problems.length > 0 && (
-                            <div className={`notice ${problems.some((p) => p.severity === 'error') ? 'bad' : 'warn'}`}>
-                                <h4>
-                                    {problems.filter((p) => p.severity === 'error').length} errors ·{' '}
-                                    {problems.filter((p) => p.severity !== 'error').length} warnings
-                                </h4>
-                                <ul>
-                                    {problems.slice(0, 12).map((issue, i) => (
-                                        <li key={`${issue.code}:${issue.relatedIds.join(',')}:${i}`}>
-                                            <button
-                                                type="button"
-                                                data-testid={`erc-${issue.code}`}
-                                                style={{ textAlign: 'left' }}
-                                                onClick={() => {
-                                                    if (!circuit) return;
-                                                    const { byPath } = buildObjectTree(circuit);
-                                                    // An id may name a part or a net, and the issue does not
-                                                    // say which — so both addresses are tried and whatever
-                                                    // exists is selected.
-                                                    setSelected(
-                                                        issue.relatedIds.flatMap(
-                                                            (id) =>
-                                                                byPath.get(`root/components/${id}`) ??
-                                                                byPath.get(`root/nets/${id}`) ??
-                                                                [],
-                                                        ),
-                                                    );
-                                                }}
-                                            >
-                                                {issue.message}
-                                            </button>
-                                        </li>
-                                    ))}
-                                    {problems.length > 12 && <li>…and {problems.length - 12} more</li>}
-                                </ul>
-                            </div>
-                        )}
+                        {/* WHAT the rule check found, beside the drawing that carries the marks saying
+                            WHERE. Held in its own file: what makes it worth reading — three severities kept
+                            apart, a border that follows the worst thing present, a line that names nothing
+                            leaving the selection alone — is behaviour, and behaviour buried in a page can
+                            only be tested by driving the whole page. */}
+                        <ErcNotice problems={problems} circuit={circuit} onSelect={setSelected} />
                         {circuit && (
                             // Selection is held HERE and passed down, so the tree and the canvas cannot
                             // disagree about what is selected. The panel used to keep its own, which meant
@@ -446,20 +407,31 @@ function Workspace() {
                                 // committed document is the one the kernel builds from the live circuit.
                                 const preview = doc.circuit ? duplicateComponents(doc.circuit, ids) : null;
                                 const created = preview?.ok && preview.changed ? (preview.created ?? []) : [];
+                                // WHICH COPY CAME FROM WHICH PART, asked rather than assumed. A selection
+                                // can hold things that are not copied — a ground marker is notation and is
+                                // skipped — so pairing the two lists up by position drops the offset on the
+                                // wrong part, on exactly the sheets where a box happened to catch a marker.
+                                const cameFrom = new Map(
+                                    created.map((id, k) => [
+                                        id,
+                                        (preview?.ok && preview.changed ? (preview.derivedFrom ?? []) : [])[k],
+                                    ]),
+                                );
 
                                 doc.applyMany('Copy', [(c: CircuitJson) => duplicateComponents(c, ids)], (ui, made) => {
                                     // OFFSET, in the same revision. A copy drawn exactly on top of its
                                     // original is invisible and reads as nothing having happened.
                                     const positions = { ...(ui.positions ?? {}) };
-                                    made.forEach((id, k) => {
-                                        const from = positions[ids[k]!];
+                                    for (const id of made) {
+                                        const source = cameFrom.get(id);
+                                        const from = source ? positions[source] : undefined;
                                         if (from)
                                             positions[id] = {
                                                 ...from,
                                                 x: from.x + PASTE_OFFSET,
                                                 y: from.y + PASTE_OFFSET,
                                             };
-                                    });
+                                    }
                                     return { ...ui, schemaVersion: 1, positions };
                                 });
 
