@@ -1197,9 +1197,9 @@ export function SchematicCanvas({
                 and none of them was written down anywhere a screen reader could read; the context menu shows
                 them to a sighted user and this is the same courtesy. */}
             <desc id="schematic-keys">
-                Arrow keys and Tab move between objects in the tree. R turns the selection, X and Y mirror it, Ctrl+D
-                copies it, Delete removes it. With two terminals selected, W joins them into one net; S takes the
-                selected terminals off their net onto a new one, together.
+                Tab reaches the object tree and the arrow keys move within it; Enter selects a row. R turns the
+                selection, X and Y mirror it, Ctrl+D copies it, Delete removes it. With two terminals selected, W joins
+                them into one net; S takes the selected terminals off their net onto a new one, together.
             </desc>
 
             {/* The box, while it is being drawn. Dashed and unfilled at the edges so it never hides what it

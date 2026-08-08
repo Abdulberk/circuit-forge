@@ -30,16 +30,32 @@ const key = (node: TreeNode) => pathKey(node.ref.path);
 /** Groups start open; a design with one board is more useful expanded than as a single row saying "Root". */
 const COLLAPSED_BY_DEFAULT = new Set<string>();
 
+/**
+ * The rows a reader can actually see, in the order they are drawn.
+ *
+ * Keyboard movement is DOWN THE SCREEN, not down the data: a row inside a folded group is not somewhere the
+ * caret may land, because the user cannot see where they went.
+ */
+function visibleRows(node: TreeNode, collapsed: ReadonlySet<string>, out: string[] = []): string[] {
+    const path = key(node);
+    out.push(path);
+    if (!collapsed.has(path)) for (const child of node.children) visibleRows(child, collapsed, out);
+    return out;
+}
+
 interface RowProps {
     node: TreeNode;
     depth: number;
     collapsed: Set<string>;
     selected: ReadonlySet<string>;
+    /** The one row the Tab key reaches. Every other row is skipped — see `ObjectTreePanel`. */
+    active: string | null;
     onToggle: (path: string) => void;
     onSelect: (path: string, mode: SelectMode) => void;
+    onMove: (from: string, key: string) => void;
 }
 
-function Row({ node, depth, collapsed, selected, onToggle, onSelect }: RowProps) {
+function Row({ node, depth, collapsed, selected, active, onToggle, onSelect, onMove }: RowProps) {
     const path = key(node);
     const hasChildren = node.children.length > 0;
     const isCollapsed = collapsed.has(path);
@@ -52,21 +68,44 @@ function Row({ node, depth, collapsed, selected, onToggle, onSelect }: RowProps)
                 aria-selected={selected.has(path)}
                 aria-expanded={hasChildren ? !isCollapsed : undefined}
                 aria-level={depth + 1}
-                tabIndex={0}
+                data-path={path}
+                // ONE TAB STOP FOR THE WHOLE TREE — the roving-tabindex pattern every tree control uses.
+                // Every row was tabbable, which on a four-hundred-part design is TWO THOUSAND presses of Tab
+                // to reach whatever is after the panel. Measured. Inside the tree you move with the arrows,
+                // which is what a tree is for and what this component's own help text already promised.
+                tabIndex={path === active ? 0 : -1}
                 style={{ paddingLeft: 6 + depth * 13 }}
                 // Shift extends the selection. WHAT that means — add, remove, replace — is decided one layer
                 // up, so this panel and the canvas cannot come to different conclusions about the same key.
                 onClick={(e) => onSelect(path, e.shiftKey ? 'toggle' : 'replace')}
                 onKeyDown={(e) => {
-                    // Enter and Space select; the arrows expand and collapse. A tree that can only be driven
-                    // by mouse is unusable for the one task it exists for — finding a part in a long list.
+                    // Enter and Space select. A tree that can only be driven by mouse is unusable for the one
+                    // task it exists for — finding a part in a long list.
                     if (e.key === 'Enter' || e.key === ' ') {
                         e.preventDefault();
                         onSelect(path, e.shiftKey ? 'toggle' : 'replace');
-                    } else if (e.key === 'ArrowRight' && hasChildren && isCollapsed) {
+                        return;
+                    }
+                    // RIGHT opens a folded group, LEFT folds an open one. Where there is nothing to fold they
+                    // fall through to movement, which is what the tree pattern says and what a hand expects:
+                    // left on a leaf goes back out to its parent rather than doing nothing at all.
+                    if (e.key === 'ArrowRight' && hasChildren && isCollapsed) {
+                        e.preventDefault();
                         onToggle(path);
-                    } else if (e.key === 'ArrowLeft' && hasChildren && !isCollapsed) {
+                        return;
+                    }
+                    if (e.key === 'ArrowLeft' && hasChildren && !isCollapsed) {
+                        e.preventDefault();
                         onToggle(path);
+                        return;
+                    }
+                    if (['ArrowDown', 'ArrowUp', 'ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(e.key)) {
+                        // UP AND DOWN DID NOTHING, while the canvas's own help text told screen readers that
+                        // "arrow keys move between objects in the tree". A promise with no behaviour behind
+                        // it is worse than silence: it sends somebody looking for a way through that is not
+                        // there.
+                        e.preventDefault();
+                        onMove(path, e.key);
                     }
                 }}
             >
@@ -92,7 +131,9 @@ function Row({ node, depth, collapsed, selected, onToggle, onSelect }: RowProps)
                         collapsed={collapsed}
                         selected={selected}
                         onToggle={onToggle}
+                        active={active}
                         onSelect={onSelect}
+                        onMove={onMove}
                     />
                 ))}
         </>
@@ -125,6 +166,14 @@ export function ObjectTreePanel({
     // panel's own appearance, and no other view has an opinion about it. Selection is about the DOCUMENT.
     const [collapsed, setCollapsed] = useState<Set<string>>(COLLAPSED_BY_DEFAULT);
     const chosen = useMemo(() => new Set(selectedPaths), [selectedPaths]);
+    /**
+     * The row the Tab key reaches, which is not the same question as which row is SELECTED.
+     *
+     * A tree is one stop in the page's tab order and the arrows move within it. Held here rather than read
+     * from the document, because moving the caret is not an edit: walking down a list to look at it must not
+     * change what is selected, mark the document unsaved, or mint an undo step.
+     */
+    const [active, setActive] = useState<string | null>(null);
 
     // Rebuilt only when a document actually changes. The kernel builds a 400-part board in single-digit
     // milliseconds, but this runs on every keystroke in the editor, and "fast enough" times 60 per second is
@@ -137,6 +186,51 @@ export function ObjectTreePanel({
     if (!tree) return <p className="empty">No design loaded.</p>;
 
     const select = (path: string, mode: SelectMode) => onSelect?.(nodeAt(tree, path.split('/')) ?? null, mode);
+
+    const rows = visibleRows(tree.root, collapsed);
+    const caret = active !== null && rows.includes(active) ? active : (rows[0] ?? null);
+
+    /**
+     * Move the caret, and take the focus with it.
+     *
+     * Focus is moved through the DOM rather than by re-rendering into an autofocus, because the row that
+     * should have it already exists — asking React to remount it would lose the ring for a frame and fight
+     * anything else that had focus.
+     */
+    const move = (from: string, pressed: string) => {
+        const here = rows.indexOf(from);
+        if (here < 0) return;
+        const target =
+            pressed === 'Home'
+                ? 0
+                : pressed === 'End'
+                  ? rows.length - 1
+                  : pressed === 'ArrowDown'
+                    ? Math.min(rows.length - 1, here + 1)
+                    : pressed === 'ArrowUp'
+                      ? Math.max(0, here - 1)
+                      : // RIGHT on a row with nothing to open steps INTO the tree, LEFT on one with nothing
+                        // to close steps back out — the two keys read as "further in" and "further out"
+                        // rather than doing nothing at all when a row has no children.
+                        pressed === 'ArrowRight'
+                        ? Math.min(rows.length - 1, here + 1)
+                        : Math.max(0, here - 1);
+        const path = rows[target];
+        if (path === undefined || path === from) return;
+        setActive(path);
+        // Queued, so the row has been re-rendered as the tabbable one before it is asked to take focus.
+        //
+        // FOUND BY COMPARING, not by building a selector. A path is ordinary data — it holds ids that came
+        // from a document — so putting one inside a selector needs `CSS.escape`, which is absent in older
+        // browsers and in the test environment. Reading the attribute back and comparing needs no escaping
+        // and cannot be broken by an id containing a quote.
+        requestAnimationFrame(() => {
+            const el = [...document.querySelectorAll<HTMLElement>('[data-path]')].find(
+                (row) => row.getAttribute('data-path') === path,
+            );
+            el?.focus();
+        });
+    };
 
     return (
         // DECLARED multi-selectable. A `role="tree"` says single-select unless it says otherwise, so marking
@@ -155,7 +249,9 @@ export function ObjectTreePanel({
                         return next;
                     })
                 }
+                active={caret}
                 onSelect={select}
+                onMove={move}
             />
             <TreeGaps tree={tree} />
         </div>
