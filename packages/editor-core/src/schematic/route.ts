@@ -451,6 +451,56 @@ function routeOne(
  * twice, which is exactly what they are — the shared-run hazard is about two DIFFERENT nodes being drawn as
  * one, and refusing it within a net would spend diagonals on a reading that was never wrong.
  */
+/**
+ * Which pairs of a net's terminals to actually draw between — the net's ROUTING TREE.
+ *
+ * Every terminal of a net is one node, so any tree over them depicts the connection correctly and the only
+ * question is which tree a reader would rather look at. This drew a STAR: one terminal picked by array order
+ * became the hub and every other one got its own wire back to it. Correct, and on a net with fan-out it is
+ * the shape that sends wires round the sheet — measured at three times the length of the shortest tree over
+ * the same five terminals, with every one of those wires crossing the others to reach the same point.
+ *
+ * A MINIMUM SPANNING TREE instead, by Manhattan distance, which is the length a right-angled wire actually
+ * costs. It is the standard opening move in routing literature — the true optimum is a rectilinear STEINER
+ * tree, which may add junction points of its own and is NP-complete; the spanning tree is within a small
+ * factor of it and needs no invented points, which matters here because a point this module invented would
+ * be a junction dot claiming a connection nobody authored.
+ *
+ * Grown from pin ZERO and reported as (nearer, further) pairs, so each wire is still named after the
+ * terminal it reaches and every terminal but the first names exactly one wire — the key scheme is unchanged.
+ * Prim's, because the neighbour set is the tree so far: on nets of this size it is a handful of comparisons
+ * and it is deterministic, which a sort-based Kruskal would only be with a tie-break nobody could read.
+ */
+function treeOf(pins: readonly RoutePin[]): Array<[RoutePin, RoutePin]> {
+    const edges: Array<[RoutePin, RoutePin]> = [];
+    if (pins.length < 2) return edges;
+    const inTree = [0];
+    const rest = pins.map((_, i) => i).slice(1);
+    while (rest.length > 0) {
+        let best = Infinity;
+        let pick = 0;
+        let from = 0;
+        for (let k = 0; k < rest.length; k++) {
+            for (const t of inTree) {
+                const a = pins[rest[k]!]!;
+                const b = pins[t]!;
+                const d = Math.abs(a.x - b.x) + Math.abs(a.y - b.y);
+                // Strictly closer, so the first candidate wins a tie and the answer does not depend on the
+                // order the loop happened to reach two equally good terminals in.
+                if (d < best) {
+                    best = d;
+                    pick = k;
+                    from = t;
+                }
+            }
+        }
+        edges.push([pins[from]!, pins[rest[pick]!]!]);
+        inTree.push(rest[pick]!);
+        rest.splice(pick, 1);
+    }
+    return edges;
+}
+
 export function routeSheet(nets: readonly RouteNet[], bodies: readonly Box[]): RoutedSheet {
     const field = makeField(bodies);
     for (const net of nets) for (const p of net.pins) field.addPin(p, net.id);
@@ -475,14 +525,13 @@ export function routeSheet(nets: readonly RouteNet[], bodies: readonly Box[]): R
     const junctions: Junction[] = [];
 
     for (const net of nets) {
-        const [hub, ...spokes] = net.pins;
         // A one-pin net is an UNCONNECTED terminal, and drawing nothing is the correct depiction of it: the
         // bare pin is the symbol for it, and ERC reports it in exactly those words.
-        if (!hub || spokes.length === 0) continue;
+        if (net.pins.length < 2) continue;
 
         const mine: Seg[] = [];
         const drawn: Point[][] = [];
-        for (const spoke of spokes) {
+        for (const [hub, spoke] of treeOf(net.pins)) {
             // TWO TERMINALS ON THE SAME POINT ARE ALREADY JOINED, and the right depiction of that is nothing
             // at all. It happens the moment somebody drags one part onto another's pin, which is ordinary
             // work — and the router used to answer it with a wire from a point to itself, then REPORT that

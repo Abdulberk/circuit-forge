@@ -1039,7 +1039,13 @@ describe('the view and the gestures, at the edges where they actually broke', ()
             ],
         };
         rerender(<SchematicCanvas circuit={bigger} />);
-        expect(viewBox(sized(container))[2]).toBeGreaterThan(before[2]!);
+        // EITHER DIMENSION. The claim is that a null view re-fits to whatever the drawing now covers, and
+        // checking the WIDTH only was a claim about the auto-placer instead: parts used to land in a square
+        // grid, so anything added made the sheet wider. They are placed by signal flow now, and six parts
+        // added to one net stack in a column — measured, the sheet went from 56 units tall to 988 and not
+        // one unit wider. The test was reading the axis that happened to move, not the property.
+        const [, , w, h] = viewBox(sized(container));
+        expect({ grew: w! * h! > before[2]! * before[3]! }).toEqual({ grew: true });
     });
 
     it('a zoom-OUT notch never zooms in, whatever the drawing did since', () => {
@@ -1809,7 +1815,14 @@ describe('a gesture is not a click, and a selection is not a click order', () =>
             [...container.querySelectorAll('[data-testid="ground-glyph"]')].map((g) => g.getAttribute('transform'));
         const before = glyphAt();
 
-        fireEvent.pointerDown(container.querySelector('[data-testid="symbol-v1"]')!, {
+        // THE PART THE GLYPH ACTUALLY MARKS, asked rather than assumed. This used to drag `v1` — which had a
+        // generated glyph only because of where the auto-placer happened to put things, so the authored
+        // ground marker attached to some other pin. Placement changed, the marker moved to v1's terminal,
+        // and the test failed while the behaviour it names was intact: it was dragging a part with nothing
+        // to follow it.
+        const marked = container.querySelector('[data-testid="ground-glyph"]')!.getAttribute('data-annotates')!;
+        const partId = marked.split('.')[0]!;
+        fireEvent.pointerDown(container.querySelector(`[data-testid="symbol-${partId}"]`)!, {
             pointerId: 44,
             button: 0,
             clientX: 300,
