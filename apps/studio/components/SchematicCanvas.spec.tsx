@@ -1222,7 +1222,12 @@ describe('the view and the gestures, at the edges where they actually broke', ()
         );
         const svg = sized(container);
         const pin = container.querySelector('[data-testid="pin-r1-2"]')!;
-        const [bx, by, bw, bh] = viewBox(svg) as [number, number, number, number];
+        const [bx, by, bw, bh] = svg.getAttribute('viewBox')!.split(' ').map(Number) as [
+            number,
+            number,
+            number,
+            number,
+        ];
         const perUnit = Math.min(800 / bw, 600 / bh);
         const [tx, ty] = translateOf(pin.closest('g[data-testid^="symbol-"]')!);
         const at = {
@@ -1901,6 +1906,63 @@ describe('a box selects, and Ctrl+D copies', () => {
         fireEvent.pointerMove(svg, { pointerId: 51, ...at(r1[0]!, r1[1]!) });
         fireEvent.pointerUp(svg, { pointerId: 51, ...at(r1[0]!, r1[1]!) });
         expect(picked).toContain('r1');
+    });
+
+    it('marks what it has hold of BEFORE the pointer comes up', () => {
+        // Without this the box is the drag all over again: you cannot tell what you have until it is done,
+        // and if it is wrong you undo and draw it a second time. The whole cost the gesture exists to remove.
+        const { container } = render(<SchematicCanvas circuit={CIRCUIT} onSelect={() => {}} />);
+        const svg = sized(container);
+        expect(container.querySelectorAll('[data-catching="yes"]')).toHaveLength(0);
+
+        fireEvent.pointerDown(svg, { pointerId: 61, button: 0, shiftKey: true, clientX: 5, clientY: 5 });
+        fireEvent.pointerMove(svg, { pointerId: 61, shiftKey: true, clientX: 795, clientY: 595 });
+        const caught = container.querySelectorAll('[data-catching="yes"]');
+        expect(caught.length).toBeGreaterThan(0);
+        // …and it marks them the way a SELECTED part is marked, because that is what releasing will make
+        // them. A third visual state would explain the mechanism and say nothing about the outcome.
+        expect(caught[0]!.getAttribute('data-testid')).toMatch(/^symbol-/);
+    });
+
+    it('marks NOTHING once the box is released — the selection takes over', () => {
+        const { container } = render(<SchematicCanvas circuit={CIRCUIT} onSelect={() => {}} />);
+        const svg = sized(container);
+        fireEvent.pointerDown(svg, { pointerId: 62, button: 0, shiftKey: true, clientX: 5, clientY: 5 });
+        fireEvent.pointerMove(svg, { pointerId: 62, shiftKey: true, clientX: 795, clientY: 595 });
+        fireEvent.pointerUp(svg, { pointerId: 62, shiftKey: true, clientX: 795, clientY: 595 });
+        expect(container.querySelectorAll('[data-catching="yes"]')).toHaveLength(0);
+    });
+
+    it('shows and TAKES the same parts — one rule, not two', () => {
+        // The disagreement this guards against would be invisible until somebody let go of the pointer and
+        // got something other than what had been highlighted the whole way.
+        const taken: string[] = [];
+        const { container } = render(<SchematicCanvas circuit={CIRCUIT} onSelect={(w) => taken.push(...many(w))} />);
+        const svg = sized(container);
+        // A box over PART of the sheet, so "touches" and "encloses" can give different answers — one drawn
+        // over everything cannot tell them apart. Its far corner is derived from where a symbol ACTUALLY is
+        // rather than guessed in client pixels: the first version guessed, landed on empty sheet, and caught
+        // nothing, which would have made the comparison below true and empty.
+        const r1 = translateOf(container.querySelector('[data-testid="symbol-r1"]')!);
+        const [bx, by, bw, bh] = svg.getAttribute('viewBox')!.split(' ').map(Number) as [
+            number,
+            number,
+            number,
+            number,
+        ];
+        const perUnit = Math.min(800 / bw, 600 / bh);
+        const at = (x: number, y: number) => ({
+            clientX: (800 - bw * perUnit) / 2 + (x - bx) * perUnit,
+            clientY: (600 - bh * perUnit) / 2 + (y - by) * perUnit,
+        });
+        fireEvent.pointerDown(svg, { pointerId: 63, button: 0, shiftKey: true, ...at(bx - 50, by - 50) });
+        fireEvent.pointerMove(svg, { pointerId: 63, shiftKey: true, ...at(r1[0]!, r1[1]!) });
+        const shown = [...container.querySelectorAll('[data-catching="yes"]')]
+            .map((el) => el.getAttribute('data-testid')!.replace('symbol-', ''))
+            .sort();
+        fireEvent.pointerUp(svg, { pointerId: 63, shiftKey: true, ...at(r1[0]!, r1[1]!) });
+        expect(shown.length).toBeGreaterThan(0);
+        expect([...taken].sort()).toEqual(shown);
     });
 
     it('shows the box while it is being drawn, and only while', () => {
