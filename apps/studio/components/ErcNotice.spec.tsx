@@ -113,6 +113,27 @@ describe('the rule-check panel', () => {
             expect(seen[0]!.map((n) => n.ref.id)).toEqual(['b']);
         });
 
+        it('selects the object the issue is ABOUT when a part and a net share an id', () => {
+            // Trying both addresses and taking whichever exists picks the part every time, because parts are
+            // tried first — so a remark about a spare net called `r1` opened the resistor R1 and showed a
+            // reader nothing wrong with it. The issue now says which one it means.
+            const collide: CircuitJson = {
+                ...CIRCUIT,
+                nets: [...(CIRCUIT.nets as never[]), { id: 'r1', name: 'SPARE' }],
+            } as CircuitJson;
+            const seen: TreeNode[][] = [];
+            const about = { relatedIds: ['r1'], related: [{ kind: 'net' as const, id: 'r1' }] };
+            const { getByTestId } = render(
+                <ErcNotice
+                    problems={[{ ...issue('warning', 'A'), ...about }]}
+                    circuit={collide}
+                    onSelect={(n) => seen.push(n)}
+                />,
+            );
+            fireEvent.click(getByTestId('erc-A'));
+            expect(seen[0]!.map((n) => n.ref.kind)).toEqual(['net']);
+        });
+
         it('LEAVES THE SELECTION ALONE when it names nothing', () => {
             // The defect. Some remarks are about the sheet rather than any object on it, and some name an id
             // that has since been deleted. Reporting an empty selection cleared whatever the user had picked

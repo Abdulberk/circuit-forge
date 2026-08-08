@@ -63,7 +63,7 @@ export type {
     SensitivityEntry,
 } from './types/simulation';
 
-export type { ErcResult, ErcIssue, ErcConfig } from './types/erc';
+export type { ErcResult, ErcIssue, ErcSubject, ErcConfig } from './types/erc';
 
 export { ErcCode } from './types/erc';
 export type { ErcSeverity } from './types/erc';

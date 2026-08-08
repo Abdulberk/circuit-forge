@@ -63,10 +63,19 @@ export function ErcNotice({ problems, circuit, onSelect }: ErcNoticeProps): Reac
                             onClick={() => {
                                 if (!circuit || !onSelect) return;
                                 const { byPath } = buildObjectTree(circuit);
-                                // An id may name a part or a net, and the issue does not say which — so both
-                                // addresses are tried and whatever exists is selected.
-                                const found = issue.relatedIds.flatMap(
-                                    (id) => byPath.get(componentPath(id)) ?? byPath.get(netPath(id)) ?? [],
+                                // ASKED, not guessed. The issue now says what each id names, so a remark
+                                // about a net called `r1` selects that net rather than the resistor that
+                                // happens to share the string. Where an older issue does not say — the field
+                                // is optional so a hand-built one is still valid — both addresses are tried
+                                // and whatever exists is selected, which is what this always did.
+                                const found = (
+                                    issue.related ?? issue.relatedIds.map((id) => ({ kind: undefined, id }))
+                                ).flatMap(({ kind, id }) =>
+                                    kind === 'component'
+                                        ? (byPath.get(componentPath(id)) ?? [])
+                                        : kind === 'net'
+                                          ? (byPath.get(netPath(id)) ?? [])
+                                          : (byPath.get(componentPath(id)) ?? byPath.get(netPath(id)) ?? []),
                                 );
                                 // ONLY IF IT NAMES SOMETHING. Some remarks are about the sheet rather than any
                                 // object on it, and some name an id that has since been deleted. Clearing the

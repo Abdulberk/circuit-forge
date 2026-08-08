@@ -51,6 +51,12 @@ export enum ErcCode {
  */
 export type ErcSeverity = 'error' | 'warning' | 'info';
 
+/** What an issue is ABOUT: a part on the sheet, or a node between parts. */
+export interface ErcSubject {
+    kind: 'component' | 'net';
+    id: string;
+}
+
 /**
  * Individual ERC issue
  */
@@ -64,8 +70,27 @@ export interface ErcIssue {
     /** Human-readable message */
     message: string;
 
-    /** IDs of related components or nets */
+    /**
+     * IDs of related components or nets.
+     *
+     * Kept exactly as it was, because it is part of the published surface and reaches the API and the LLM
+     * prompt. It cannot say WHICH kind each id names, which is what `related` is for — read that when you
+     * have to point at an object rather than merely name it.
+     */
     relatedIds: string[];
+
+    /**
+     * The same objects, each saying what it IS — in the same order as `relatedIds`.
+     *
+     * A bare id cannot be resolved: a component id and a net id are both just strings, and nothing stops one
+     * document holding the same string as both. A reader that guessed by looking the id up in the components
+     * marked the WRONG OBJECT — measured on a sheet whose spare net was called `r1`, where three remarks
+     * about the net put a mark on the resistor, and a user opening R1 to see what was wrong found nothing.
+     *
+     * Optional so that an issue built by hand — a test, a fixture, an older document — is still a valid
+     * issue; a consumer that needs the kind falls back to guessing, exactly as it had to before.
+     */
+    related?: ErcSubject[];
 }
 
 /**
