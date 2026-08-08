@@ -28,6 +28,17 @@ const R = (id: string, a: string, b: string) => ({
     ],
 });
 const C = (id: string, a: string, b: string) => ({ ...R(id, a, b), type: 'capacitor', value: '100n' });
+const Q = (id: string, c: string, b: string, e: string) => ({
+    id,
+    type: 'bjt',
+    designator: id.toUpperCase(),
+    model: '2N3904',
+    pins: [
+        { pinId: 'c', netId: c },
+        { pinId: 'b', netId: b },
+        { pinId: 'e', netId: e },
+    ],
+});
 const V = (id: string, a: string, b: string) => ({
     id,
     type: 'voltage_source',
@@ -69,7 +80,10 @@ describe('reading order', () => {
     it('puts the source on the left and the signal to its right', () => {
         // The convention every schematic follows and no algorithm gets for free. It is also what makes the
         // rest of the arrangement mean anything: a column is a step in the signal's path.
-        const circuit = sheet([R('r1', 'in', 'mid'), R('r2', 'mid', 'gnd'), V('v1', 'in', 'gnd')], ['in', 'mid', 'gnd']);
+        const circuit = sheet(
+            [R('r1', 'in', 'mid'), R('r2', 'mid', 'gnd'), V('v1', 'in', 'gnd')],
+            ['in', 'mid', 'gnd'],
+        );
         const slots = arrangeBySignalFlow(circuit);
         expect(slots.get('v1')!.column).toBe(0);
         expect(slots.get('r1')!.column).toBeGreaterThan(slots.get('v1')!.column);
@@ -123,7 +137,11 @@ describe('reading order', () => {
 
     it('leaves markers out of it — they belong against the terminal they annotate', () => {
         const withMarker = sheet(
-            [V('v1', 'in', 'gnd'), R('r1', 'in', 'gnd'), { id: 'g1', type: 'ground', designator: '', pins: [{ pinId: '1', netId: 'gnd' }] }],
+            [
+                V('v1', 'in', 'gnd'),
+                R('r1', 'in', 'gnd'),
+                { id: 'g1', type: 'ground', designator: '', pins: [{ pinId: '1', netId: 'gnd' }] },
+            ],
             ['in', 'gnd'],
         );
         expect([...arrangeBySignalFlow(withMarker).keys()].sort()).toEqual(['r1', 'v1']);
@@ -157,7 +175,10 @@ describe('what the arrangement is FOR', () => {
         for (const a of ladder.components!)
             for (const b of ladder.components!) {
                 if (a.id >= b.id || !joined(a, b)) continue;
-                worst = Math.max(worst, Math.abs(at.get(a.id)!.x - at.get(b.id)!.x) + Math.abs(at.get(a.id)!.y - at.get(b.id)!.y));
+                worst = Math.max(
+                    worst,
+                    Math.abs(at.get(a.id)!.x - at.get(b.id)!.x) + Math.abs(at.get(a.id)!.y - at.get(b.id)!.y),
+                );
             }
         // One cell apart is the best any grid can do; two is a neighbour once removed. Six — which is what
         // index order gave — is the other side of the sheet.
@@ -167,11 +188,124 @@ describe('what the arrangement is FOR', () => {
     it('draws less wire than the grid it replaced, on the circuits this product makes', () => {
         // The number a reader feels. Measured against the grid-by-index arrangement these were drawn with
         // before: divider 580, RC filter 570, eight-part ladder 2400.
-        const divider = sheet([V('v1', 'in', 'gnd'), R('r1', 'in', 'mid'), R('r2', 'mid', 'gnd')], ['in', 'mid', 'gnd']);
+        const divider = sheet(
+            [V('v1', 'in', 'gnd'), R('r1', 'in', 'mid'), R('r2', 'mid', 'gnd')],
+            ['in', 'mid', 'gnd'],
+        );
         const filter = sheet([V('v1', 'in', 'gnd'), R('r1', 'in', 'out'), C('c1', 'out', 'gnd')], ['in', 'out', 'gnd']);
         expect({ divider: wireLength(divider) < 580, filter: wireLength(filter) < 570 }).toEqual({
             divider: true,
             filter: true,
         });
+    });
+});
+
+/**
+ * How many times one net's wire crosses another's, strictly through the middle of both.
+ *
+ * A crossing is legible — it is the one thing a reader never misreads, and the router allows it on purpose —
+ * but it is still work: every one is a place somebody has to follow a line with their eye to be sure. Length
+ * is what a sheet costs; crossings are what it costs to READ.
+ */
+const crossings = (circuit: CircuitJson): number => {
+    const placed = placeParts(circuit);
+    const { wires } = routeSheet(netsOf(circuit, placed), bodiesOf([...placed, ...groundGlyphs(circuit, placed)]));
+    const segs = wires.flatMap((w) =>
+        w.points.slice(1).map((p, i) => ({
+            x1: w.points[i]![0],
+            y1: w.points[i]![1],
+            x2: p[0],
+            y2: p[1],
+            net: w.netId,
+        })),
+    );
+    const det = (px: number, py: number, qx: number, qy: number) => px * qy - py * qx;
+    let total = 0;
+    for (let i = 0; i < segs.length; i++)
+        for (let k = i + 1; k < segs.length; k++) {
+            const a = segs[i]!;
+            const b = segs[k]!;
+            if (a.net === b.net) continue;
+            const r = [a.x2 - a.x1, a.y2 - a.y1] as const;
+            const t = [b.x2 - b.x1, b.y2 - b.y1] as const;
+            const w = [b.x1 - a.x1, b.y1 - a.y1] as const;
+            const den = det(r[0], r[1], t[0], t[1]);
+            if (den === 0) continue;
+            const u = det(w[0], w[1], t[0], t[1]) / den;
+            const v = det(w[0], w[1], r[0], r[1]) / den;
+            // STRICTLY interior to both, which is what a crossing IS: touching at an end is a junction, and
+            // the router forbids that between two nets anyway.
+            if (u > 0 && u < 1 && v > 0 && v < 1) total++;
+        }
+    return total;
+};
+
+describe('not crossing', () => {
+    /**
+     * A source feeding three branches, two of which feed one output — and the ids chosen so that ALPHABETICAL
+     * order is the wrong order: `xa` hangs off the last branch and `xb` off the first.
+     *
+     * This circuit exists because the ordering step could not be shown to do anything without it. On a chain
+     * — a divider, a filter, a ladder — the order parts arrive in is already the order that does not cross,
+     * so switching the step off changed nothing on any of them, and a step that changes nothing is one to
+     * delete rather than keep. Measured here: with it, no crossing and 1120 units of wire; without it, one
+     * crossing and 1440.
+     */
+    const FAN: CircuitJson = sheet(
+        [
+            V('v1', 'in', 'gnd'),
+            R('a', 'in', 'na'),
+            R('b', 'in', 'nb'),
+            R('c', 'in', 'nc'),
+            R('xa', 'nc', 'out'),
+            R('xb', 'na', 'out'),
+        ],
+        ['in', 'gnd', 'na', 'nb', 'nc', 'out'],
+    );
+
+    it('orders a column by what it connects to, not by the ids', () => {
+        const slots = arrangeBySignalFlow(FAN);
+        // `xb` hangs off `a`, which is the top of its column, so it belongs at the top of the next one.
+        expect(slots.get('xb')!.row).toBeLessThan(slots.get('xa')!.row);
+    });
+
+    it('leaves the fan-out sheet with no crossings at all', () => {
+        expect({ crossings: crossings(FAN) }).toEqual({ crossings: 0 });
+    });
+
+    it('leaves the circuits this product actually makes with none either', () => {
+        // Length was the number I measured when this arrangement was written; crossings are the number a
+        // reader feels, and nothing was checking them. All five come out clean.
+        const divider = sheet(
+            [V('v1', 'in', 'gnd'), R('r1', 'in', 'mid'), R('r2', 'mid', 'gnd')],
+            ['in', 'mid', 'gnd'],
+        );
+        const filter = sheet([V('v1', 'in', 'gnd'), R('r1', 'in', 'out'), C('c1', 'out', 'gnd')], ['in', 'out', 'gnd']);
+        // THE WHOLE amplifier, transistors included. An earlier version of this fixture left them out and
+        // measured one crossing — correctly: without them the stages touch nothing but the rails, the graph
+        // falls into unconnected pieces, and no arrangement of unconnected pieces is better than another.
+        // It is the transistors that make it a circuit rather than a pile of parts.
+        const twoStage = sheet(
+            [
+                V('v1', 'vcc', 'gnd'),
+                C('c1', 'in', 'b1'),
+                R('rb1', 'vcc', 'b1'),
+                Q('q1', 'c1n', 'b1', 'gnd'),
+                R('rc1', 'vcc', 'c1n'),
+                C('c2', 'c1n', 'b2'),
+                R('rb2', 'vcc', 'b2'),
+                Q('q2', 'c2n', 'b2', 'gnd'),
+                R('rc2', 'vcc', 'c2n'),
+                C('c3', 'c2n', 'out'),
+                R('rl', 'out', 'gnd'),
+            ],
+            ['vcc', 'gnd', 'in', 'b1', 'c1n', 'b2', 'c2n', 'out'],
+            ['gnd', 'vcc'],
+        );
+        expect({
+            divider: crossings(divider),
+            filter: crossings(filter),
+            twoStage: crossings(twoStage),
+        }).toEqual({ divider: 0, filter: 0, twoStage: 0 });
     });
 });
