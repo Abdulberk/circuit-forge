@@ -288,6 +288,19 @@ code,
     font-weight: 600;
 }
 
+/* The dismiss control on an edit note. DIRECT CHILD only: the rule-check panel puts a button inside every
+   list row, and an unscoped `.notice button` would draw a border round each of them. */
+.notice > button {
+    margin-top: 6px;
+    background: none;
+    border: 1px solid var(--line-bright);
+    border-radius: var(--radius);
+    color: var(--text-dim);
+    font-size: 11px;
+    padding: 2px 8px;
+    cursor: pointer;
+}
+
 .notice ul {
     margin: 4px 0 0;
     padding-left: 16px;
