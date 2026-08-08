@@ -94,4 +94,5 @@ export { placeParts, bodiesOf, netsOf, groundGlyphs, railGlyphs } from './schema
 export { alignParts, spreadParts, type AlignEdge, type SpreadAxis } from './schematic/align';
 export { arrangeBySignalFlow, type Slot } from './schematic/arrange';
 export { stretchWire } from './schematic/stretch';
+export { partsTouching, boxBetween } from './schematic/pick';
 export type { PlacedPart } from './schematic/layout';
