@@ -11,8 +11,8 @@
  * rather than "anything at all", and a line that names nothing leaves the selection alone.
  */
 
-import type { ErcIssue , CircuitJson } from '@circuit-forge/eda-core';
-import { buildObjectTree, type TreeNode } from '@circuit-forge/editor-core';
+import type { ErcIssue, CircuitJson } from '@circuit-forge/eda-core';
+import { buildObjectTree, componentPath, netPath, type TreeNode } from '@circuit-forge/editor-core';
 
 /** How many lines are listed before the rest are summarised. A panel is a summary, not a report. */
 const SHOWN = 12;
@@ -66,7 +66,7 @@ export function ErcNotice({ problems, circuit, onSelect }: ErcNoticeProps): Reac
                                 // An id may name a part or a net, and the issue does not say which — so both
                                 // addresses are tried and whatever exists is selected.
                                 const found = issue.relatedIds.flatMap(
-                                    (id) => byPath.get(`root/components/${id}`) ?? byPath.get(`root/nets/${id}`) ?? [],
+                                    (id) => byPath.get(componentPath(id)) ?? byPath.get(netPath(id)) ?? [],
                                 );
                                 // ONLY IF IT NAMES SOMETHING. Some remarks are about the sheet rather than any
                                 // object on it, and some name an id that has since been deleted. Clearing the

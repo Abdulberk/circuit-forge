@@ -42,6 +42,9 @@ import {
     type PlacedPart,
     type SelectMode,
     type TreeNode,
+    componentPath,
+    pathKey,
+    pinPath,
 } from '@circuit-forge/editor-core';
 import { useEffect, useMemo, useRef, useState } from 'react';
 
@@ -507,7 +510,7 @@ export function SchematicCanvas({
         // selection everywhere else on this canvas. Replacing instead would make Shift mean two things.
         // 'add', not 'toggle': a box GATHERS. Sent as a toggle it dropped every part the box caught that was
         // already selected, so dragging over your own selection cleared it.
-        for (const p of caught) onSelect(byPath.get(`root/components/${p.id}`) ?? null, 'add');
+        for (const p of caught) onSelect(byPath.get(componentPath(p.id)) ?? null, 'add');
     };
 
     const endPan = (e: React.PointerEvent): void => {
@@ -874,8 +877,8 @@ export function SchematicCanvas({
         // selected parts and having the other four stay put is the behaviour that makes people stop
         // selecting things — and a part that is NOT selected drags alone, because grabbing something
         // outside the selection plainly means that thing.
-        const group = selection.has(`root/components/${id}`)
-            ? placed.filter((q) => selection.has(`root/components/${q.id}`))
+        const group = selection.has(componentPath(id))
+            ? placed.filter((q) => selection.has(componentPath(q.id)))
             : [start];
 
         setDrag({
@@ -1011,8 +1014,8 @@ export function SchematicCanvas({
                         at[1] <= q.y + b.maxY
                     );
                 });
-                const node = part ? (byPath.get(`root/components/${part.id}`) ?? null) : null;
-                if (node && !selection.has(node.ref.path.join('/'))) onSelect?.(node);
+                const node = part ? (byPath.get(componentPath(part.id)) ?? null) : null;
+                if (node && !selection.has(pathKey(node.ref.path))) onSelect?.(node);
                 onContextMenu({ x: e.clientX, y: e.clientY }, node);
             }}
             onPointerMove={marquee ? moveMarquee : wire ? moveWire : pan ? movePan : drag ? moveDrag : undefined}
@@ -1190,7 +1193,7 @@ export function SchematicCanvas({
             ))}
 
             {placed.map((p) => {
-                const path = `root/components/${p.id}`;
+                const path = componentPath(p.id);
                 const isSelected = selection.has(path);
                 return (
                     <g
@@ -1266,7 +1269,7 @@ export function SchematicCanvas({
                             // and what the Inspector shows, and the drawing was byte-identical to having
                             // nothing selected — so the user pressed the key and could only find out by
                             // watching what disappeared.
-                            const marked = selection.has(`root/components/${p.id}/pins/${pin.pinId}`);
+                            const marked = selection.has(pinPath(p.id, pin.pinId));
                             return (
                                 <g key={pin.pinId}>
                                     <circle
@@ -1301,7 +1304,7 @@ export function SchematicCanvas({
                                                 // ambiguous at exactly the moment it matters.
                                                 e.stopPropagation();
                                                 onSelect?.(
-                                                    byPath.get(`root/components/${p.id}/pins/${pin.pinId}`) ?? null,
+                                                    byPath.get(pinPath(p.id, pin.pinId)) ?? null,
                                                     e.shiftKey ? 'toggle' : 'replace',
                                                 );
                                             }}

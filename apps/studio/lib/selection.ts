@@ -10,7 +10,7 @@
  * what it caught) is invisible at that distance.
  */
 
-import type { SelectMode, TreeNode } from '@circuit-forge/editor-core';
+import { pathKey, type SelectMode, type TreeNode } from '@circuit-forge/editor-core';
 
 /**
  * Apply a gesture to a selection, giving back the new one.
@@ -27,8 +27,8 @@ export function applySelection(
     if (!node) return [];
     if (mode === 'replace') return [node];
 
-    const path = node.ref.path.join('/');
-    const without = was.filter((n) => n.ref.path.join('/') !== path);
+    const path = pathKey(node.ref.path);
+    const without = was.filter((n) => pathKey(n.ref.path) !== path);
     const had = without.length !== was.length;
 
     // Shift-clicking something already selected takes it OUT — the same key adds and removes, which is what

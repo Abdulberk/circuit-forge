@@ -2116,6 +2116,71 @@ describe('a supply rail is marked, not wired', () => {
  * the verb — and the canvas was declared `role="img"`, which tells a screen reader it is a picture and that
  * everything in it, and every verb behind it, is not there.
  */
+describe('a part whose id looks like another object’s address', () => {
+    // Ids are ordinary data — a design merged from two sub-sheets or written by something else can carry a
+    // slash. Addresses are built by joining, and joining is only unambiguous while no segment can hold the
+    // separator: a part called `r1/pins/2` used to produce the same address as r1's second terminal, so one
+    // of them lost its address. On the sheet that part was visible, clickable, and every click on it selected
+    // a pin of a different part.
+    const ODD: CircuitJson = {
+        version: '1.0',
+        components: [
+            {
+                id: 'r1',
+                type: 'resistor',
+                designator: 'R1',
+                value: '1k',
+                pins: [
+                    { pinId: '1', netId: 'a' },
+                    { pinId: '2', netId: 'b' },
+                ],
+            },
+            {
+                id: 'r1/pins/2',
+                type: 'resistor',
+                designator: 'R2',
+                value: '2k',
+                pins: [
+                    { pinId: '1', netId: 'b' },
+                    { pinId: '2', netId: 'a' },
+                ],
+            },
+        ] as never,
+        nets: [
+            { id: 'a', name: 'A' },
+            { id: 'b', name: 'B' },
+        ],
+    };
+
+    it('is drawn, and clicking it selects IT', () => {
+        const seen: Array<string | undefined> = [];
+        const { container } = render(<SchematicCanvas circuit={ODD} onSelect={(n) => seen.push(n?.ref.id)} />);
+        const symbol = container.querySelector('[data-testid="symbol-r1/pins/2"]');
+        expect(symbol).not.toBeNull();
+        fireEvent.click(symbol!);
+        expect(seen).toEqual(['r1/pins/2']);
+    });
+
+    it('and the terminal it collides with still selects the terminal', () => {
+        const seen: Array<{ kind: string; id: string | undefined }> = [];
+        const { container } = render(
+            <SchematicCanvas
+                circuit={ODD}
+                // The terminal's hit target exists only where wiring is possible — that is what `onConnect`
+                // being supplied means — so a test that omits it is testing a canvas with no terminals on it.
+                onConnect={() => {}}
+                onSelect={(n) => n && seen.push({ kind: n.ref.kind, id: n.ref.id })}
+            />,
+        );
+        // Both objects must be reachable — a fix that gave the part its address by taking the pin's would be
+        // the same defect pointed the other way.
+        const pin = container.querySelector('[data-testid="pin-r1-2"]');
+        expect(pin).not.toBeNull();
+        fireEvent.click(pin!);
+        expect(seen).toEqual([{ kind: 'pin', id: '2' }]);
+    });
+});
+
 describe('the editor can be driven without a pointer', () => {
     it('W joins two selected terminals', () => {
         const joined: unknown[] = [];

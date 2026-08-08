@@ -14,11 +14,18 @@
  */
 
 import type { CircuitJson } from '@circuit-forge/eda-core';
-import { buildObjectTree, nodeAt, type ObjectTree, type SelectMode, type TreeNode } from '@circuit-forge/editor-core';
+import {
+    buildObjectTree,
+    nodeAt,
+    pathKey,
+    type ObjectTree,
+    type SelectMode,
+    type TreeNode,
+} from '@circuit-forge/editor-core';
 import type { LayoutGeometry } from '@circuit-forge/pcb-contract';
 import { useMemo, useState } from 'react';
 
-const key = (node: TreeNode) => node.ref.path.join('/');
+const key = (node: TreeNode) => pathKey(node.ref.path);
 
 /** Groups start open; a design with one board is more useful expanded than as a single row saying "Root". */
 const COLLAPSED_BY_DEFAULT = new Set<string>();

@@ -106,6 +106,32 @@ export interface ObjectTree {
     ambiguous: Array<{ what: string; path: string }>;
 }
 
+/**
+ * An object's address as ONE string, which is how a selection is carried and compared.
+ *
+ * ESCAPED, because an id is ordinary data. A path is a join, and a join is only unambiguous while no segment
+ * can contain the separator — ids can: a design may be machine-generated, imported, or merged from two
+ * sub-sheets, and this module says so a few lines above. Measured: a part whose id is `r1/pins/2` produces
+ * the same joined string as `r1`'s pin `2`, so one of them lost its address, was reported as an ADDRESS
+ * CLAIMED TWICE in a document with no repeated id anywhere, and became unselectable — visible on the sheet,
+ * and every click on it selecting something else.
+ *
+ * `%` is escaped first, so the escape itself cannot be forged: without it an id containing the literal text
+ * `%2F` would decode into a separator and the problem would return by another route.
+ */
+export const pathKey = (segments: readonly string[]): string =>
+    segments.map((s) => s.replaceAll('%', '%25').replaceAll('/', '%2F')).join('/');
+
+/** The address of a part. Built here rather than written out, so no caller restates the shape of an address. */
+export const componentPath = (componentId: string): string => pathKey(['root', 'components', componentId]);
+
+/** The address of one terminal of a part. */
+export const pinPath = (componentId: string, pinId: string): string =>
+    pathKey(['root', 'components', componentId, 'pins', pinId]);
+
+/** The address of a net. */
+export const netPath = (netId: string): string => pathKey(['root', 'nets', netId]);
+
 const ref = (kind: ObjectKind, id: string, parent: string[], componentId?: string): ObjectRef => ({
     kind,
     id,
@@ -154,7 +180,7 @@ export function buildObjectTree(circuit: CircuitJson, layout?: LayoutGeometry): 
     const byPath = new Map<string, TreeNode>();
 
     const add = (node: TreeNode): TreeNode => {
-        const path = node.ref.path.join('/');
+        const path = pathKey(node.ref.path);
         // First claim wins, and the loser is reported. `set` alone would make the LAST one win silently,
         // which is the same bug with worse ergonomics: the addressable object changes as the array order does.
         if (byPath.has(path)) ambiguous.push({ what: node.label, path });
@@ -326,5 +352,5 @@ export function buildObjectTree(circuit: CircuitJson, layout?: LayoutGeometry): 
 /** Resolve a selection back to its node. Returns undefined rather than throwing — a stale selection after a
  *  re-layout is ordinary, and the caller clears it. */
 export function nodeAt(tree: ObjectTree, path: string[]): TreeNode | undefined {
-    return tree.byPath.get(path.join('/'));
+    return tree.byPath.get(pathKey(path));
 }
