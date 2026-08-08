@@ -2219,6 +2219,99 @@ describe('a supply rail is marked, not wired', () => {
  * the verb — and the canvas was declared `role="img"`, which tells a screen reader it is a picture and that
  * everything in it, and every verb behind it, is not there.
  */
+describe('the wires while a part is being dragged', () => {
+    // The founder's words: dragging felt stiff and dishonest next to other editors — the wire swung through
+    // any angle the hand travelled, and the whole drawing changed shape at the moment of release. What is
+    // tested here is that the picture DURING the gesture obeys the same rule as the picture after it.
+    /**
+     * The points of a polyline, parsed.
+     *
+     * It ASSERTS that it parsed something, which is not fussiness. This was written as `split(/s+/)` — the
+     * letter s, not whitespace — so every wire came back as ONE point, `slice(1)` was empty, and `every()`
+     * on an empty array is true. The orthogonality test below passed with the defect it was written for put
+     * straight back. A parser that quietly returns one point makes every claim about segments vacuous.
+     */
+    const segmentsOf = (el: Element): Array<[number, number]> => {
+        const pts = el
+            .getAttribute('points')!
+            .trim()
+            .split(/\s+/)
+            .map((p) => p.split(',').map(Number) as [number, number]);
+        expect({ parsed: pts.length >= 2, from: el.getAttribute('points') }).toEqual({
+            parsed: true,
+            from: el.getAttribute('points'),
+        });
+        return pts;
+    };
+
+    /** The svg with a size, so a client point converts to a sheet point. Each describe has its own. */
+    const sized = (container: HTMLElement, w = 800, h = 600): SVGSVGElement => {
+        const svg = container.querySelector('svg')!;
+        svg.getBoundingClientRect = () =>
+            ({ width: w, height: h, x: 0, y: 0, top: 0, left: 0, right: w, bottom: h, toJSON: () => ({}) }) as DOMRect;
+        return svg;
+    };
+
+    const dragBy = (container: HTMLElement, id: string, dx: number, dy: number) => {
+        const svg = sized(container);
+        fireEvent.pointerDown(container.querySelector(`[data-testid="symbol-${id}"]`)!, {
+            pointerId: 77,
+            button: 0,
+            clientX: 300,
+            clientY: 300,
+        });
+        fireEvent.pointerMove(svg, { pointerId: 77, clientX: 300 + dx, clientY: 300 + dy });
+    };
+
+    it('keeps every wire at RIGHT ANGLES, whatever direction the drag went', () => {
+        // THE DEFECT. Only the end point moved, so the last segment took the angle of the hand: drag a part
+        // in a circle and its wire sweeps through 360°. On a drawing whose entire readability rests on
+        // right angles, that is the one thing the gesture must not do.
+        let inspected = 0;
+        for (const [dx, dy] of [
+            [60, 0],
+            [0, 60],
+            [60, 60],
+            [-80, 45],
+            [25, -110],
+        ] as const) {
+            const { container } = render(<SchematicCanvas circuit={CIRCUIT} onArrange={() => {}} />);
+            dragBy(container, 'r1', dx, dy);
+            for (const wire of container.querySelectorAll('polyline[data-net]')) {
+                inspected++;
+                const pts = segmentsOf(wire);
+                // A diagonal the ROUTER declared is exempt: it is a wire the module said it could not draw
+                // honestly at right angles, and a drag has no better idea than the router had.
+                if (wire.getAttribute('data-shape') === 'diagonal') continue;
+                const straight = pts.slice(1).every((p, i) => p[0] === pts[i]![0] || p[1] === pts[i]![1]);
+                expect({ dx, dy, net: wire.getAttribute('data-net'), straight }).toEqual({
+                    dx,
+                    dy,
+                    net: wire.getAttribute('data-net'),
+                    straight: true,
+                });
+            }
+        }
+        // THE DEVICE, CHECKED. A loop that inspected nothing passes every assertion inside it — and this one
+        // did: the whole test stayed green with the old endpoint-only stretch put back, because it was
+        // looking at zero wires and saying so to nobody.
+        expect({ inspected: inspected > 0 }).toEqual({ inspected: true });
+    });
+
+    it('keeps the wire attached to the part that moved', () => {
+        // The other half. A wire that stayed square by refusing to follow the part would show a connection
+        // that is not there, which is worse than the diagonal it replaced.
+        const before = render(<SchematicCanvas circuit={CIRCUIT} onArrange={() => {}} />);
+        const wiresBefore = [...before.container.querySelectorAll('polyline[data-net]')].map((w) =>
+            w.getAttribute('points'),
+        );
+        const { container } = render(<SchematicCanvas circuit={CIRCUIT} onArrange={() => {}} />);
+        dragBy(container, 'r1', 70, 40);
+        const wiresAfter = [...container.querySelectorAll('polyline[data-net]')].map((w) => w.getAttribute('points'));
+        expect(wiresAfter).not.toEqual(wiresBefore);
+    });
+});
+
 describe('a part whose id looks like another object’s address', () => {
     // Ids are ordinary data — a design merged from two sub-sheets or written by something else can carry a
     // slash. Addresses are built by joining, and joining is only unambiguous while no segment can hold the
