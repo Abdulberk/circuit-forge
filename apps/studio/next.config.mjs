@@ -9,6 +9,19 @@
  * @type {import('next').NextConfig}
  */
 const nextConfig = {
+    /**
+     * WHERE THE BUILD OUTPUT GOES, so a build cannot destroy a running dev server.
+     *
+     * They share `.next` by default: `next build` rewrites the chunk manifest that `next dev` is serving
+     * from, and the page then loads its shell and 404s on `main-app.js`, `layout.js` and `polyfills.js` —
+     * the browser shows a blank page that says "loading" forever, with the server answering 200 and nothing
+     * in its log to suggest a problem. It happened for real: a build run to verify a change took down the
+     * founder's editor, and the symptom pointed at the change rather than at the build.
+     *
+     * Verifying a build while somebody has the editor open is ordinary — it is what CI does and what anyone
+     * checking their own work does — so the two outputs are kept apart rather than the practice forbidden.
+     */
+    distDir: process.env.NEXT_DIST_DIR || '.next',
     reactStrictMode: true,
     eslint: {
         // Lint runs as its own task in the pipeline (`pnpm lint`), against the same root config as every

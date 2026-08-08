@@ -11,8 +11,9 @@
         "lint:fix": "eslint app lib components --ext .ts,.tsx --fix",
         "test": "jest --passWithNoTests",
         "typecheck": "tsc --noEmit",
-        "clean": "rm -rf .next coverage",
-        "test:e2e": "jest --testMatch \"**/*.e2e.spec.ts\" --testPathIgnorePatterns \"/node_modules/\" --runInBand"
+        "clean": "rm -rf .next .next-check coverage",
+        "test:e2e": "jest --testMatch \"**/*.e2e.spec.ts\" --testPathIgnorePatterns \"/node_modules/\" --runInBand",
+        "build:check": "node scripts/build-check.mjs"
     },
     "dependencies": {
         "@circuit-forge/eda-core": "workspace:*",
