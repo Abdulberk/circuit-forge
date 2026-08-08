@@ -1,4 +1,6 @@
 node_modules/
 .next/
+# A build run to VERIFY a change goes here, so it cannot overwrite what `next dev` is serving.
+.next-check/
 # Rewritten by `next build` on every run; Next owns it, so a committed copy only ever goes stale.
 next-env.d.ts
