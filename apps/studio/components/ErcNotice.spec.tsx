@@ -157,6 +157,37 @@ describe('the rule-check panel', () => {
         });
     });
 
+    it('shows the WORST first, so a truncated list never hides an error', () => {
+        // THE DEFECT. The list is truncated and it truncated in CHECK order — the order `runErc` happens to
+        // run its checks in, which means nothing to a reader. Measured on a real sheet with six unwired parts
+        // on it: the panel said "1 error", painted itself red, listed twelve dead-end-net warnings and
+        // "…and 7 more", and the error was not among them. The one thing saying the sheet cannot be built was
+        // counted, coloured, and never shown — and clicking it to find the part was impossible.
+        const problems = [
+            ...Array.from({ length: 14 }, (_, i) => issue('info', `N${i}`)),
+            ...Array.from({ length: 6 }, (_, i) => issue('warning', `W${i}`)),
+            issue('error', 'THE_ERROR', ['r1']),
+        ];
+        const { getByTestId } = render(<ErcNotice problems={problems} circuit={CIRCUIT} />);
+        const panel = getByTestId('erc-notice');
+        expect(panel.querySelector('[data-testid="erc-THE_ERROR"]')).not.toBeNull();
+        // …and the warnings come before the notes, for the same reason.
+        const shown = [...panel.querySelectorAll('button[data-severity]')].map((b) => b.getAttribute('data-severity'));
+        expect(shown[0]).toBe('error');
+        expect(shown.filter((s) => s === 'warning').length).toBeGreaterThan(0);
+    });
+
+    it('keeps the checker’s own order WITHIN a severity', () => {
+        // Sorting by severity must be stable: the checker groups related remarks together and a reader
+        // following the list down expects it to stay put.
+        const problems = [issue('warning', 'B'), issue('warning', 'A'), issue('error', 'E')];
+        const { getByTestId } = render(<ErcNotice problems={problems} circuit={CIRCUIT} />);
+        const codes = [...getByTestId('erc-notice').querySelectorAll('button[data-testid]')].map((b) =>
+            b.getAttribute('data-testid'),
+        );
+        expect(codes).toEqual(['erc-E', 'erc-B', 'erc-A']);
+    });
+
     it('summarises the tail rather than listing four hundred lines', () => {
         const many = Array.from({ length: 20 }, (_, i) => issue('warning', `W${i}`));
         const { getByTestId } = render(<ErcNotice problems={many} circuit={CIRCUIT} />);

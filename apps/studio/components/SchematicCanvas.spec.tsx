@@ -1908,6 +1908,39 @@ describe('a box selects, and Ctrl+D copies', () => {
         expect(picked).toContain('r1');
     });
 
+    it('does NOT destroy the selection when a shift-click lands on empty sheet', () => {
+        // THE DEFECT, and the existing test next to it passed only because `fireEvent` never synthesised the
+        // click a browser fires after a press and release on the same element. `endMarquee` refuses a box
+        // with no travel for exactly this reason — but nothing travelled, so the click-away handler ran and
+        // reported null. A user assembling a multi-part selection by shift-clicking lost all of it the first
+        // time one landed slightly off a part.
+        const seen: unknown[] = [];
+        const { container } = render(
+            <SchematicCanvas
+                circuit={CIRCUIT}
+                selectedPaths={['root/components/r1', 'root/components/r2']}
+                onSelect={(w) => seen.push(w)}
+            />,
+        );
+        const svg = sized(container);
+        fireEvent.pointerDown(svg, { pointerId: 90, button: 0, shiftKey: true, clientX: 3, clientY: 3 });
+        fireEvent.pointerUp(svg, { pointerId: 90, shiftKey: true, clientX: 3, clientY: 3 });
+        fireEvent.click(svg, { shiftKey: true, clientX: 3, clientY: 3 });
+        expect(seen).toEqual([]);
+    });
+
+    it('still clears the selection on a PLAIN click on empty sheet', () => {
+        // The other half: a click on nothing selects nothing, and with several things selected and keys that
+        // act on all of them, "how do I stop this being selected" must not need a lucky click.
+        const seen: unknown[] = [];
+        const { container } = render(
+            <SchematicCanvas circuit={CIRCUIT} selectedPaths={['root/components/r1']} onSelect={(w) => seen.push(w)} />,
+        );
+        const svg = sized(container);
+        fireEvent.click(svg, { clientX: 3, clientY: 3 });
+        expect(seen).toEqual([null]);
+    });
+
     it('marks what it has hold of BEFORE the pointer comes up', () => {
         // Without this the box is the drag all over again: you cannot tell what you have until it is done,
         // and if it is wrong you undo and draw it a second time. The whole cost the gesture exists to remove.

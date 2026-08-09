@@ -48,14 +48,26 @@ const refuse = (reason: EditRefusal, message: string): EditResult => ({ ok: fals
  */
 const isVariableArity = (type: ComponentType): boolean => (COMPONENT_PINS[type] ?? []).length === 0;
 
-/** The next free `R3`-style designator for a type, by scanning what the document already uses. */
+/**
+ * The next free `R3`-style designator for a type, by scanning what the document already uses.
+ *
+ * FREE AS A DESIGNATOR **AND** AS AN ID, because the id is derived from it a few lines below. Skipping only
+ * taken designators produced names whose derived id was already somebody else's, and the add was then
+ * refused — permanently, since nothing retried, and with a message naming an internal id the user has never
+ * seen. Measured on a shipped template: `01-alu-8bit` names its gates `g0`, `g1`, … with designators
+ * `U0`, `U1`, …, and the SPICE prefix for a VCCS is `G` — so the first free designator was `G1`, whose id
+ * `g1` was a logic gate, and no VCCS could ever be added to that design. The same trap closes on any
+ * document after one rename: rename `R9` to `R20` and the id stays `r9`, so the next resistor is refused.
+ */
 function nextDesignator(circuit: CircuitJson, type: ComponentType): string | null {
     const prefix = SPICE_PREFIXES[type];
     if (!prefix) return null; // composite types (transformer) have no single prefix
-    const taken = new Set((circuit.components ?? []).map((c) => c.designator.toUpperCase()));
+    const parts = circuit.components ?? [];
+    const takenNames = new Set(parts.map((c) => c.designator.toUpperCase()));
+    const takenIds = new Set(parts.map((c) => c.id));
     for (let n = 1; ; n++) {
         const candidate = `${prefix}${n}`;
-        if (!taken.has(candidate)) return candidate;
+        if (!takenNames.has(candidate) && !takenIds.has(candidate.toLowerCase())) return candidate;
     }
 }
 

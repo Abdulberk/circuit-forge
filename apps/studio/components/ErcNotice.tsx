@@ -39,6 +39,22 @@ export function ErcNotice({ problems, circuit, onSelect }: ErcNoticeProps): Reac
     // those, so the panel spent the entire middle of a design crying wolf.
     const tone = errors > 0 ? 'bad' : warnings > 0 ? 'warn' : 'info';
 
+    /**
+     * WORST FIRST, then as they came.
+     *
+     * The list is truncated, and it used to truncate in CHECK order — which is the order `runErc` happens to
+     * run its checks in, not an order that means anything to a reader. Measured on a real sheet with six
+     * unwired parts on it: the panel said "1 error", painted itself red, listed twelve dead-end-net warnings
+     * and "…and 7 more", and the error was not among them. So the one thing saying the sheet cannot be built
+     * was counted, coloured, and never shown — and the click-to-select path, which is the whole reason the
+     * panel exists, did not exist for exactly the issue that mattered most.
+     *
+     * A stable sort: within a severity the order is still the checker's, because that order groups related
+     * remarks together and a reader following the list down expects it to stay put.
+     */
+    const RANK = { error: 0, warning: 1, info: 2 } as const;
+    const ordered = [...problems].sort((a, b) => (RANK[a.severity] ?? 3) - (RANK[b.severity] ?? 3));
+
     return (
         <div className={`notice ${tone}`} data-testid="erc-notice">
             <h4>
@@ -53,7 +69,7 @@ export function ErcNotice({ problems, circuit, onSelect }: ErcNoticeProps): Reac
                 {counted(notes, 'note')}
             </h4>
             <ul>
-                {problems.slice(0, SHOWN).map((issue, i) => (
+                {ordered.slice(0, SHOWN).map((issue, i) => (
                     <li key={`${issue.code}:${issue.relatedIds.join(',')}:${i}`}>
                         <button
                             type="button"
