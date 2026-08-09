@@ -96,7 +96,7 @@ export interface RoutedSheet {
     fellBack: Fallback[];
 }
 
-interface Seg {
+export interface Seg {
     x1: number;
     y1: number;
     x2: number;
@@ -438,9 +438,15 @@ function routeOne(
 /**
  * Every wire on the sheet.
  *
- * THE STAR, kept here rather than in a renderer. A net is a SET of terminals that are one node; it carries
- * no order. Drawing A–B–C would state an order the netlist does not have and would invite the reader to
- * believe current reaches C through B. Spokes from one hub state the truth: everything meets at a point.
+ * THE TOPOLOGY IS DECIDED HERE, not in a renderer. A net is a SET of terminals that are one node and
+ * carries no order, so ANY tree over them depicts it correctly and the only question is which tree a reader
+ * would rather look at. It is a minimum spanning tree — see `treeOf` below, which explains why, and what a
+ * star cost before it.
+ *
+ * The worry a star answered was that drawing A–B–C states an order the netlist does not have. It does not:
+ * a junction DOT is what says "these meet", and `junctionsOf` puts one wherever a net branches. What the
+ * star actually produced was every wire converging on one arbitrary terminal, measured at three times the
+ * shortest tree over five terminals.
  *
  * ORDER MATTERS AND IS FIXED. Each net avoids the runs already claimed by earlier ones, so the result
  * depends on the order nets arrive in — and it is the caller's order, unshuffled, so the same document
@@ -609,6 +615,29 @@ function latticeWalk(lat: Lattice, points: readonly Point[]): number[] {
  * terminal's own lead — arriving from the body, opposite to the side its wire leaves on — contributes one.
  */
 function junctionsOf(segs: readonly Seg[], net: RouteNet, field: Field): Junction[] {
+    return junctionsAt(segs, net.id, (x, y) => field.pinsAt(x, y, net.id).map((p) => p.side));
+}
+
+/**
+ * The same rule, over GEOMETRY ALONE — so a caller that has moved the wires can ask again.
+ *
+ * A dot is not decoration: it means these wires are one node, and its absence means they merely cross. While
+ * a part is dragged the wires move and the dots did not, so a connection dot sat on empty sheet for the whole
+ * gesture — measured at 324 orphans across 553 drags on the product's own templates. Asking again is the only
+ * honest answer, and asking THIS function means the drag and the router cannot come to different conclusions
+ * about the same geometry.
+ *
+ * `sidesAt` reports the terminals of this net at a point, by the side each one leaves in. A terminal's own
+ * lead is a conductor like any other, which is why two wires meeting at a pin is three conductors and not two.
+ */
+/** Wire geometry as the junction rule wants it: axis-aligned pieces, each knowing its net. */
+export const segmentsOfWire = (points: readonly Point[]): Seg[] => segsOf(points);
+
+export function junctionsAt(
+    segs: readonly Seg[],
+    netId: string,
+    sidesAt: (x: number, y: number) => ReadonlyArray<RoutePin['side']>,
+): Junction[] {
     const seen = new Set<string>();
     const out: Junction[] = [];
 
@@ -651,12 +680,12 @@ function junctionsOf(segs: readonly Seg[], net: RouteNet, field: Field): Junctio
             }
             // The terminal's own lead, which is a conductor like any other and is why two wires meeting at a
             // pin is three conductors rather than two.
-            for (const p of field.pinsAt(x, y, net.id)) {
-                const [dx, dy] = STEP[p.side];
+            for (const side of sidesAt(x, y)) {
+                const [dx, dy] = STEP[side];
                 dirs.add(`${-dx},${-dy}`);
             }
 
-            if (dirs.size >= 3) out.push({ x, y, netId: net.id });
+            if (dirs.size >= 3) out.push({ x, y, netId });
         }
     }
     return out;
