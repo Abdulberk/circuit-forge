@@ -60,13 +60,21 @@ function fakeApi(over: Partial<Record<'search' | 'component', unknown>> = {}) {
     return { api, calls };
 }
 
-function fakeDoc() {
+/**
+ * A document with a CIRCUIT in it, because a real one always has.
+ *
+ * The stub used to carry only `apply`, which let the panel be tested without ever asking whether the edit
+ * would be accepted — and the panel duly reported "Placed …" for parts the kernel refuses. `doc.circuit` is
+ * what the panel now asks before it claims anything.
+ */
+function fakeDoc(circuit: unknown = { version: '1.0', components: [], nets: [] }) {
     const applied: unknown[] = [];
     const doc = {
+        circuit,
         refusal: null,
         notes: [],
         apply: (edit: (c: never) => { ok: boolean; changed?: boolean; circuit?: unknown }) => {
-            const r = edit({ version: '1.0', components: [], nets: [] } as never);
+            const r = edit(circuit as never);
             if (r.ok && r.changed) applied.push(r.circuit);
         },
     } as unknown as DocumentState;
@@ -213,17 +221,23 @@ describe('placing a real part', () => {
     });
 
     it('places a part the simulator cannot model, and SAYS why', async () => {
-        // Refusing would be the tool deciding a board may not contain a connector. Hiding the reason would
-        // let someone wonder later why simulation stopped covering half the design.
+        // Refusing would be the tool deciding a board may not contain an op-amp macromodel. Hiding the reason
+        // would let someone wonder later why simulation stopped covering half the design.
+        //
+        // ITS PINS COME FROM ITS MODEL. A subckt has no canonical pin list — its shape IS the `.subckt`
+        // declaration — so `ModelDef.ports` is what makes it placeable at all. Without that this panel
+        // reported "Placed …" over a document the kernel had refused, and this test asserted the message
+        // rather than the placement, so it agreed.
         const { api } = fakeApi({
             component: {
                 simulatable: false,
-                reason: 'no SPICE model for a mechanical connector',
+                reason: 'macromodel only — not a full transistor-level model',
                 component: { type: 'subckt', mpn: PART.mpn },
+                modelDef: { name: 'OPA333', ports: ['in+', 'in-', 'v+', 'v-', 'out'] },
                 catalog: PART,
             } as MappedPart,
         });
-        const { doc } = fakeDoc();
+        const { doc, applied } = fakeDoc();
         render(<PartLibrary api={api} doc={doc} />);
         type('10k');
         await settle();
@@ -235,7 +249,40 @@ describe('placing a real part', () => {
         });
 
         await waitFor(() => expect(screen.getByRole('status').textContent).toMatch(/will NOT be simulated/));
-        expect(screen.getByRole('status').textContent).toMatch(/mechanical connector/);
+        expect(screen.getByRole('status').textContent).toMatch(/macromodel only/);
+        // It really landed, with the pins its model declares.
+        await waitFor(() => expect(applied).toHaveLength(1));
+        const added = (applied[0] as { components: Array<{ pins: Array<{ pinId: string }> }> }).components[0]!;
+        expect(added.pins.map((q) => q.pinId)).toEqual(['in+', 'in-', 'v+', 'v-', 'out']);
+    });
+
+    it('does NOT claim it placed a part the kernel refused', async () => {
+        // THE DEFECT. `doc.apply` reports a refusal by setting state, not by returning, so the success line
+        // printed whether or not anything landed — and for a part with no pin shape nothing can. A mechanical
+        // connector mapped to a subckt with no model has no declared ports, and nobody can invent them.
+        const { api } = fakeApi({
+            component: {
+                simulatable: false,
+                reason: 'no SPICE model for a mechanical connector',
+                component: { type: 'subckt', mpn: PART.mpn },
+                catalog: PART,
+            } as MappedPart,
+        });
+        const { doc, applied } = fakeDoc();
+        render(<PartLibrary api={api} doc={doc} />);
+        type('10k');
+        await settle();
+        await waitFor(() => screen.getByText('Place'));
+
+        await act(async () => {
+            screen.getByText('Place').click();
+            await Promise.resolve();
+        });
+
+        await waitFor(() => expect(screen.getByRole('status').textContent).toMatch(/was not placed/));
+        // The kernel's own words, so a user knows why rather than retrying something that cannot work.
+        expect(screen.getByRole('status').textContent).toMatch(/no fixed pin list/);
+        expect(applied).toHaveLength(0);
     });
 
     it('says plainly when a catalogue part cannot be represented at all', async () => {

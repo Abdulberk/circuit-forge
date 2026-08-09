@@ -1051,6 +1051,12 @@ export function SchematicCanvas({
             onClick={(e) => {
                 // A pan ends here too, and a pan is not a click on the sheet.
                 if (gestured.current) return;
+                // SHIFT MEANS EXTEND, and extending by nothing is nothing. `endMarquee` already refuses a box
+                // with no travel for exactly this reason — but the browser fires a click after the press and
+                // release anyway, nothing travelled so `gestured` is false, and the selection the user was
+                // assembling was destroyed by one shift-click that landed slightly off a part. The guard in
+                // `endMarquee` was answering the pointer gesture; this is the click that follows it.
+                if (e.shiftKey) return;
                 if (e.target === e.currentTarget) onSelect?.(null);
             }}
             onContextMenu={(e) => {

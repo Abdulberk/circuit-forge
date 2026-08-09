@@ -9,6 +9,7 @@
  */
 import type { CircuitJson } from '@circuit-forge/eda-core';
 
+import { setDesignator } from './edits';
 import { addComponent, deleteComponent } from './parts';
 
 const CIRCUIT: CircuitJson = {
@@ -211,5 +212,77 @@ describe('a part built to an authored shape', () => {
         if (!r.ok || !r.changed) return;
         const pins = r.circuit.components!.at(-1)!.pins;
         expect(new Set(pins.map((q) => q.netId)).size).toBe(3);
+    });
+});
+
+describe('naming a new part', () => {
+    /**
+     * The id is DERIVED from the designator, so a designator whose id is already taken is not free.
+     *
+     * Skipping only taken DESIGNATORS produced names the add then refused — permanently, since nothing
+     * retried, and with a message naming an internal id the user has never seen. Measured on a shipped
+     * template: `01-alu-8bit` names its gates `g0`, `g1`, … with designators `U0`, `U1`, …, and the SPICE
+     * prefix for a VCCS is `G` — so the first free designator was `G1`, whose id belonged to a logic gate,
+     * and no VCCS could ever be added to that design.
+     */
+    const withOddIds: CircuitJson = {
+        version: '1.0',
+        components: [
+            // Designator U1, id r1 — legal, and exactly the shape a generated or imported design produces.
+            { id: 'r1', type: 'resistor', designator: 'U1', value: '1k', pins: [{ pinId: '1', netId: 'a' }] },
+        ] as never,
+        nets: [{ id: 'a', name: 'A' }],
+    };
+
+    it('skips a designator whose ID is already somebody else’s', () => {
+        const r = addComponent(withOddIds, { type: 'resistor', value: '10k' });
+        expect(r.ok).toBe(true);
+        if (!r.ok || !r.changed) return;
+        const made = r.circuit.components!.at(-1)!;
+        expect(made.designator).toBe('R2');
+        expect(made.id).toBe('r2');
+    });
+
+    it('keeps working after a RENAME, which is where this trap closes on any document', () => {
+        // Rename R9 to R20 and the id stays r9. The next resistor wants R9 — free as a name, taken as an id.
+        let circuit: CircuitJson = { version: '1.0', components: [] as never, nets: [] };
+        const first = addComponent(circuit, { type: 'resistor', value: '1k' });
+        expect(first.ok).toBe(true);
+        if (!first.ok || !first.changed) return;
+        circuit = first.circuit;
+        const renamed = setDesignator(circuit, first.circuit.components!.at(-1)!.id, 'R20');
+        expect(renamed.ok).toBe(true);
+        if (!renamed.ok || !renamed.changed) return;
+
+        // Ten in a row: the old rule refused all ten identically.
+        let next = renamed.circuit;
+        for (let i = 0; i < 10; i++) {
+            const r = addComponent(next, { type: 'resistor', value: '1k' });
+            expect({ attempt: i, ok: r.ok }).toEqual({ attempt: i, ok: true });
+            if (!r.ok || !r.changed) return;
+            next = r.circuit;
+        }
+        expect(next.components!.length).toBe(11);
+    });
+
+    it('still never hands out a designator somebody already has', () => {
+        // The other half of the bargain: widening what counts as taken must not narrow it. The fixture has
+        // to be one where the NAME is taken and its id is not — `withOddIds` is the mirror case and the
+        // first version of this test used it, so dropping the name check entirely left the test green.
+        const nameTaken: CircuitJson = {
+            version: '1.0',
+            components: [
+                { id: 'x1', type: 'resistor', designator: 'R1', value: '1k', pins: [{ pinId: '1', netId: 'a' }] },
+            ] as never,
+            nets: [{ id: 'a', name: 'A' }],
+        };
+        const r = addComponent(nameTaken, { type: 'resistor', value: '10k' });
+        expect(r.ok).toBe(true);
+        if (!r.ok || !r.changed) return;
+        expect(r.circuit.components!.at(-1)!.designator).not.toBe('R1');
+        const names = r.circuit.components!.map((c) => c.designator.toUpperCase());
+        expect(new Set(names).size).toBe(names.length);
+        const ids = r.circuit.components!.map((c) => c.id);
+        expect(new Set(ids).size).toBe(ids.length);
     });
 });

@@ -52,7 +52,13 @@ export function PartLibrary({ api, doc }: { api: Api; doc: DocumentState }) {
     const [busy, setBusy] = useState(false);
     const [error, setError] = useState<ApiError | null>(null);
     const [placing, setPlacing] = useState<string | null>(null);
-    const [placed, setPlaced] = useState<MappedPart | null>(null);
+    /**
+     * What happened to the last attempt.
+     *
+     * THREE OUTCOMES, not two. It used to be "we could not represent it" or "placed" — and the third,
+     * "the kernel refused it", was reported as the second. `refusal` carries the kernel's own words.
+     */
+    const [placed, setPlaced] = useState<(MappedPart & { refusal?: string }) | null>(null);
     const inFlight = useRef<AbortController | null>(null);
 
     useEffect(() => {
@@ -99,19 +105,37 @@ export function PartLibrary({ api, doc }: { api: Api; doc: DocumentState }) {
                     return;
                 }
                 const c = mapped.component;
-                doc.apply((circuit) =>
-                    addComponent(circuit, {
-                        type: c.type as Parameters<typeof addComponent>[1]['type'],
-                        value: c.value,
-                        model: c.model,
-                        mpn: c.mpn ?? part.mpn,
-                        manufacturer: c.manufacturer ?? part.manufacturer,
-                        footprint: c.footprint ?? part.footprint,
-                        tolerance: c.tolerance,
-                        toleranceSource: c.toleranceSource,
-                        sourcing: c.sourcing,
-                    }),
-                );
+                // ASKED BEFORE CLAIMED. `doc.apply` reports a refusal by setting state, not by returning, so
+                // the success message below used to print whether or not the part landed — and it never
+                // landed for a whole slice of the catalogue: the API maps connectors, bridge rectifiers, TVS
+                // arrays, resistor networks and colourless LEDs to `generic`, which has no fixed pin list, so
+                // `addComponent` refuses it. The panel said "Placed KBP206G." over a design that had not
+                // changed. Run against the current circuit first — the edit is pure and deterministic, the
+                // same double-run the copy handler already relies on — and only claim what actually happened.
+                const spec = {
+                    type: c.type as Parameters<typeof addComponent>[1]['type'],
+                    value: c.value,
+                    model: c.model,
+                    mpn: c.mpn ?? part.mpn,
+                    manufacturer: c.manufacturer ?? part.manufacturer,
+                    footprint: c.footprint ?? part.footprint,
+                    tolerance: c.tolerance,
+                    toleranceSource: c.toleranceSource,
+                    sourcing: c.sourcing,
+                    // THE MACROMODEL'S OWN PORTS, where there are any. A catalogue part that maps to a
+                    // `subckt` has no canonical pin list — its shape IS its model's `.subckt` declaration —
+                    // so without this the kernel refuses it and the whole subckt slice of the catalogue is
+                    // unplaceable. `ModelDef.ports` exists for exactly this and the API already sends it.
+                    ...(Array.isArray(mapped.modelDef?.ports) && mapped.modelDef.ports.length > 0
+                        ? { pins: mapped.modelDef.ports }
+                        : {}),
+                } as const;
+                const attempt = doc.circuit ? addComponent(doc.circuit, spec) : null;
+                if (!attempt || !attempt.ok) {
+                    setPlaced({ ...mapped, refusal: attempt && !attempt.ok ? attempt.message : 'No design is open.' });
+                    return;
+                }
+                doc.apply((circuit) => addComponent(circuit, spec));
                 setPlaced(mapped);
             } catch (e: unknown) {
                 setError(e instanceof ApiError ? e : new ApiError('unexpected', String(e)));
@@ -144,8 +168,24 @@ export function PartLibrary({ api, doc }: { api: Api; doc: DocumentState }) {
             {items?.length === 0 && <p className="empty">No parts matched.</p>}
 
             {placed && (
-                <div className={placed.simulatable ? 'notice' : 'notice bad'} role="status">
-                    {placed.component ? (
+                <div
+                    className={
+                        placed.refusal || !placed.component
+                            ? 'notice bad'
+                            : placed.simulatable
+                              ? 'notice'
+                              : 'notice bad'
+                    }
+                    role="status"
+                >
+                    {placed.refusal ? (
+                        // THE KERNEL'S OWN WORDS. A part the design refused is not a part that was placed,
+                        // and saying so with the reason is the difference between a user retrying something
+                        // that cannot work and a user knowing why.
+                        <>
+                            {placed.catalog.mpn} was not placed: {placed.refusal}
+                        </>
+                    ) : placed.component ? (
                         placed.simulatable ? (
                             <>Placed {placed.catalog.mpn}.</>
                         ) : (

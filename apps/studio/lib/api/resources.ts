@@ -220,8 +220,14 @@ export interface MappedPart {
         toleranceSource?: 'user' | 'catalog';
         sourcing?: Record<string, unknown>;
     };
-    /** The SPICE model body to add alongside the component, for active devices. */
-    modelDef?: { name: string; [k: string]: unknown };
+    /**
+     * The SPICE model body to add alongside the component, for active devices.
+     *
+     * `ports` is narrowed out of the rest because the library READS it: a catalogue part that maps to a
+     * subckt has no fixed pin list of its own, and its macromodel's declared port order is the only thing
+     * that says what its pins are called. Without it the part could not be placed at all.
+     */
+    modelDef?: { name: string; ports?: string[]; [k: string]: unknown };
     catalog: CatalogPart;
 }
 
