@@ -381,3 +381,74 @@ describe('the shapes a part can actually have', () => {
         expect(copy.pins.find((q) => q.pinId === '2')!.netId).not.toBe('out');
     });
 });
+
+describe('a value that is also wiring', () => {
+    /**
+     * A behavioural source's value is an expression over NODES — `V=v(mid)*2` — and the netlist generator
+     * resolves those names against the circuit's nets. Copied verbatim, the copy's pins were correctly cut
+     * onto fresh private nets while its expression went on reading the ORIGINAL's nodes: silently joined to
+     * the rest of the design, which is the one thing this function's header promises never to do.
+     */
+    const B = (id: string, value: string, a: string, b: string) => ({
+        id,
+        type: 'bsource',
+        designator: id.toUpperCase(),
+        value,
+        pins: [
+            { pinId: '+', netId: a },
+            { pinId: '-', netId: b },
+        ],
+    });
+
+    const withSource = (value: string): CircuitJson =>
+        ({
+            version: '1.0',
+            components: [R('r1', 'in', 'mid'), R('r2', 'mid', 'gnd'), B('b1', value, 'mid', 'gnd')],
+            nets: [{ id: 'in' }, { id: 'mid' }, { id: 'gnd', isGround: true }],
+        }) as unknown as CircuitJson;
+
+    it('re-points a reference to a node that TRAVELLED with the selection', () => {
+        // `mid` has two terminals inside the selection, so it is copied — and the expression must follow the
+        // copy exactly as the pins do.
+        const out = duplicateComponents(withSource('V=v(mid)*2'), ['r1', 'r2', 'b1']);
+        expect(out.ok && out.changed).toBe(true);
+        if (!out.ok || !out.changed) return;
+        const copy = out.circuit.components!.find((c) => c.designator === 'B2')! as {
+            value?: string;
+            pins: Array<{ netId: string }>;
+        };
+        expect(copy.value).not.toContain('v(mid)');
+        // It reads the node its own + pin is on, which is what the original did.
+        expect(copy.value).toContain(`v(${copy.pins[0]!.netId})`);
+    });
+
+    it('REPORTS a reference it cannot re-point, rather than leaving it silent', () => {
+        // Copy the source alone: there is no copy of `mid` to point at, so the expression still reads the
+        // original's node. That is a connection to the rest of the design, and the user cannot undo what
+        // nobody told them about.
+        const out = duplicateComponents(withSource('V=v(mid)*2'), ['b1']);
+        expect(out.ok && out.changed).toBe(true);
+        if (!out.ok || !out.changed) return;
+        expect(out.note ?? '').toContain('reads node mid');
+    });
+
+    it('leaves a RAIL reference alone and says nothing about it', () => {
+        // Ground is shared by definition — the pins are shared too — so reading it is not a connection the
+        // copy acquired, and reporting it would be noise on every copy of every source.
+        const out = duplicateComponents(withSource('V=v(gnd)*2'), ['b1']);
+        expect(out.ok && out.changed).toBe(true);
+        if (!out.ok || !out.changed) return;
+        const copy = out.circuit.components!.find((c) => c.designator === 'B2')! as { value?: string };
+        expect(copy.value).toBe('V=v(gnd)*2');
+        expect(out.note ?? '').not.toContain('reads node');
+    });
+
+    it('touches nothing on a part whose value is not an expression', () => {
+        // A resistor's `1k` must not be mangled by a rule about node references.
+        const out = duplicateComponents(withSource('V=v(mid)*2'), ['r1']);
+        expect(out.ok && out.changed).toBe(true);
+        if (!out.ok || !out.changed) return;
+        const copy = out.circuit.components!.find((c) => c.id === out.created![0])! as { value?: string };
+        expect(copy.value).toBe('1k');
+    });
+});
