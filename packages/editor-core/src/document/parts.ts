@@ -369,6 +369,37 @@ export function duplicateComponents(circuit: CircuitJson, ids: readonly string[]
         };
     }
 
+    // A VALUE THAT IS ALSO WIRING, rewritten HERE — after every copy exists, so the net mapping is complete.
+    //
+    // A behavioural source's value is an expression over NODES (`V=v(mid)*2`) and the netlist generator
+    // resolves those names against the circuit's nets. Copied verbatim, a copy's pins were correctly cut
+    // onto fresh private nets while its expression went on reading the ORIGINAL's nodes — silently joined to
+    // the rest of the design, which is the one thing this function's header promises never to do.
+    //
+    // Inside the loop this would depend on which part came first in the array: `netFor` fills as pins are
+    // re-pointed, so a source listed before the parts it reads would have seen an empty map.
+    //
+    // What CAN be re-pointed is a node that travelled with the selection. What cannot — a node with no copy
+    // to point at — is left alone and REPORTED, because an expression cannot be cut the way a wire can and a
+    // user who is not told cannot see it in order to undo it.
+    const stillReaching = new Set<string>();
+    next = {
+        ...next,
+        components: (next.components ?? []).map((c) => {
+            if (!created.includes(c.id)) return c;
+            const value = (c as { value?: string }).value;
+            if (typeof value !== 'string' || !/\bv\s*\(/i.test(value)) return c;
+            const rewritten = value.replace(/\bv\s*\(\s*([^),\s]+)\s*\)/gi, (whole, ref: string) => {
+                if (shared.has(ref)) return whole; // a rail is shared by definition, and so are its pins
+                const to = netFor.get(ref);
+                if (to) return whole.replace(ref, to);
+                stillReaching.add(`${c.designator} reads node ${ref}`);
+                return whole;
+            });
+            return rewritten === value ? c : ({ ...c, value: rewritten } as typeof c);
+        }),
+    };
+
     // ONCE, at the end, and against a set built in one pass. Pruning inside the loop re-read every net
     // against every pin of every component for every part copied — quadratic in the size of the SHEET, not of
     // the selection, so duplicating a handful of parts on a large design took over a second while the sheet
@@ -386,8 +417,15 @@ export function duplicateComponents(circuit: CircuitJson, ids: readonly string[]
         // `created` no longer lines up with the ids it was ASKED about now that markers are skipped.
         derivedFrom: originals.map((c) => c!.id),
         note:
-            created.length === 1
-                ? undefined
-                : `Copied ${created.length} parts; connections among them were kept, connections to the rest of the design were not.`,
+            [
+                created.length === 1
+                    ? undefined
+                    : `Copied ${created.length} parts; connections among them were kept, connections to the rest of the design were not.`,
+                stillReaching.size > 0
+                    ? `${[...stillReaching].join('; ')} — an expression cannot be cut the way a wire can, so the copy still reads the original's node.`
+                    : undefined,
+            ]
+                .filter(Boolean)
+                .join(' ') || undefined,
     };
 }

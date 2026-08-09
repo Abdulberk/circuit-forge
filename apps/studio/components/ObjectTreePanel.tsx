@@ -14,14 +14,7 @@
  */
 
 import type { CircuitJson } from '@circuit-forge/eda-core';
-import {
-    buildObjectTree,
-    nodeAt,
-    pathKey,
-    type ObjectTree,
-    type SelectMode,
-    type TreeNode,
-} from '@circuit-forge/editor-core';
+import { buildObjectTree, pathKey, type ObjectTree, type SelectMode, type TreeNode } from '@circuit-forge/editor-core';
 import type { LayoutGeometry } from '@circuit-forge/pcb-contract';
 import { useMemo, useState } from 'react';
 
@@ -36,15 +29,26 @@ const COLLAPSED_BY_DEFAULT = new Set<string>();
  * Keyboard movement is DOWN THE SCREEN, not down the data: a row inside a folded group is not somewhere the
  * caret may land, because the user cannot see where they went.
  */
-function visibleRows(node: TreeNode, collapsed: ReadonlySet<string>, out: string[] = []): string[] {
-    const path = key(node);
-    out.push(path);
-    if (!collapsed.has(path)) for (const child of node.children) visibleRows(child, collapsed, out);
+function visibleRows(node: TreeNode, collapsed: ReadonlySet<string>, seat = '0', out: string[] = []): string[] {
+    out.push(seat);
+    if (!collapsed.has(key(node)))
+        node.children.forEach((child, i) => visibleRows(child, collapsed, `${seat}.${i}`, out));
     return out;
 }
 
+/**
+ * WHERE A ROW SITS IN THE TREE, which is not the same as what object it addresses.
+ *
+ * Two components CAN share an id — this kernel supports it on purpose and reports it as `ambiguous` rather
+ * than dropping one — and then two rows carry the same address. Keyed by address, React was handed the same
+ * key twice and said so; worse, the caret resolved by `indexOf` and the focus lookup took the first DOM
+ * match, so pressing Down on the second row jumped BACKWARDS into the first one's subtree and everything
+ * below it was unreachable from a keyboard. A seat is a path of child indices and is unique by construction.
+ */
 interface RowProps {
     node: TreeNode;
+    /** This row's position in the tree, e.g. `0.2.1`. Unique even when two rows address one object. */
+    seat: string;
     depth: number;
     collapsed: Set<string>;
     selected: ReadonlySet<string>;
@@ -55,7 +59,7 @@ interface RowProps {
     onMove: (from: string, key: string) => void;
 }
 
-function Row({ node, depth, collapsed, selected, active, onToggle, onSelect, onMove }: RowProps) {
+function Row({ node, seat, depth, collapsed, selected, active, onToggle, onSelect, onMove }: RowProps) {
     const path = key(node);
     const hasChildren = node.children.length > 0;
     const isCollapsed = collapsed.has(path);
@@ -69,11 +73,12 @@ function Row({ node, depth, collapsed, selected, active, onToggle, onSelect, onM
                 aria-expanded={hasChildren ? !isCollapsed : undefined}
                 aria-level={depth + 1}
                 data-path={path}
+                data-seat={seat}
                 // ONE TAB STOP FOR THE WHOLE TREE — the roving-tabindex pattern every tree control uses.
                 // Every row was tabbable, which on a four-hundred-part design is TWO THOUSAND presses of Tab
                 // to reach whatever is after the panel. Measured. Inside the tree you move with the arrows,
                 // which is what a tree is for and what this component's own help text already promised.
-                tabIndex={path === active ? 0 : -1}
+                tabIndex={seat === active ? 0 : -1}
                 style={{ paddingLeft: 6 + depth * 13 }}
                 // Shift extends the selection. WHAT that means — add, remove, replace — is decided one layer
                 // up, so this panel and the canvas cannot come to different conclusions about the same key.
@@ -105,7 +110,7 @@ function Row({ node, depth, collapsed, selected, active, onToggle, onSelect, onM
                         // it is worse than silence: it sends somebody looking for a way through that is not
                         // there.
                         e.preventDefault();
-                        onMove(path, e.key);
+                        onMove(seat, e.key);
                     }
                 }}
             >
@@ -123,9 +128,10 @@ function Row({ node, depth, collapsed, selected, active, onToggle, onSelect, onM
             </div>
             {hasChildren &&
                 !isCollapsed &&
-                node.children.map((child) => (
+                node.children.map((child, i) => (
                     <Row
-                        key={key(child)}
+                        key={`${seat}.${i}`}
+                        seat={`${seat}.${i}`}
                         node={child}
                         depth={depth + 1}
                         collapsed={collapsed}
@@ -185,7 +191,16 @@ export function ObjectTreePanel({
 
     if (!tree) return <p className="empty">No design loaded.</p>;
 
-    const select = (path: string, mode: SelectMode) => onSelect?.(nodeAt(tree, path.split('/')) ?? null, mode);
+    /**
+     * Resolve a row's ADDRESS, which is already escaped — do not take it apart.
+     *
+     * `pathKey` escapes `%` and `/` inside a segment so an id carrying a separator stays addressable.
+     * Splitting that escaped string on `/` and handing the pieces to `nodeAt` escapes them a SECOND time
+     * (`%2F` becomes `%252F`), so the lookup missed — and a miss becomes `null`, which the one selection
+     * rule reads as CLEAR. Clicking a row whose id contained a slash therefore failed to select it AND
+     * destroyed whatever the user already had. The map is keyed by exactly this string; ask it directly.
+     */
+    const select = (path: string, mode: SelectMode) => onSelect?.(tree.byPath.get(path) ?? null, mode);
 
     const rows = visibleRows(tree.root, collapsed);
     const caret = active !== null && rows.includes(active) ? active : (rows[0] ?? null);
@@ -225,8 +240,8 @@ export function ObjectTreePanel({
         // browsers and in the test environment. Reading the attribute back and comparing needs no escaping
         // and cannot be broken by an id containing a quote.
         requestAnimationFrame(() => {
-            const el = [...document.querySelectorAll<HTMLElement>('[data-path]')].find(
-                (row) => row.getAttribute('data-path') === path,
+            const el = [...document.querySelectorAll<HTMLElement>('[data-seat]')].find(
+                (row) => row.getAttribute('data-seat') === path,
             );
             el?.focus();
         });
@@ -249,6 +264,7 @@ export function ObjectTreePanel({
                         return next;
                     })
                 }
+                seat="0"
                 active={caret}
                 onSelect={select}
                 onMove={move}
