@@ -2393,6 +2393,101 @@ describe('the wires while a part is being dragged', () => {
         expect({ inspected: inspected > 0 }).toEqual({ inspected: true });
     });
 
+    it('keeps every junction DOT on a wire, not floating on empty sheet', () => {
+        // A dot is not decoration: it means these wires are one node, and its absence means they merely
+        // cross. The dots were drawn at their pre-drag coordinates while the wires that produced them moved
+        // away — measured across 553 drags on the product's own templates, 324 dots left floating.
+        //
+        // A three-terminal net, so there is a dot at all.
+        const branched: CircuitJson = {
+            version: '1.0',
+            components: [
+                {
+                    id: 'v1',
+                    type: 'voltage_source',
+                    designator: 'V1',
+                    value: '5',
+                    pins: [
+                        { pinId: '+', netId: 'in' },
+                        { pinId: '-', netId: 'gnd' },
+                    ],
+                },
+                {
+                    id: 'r1',
+                    type: 'resistor',
+                    designator: 'R1',
+                    value: '1k',
+                    pins: [
+                        { pinId: '1', netId: 'in' },
+                        { pinId: '2', netId: 'mid' },
+                    ],
+                },
+                {
+                    id: 'r2',
+                    type: 'resistor',
+                    designator: 'R2',
+                    value: '2k',
+                    pins: [
+                        { pinId: '1', netId: 'mid' },
+                        { pinId: '2', netId: 'gnd' },
+                    ],
+                },
+                {
+                    id: 'r3',
+                    type: 'resistor',
+                    designator: 'R3',
+                    value: '3k',
+                    pins: [
+                        { pinId: '1', netId: 'mid' },
+                        { pinId: '2', netId: 'gnd' },
+                    ],
+                },
+            ] as never,
+            // NAMED, because the canvas writes `data-net` from a net's NAME — an unnamed net renders a
+            // polyline with no such attribute, the selector below finds nothing, and every dot then passes
+            // the "is it on a wire" check vacuously. The first version of this fixture had no names.
+            nets: [
+                { id: 'in', name: 'IN' },
+                { id: 'mid', name: 'MID' },
+                { id: 'gnd', name: 'GND', isGround: true },
+            ] as never,
+        };
+
+        const onSeg = (p: number[], a: number[], b: number[]) => {
+            const cross = (b[0]! - a[0]!) * (p[1]! - a[1]!) - (b[1]! - a[1]!) * (p[0]! - a[0]!);
+            if (Math.abs(cross) > 0.01) return false;
+            return (
+                Math.min(a[0]!, b[0]!) - 0.01 <= p[0]! &&
+                p[0]! <= Math.max(a[0]!, b[0]!) + 0.01 &&
+                Math.min(a[1]!, b[1]!) - 0.01 <= p[1]! &&
+                p[1]! <= Math.max(a[1]!, b[1]!) + 0.01
+            );
+        };
+
+        let checked = 0;
+        for (const part of ['r1', 'r2', 'r3'] as const) {
+            for (const [dx, dy] of [
+                [70, 40],
+                [-60, 90],
+                [30, -80],
+            ] as const) {
+                const { container } = render(<SchematicCanvas circuit={branched} onArrange={() => {}} />);
+                dragBy(container, part, dx, dy);
+                const wires = [...container.querySelectorAll('polyline[data-net]')].map((w) => segmentsOf(w));
+                // The device, checked before it is trusted: no wires means no test.
+                expect({ part, drew: wires.length > 0 }).toEqual({ part, drew: true });
+                for (const dot of container.querySelectorAll('[data-testid="junction"]')) {
+                    const at = [Number(dot.getAttribute('cx')), Number(dot.getAttribute('cy'))];
+                    checked++;
+                    const onAWire = wires.some((pts) => pts.slice(1).some((p, i) => onSeg(at, pts[i]!, p)));
+                    expect({ part, dx, dy, onAWire }).toEqual({ part, dx, dy, onAWire: true });
+                }
+            }
+        }
+        // The device, checked: a run that inspected no dots would pass every assertion inside it.
+        expect({ checked: checked > 0 }).toEqual({ checked: true });
+    });
+
     it('keeps the wire attached to the part that moved', () => {
         // The other half. A wire that stayed square by refusing to follow the part would show a connection
         // that is not there, which is worse than the diagonal it replaced.

@@ -565,6 +565,12 @@ export function useDocument(
                 const result = commit(current, label, edits, drawing);
                 if (!result.ok) {
                     setRefusal({ reason: result.reason, message: result.message });
+                    // AND CLEAR THE LAST EDIT'S COST. The two banners sit next to each other, so a note left
+                    // standing under a refusal reads as a description of the edit that did NOT happen —
+                    // "that would short GND to VCC" with "MID merged into VOUT." directly beneath it. The
+                    // note describes the last thing that DID happen, and after a refusal that is no longer
+                    // the last thing the user tried.
+                    setNotes([]);
                     return current;
                 }
                 setRefusal(null);

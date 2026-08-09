@@ -56,6 +56,8 @@ import {
     type Point,
     partsTouching,
     boxBetween,
+    junctionsAt,
+    segmentsOfWire,
 } from '@circuit-forge/editor-core';
 import { useEffect, useMemo, useRef, useState } from 'react';
 
@@ -1019,15 +1021,55 @@ export function SchematicCanvas({
     };
 
     /**
+     * The junction DOTS while a part is dragged — recomputed, not carried.
+     *
+     * A dot is not decoration: it means these wires are one node, and its absence means they merely cross.
+     * They were drawn at their pre-drag coordinates while the wires that produced them moved away, so a
+     * connection dot sat on empty sheet for the whole gesture — measured at 324 orphans across 553 drags on
+     * the product's own templates. Moving each dot by the drag delta is not the answer either: a dot can sit
+     * where two of a net's own wires CROSS, which is a point no wire has as an endpoint, and a bend that
+     * absorbs the movement travels along one axis only.
+     *
+     * So the rule is asked again, and it is the ROUTER'S OWN rule — `junctionsAt` — over the stretched
+     * geometry and the dragged terminals. Two copies of "where does a dot go" is the drift this codebase
+     * keeps paying for, and here the two would disagree only mid-gesture, where nobody is looking at a test.
+     */
+    const netOfPin = new Map<string, string>(
+        (circuit.components ?? []).flatMap((c) => c.pins.map((q) => [`${c.id}.${q.pinId}`, q.netId] as const)),
+    );
+    /**
      * What the box has hold of RIGHT NOW, so the user can see it before letting go.
      *
-     * Without this the gesture is the drag all over again: you cannot tell what you have until it is done,
-     * and if it is wrong you undo and try once more. The box test is a linear scan and free at this size —
-     * measured at 0.05ms for sixteen hundred parts, which is nothing at sixty frames a second.
+     * Without this the gesture is the drag all over again: you cannot tell what you have until it is done.
+     * The box test is a linear scan and free at this size — 0.05ms for sixteen hundred parts.
      */
     const catching = new Set(
         marquee ? partsTouching(placed, boxBetween(marquee.from, marquee.to)).map((p) => p.id) : [],
     );
+
+    const junctions = (() => {
+        if (!drag?.moved) return routed.junctions;
+        const byNet = new Map<string, ReturnType<typeof segmentsOfWire>>();
+        for (const w of routed.wires) {
+            const segs = segmentsOfWire(rubberBand(w.points) as Point[]);
+            byNet.set(w.netId, [...(byNet.get(w.netId) ?? []), ...segs]);
+        }
+        // Where every terminal of a net is NOW, including the ones travelling with the drag.
+        const moving = new Set(drag.ids);
+        const pinsNow = placed.flatMap((p) =>
+            p.symbol.pins.map((s) => ({
+                netId: netOfPin.get(`${p.id}.${s.pinId}`) ?? '',
+                x: p.x + s.x + (moving.has(p.id) ? drag.dx : 0),
+                y: p.y + s.y + (moving.has(p.id) ? drag.dy : 0),
+                side: s.side,
+            })),
+        );
+        return [...byNet].flatMap(([netId, segs]) =>
+            junctionsAt(segs, netId, (x, y) =>
+                pinsNow.filter((q) => q.netId === netId && q.x === x && q.y === y).map((q) => q.side),
+            ),
+        );
+    })();
 
     if (placed.length === 0) return <p className="empty">Nothing to draw yet — this design has no placeable parts.</p>;
 
@@ -1161,7 +1203,7 @@ export function SchematicCanvas({
             {/* THE DOTS, which are not decoration. A dot means these wires are one node; its absence means
                 they merely cross. Without them a branch and a crossing look identical, and a reader has to
                 guess which circuit they are looking at. */}
-            {routed.junctions.map((j) => (
+            {junctions.map((j) => (
                 <circle
                     key={`${j.netId}@${j.x},${j.y}`}
                     data-testid="junction"

@@ -983,4 +983,19 @@ describe('an edit that destroys something says so', () => {
         expect(screen.getByTestId('refusal').textContent).toBe('no-such-pin');
         expect(notes()).toBe('—');
     });
+
+    it('does not leave the LAST edit’s note standing under a refusal', () => {
+        // The two banners sit next to each other on the page, so a note left over reads as a description of
+        // the edit that did NOT happen — "that would short GND to VCC" with "N2 merged into N1." directly
+        // beneath it. The test above starts from a clean state and so passed without any clearing at all;
+        // the defect only appears in the SEQUENCE.
+        const { api } = conditionalSave('T0');
+        render(<Harness api={api} opened={asDraft('T0')} store={memoryDraftStore()} />);
+
+        click('connect');
+        expect(notes()).toBe('N2 merged into N1.');
+        click('connect-self');
+        expect(screen.getByTestId('refusal').textContent).toBe('no-such-pin');
+        expect(notes()).toBe('—');
+    });
 });

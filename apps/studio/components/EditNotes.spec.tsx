@@ -62,11 +62,30 @@ describe('what the edit cost', () => {
             // A re-render for an unrelated reason — a pan, a selection — must not bring it back. It would
             // read as a message repeating itself, which is how a notice becomes something people click away
             // without reading.
+            //
+            // THE SAME ARRAY, which is what an unrelated re-render actually passes: `useDocument` holds the
+            // notes in state and only replaces them on a commit. This first passed `[...notes]` — a new
+            // array with the same words — which does not model a re-render at all, it models a NEW EDIT, and
+            // a new edit is exactly the thing that must come back.
             const notes = ['MID merged into VOUT.'];
             const { getByTestId, queryByTestId, rerender } = render(<EditNotes notes={notes} />);
             fireEvent.click(getByTestId('edit-notes-dismiss'));
-            rerender(<EditNotes notes={[...notes]} />);
+            rerender(<EditNotes notes={notes} />);
             expect(queryByTestId('edit-notes')).toBeNull();
+        });
+
+        it('shows a LATER edit whose words happen to be identical', () => {
+            // THE DEFECT. `duplicateComponents` emits a note that names no ids — "Copied 2 parts; connections
+            // among them were kept, connections to the rest of the design were not." — so keying the
+            // dismissal on the TEXT silenced every later copy of the same size, each of which dropped
+            // different connections. Two edits are two edits however alike their words.
+            const first = ['Copied 2 parts; connections among them were kept.'];
+            const second = ['Copied 2 parts; connections among them were kept.'];
+            const { getByTestId, queryByTestId, rerender } = render(<EditNotes notes={first} />);
+            fireEvent.click(getByTestId('edit-notes-dismiss'));
+            expect(queryByTestId('edit-notes')).toBeNull();
+            rerender(<EditNotes notes={second} />);
+            expect(queryByTestId('edit-notes')).not.toBeNull();
         });
     });
 });

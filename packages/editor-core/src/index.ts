@@ -71,7 +71,7 @@ export { orientSymbol, type Orientation } from './schematic/orient';
  * chain — lives here rather than in a renderer, because it is a claim about the netlist and not about
  * pixels. A renderer that had to re-derive it would be the second authority this codebase keeps paying for.
  */
-export { routeSheet } from './schematic/route';
+export { routeSheet, junctionsAt, segmentsOfWire } from './schematic/route';
 export type {
     Box,
     Fallback,
