@@ -1005,13 +1005,26 @@ export function SchematicCanvas({
      * drag is sixty frames a second. Before this the wires did not move at all, so a part could be dragged
      * clear across the sheet with its wires still pointing at where it used to be.
      */
+    /**
+     * The terminals travelling with this drag — built ONCE, not once per wire.
+     *
+     * It was built inside `rubberBand`, which runs per wire on every pointer-move, and `drag.ids` is an
+     * array so the membership test was linear too: the whole thing was O(wires × parts × selected) per
+     * frame. Measured on a 135-part template with everything selected, 19.5ms per render against a 16ms
+     * budget — and 1.6ms even for a single-part drag. Nothing in it depends on the wire.
+     */
+    const draggedPins = (() => {
+        const out = new Set<string>();
+        if (!drag?.moved) return out;
+        const moving = new Set(drag.ids);
+        for (const p of placed)
+            if (moving.has(p.id)) for (const s of p.symbol.pins) out.add(`${p.x + s.x},${p.y + s.y}`);
+        return out;
+    })();
+
     const rubberBand = (points: readonly (readonly [number, number])[]): Array<readonly [number, number]> => {
         if (!drag?.moved) return [...points];
-        const moved = new Set(
-            placed
-                .filter((p) => drag.ids.includes(p.id))
-                .flatMap((p) => p.symbol.pins.map((s) => `${p.x + s.x},${p.y + s.y}`)),
-        );
+        const moved = draggedPins;
         // THE BEND ABSORBS THE MOVEMENT, in the kernel where it can be tested. Moving only the end point —
         // which is what this did — left the last segment at whatever angle the hand travelled, so dragging a
         // part in a circle swept its wire through three hundred and sixty degrees, and the shape then jumped
