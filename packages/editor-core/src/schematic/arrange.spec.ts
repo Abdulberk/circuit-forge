@@ -132,7 +132,36 @@ describe('reading order', () => {
         const slots = arrangeBySignalFlow(withIsland);
         expect(slots.size).toBe(3);
         expect(new Set([...slots.values()].map((s) => `${s.column},${s.row}`)).size).toBe(3);
-        expect(slots.get('lonely')!.column).toBeGreaterThan(0);
+        // BELOW the circuit, not beside it. It used to take a column of its own with a blank one after —
+        // measured, a thirteen-part sheet went from 480 units wide to 3040 after eight palette adds, and the
+        // part somebody had just added ended up furthest from what they were looking at. A row below says
+        // "not part of this yet" without pushing the design off the screen.
+        expect(slots.get('lonely')!.row).toBeGreaterThan(Math.max(slots.get('v1')!.row, slots.get('r1')!.row));
+    });
+
+    it('keeps unwired parts in a BLOCK rather than a ribbon', () => {
+        // A part dragged out of the palette is unwired by construction — every pin gets its own private net
+        // — so this is the ordinary state of a sheet somebody is building, not a corner case.
+        const bank = sheet(
+            [
+                V('v1', 'in', 'gnd'),
+                R('r1', 'in', 'gnd'),
+                ...Array.from({ length: 9 }, (_, i) => R(`c${i}`, `x${i}`, `y${i}`)),
+            ],
+            [
+                'in',
+                'gnd',
+                ...Array.from({ length: 9 }, (_, i) => `x${i}`),
+                ...Array.from({ length: 9 }, (_, i) => `y${i}`),
+            ],
+        );
+        const slots = arrangeBySignalFlow(bank);
+        const loose = Array.from({ length: 9 }, (_, i) => slots.get(`c${i}`)!);
+        // Nine of them fit in three columns and three rows, not nine columns and one row.
+        expect(new Set(loose.map((s) => s.column)).size).toBeLessThanOrEqual(3);
+        expect(new Set(loose.map((s) => s.row)).size).toBeGreaterThan(1);
+        // …and every one still has a slot to itself.
+        expect(new Set(loose.map((s) => `${s.column},${s.row}`)).size).toBe(9);
     });
 
     it('leaves markers out of it — they belong against the terminal they annotate', () => {

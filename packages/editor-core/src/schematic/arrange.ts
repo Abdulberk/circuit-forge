@@ -110,6 +110,8 @@ export function arrangeBySignalFlow(circuit: CircuitJson): Map<string, Slot> {
         .map((c) => c.id)
         .sort();
     const queue: string[] = [];
+    /** Parts the sources never reach — each one the head of its own little graph. */
+    const islands = new Set<string>();
     const start = (id: string) => {
         column.set(id, 0);
         queue.push(id);
@@ -133,12 +135,14 @@ export function arrangeBySignalFlow(circuit: CircuitJson): Map<string, Slot> {
             column.set(other, next);
             queue.push(other);
         }
-        // Everything reachable is placed; anything left is a separate island and gets its own start, to the
-        // right of what has been placed so far rather than on top of it.
+        // Everything reachable from this seed is placed; anything left is a separate island and starts its
+        // own walk. Islands are POSITIONED afterwards, together, rather than each one taking a column of its
+        // own — see below.
         if (queue.length === 0) {
             const stranded = parts.filter((c) => !column.has(c.id)).sort((a, b) => a.id.localeCompare(b.id))[0];
             if (stranded) {
-                column.set(stranded.id, Math.max(...column.values()) + 2);
+                islands.add(stranded.id);
+                column.set(stranded.id, 0);
                 queue.push(stranded.id);
             }
         }
@@ -222,6 +226,37 @@ export function arrangeBySignalFlow(circuit: CircuitJson): Map<string, Slot> {
     // ---- 3. The answer ------------------------------------------------------------------------------
     const slots = new Map<string, Slot>();
     columns.forEach((col, ci) => col.forEach((id, ri) => slots.set(id, { column: ci, row: ri })));
+
+    /**
+     * The unwired parts, gathered into a BLOCK below the circuit instead of a ribbon beside it.
+     *
+     * A part dragged out of the palette is an island by construction — `addComponent` gives every pin its own
+     * private net — so this is the ordinary state of a sheet somebody is building, not a corner case. Each
+     * island used to take a column of its own with a blank one after it: measured, a thirteen-part template
+     * went from 480 units wide to 3040 after eight palette adds, and a bank of twenty-six decoupling caps
+     * arranged as fifty columns by one row. The sheet ran off the side of the screen and the part the user
+     * had just added was the furthest thing from what they were looking at.
+     *
+     * Below rather than beside, because the connected design is what a reader reads and it stays where it
+     * was; and in as square a block as the count allows, so the sheet grows in both directions rather than
+     * one. They keep their own relative arrangement — two unwired parts that ARE joined to each other stay
+     * adjacent, because an island is a little graph, not necessarily one part.
+     */
+    // WIRED TO NOTHING AT ALL — not merely "the sources never reached it".
+    //
+    // The first version of this rule used reachability, and it swallowed whole circuits: a two-stage
+    // amplifier whose supply touches only the rails has NO signal-net neighbour for its source, so every
+    // other part counted as an island and the arrangement collapsed into one column. A sub-graph that is
+    // wired but unreached is still a circuit and still reads left to right; what has no neighbour at all is
+    // a part somebody has just dragged out of the palette.
+    const strayIds = parts.map((c) => c.id).filter((id) => (neighbours.get(id)?.size ?? 0) === 0);
+    const stray = new Set(strayIds);
+    if (strayIds.length > 0) {
+        const connected = columns.map((col) => col.filter((id) => !stray.has(id)));
+        const below = connected.length === 0 ? 0 : Math.max(0, ...connected.map((c) => c.length));
+        const across = Math.max(1, Math.ceil(Math.sqrt(strayIds.length)));
+        strayIds.forEach((id, i) => slots.set(id, { column: i % across, row: below + 1 + Math.floor(i / across) }));
+    }
     // Every placeable part has a slot. A part that fell through would be drawn at the origin, on top of
     // whatever else is there, which is worse than any arrangement.
     for (const c of parts) if (!slots.has(c.id)) slots.set(c.id, { column: columns.length, row: 0 });
