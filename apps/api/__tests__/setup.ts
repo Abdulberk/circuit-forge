@@ -22,7 +22,17 @@ process.env.DATABASE_URL = 'postgresql://postgres:postgres@localhost:5432/circui
  * worker count by the same factor, which is exactly what jest.config.js computes.
  */
 process.env.DB_CONNECTION_LIMIT = process.env.DB_CONNECTION_LIMIT ?? '5';
-process.env.REDIS_URL = 'redis://localhost:6379';
+/**
+ * A Redis database of the suites' OWN, not the dev stack's.
+ *
+ * The database above was already separate and the queue was not: suites wrote their rows to
+ * `circuitforge_test` and enqueued their jobs into db 0, which is where a locally running worker-sim
+ * listens. That worker then picked the jobs up, looked for rows in the DEV database, and failed every one
+ * with "Record to update not found" — 59 of them in a single burst the next time the stack was started.
+ * Nothing drains db 1. A suite that needs an undrained queue of its own can still pick another index,
+ * as verify-design does with /15.
+ */
+process.env.REDIS_URL = 'redis://localhost:6379/1';
 process.env.S3_ENDPOINT = 'http://localhost:9000';
 process.env.S3_ACCESS_KEY = 'minioadmin';
 process.env.S3_SECRET_KEY = 'minioadmin';

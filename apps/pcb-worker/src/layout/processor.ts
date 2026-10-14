@@ -39,9 +39,9 @@ export interface LayoutJobPayload {
     otel?: Record<string, string>;
 }
 
-export function createLayoutWorker(): Worker<LayoutJobPayload> {
+export function createLayoutWorker(): Worker<LayoutJobPayload, LayoutJobReturn | void> {
     const connection = new Redis(config.REDIS_URL, { maxRetriesPerRequest: null });
-    const worker = new Worker<LayoutJobPayload>(
+    const worker = new Worker<LayoutJobPayload, LayoutJobReturn | void>(
         config.PCB_QUEUE_NAME,
         async (job: Job<LayoutJobPayload>) => processLayoutJob(job),
         // The freerouting/kicad-cli calls are async (execFile) so the loop stays free and BullMQ renews the
@@ -50,7 +50,11 @@ export function createLayoutWorker(): Worker<LayoutJobPayload> {
         // block renewal for tens of seconds on dense boards; 300s (= the per-tool timeout) covers that.
         { connection, concurrency: config.PCB_CONCURRENCY, lockDuration: 300_000 },
     );
-    worker.on('completed', (job) => logger.info({ jobId: job.data.jobId }, 'Layout job completed'));
+    // A job the claim refused was never laid out, and the log has to say so: 'completed' after 'skipping'
+    // read as a board that had been built.
+    worker.on('completed', (job, result) =>
+        logger.info({ jobId: job.data.jobId }, result?.skipped ? 'Layout job skipped' : 'Layout job completed'),
+    );
     worker.on('failed', (job, err) =>
         logger.error({ jobId: job?.data.jobId, error: err.message }, 'Layout job failed'),
     );
@@ -120,7 +124,12 @@ async function finish(
 /** How often the worker re-reads the cancel flag while a layout runs. */
 const ABORT_POLL_MS = 3_000;
 
-export async function processLayoutJob(job: Job<LayoutJobPayload>): Promise<void> {
+/** What a job returns when the claim refused it, so the completion log does not report a layout. */
+export interface LayoutJobReturn {
+    skipped: true;
+}
+
+export async function processLayoutJob(job: Job<LayoutJobPayload>): Promise<LayoutJobReturn | void> {
     const { jobId } = job.data;
     const t0 = Date.now();
 
@@ -132,7 +141,7 @@ export async function processLayoutJob(job: Job<LayoutJobPayload>): Promise<void
     });
     if (claim.count === 0) {
         logger.info({ jobId }, 'Layout job not claimed (canceled or already terminal) — skipping');
-        return;
+        return { skipped: true };
     }
 
     // Hoisted so the catch can tell a cancel from a fault: the FLAG is the authority, not whatever the

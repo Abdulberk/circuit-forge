@@ -410,7 +410,8 @@ describe('the gate cannot be bypassed by an upstream failure', () => {
 
     it('an unclaimed job (canceled while queued) does no work at all', async () => {
         layoutJob.updateMany.mockResolvedValue({ count: 0 });
-        await processLayoutJob(job);
+        // Reported as SKIPPED, so the completion log does not announce a layout that never ran.
+        await expect(processLayoutJob(job)).resolves.toEqual({ skipped: true });
         expect(layoutCircuit).not.toHaveBeenCalled();
         expect(layoutJob.updateMany).toHaveBeenCalledTimes(1); // the failed claim, and nothing after it
     });

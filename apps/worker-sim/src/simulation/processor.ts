@@ -22,6 +22,7 @@ import { recordSim } from '../observability/telemetry';
 import { prisma } from '../prisma/client';
 import { downloadFile, uploadJsonResult } from '../storage/s3-client';
 
+import { claimSimulationJob, isRecordNotFound } from './claim';
 import { runCornerBatch } from './corner-runner';
 import { runMonteCarloBatch } from './montecarlo-runner';
 import {
@@ -98,6 +99,14 @@ export interface SimulationJobPayload {
 }
 
 /**
+ * What a job returns when it was taken off the queue without being run, so the completion log can say so
+ * instead of reporting a simulation that never happened.
+ */
+export interface SimulationJobReturn {
+    skipped: 'terminal' | 'orphaned';
+}
+
+/**
  * Create the simulation worker
  */
 export function createSimulationWorker(): Worker {
@@ -105,7 +114,7 @@ export function createSimulationWorker(): Worker {
         maxRetriesPerRequest: null,
     });
 
-    const worker = new Worker<SimulationJobPayload>(
+    const worker = new Worker<SimulationJobPayload, SimulationJobReturn | undefined>(
         config.QUEUE_NAME,
         async (job: Job<SimulationJobPayload>) => {
             return processJob(job);
@@ -116,8 +125,9 @@ export function createSimulationWorker(): Worker {
         },
     );
 
-    worker.on('completed', (job) => {
-        logger.info({ jobId: job.data.jobId }, 'Job completed');
+    worker.on('completed', (job, result) => {
+        if (result?.skipped) logger.info({ jobId: job.data.jobId, reason: result.skipped }, 'Job skipped');
+        else logger.info({ jobId: job.data.jobId }, 'Job completed');
     });
 
     worker.on('failed', (job, err) => {
@@ -136,7 +146,7 @@ export function createSimulationWorker(): Worker {
 /**
  * Process a single simulation job
  */
-async function processJob(job: Job<SimulationJobPayload>): Promise<void> {
+async function processJob(job: Job<SimulationJobPayload>): Promise<SimulationJobReturn | undefined> {
     const { jobId, orgId, netlist, probeNames, analysisType, modelAssets } = job.data;
 
     // Is this the LAST attempt BullMQ will run? Drives WHEN it's safe to write a terminal FAILED row:
@@ -156,20 +166,26 @@ async function processJob(job: Job<SimulationJobPayload>): Promise<void> {
     const parentCtx = propagation.extract(otelContext.active(), job.data.otel ?? {});
     const tracer = trace.getTracer('circuit-forge-worker');
 
-    await tracer.startActiveSpan(
+    return tracer.startActiveSpan(
         'sim.process',
         { attributes: { 'sim.job_id': jobId, 'sim.org_id': orgId, 'sim.analysis_type': analysisType } },
         parentCtx,
-        async (span) => {
+        async (span): Promise<SimulationJobReturn | undefined> => {
             try {
-                // Update job status to RUNNING
-                await prisma.simulationJob.update({
-                    where: { id: jobId },
-                    data: {
-                        status: 'RUNNING',
-                        startedAt: new Date(),
-                    },
-                });
+                // CLAIM the row before anything runs (see claim.ts). A job that is canceled, finished or
+                // has no row at all is taken off the queue once, with one line saying why — not retried.
+                const claim = await claimSimulationJob(prisma, jobId);
+                if (claim !== 'claimed') {
+                    logger.warn(
+                        { jobId, orgId, claim },
+                        claim === 'orphaned'
+                            ? 'Simulation job has no database row — discarding'
+                            : 'Simulation job not claimed (canceled or already terminal) — skipping',
+                    );
+                    span.setAttribute('sim.outcome', claim);
+                    span.setStatus({ code: SpanStatusCode.OK });
+                    return { skipped: claim };
+                }
 
                 // Download model files if needed
                 const modelFiles: Array<{ name: string; content: Buffer }> = [];
@@ -189,7 +205,7 @@ async function processJob(job: Job<SimulationJobPayload>): Promise<void> {
                     await handleMonteCarlo(job, modelFiles.length > 0 ? modelFiles : undefined);
                     span.setAttribute('sim.outcome', 'montecarlo');
                     span.setStatus({ code: SpanStatusCode.OK });
-                    return;
+                    return undefined;
                 }
 
                 // Worst-case CORNER job: evaluate the criteria at the 2^k deterministic ±tol corners, instead of
@@ -199,7 +215,7 @@ async function processJob(job: Job<SimulationJobPayload>): Promise<void> {
                     await handleCorner(job, modelFiles.length > 0 ? modelFiles : undefined);
                     span.setAttribute('sim.outcome', 'worstcase');
                     span.setStatus({ code: SpanStatusCode.OK });
-                    return;
+                    return undefined;
                 }
 
                 // Ambient TEMPERATURE-CORNER job: re-evaluate the criteria + capture per-node metric drift across
@@ -209,7 +225,7 @@ async function processJob(job: Job<SimulationJobPayload>): Promise<void> {
                     await handleTempCorner(job, modelFiles.length > 0 ? modelFiles : undefined);
                     span.setAttribute('sim.outcome', 'tempcorner');
                     span.setStatus({ code: SpanStatusCode.OK });
-                    return;
+                    return undefined;
                 }
 
                 // SUPPLY-VOLTAGE corner job: perturb each trusted power rail's driving source ±tolerance and report
@@ -219,7 +235,7 @@ async function processJob(job: Job<SimulationJobPayload>): Promise<void> {
                     await handleSupplyCorner(job, modelFiles.length > 0 ? modelFiles : undefined);
                     span.setAttribute('sim.outcome', 'supplycorner');
                     span.setStatus({ code: SpanStatusCode.OK });
-                    return;
+                    return undefined;
                 }
 
                 // Run the simulation
@@ -266,6 +282,7 @@ async function processJob(job: Job<SimulationJobPayload>): Promise<void> {
                         );
                         throw new RetryableInfraError(result.error ?? 'simulation infrastructure failure (will retry)');
                 }
+                return undefined;
             } catch (error) {
                 const errorMessage = error instanceof Error ? error.message : String(error);
                 span.recordException(error instanceof Error ? error : new Error(errorMessage));
@@ -277,6 +294,14 @@ async function processJob(job: Job<SimulationJobPayload>): Promise<void> {
                 if (error instanceof RetryableInfraError) {
                     logger.error({ jobId, error: errorMessage }, 'Job processing infra failure');
                     throw error;
+                }
+
+                // The row was deleted while the job ran (its org went with it). There is nothing left to
+                // write a result or a failure into, and a retry would find the same nothing.
+                if (isRecordNotFound(error)) {
+                    logger.warn({ jobId, orgId }, 'Simulation job row disappeared while running — discarding');
+                    span.setStatus({ code: SpanStatusCode.OK });
+                    return { skipped: 'orphaned' };
                 }
 
                 // Otherwise an UNEXPECTED throw escaped the runner result path — S3 model download, the
