@@ -107,8 +107,7 @@ describe('supply marks', () => {
                 })),
             )[0]!;
             const box = textBox(turned);
-            for (const seg of segments(turned))
-                expect({ side, hit: crosses(seg, box) }).toEqual({ side, hit: false });
+            for (const seg of segments(turned)) expect({ side, hit: crosses(seg, box) }).toEqual({ side, hit: false });
         }
         expect(glyph.label).toBe('VCC');
     });
@@ -133,8 +132,7 @@ describe('supply marks', () => {
                 })),
             )[0]!;
             const box = textBox(turned);
-            for (const seg of segments(turned))
-                expect({ side, hit: crosses(seg, box) }).toEqual({ side, hit: false });
+            for (const seg of segments(turned)) expect({ side, hit: crosses(seg, box) }).toEqual({ side, hit: false });
         }
     });
 

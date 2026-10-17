@@ -37,11 +37,14 @@ describe('claimSimulationJob', () => {
         await expect(claimSimulationJob(db, 'j1')).resolves.toBe('claimed');
     });
 
-    it.each<Status>(['CANCELED', 'SUCCEEDED', 'FAILED', 'TIMED_OUT'])('leaves a %s row alone and reports it terminal', async (status) => {
-        const { db, row } = fakeDb({ id: 'j1', status });
-        await expect(claimSimulationJob(db, 'j1')).resolves.toBe('terminal');
-        expect(row?.status).toBe(status);
-    });
+    it.each<Status>(['CANCELED', 'SUCCEEDED', 'FAILED', 'TIMED_OUT'])(
+        'leaves a %s row alone and reports it terminal',
+        async (status) => {
+            const { db, row } = fakeDb({ id: 'j1', status });
+            await expect(claimSimulationJob(db, 'j1')).resolves.toBe('terminal');
+            expect(row?.status).toBe(status);
+        },
+    );
 
     it('reports a job with no row as orphaned instead of throwing', async () => {
         const { db } = fakeDb(null);
@@ -52,7 +55,9 @@ describe('claimSimulationJob', () => {
         const { db, updateMany } = fakeDb({ id: 'j1', status: 'QUEUED' });
         const now = new Date('2026-10-14T18:00:00Z');
         await claimSimulationJob(db, 'j1', now);
-        expect(updateMany).toHaveBeenCalledWith(expect.objectContaining({ data: { status: 'RUNNING', startedAt: now } }));
+        expect(updateMany).toHaveBeenCalledWith(
+            expect.objectContaining({ data: { status: 'RUNNING', startedAt: now } }),
+        );
     });
 });
 

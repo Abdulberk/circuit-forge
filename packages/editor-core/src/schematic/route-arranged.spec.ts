@@ -102,7 +102,7 @@ const CIRCUITS: Record<string, CircuitJson> = {
 };
 
 /** Seeded, so a failure names a sheet somebody can reproduce rather than one that happened once. */
-const rng = (seed: number) => () => ((seed = (seed * 1103515245 + 12345) & 0x7fffffff) / 0x7fffffff);
+const rng = (seed: number) => () => (seed = (seed * 1103515245 + 12345) & 0x7fffffff) / 0x7fffffff;
 
 const arrangement = (circuit: CircuitJson, seed: number): Record<string, Position> => {
     const rand = rng(seed);
@@ -190,17 +190,11 @@ describe('the router on arranged sheets', () => {
         for (const [name, circuit] of Object.entries(CIRCUITS)) {
             for (let seed = 1; seed <= 60; seed++) {
                 const placed = placeParts(circuit, arrangement(circuit, seed * 7919 + name.length));
-                const bodies = bodiesOf([
-                    ...placed,
-                    ...groundGlyphs(circuit, placed),
-                    ...railGlyphs(circuit, placed),
-                ]);
+                const bodies = bodiesOf([...placed, ...groundGlyphs(circuit, placed), ...railGlyphs(circuit, placed)]);
                 const nets = netsOf(circuit, placed);
                 const { wires, fellBack } = routeSheet(nets, bodies);
 
-                const undrawable = new Set(
-                    fellBack.filter((f) => f.reason === 'no-legible-route').map((f) => f.key),
-                );
+                const undrawable = new Set(fellBack.filter((f) => f.reason === 'no-legible-route').map((f) => f.key));
                 undrawableTotal += undrawable.size;
 
                 const all = wires
