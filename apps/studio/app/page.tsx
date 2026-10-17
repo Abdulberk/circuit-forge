@@ -18,6 +18,8 @@ import {
     duplicateComponents,
     isPlaceablePart,
     placeParts,
+    planWire,
+    planWireDeletion,
     splitNet,
     spreadParts,
     type PlacedPart,
@@ -399,6 +401,18 @@ function Workspace() {
                             // terminals and parting them again are two steps of one undo stack in the order
                             // they happened — not two stacks a user has to hold in their head.
                             onDisconnect={(pin) => doc.apply((c) => disconnectPin(c, pin))}
+                            // A DRAWN WIRE: stored where it was drawn, and the netlist follows in the same
+                            // revision. `planWire` decides what it means; the canvas only reports the corners.
+                            onDrawWire={(draft) => {
+                                if (!circuit) return;
+                                const plan = planWire(circuit, doc.ui, draft);
+                                doc.applyMany(plan.label, plan.edits, plan.drawing);
+                            }}
+                            onDeleteWires={(keys) => {
+                                if (!circuit) return;
+                                const plan = planWireDeletion(circuit, doc.ui, keys);
+                                doc.applyMany(plan.label, plan.edits, plan.drawing);
+                            }}
                             // WHICH NET is read from the first terminal named, and `splitNet` checks that the
                             // rest are on it — refusing by name if they are not. Deciding it here would be a
                             // second opinion about connectivity, which is the drift this codebase keeps

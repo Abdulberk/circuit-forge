@@ -12,7 +12,16 @@
  * quietly passes when it did not run is worse than no test.
  */
 import type { CircuitJson, UiJson } from '@circuit-forge/eda-core';
-import { buildObjectTree, setValue } from '@circuit-forge/editor-core';
+import {
+    beginHistory,
+    buildObjectTree,
+    commit,
+    drawingProblems,
+    freezeDrawing,
+    planWire,
+    setValue,
+    sheetPins,
+} from '@circuit-forge/editor-core';
 
 import { ApiClient } from './client';
 import { ApiError } from './errors';
@@ -238,6 +247,45 @@ describe('the transcribed contracts, against the server that defines them', () =
         expect(loaded!.circuitJson).toEqual(DIVIDER);
     });
 
+    it('stores a DRAWN wire and gives it back exactly — the drawing survives save and reopen', async () => {
+        // The editor's whole new model, end to end: freeze the AI-style design once, draw a wire through the
+        // kernel exactly as the canvas does, save, reopen, and find the same wire in the same place. The
+        // server's strict UiJson schema must accept every field the kernel writes.
+        let h = beginHistory({ circuit: DIVIDER, ui: {} });
+        const ui = freezeDrawing(DIVIDER, {});
+        const pins = sheetPins(DIVIDER, ui.positions);
+        const a = pins.find((p) => p.componentId === 'r1' && p.pinId === '2')!;
+        const b = pins.find((p) => p.componentId === 'r2' && p.pinId === '1')!;
+        const plan = planWire(DIVIDER, ui, {
+            points: [
+                { x: a.x, y: a.y },
+                { x: a.x, y: a.y - 30 },
+                { x: b.x, y: a.y - 30 },
+                { x: b.x, y: b.y },
+            ],
+            from: a,
+            to: b,
+        });
+        const r = commit(h, plan.label, plan.edits, plan.drawing);
+        if (!r.ok || !r.changed) throw new Error(r.ok ? 'nothing changed' : r.message);
+        h = r.history;
+        expect(drawingProblems(h.present.circuit, h.present.ui)).toEqual([]);
+
+        await api.saveWorkingCopy(projectId, { circuitJson: h.present.circuit, uiJson: h.present.ui });
+        const loaded = await api.workingCopy(projectId);
+        expect(loaded!.uiJson).toEqual(h.present.ui);
+        expect(loaded!.circuitJson).toEqual(h.present.circuit);
+        // Reopened, it is already owned: nothing is re-laid-out or re-routed.
+        const reopened = loaded!.uiJson as UiJson;
+        expect(freezeDrawing(loaded!.circuitJson, reopened)).toBe(reopened);
+        // Put the plain divider back for the tests that follow.
+        await api.saveWorkingCopy(projectId, {
+            circuitJson: DIVIDER,
+            uiJson: {},
+            expectedUpdatedAt: (await api.workingCopy(projectId))!.updatedAt,
+        });
+    });
+
     it('refuses a save whose precondition is stale — the whole point of expectedUpdatedAt', async () => {
         // Two people with the project open. The second save must be REFUSED, not merged and not silently
         // applied over work that was never on this screen.
@@ -273,7 +321,10 @@ describe('the transcribed contracts, against the server that defines them', () =
         // The components too — no layout has been run, and that must not make the parts vanish. This is the
         // state an editor is in almost all the time, and the tree used to render it as nets and nothing else.
         const parts = branch('components').children;
-        expect(parts.map((n) => n.label).sort()).toEqual(['R1', 'R2', 'V1']); // GND1 is a net marker, not a part
+        // GND1 is listed too, as a NET MARKER: drawn on the sheet, selectable, never a part on the board or the
+        // BOM. The tree has listed it since #304; this assertion predated that and was not re-run against it.
+        expect(parts.map((n) => n.label).sort()).toEqual(['GND1', 'R1', 'R2', 'V1']);
+        expect(parts.find((n) => n.label === 'GND1')!.detail).toBe('net marker');
         // …each with its own pins, read against the net NAME an engineer would recognise.
         const r1Pins = parts.find((n) => n.label === 'R1')!.children.find((c) => c.ref.kind === 'pins')!;
         expect(r1Pins.children.map((p) => `${p.label}→${p.detail!}`)).toEqual(['1→VIN', '2→MID']);

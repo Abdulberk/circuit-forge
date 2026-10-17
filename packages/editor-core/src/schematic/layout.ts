@@ -53,6 +53,8 @@ export interface PlacedPart {
      * because a ground net is no longer wired. Reproducible on this product's own divider after one drag.
      */
     annotates?: string;
+    /** The turn a marker was given to hang away from its terminal, so a drawing that stores it keeps it. */
+    turn?: Position['rotation'];
 }
 
 /**
@@ -151,7 +153,13 @@ function attachMarkers(circuit: CircuitJson, placed: PlacedPart[], positions?: R
         const symbol = orientSymbol(symbolFor(GROUND_SYMBOL), { rotation: GLYPH_TURN[at.side] });
         const own = symbol.pins[0];
         if (!own) continue;
-        moved.set(marker.id, { x: at.x - own.x, y: at.y - own.y, symbol, annotates: at.key });
+        moved.set(marker.id, {
+            x: at.x - own.x,
+            y: at.y - own.y,
+            symbol,
+            annotates: at.key,
+            turn: GLYPH_TURN[at.side],
+        });
     }
     return placed.map((p) => ({ ...p, ...(moved.get(p.id) ?? {}) }));
 }

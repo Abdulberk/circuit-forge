@@ -1681,7 +1681,8 @@ describe('a gesture is not a click, and a selection is not a click order', () =>
             />,
         );
         const svg = sized(container);
-        fireEvent.pointerDown(svg, { pointerId: 41, button: 0, clientX: 400, clientY: 300 });
+        // Panned with the MIDDLE button, as in KiCad: a left drag on bare sheet now draws a selection box.
+        fireEvent.pointerDown(svg, { pointerId: 41, button: 1, clientX: 400, clientY: 300 });
         fireEvent.pointerMove(svg, { pointerId: 41, clientX: 500, clientY: 360 });
         fireEvent.pointerUp(svg, { pointerId: 41, clientX: 500, clientY: 360 });
         fireEvent.click(svg);
@@ -2009,17 +2010,23 @@ describe('a box selects, and Ctrl+D copies', () => {
         expect(container.querySelector('[data-testid="marquee"]')).toBeNull();
     });
 
-    it('a bare drag on the sheet still PANS rather than selecting', () => {
-        // Panning is the more common act by a long way, so the box is the modified gesture and not the other
-        // way round. Getting this backwards would make the sheet feel stuck.
+    it('a bare LEFT drag draws a box, as in KiCad, Altium and Flux — and the middle button pans', () => {
+        // The review: "a left drag on empty sheet pans; selecting needs Shift" was the opposite of every
+        // rival. Now the box is the plain gesture, and panning lives on the middle and right buttons.
         const picked: string[] = [];
         const { container } = render(<SchematicCanvas circuit={CIRCUIT} onSelect={(w) => picked.push(...many(w))} />);
         const svg = sized(container);
         const before = svg.getAttribute('viewBox');
         fireEvent.pointerDown(svg, { pointerId: 53, button: 0, clientX: 100, clientY: 100 });
         fireEvent.pointerMove(svg, { pointerId: 53, clientX: 300, clientY: 250 });
+        expect(container.querySelector('[data-testid="marquee"]')).not.toBeNull();
         fireEvent.pointerUp(svg, { pointerId: 53, clientX: 300, clientY: 250 });
-        expect({ picked, moved: svg.getAttribute('viewBox') !== before }).toEqual({ picked: [], moved: true });
+        expect(svg.getAttribute('viewBox')).toBe(before);
+
+        fireEvent.pointerDown(svg, { pointerId: 54, button: 1, clientX: 100, clientY: 100 });
+        fireEvent.pointerMove(svg, { pointerId: 54, clientX: 300, clientY: 250 });
+        fireEvent.pointerUp(svg, { pointerId: 54, clientX: 300, clientY: 250 });
+        expect(svg.getAttribute('viewBox')).not.toBe(before);
     });
 
     it('a shift-press that does not travel changes nothing', () => {
