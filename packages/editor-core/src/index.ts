@@ -98,6 +98,19 @@ export { partsTouching, boxBetween } from './schematic/pick';
 export type { PlacedPart } from './schematic/layout';
 
 /**
+ * The generic part library: what every placing surface reads, so a part never arrives without a value.
+ */
+export {
+    GENERIC_PARTS,
+    defaultPartFor,
+    genericPart,
+    isPlaceableType,
+    searchGenericParts,
+    type GenericPart,
+    type PartGroup,
+} from './library/generic';
+
+/**
  * Drawn wires: the drawing is the user's, stored and never redrawn behind their back. The netlist follows
  * every drawn or deleted wire in the same revision; a netlist change shows up as dashed, not-yet-drawn lines.
  */
