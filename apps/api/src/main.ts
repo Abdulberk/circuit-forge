@@ -68,7 +68,7 @@ async function bootstrap() {
     // client can only report "could not reach the API" — pointing at a server that is up and answering curl
     // perfectly. The person debugging it checks the server, the port and the container, and all three are fine.
     const devOrigins = [
-        'http://localhost:3200', // apps/studio
+        'http://localhost:3200', // apps/web
         'http://localhost:3100', // apps/pcb-viewer
         'http://localhost:3000', // a frontend on the Nest default
         'http://localhost:5173', // vite

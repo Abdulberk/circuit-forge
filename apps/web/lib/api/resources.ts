@@ -56,6 +56,19 @@ export interface Project {
     updatedAt: string;
 }
 
+/** GET /templates — the Prisma `Template` row. `orgId` null means a public template. */
+export interface Template {
+    id: string;
+    orgId: string | null;
+    name: string;
+    description: string | null;
+    tags: string[];
+    circuitJson: CircuitJson;
+    analysisConfig: unknown;
+    createdAt: string;
+    updatedAt: string;
+}
+
 /**
  * What a SAVE answers with — the server-owned fields only, deliberately not the blobs.
  *
@@ -289,6 +302,35 @@ export class Api {
     /** GET /projects/:id */
     project(projectId: string, signal?: AbortSignal): Promise<Project> {
         return this.http.request<Project>(`/projects/${projectId}`, { signal });
+    }
+
+    /** POST /orgs/:orgId/projects — answers with the new project row. */
+    createProject(orgId: string, body: { name: string; description?: string }, signal?: AbortSignal): Promise<Project> {
+        return this.http.request<Project>(`/orgs/${orgId}/projects`, { method: 'POST', body, signal });
+    }
+
+    /** PATCH /projects/:id */
+    updateProject(
+        projectId: string,
+        body: { name?: string; description?: string },
+        signal?: AbortSignal,
+    ): Promise<Project> {
+        return this.http.request<Project>(`/projects/${projectId}`, { method: 'PATCH', body, signal });
+    }
+
+    /** DELETE /projects/:id */
+    deleteProject(projectId: string, signal?: AbortSignal): Promise<unknown> {
+        return this.http.request<unknown>(`/projects/${projectId}`, { method: 'DELETE', signal });
+    }
+
+    // ---- Templates ------------------------------------------------------------------------------------
+
+    /**
+     * GET /templates — public templates (or one org's with `orgId`). A plain ARRAY, not the paginated
+     * envelope the project list uses: the service returns `findMany` directly.
+     */
+    templates(query: { orgId?: string; tag?: string; limit?: number } = {}, signal?: AbortSignal): Promise<Template[]> {
+        return this.http.request<Template[]>('/templates', { query, signal });
     }
 
     // ---- The draft ------------------------------------------------------------------------------------

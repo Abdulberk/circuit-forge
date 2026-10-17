@@ -111,7 +111,7 @@ module.exports = {
             // Scoped rather than global on purpose: apps/pcb-viewer predates this and would light up with
             // findings that have nothing to do with the change being made. Widening it there is its own task,
             // with its own review.
-            files: ['apps/studio/**/*.ts', 'apps/studio/**/*.tsx'],
+            files: ['apps/web/**/*.ts', 'apps/web/**/*.tsx'],
             plugins: ['react-hooks'],
             rules: {
                 'react-hooks/rules-of-hooks': 'error',

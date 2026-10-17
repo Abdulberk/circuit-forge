@@ -1,0 +1,101 @@
+/*
+ * Design tokens — the ONE place a colour, a radius or a font is decided.
+ *
+ * Two themes, light and dark, switched by `data-theme` on <html> (no flash: the attribute is written by an
+ * inline script before first paint). Values are picked against WCAG: body text ≥ 7:1, secondary ≥ 4.5:1,
+ * wires and symbols ≥ 4.5:1 against the canvas — the review measured the old wires at 3.87:1 and half a
+ * pixel wide.
+ *
+ * Tailwind reads these through `@theme inline` in globals.css, so `bg-surface`, `text-muted`, `border-line`
+ * and friends are the only way a component reaches a colour. The legacy names at the bottom keep the
+ * components carried over from the studio rendering correctly until each is moved to utilities.
+ */
+
+:root,
+[data-theme='light'] {
+    color-scheme: light;
+
+    --bg: #f6f7f9;
+    --surface: #ffffff;
+    --surface-2: #f1f3f6;
+    --surface-3: #e7eaef;
+    --line: #e2e6eb;
+    --line-strong: #cdd3db;
+
+    --fg: #111418;
+    --fg-muted: #4b5563;
+    --fg-subtle: #6b7280;
+
+    --accent: #2563eb;
+    --accent-fg: #ffffff;
+    --accent-soft: #dbe6fd;
+
+    --ok: #15803d;
+    --warn: #b45309;
+    --bad: #c2410c;
+
+    /* The schematic sheet. */
+    --canvas: #fbfbf8;
+    --canvas-grid: #d4d6d0;
+    --wire: #1f8a4c;
+    --symbol: #27313b;
+    --symbol-fill: #fffef6;
+    --pin: #6b7280;
+    --label: #4b5563;
+    --selection: #2563eb;
+}
+
+[data-theme='dark'] {
+    color-scheme: dark;
+
+    --bg: #0b0d10;
+    --surface: #121519;
+    --surface-2: #181c21;
+    --surface-3: #20252b;
+    --line: #232930;
+    --line-strong: #323a43;
+
+    --fg: #e8ecf0;
+    --fg-muted: #a5b0bb;
+    --fg-subtle: #7d8994;
+
+    --accent: #5b8cff;
+    --accent-fg: #0b0d10;
+    --accent-soft: #1b2a4a;
+
+    --ok: #4ade80;
+    --warn: #fbbf24;
+    --bad: #f87171;
+
+    --canvas: #0f1215;
+    --canvas-grid: #2a3138;
+    --wire: #4ade80;
+    --symbol: #d9e0e6;
+    --symbol-fill: #161a1f;
+    --pin: #8b97a2;
+    --label: #a5b0bb;
+    --selection: #5b8cff;
+}
+
+:root {
+    --font-sans: 'Inter', ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
+    --font-mono: 'JetBrains Mono', ui-monospace, 'SF Mono', 'Cascadia Mono', Menlo, Consolas, monospace;
+    --radius: 6px;
+
+    /* ---- Legacy names, mapped onto the tokens above. Remove as components move to utilities. ---- */
+    --ground: var(--bg);
+    --panel: var(--surface);
+    /* The canvas fills symbol bodies with this, so it is the symbol fill rather than a panel tone. */
+    --panel-raised: var(--symbol-fill);
+    --line-bright: var(--line-strong);
+    --border: var(--line-strong);
+    --rule: var(--line);
+    --text: var(--symbol);
+    --text-dim: var(--label);
+    --text-faint: var(--fg-subtle);
+    --copper: var(--accent);
+    --copper-dim: var(--accent-soft);
+    --good: var(--ok);
+    --ui: var(--font-sans);
+    --mono: var(--font-mono);
+}

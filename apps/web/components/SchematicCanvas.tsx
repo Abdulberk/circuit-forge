@@ -1476,9 +1476,18 @@ export function SchematicCanvas({
                     x={-PIN_GRID / 2}
                     y={-PIN_GRID / 2}
                 >
-                    <circle cx={PIN_GRID / 2} cy={PIN_GRID / 2} r={0.6} fill="var(--line-bright, #333d45)" />
+                    <circle cx={PIN_GRID / 2} cy={PIN_GRID / 2} r={0.7} fill="var(--canvas-grid, #333d45)" />
                 </pattern>
             </defs>
+            {/* The sheet itself, then the grid on it — both from the theme, so light and dark both read. */}
+            <rect
+                x={box.x}
+                y={box.y}
+                width={box.w}
+                height={box.h}
+                fill="var(--canvas, transparent)"
+                pointerEvents="none"
+            />
             <rect
                 data-testid="grid"
                 x={box.x}
@@ -1517,7 +1526,7 @@ export function SchematicCanvas({
                             y1={p.y + s.y}
                             x2={wire.at.x}
                             y2={wire.at.y}
-                            stroke="var(--accent, #6cf)"
+                            stroke="var(--selection, #6cf)"
                             strokeWidth={1}
                             strokeDasharray="5 3"
                         />
@@ -1574,7 +1583,7 @@ export function SchematicCanvas({
                             // the thing a schematic is made of and has to read before anything else does.
                             stroke={
                                 picked
-                                    ? 'var(--accent, #6cf)'
+                                    ? 'var(--selection, #6cf)'
                                     : netProblem(w.netId) === 'error'
                                       ? 'var(--bad, #e5484d)'
                                       : netProblem(w.netId) !== undefined
@@ -1673,7 +1682,7 @@ export function SchematicCanvas({
                             key={i}
                             points={st.points.map(([x, y]) => `${x},${y}`).join(' ')}
                             fill="none"
-                            stroke="var(--text, #ccc)"
+                            stroke="var(--symbol, #ccc)"
                             strokeWidth={1.4}
                         />
                     ))}
@@ -1700,9 +1709,9 @@ export function SchematicCanvas({
                     y={Math.min(marquee.from[1], marquee.to[1])}
                     width={Math.abs(marquee.to[0] - marquee.from[0])}
                     height={Math.abs(marquee.to[1] - marquee.from[1])}
-                    fill="var(--accent, #6cf)"
+                    fill="var(--selection, #6cf)"
                     fillOpacity={0.08}
-                    stroke="var(--accent, #6cf)"
+                    stroke="var(--selection, #6cf)"
                     strokeWidth={1}
                     strokeDasharray="4 3"
                 />
@@ -1724,7 +1733,7 @@ export function SchematicCanvas({
                             key={i}
                             points={st.points.map(([x, y]) => `${x},${y}`).join(' ')}
                             fill="none"
-                            stroke="var(--text, #ccc)"
+                            stroke="var(--symbol, #ccc)"
                             strokeWidth={1.4}
                         />
                     ))}
@@ -1734,7 +1743,7 @@ export function SchematicCanvas({
                         // WHICH WAY THE NAME RUNS, decided with the geometry rather than fixed here. Always
                         // centred, it was drawn across its own bar wherever the mark was turned sideways.
                         textAnchor={r.labelRuns}
-                        fill="var(--text-dim, #9ad)"
+                        fill="var(--label, #9ad)"
                         fontSize={8}
                     >
                         {r.label}
@@ -1807,7 +1816,7 @@ export function SchematicCanvas({
                             // written on the element, where React looks for it.
                             const shape = {
                                 points: s.points.map(([x, y]) => `${x},${y}`).join(' '),
-                                stroke: isSelected ? 'var(--accent, #d99a5c)' : 'var(--text, #ccc)',
+                                stroke: isSelected ? 'var(--selection, #d99a5c)' : 'var(--symbol, #ccc)',
                                 strokeWidth: isSelected ? 2 : 1.4,
                             };
                             return s.closed ? (
@@ -1834,7 +1843,7 @@ export function SchematicCanvas({
                                             live || source
                                                 ? 'var(--good)'
                                                 : marked
-                                                  ? 'var(--accent, #6cf)'
+                                                  ? 'var(--selection, #6cf)'
                                                   : 'var(--text-faint, #888)'
                                         }
                                     />
@@ -1872,7 +1881,7 @@ export function SchematicCanvas({
                             y={p.symbol.labelAnchor.y}
                             fontSize={10}
                             textAnchor="middle"
-                            fill={isSelected ? 'var(--accent, #d99a5c)' : 'var(--text-dim, #93a1ab)'}
+                            fill={isSelected ? 'var(--selection, #d99a5c)' : 'var(--label, #93a1ab)'}
                         >
                             {p.designator}
                         </text>
@@ -1885,7 +1894,7 @@ export function SchematicCanvas({
                                 y={p.symbol.labelAnchor.y + (p.symbol.labelAnchor.y < 0 ? -10 : 10)}
                                 fontSize={9}
                                 textAnchor="middle"
-                                fill="var(--text-dim, #93a1ab)"
+                                fill="var(--label, #93a1ab)"
                             >
                                 {values.get(p.id)}
                             </text>

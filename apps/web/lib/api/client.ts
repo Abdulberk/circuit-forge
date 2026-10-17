@@ -300,6 +300,20 @@ export class ApiClient {
         this.store.write(tokens);
     }
 
+    /**
+     * POST /auth/register — creates the account AND its first organization, and answers with a token pair,
+     * so a new user lands signed in. Throttled server-side (anti-spam), which the caller surfaces as-is.
+     */
+    async register(name: string, email: string, password: string, signal?: AbortSignal): Promise<void> {
+        const tokens = await this.request<Tokens>('/auth/register', {
+            method: 'POST',
+            body: { name, email, password },
+            authenticated: false,
+            signal,
+        });
+        this.store.write(tokens);
+    }
+
     async signOut(signal?: AbortSignal): Promise<void> {
         const tokens = this.store.read();
         // `endSession`, not `store.clear()`. Clearing the store is invisible to React: the only route into
