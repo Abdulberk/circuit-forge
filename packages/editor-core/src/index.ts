@@ -96,3 +96,29 @@ export { arrangeBySignalFlow, type Slot } from './schematic/arrange';
 export { stretchWire } from './schematic/stretch';
 export { partsTouching, boxBetween } from './schematic/pick';
 export type { PlacedPart } from './schematic/layout';
+
+/**
+ * Drawn wires: the drawing is the user's, stored and never redrawn behind their back. The netlist follows
+ * every drawn or deleted wire in the same revision; a netlist change shows up as dashed, not-yet-drawn lines.
+ */
+export {
+    airwires,
+    drawingProblems,
+    drawnJunctions,
+    freezeDrawing,
+    isOwnedDrawing,
+    misleadingJoints,
+    placeNewParts,
+    planWire,
+    planWireDeletion,
+    sheetPins,
+    syncDrawing,
+    tidyPoints,
+    wireKey,
+    wireTouches,
+    withPositions,
+    type Airwire,
+    type SheetPin,
+    type WireDraft,
+    type WirePlan,
+} from './schematic/wiring';

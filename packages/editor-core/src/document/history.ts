@@ -28,6 +28,8 @@
  */
 import type { CircuitJson, UiJson } from '@circuit-forge/eda-core';
 
+import { freezeDrawing, syncDrawing } from '../schematic/wiring';
+
 import type { EditResult } from './edits';
 import { sameJson } from './same-json';
 
@@ -141,7 +143,7 @@ export function commit(
      * It is handed what the edits CREATED, because that is the one thing a caller cannot work out for
      * itself: designators are allocated against a document that changes as each part lands.
      */
-    drawing?: (ui: UiJson, created: readonly string[]) => UiJson,
+    drawing?: (ui: UiJson, created: readonly string[], circuit: CircuitJson) => UiJson,
 ): CommitResult {
     let circuit = history.present.circuit;
     let changed = false;
@@ -162,8 +164,10 @@ export function commit(
     }
 
     // A commit that changed nothing is not a revision. Re-typing the same value must not mint an undo step a
-    // user then has to press through, nor a save that conflicts with another tab for no reason.
-    if (!changed) return { ok: true, history, changed: false };
+    // user then has to press through, nor a save that conflicts with another tab for no reason. A DRAWING
+    // change counts, though: a wire drawn between two terminals already on one net changes no netlist and is
+    // still the user's work.
+    if (!changed && !drawing) return { ok: true, history, changed: false };
 
     // THE DRAWING FOLLOWS THE DESIGN, in the same revision. A position for a component the design no longer
     // has is not a drawing, it is litter — and it is not harmless: positions are keyed by component id, and
@@ -173,11 +177,14 @@ export function commit(
     // Pruned HERE rather than at the call site because every path that removes a component asks the same
     // question, and because it has to be the same revision: a separate commit would make undo restore the
     // part without its place, or its place without the part.
-    const next: EditorDocument = {
-        ...history.present,
-        circuit,
-        ui: withoutOrphanPositions(drawing ? drawing(history.present.ui, created) : history.present.ui, circuit),
-    };
+    // THE DRAWING IS THE USER'S, and the first edit hands it over. A design that arrived without wires is
+    // drawn once from the circuit as it was BEFORE this edit, so the edit itself moves nothing; from then on
+    // `syncDrawing` only removes wires the netlist contradicts and finds room for new parts. Nothing reroutes.
+    const owned = freezeDrawing(history.present.circuit, history.present.ui);
+    const drawn = withoutOrphanPositions(drawing ? drawing(owned, created, circuit) : owned, circuit);
+    const ui = syncDrawing(circuit, drawn);
+    if (!changed && sameJson(ui, history.present.ui)) return { ok: true, history, changed: false };
+    const next: EditorDocument = { ...history.present, circuit, ui };
     const revision: Revision = {
         snapshot: history.present, // the revision RECORDS what to go back to
         label,
