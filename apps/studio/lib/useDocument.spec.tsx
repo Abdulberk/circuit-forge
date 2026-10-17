@@ -625,7 +625,9 @@ describe('the drawing is part of the document', () => {
 
         await waitFor(() => expect(sent).toHaveLength(1));
         expect(sent[0]!.value).toBe('2k'); // the edit really went
-        expect(sentUi[0]).toEqual(arrangement); // …and took the arrangement with it
+        // …and took the arrangement with it. The first edit also hands the drawing over (`wires: []` here,
+        // since these parts share no net), and that is the only thing added: every position is untouched.
+        expect(sentUi[0]).toEqual({ ...arrangement, wires: [] });
     });
 
     it('does not wipe the CIRCUIT when the arrangement changes either', async () => {

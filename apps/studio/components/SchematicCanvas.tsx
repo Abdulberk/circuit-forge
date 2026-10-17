@@ -58,6 +58,15 @@ import {
     boxBetween,
     junctionsAt,
     segmentsOfWire,
+    airwires,
+    drawnJunctions,
+    freezeDrawing,
+    isOwnedDrawing,
+    misleadingJoints,
+    wireKey,
+    withPositions,
+    type RoutedSheet,
+    type WireDraft,
 } from '@circuit-forge/editor-core';
 import { useEffect, useMemo, useRef, useState } from 'react';
 
@@ -78,7 +87,7 @@ type Placed = PlacedPart;
 
 export function SchematicCanvas({
     circuit,
-    ui,
+    ui: stored,
     selectedPaths = EMPTY,
     problems = NO_PROBLEMS,
     onContextMenu,
@@ -86,6 +95,8 @@ export function SchematicCanvas({
     onArrange,
     onConnect,
     onDisconnect,
+    onDrawWire,
+    onDeleteWires,
     onSplit,
     onDelete,
     onDuplicate,
@@ -131,6 +142,13 @@ export function SchematicCanvas({
      */
     onDisconnect?: (pin: { componentId: string; pinId: string }) => void;
     /**
+     * Draw a wire, KiCad style: the clicked corners and the terminal under each end. The wire is stored where
+     * it was drawn and the netlist follows it (`planWire`). When given, it replaces `onConnect` as the gesture.
+     */
+    onDrawWire?: (draft: WireDraft) => void;
+    /** Delete stored wires by key — and the connections only they made (`planWireDeletion`). */
+    onDeleteWires?: (keys: readonly string[]) => void;
+    /**
      * Remove parts from the design — ALL of them, as one action.
      *
      * A list rather than one id, because deleting five parts one call at a time would be five undo steps for
@@ -167,6 +185,17 @@ export function SchematicCanvas({
     onContextMenu?: (at: { x: number; y: number }, node: TreeNode | null) => void;
 }) {
     const svgRef = useRef<SVGSVGElement | null>(null);
+    /**
+     * THE DRAWING THIS CANVAS SHOWS AND EDITS — the stored one, frozen if it has no wires yet.
+     *
+     * Only when the canvas can edit (`onDrawWire`). Freezing is deterministic and the commit kernel does the
+     * same on the first edit, so what is shown is exactly what the first save will store, and opening a
+     * project writes nothing. A read-only canvas keeps the old routed view.
+     */
+    const ui = useMemo(
+        () => (onDrawWire && !isOwnedDrawing(stored) ? freezeDrawing(circuit, stored ?? {}) : stored),
+        [circuit, stored, onDrawWire],
+    );
     // Asked many times per render — by every symbol, every terminal and every key handler — so it is a set
     // rather than a scan. `chosen` is the primary: the one the single-object verbs act on.
     const selection = useMemo(() => new Set(selectedPaths), [selectedPaths]);
@@ -249,8 +278,9 @@ export function SchematicCanvas({
         moved: boolean;
     } | null>(null);
 
-    const { placed, glyphs, rails, routed, extent, byPath } = useMemo(() => {
+    const { placed, glyphs, rails, routed, extent, byPath, owned, pending, misleading } = useMemo(() => {
         const placed = placeParts(circuit, ui?.positions);
+        const netNames = new Map((circuit.nets ?? []).map((n) => [n.id, n.name ?? n.id]));
 
         /**
          * The wires, ROUTED IN THE KERNEL rather than drawn here.
@@ -277,7 +307,25 @@ export function SchematicCanvas({
         // designs and it crosses everything on its way to each consumer. With its NAME, because every ground
         // symbol means one node while VCC and +3V3 are different nodes drawn with the same mark.
         const rails = railGlyphs(circuit, placed);
-        const routed = routeSheet(netsOf(circuit, placed), bodiesOf([...placed, ...glyphs, ...rails]));
+        // AN OWNED DRAWING IS READ, NOT ROUTED. Once a sheet has stored wires they are the user's: drawn from
+        // storage, never recomputed, so an edit can no longer reshuffle wires it did not touch — and the
+        // whole-sheet route (three seconds on the ALU, on every keystroke) no longer runs at all.
+        const owned = isOwnedDrawing(ui);
+        const routed: RoutedSheet = owned
+            ? {
+                  wires: ui!.wires!.map((w, i) => ({
+                      key: wireKey(w, i),
+                      netId: w.netId,
+                      netName: netNames.get(w.netId) ?? w.netId,
+                      points: w.points.map((p): Point => [p.x, p.y]),
+                      shape: 'straight' as const,
+                  })),
+                  junctions: drawnJunctions(circuit, ui!),
+                  fellBack: [],
+              }
+            : routeSheet(netsOf(circuit, placed), bodiesOf([...placed, ...glyphs, ...rails]));
+        const pending = owned ? airwires(circuit, ui!) : [];
+        const misleading = owned ? misleadingJoints(ui!) : [];
 
         // HALF the extent on each side of the centre, because `width`/`height` are FULL extents — the size
         // of the whole symbol, scanned from its own strokes and pins. This file used to read them both
@@ -289,8 +337,15 @@ export function SchematicCanvas({
         // boxes needed, and for the same reason: ground is not centred on its origin, so reconstructing the
         // box from the extent left part of the drawing outside the view.
         const drawn = [...placed, ...glyphs, ...rails];
-        const xs = drawn.flatMap((p) => [p.x + p.symbol.bounds.minX, p.x + p.symbol.bounds.maxX]);
-        const ys = drawn.flatMap((p) => [p.y + p.symbol.bounds.minY, p.y + p.symbol.bounds.maxY]);
+        const wirePts = routed.wires.flatMap((w) => w.points);
+        const xs = [
+            ...drawn.flatMap((p) => [p.x + p.symbol.bounds.minX, p.x + p.symbol.bounds.maxX]),
+            ...wirePts.map((p) => p[0]),
+        ];
+        const ys = [
+            ...drawn.flatMap((p) => [p.y + p.symbol.bounds.minY, p.y + p.symbol.bounds.maxY]),
+            ...wirePts.map((p) => p[1]),
+        ];
         // From the true MINIMUM, not from zero. A part dragged to a negative coordinate — which stored
         // positions make ordinary — sat outside a viewBox anchored at the origin and was simply not on
         // screen, with nothing to indicate the sheet had been cropped.
@@ -306,8 +361,8 @@ export function SchematicCanvas({
         // The tree is the selection authority; the canvas resolves through it rather than minting its own
         // node shape, so clicking a symbol and clicking its row select the identical object.
         const byPath = buildObjectTree(circuit).byPath;
-        return { placed, glyphs, rails, routed, extent, byPath };
-    }, [circuit, ui?.positions]);
+        return { placed, glyphs, rails, routed, extent, byPath, owned, pending, misleading };
+    }, [circuit, ui]);
 
     /**
      * WHAT IS ON SCREEN, which is not the same question as what is in the document.
@@ -453,13 +508,17 @@ export function SchematicCanvas({
     useEffect(() => {
         const onKeyDown = (event: KeyboardEvent) => {
             if (event.ctrlKey || event.metaKey || event.altKey) return;
-            if (event.key.toLowerCase() !== 'f') return;
+            // Home fits too (KiCad). F does, EXCEPT while a wire is being drawn: there it flips the bend.
+            const fit = event.key === 'Home' || (event.key.toLowerCase() === 'f' && !routing.current);
+            if (!fit) return;
             if (isTextEntry(event.target)) return; // `f` is a letter, and the Inspector has text fields
             setView(null);
         };
         window.addEventListener('keydown', onKeyDown);
         return () => window.removeEventListener('keydown', onKeyDown);
     }, []);
+    /** Whether a wire is in flight, readable from listeners registered once. */
+    const routing = useRef(false);
 
     /**
      * Dragging the sheet itself pans it.
@@ -481,24 +540,61 @@ export function SchematicCanvas({
      * long way. Touching counts rather than enclosing: a box that only takes what it fully contains makes a
      * user draw it twice, once too small and once right.
      */
-    const [marquee, setMarquee] = useState<{ pointerId: number; from: [number, number]; to: [number, number] } | null>(
-        null,
-    );
+    const [marquee, setMarquee] = useState<{
+        pointerId: number;
+        from: [number, number];
+        to: [number, number];
+        /** Shift was held: the box ADDS to the selection instead of replacing it. */
+        add: boolean;
+    } | null>(null);
 
     const beginPan = (e: React.PointerEvent): void => {
         gestured.current = false; // every fresh press starts out a click until it travels
+        // MIDDLE OR RIGHT BUTTON PANS, as in every EDA tool. A right press that does not travel still opens
+        // the menu: the browser fires `contextmenu` regardless, and a pan that went nowhere changes nothing.
+        if ((e.button === 1 || e.button === 2) && !drag && !wire && !pan && !marquee) {
+            (e.currentTarget as Element).setPointerCapture?.(e.pointerId);
+            setPan({ pointerId: e.pointerId, from: { x: e.clientX, y: e.clientY }, box });
+            return;
+        }
+        // The wire tool: a press on empty sheet puts down a corner (or starts the wire).
+        if ((tool === 'wire' || route) && onDrawWire && owned && (e.button ?? 0) === 0) {
+            gestured.current = true;
+            clickRoute(e);
+            return;
+        }
         if ((e.button ?? 0) > 0 || drag || wire || pan || marquee) return; // one gesture at a time, first wins
 
-        if (e.shiftKey && onSelect) {
+        // A LEFT DRAG ON EMPTY SHEET DRAWS A SELECTION BOX, as in KiCad, Altium and Flux. Panning lives on
+        // the middle and right buttons, and on Space + drag. Without a selection handler there is nothing to
+        // select, so the drag pans instead (a read-only viewer).
+        if (onSelect && !spaceHeld.current) {
             const at = pointOnSheet(e.clientX, e.clientY);
             if (!at) return;
             (e.currentTarget as Element).setPointerCapture?.(e.pointerId);
-            setMarquee({ pointerId: e.pointerId, from: at, to: at });
+            setMarquee({ pointerId: e.pointerId, from: at, to: at, add: e.shiftKey });
             return;
         }
         (e.currentTarget as Element).setPointerCapture?.(e.pointerId);
         setPan({ pointerId: e.pointerId, from: { x: e.clientX, y: e.clientY }, box });
     };
+
+    /** Space held turns a left drag into a pan, the way every drawing tool does. */
+    const spaceHeld = useRef(false);
+    useEffect(() => {
+        const down = (event: KeyboardEvent) => {
+            if (event.key === ' ' && !isTextEntry(event.target)) spaceHeld.current = true;
+        };
+        const up = (event: KeyboardEvent) => {
+            if (event.key === ' ') spaceHeld.current = false;
+        };
+        window.addEventListener('keydown', down);
+        window.addEventListener('keyup', up);
+        return () => {
+            window.removeEventListener('keydown', down);
+            window.removeEventListener('keyup', up);
+        };
+    }, []);
     const movePan = (e: React.PointerEvent): void => {
         const { clientX, clientY } = e;
         // Measured from where the gesture STARTED, like the part drag: a dropped frame then costs nothing,
@@ -553,9 +649,16 @@ export function SchematicCanvas({
         // per part — quadratic in what the box caught, and measured at 20ms for 1600 parts where doing it
         // once costs 0.16ms. Reporting a gesture piecemeal also means every intermediate state exists, and
         // some of them are states the user never asked for.
+        // Wires the box touches come along, so a box over a corner of the sheet can delete it whole.
+        const wiresCaught = routed.wires.filter((w) =>
+            w.points.some((p) => p[0] >= box.minX && p[0] <= box.maxX && p[1] >= box.minY && p[1] <= box.maxY),
+        );
+        setPickedWires(
+            m.add ? (was) => [...new Set([...was, ...wiresCaught.map((w) => w.key)])] : wiresCaught.map((w) => w.key),
+        );
         onSelect(
             caught.flatMap((p) => byPath.get(componentPath(p.id)) ?? []),
-            'add',
+            m.add ? 'add' : 'replace',
         );
     };
 
@@ -586,6 +689,100 @@ export function SchematicCanvas({
     } | null>(null);
 
     /**
+     * THE WIRE TOOL, KiCad style: click to start, every click puts down a corner, a terminal or another wire
+     * finishes it. The pointer pulls an L from the last corner; `/` flips which way the L bends, Backspace
+     * takes back the last corner, Esc cancels. `W` arms it; clicking a free terminal starts it directly.
+     *
+     * `points` are the corners already put down, in sheet units, on the grid.
+     */
+    const [tool, setTool] = useState<'select' | 'wire'>('select');
+    /**
+     * Selected WIRES, by key. Held here rather than in the object tree: a wire is drawing, not design, and
+     * the tree lists the netlist. Cleared whenever the part selection is replaced from outside.
+     */
+    const [pickedWires, setPickedWires] = useState<readonly string[]>([]);
+    const wireSelection = useMemo(() => new Set(pickedWires), [pickedWires]);
+    const [route, setRoute] = useState<{
+        points: Array<{ x: number; y: number }>;
+        from: { componentId: string; pinId: string } | null;
+        at: { x: number; y: number };
+        /** Horizontal first, or vertical first. */
+        hFirst: boolean;
+    } | null>(null);
+    routing.current = route !== null;
+
+    /** The L from the last corner to the pointer, as the corners it would add. */
+    const elbow = (
+        last: { x: number; y: number },
+        to: { x: number; y: number },
+        hFirst: boolean,
+    ): Array<{ x: number; y: number }> => {
+        if (last.x === to.x || last.y === to.y) return [to];
+        return [hFirst ? { x: to.x, y: last.y } : { x: last.x, y: to.y }, to];
+    };
+
+    /** Where a click lands: on a terminal if one is under it, otherwise on the grid. */
+    const landing = (
+        clientX: number,
+        clientY: number,
+    ): { at: { x: number; y: number }; pin: { componentId: string; pinId: string } | null } | null => {
+        const pin = pinUnder(clientX, clientY);
+        if (pin) {
+            const p = placed.find((q) => q.id === pin.componentId);
+            const s = p?.symbol.pins.find((q) => q.pinId === pin.pinId);
+            if (p && s) return { at: { x: p.x + s.x, y: p.y + s.y }, pin };
+        }
+        const at = pointOnSheet(clientX, clientY);
+        return at ? { at: { x: snapToGrid(at[0]), y: snapToGrid(at[1]) }, pin: null } : null;
+    };
+
+    /** Is there a stored wire under this sheet point? A wire is a valid place to finish (a T-junction). */
+    const onWireAt = (x: number, y: number): boolean =>
+        routed.wires.some((w) =>
+            w.points.some((p, i) => {
+                if (i === 0) return false;
+                const a = w.points[i - 1]!;
+                const inX = x >= Math.min(a[0], p[0]) && x <= Math.max(a[0], p[0]);
+                const inY = y >= Math.min(a[1], p[1]) && y <= Math.max(a[1], p[1]);
+                return inX && inY && (a[0] === p[0] ? x === a[0] : a[1] === p[1] ? y === a[1] : false);
+            }),
+        );
+
+    const finishRoute = (
+        r: NonNullable<typeof route>,
+        end: { x: number; y: number },
+        to: { componentId: string; pinId: string } | null,
+    ): void => {
+        const last = r.points[r.points.length - 1]!;
+        const points = [...r.points, ...elbow(last, end, r.hFirst)];
+        setRoute(null);
+        onDrawWire?.({ points, from: r.from, to });
+    };
+
+    /** A click while the wire tool is armed. */
+    const clickRoute = (e: React.PointerEvent): void => {
+        const land = landing(e.clientX, e.clientY);
+        if (!land) return;
+        if (!route) {
+            setRoute({ points: [land.at], from: land.pin, at: land.at, hFirst: true });
+            return;
+        }
+        const last = route.points[route.points.length - 1]!;
+        if (land.at.x === last.x && land.at.y === last.y) return; // a second click on the same spot
+        // A terminal or an existing wire ends the wire; anywhere else is a corner.
+        if (land.pin || onWireAt(land.at.x, land.at.y)) {
+            finishRoute(route, land.at, land.pin);
+            return;
+        }
+        setRoute({ ...route, points: [...route.points, ...elbow(last, land.at, route.hFirst)], at: land.at });
+    };
+
+    const moveRoute = (e: React.PointerEvent): void => {
+        const land = landing(e.clientX, e.clientY);
+        if (land) setRoute((r) => (r ? { ...r, at: land.at } : r));
+    };
+
+    /**
      * How near counts as ON a terminal.
      *
      * BOUNDED AT BOTH ENDS, and both bounds are about a real failure. A terminal is drawn two units across
@@ -602,6 +799,15 @@ export function SchematicCanvas({
     const grabRadius = Math.max(2, Math.min(PIN_GRID / 2, 9 * (mapping()?.perPixel ?? PIN_GRID / 18)));
 
     const beginWire = (e: React.PointerEvent, componentId: string, pinId: string): void => {
+        // THE CLICK-TO-ROUTE TOOL, when the sheet stores wires. Pressing a terminal starts a wire there (or
+        // finishes the one in flight on it), exactly as clicking a free pin does in KiCad.
+        if (onDrawWire && owned) {
+            if ((e.button ?? 0) > 0 || drag || pan) return;
+            e.stopPropagation();
+            gestured.current = true; // the click that follows is the wire's, not a selection
+            clickRoute(e);
+            return;
+        }
         if (!onConnect || (e.button ?? 0) > 0 || drag || wire || pan) return;
         e.stopPropagation(); // not a part drag, and not a pan
         (e.target as Element).setPointerCapture?.(e.pointerId);
@@ -699,6 +905,39 @@ export function SchematicCanvas({
             }
             if (event.ctrlKey || event.metaKey || event.altKey) return;
 
+            // THE WIRE TOOL'S KEYS, KiCad's: W arms it, `/` flips the bend, Backspace takes back a corner, Esc
+            // cancels the wire (and a second Esc leaves the tool). Only on a sheet that stores its wires.
+            if (onDrawWire && owned && !isTextEntry(event.target)) {
+                const key = event.key;
+                if (key.toLowerCase() === 'w') {
+                    event.preventDefault();
+                    setTool('wire');
+                    return;
+                }
+                if (route && (key === '/' || key.toLowerCase() === 'f')) {
+                    event.preventDefault();
+                    setRoute({ ...route, hFirst: !route.hFirst });
+                    return;
+                }
+                if (route && key === 'Backspace') {
+                    event.preventDefault();
+                    setRoute(route.points.length > 1 ? { ...route, points: route.points.slice(0, -1) } : null);
+                    return;
+                }
+                if (key === 'Escape' && (route || tool === 'wire')) {
+                    event.preventDefault();
+                    if (route) setRoute(null);
+                    else setTool('select');
+                    return;
+                }
+                if ((key === 'Delete' || key === 'Backspace') && pickedWires.length > 0 && onDeleteWires) {
+                    event.preventDefault();
+                    onDeleteWires(pickedWires);
+                    setPickedWires([]);
+                    return;
+                }
+            }
+
             // W JOINS TWO SELECTED TERMINALS — the keyboard's way to do the one thing this editor exists
             // for. Wiring was pointer-only: a drag from one terminal to another, and no path to it at all
             // without a mouse. The tree is already keyboard-navigable and terminals are already selectable,
@@ -777,7 +1016,21 @@ export function SchematicCanvas({
         };
         window.addEventListener('keydown', onKeyDown);
         return () => window.removeEventListener('keydown', onKeyDown);
-    }, [chosen, selectedPaths, byPath, onConnect, onDisconnect, onSplit, onDelete, onDuplicate]);
+        // eslint-disable-next-line react-hooks/exhaustive-deps -- reads the wire tool's state at key time
+    }, [
+        chosen,
+        selectedPaths,
+        byPath,
+        onConnect,
+        onDisconnect,
+        onSplit,
+        onDelete,
+        onDuplicate,
+        route,
+        tool,
+        pickedWires,
+        owned,
+    ]);
 
     /**
      * `R` turns the selected part — the convention every schematic editor shares.
@@ -886,8 +1139,11 @@ export function SchematicCanvas({
      * document are the same object until the pointer comes up. Nothing to reconcile, and nothing to undo if
      * the gesture is cancelled — a cancelled drag is simply a piece of state that stopped existing.
      */
-    const dragged = (p: Placed): { x: number; y: number } =>
-        drag?.ids.includes(p.id) ? { x: p.x + drag.dx, y: p.y + drag.dy } : { x: p.x, y: p.y };
+    const dragged = (p: Placed): { x: number; y: number } => {
+        if (!drag?.ids.includes(p.id)) return { x: p.x, y: p.y };
+        const d = snappedDelta(p.id);
+        return { x: p.x + d.dx, y: p.y + d.dy };
+    };
 
     /**
      * A ground symbol goes where its terminal goes.
@@ -901,7 +1157,9 @@ export function SchematicCanvas({
      */
     const draggedGlyph = (g: Placed): { x: number; y: number } => {
         const owner = g.annotates?.split('.')[0];
-        return owner && drag?.ids.includes(owner) ? { x: g.x + drag.dx, y: g.y + drag.dy } : { x: g.x, y: g.y };
+        if (!owner || !drag?.ids.includes(owner)) return { x: g.x, y: g.y };
+        const d = snappedDelta(owner);
+        return { x: g.x + d.dx, y: g.y + d.dy };
     };
 
     const beginDrag = (e: React.PointerEvent, id: string) => {
@@ -969,23 +1227,30 @@ export function SchematicCanvas({
         // silently re-lay-out the board.
         if (!g.moved) return;
 
-        const positions = { ...(ui?.positions ?? {}) };
-        for (const id of g.ids) {
-            const from = g.origin[id]!;
-            positions[id] = {
-                ...positions[id],
-                x: snapToGrid(from.x + g.dx),
-                y: snapToGrid(from.y + g.dy),
-            };
-        }
         // ONE revision, and the kernel decides whether it is one at all: `commitUi` compares by value, so a
-        // drag that ends where it started commits nothing. The comparison lives in one place on purpose — a
-        // second "did it change" test here would be the second authority this codebase keeps paying for.
+        // drag that ends where it started commits nothing.
         const label =
             g.ids.length === 1
                 ? `Move ${placed.find((p) => p.id === g.ids[0])?.designator ?? 'part'}`
                 : `Move ${g.ids.length} parts`;
-        onArrange(label, { ...ui, schemaVersion: 1, positions });
+        onArrange(label, droppedDrawing(g, true));
+    };
+
+    /**
+     * The drawing a drag produces — the SAME function for the preview and the release.
+     *
+     * The review measured 48% of wires previewing one shape and committing another, because the preview
+     * stretched and the release re-routed. On an owned drawing both are `withPositions` now; only the snap
+     * differs, and the preview snaps too so the hand sees where the part will land.
+     */
+    const droppedDrawing = (g: NonNullable<typeof drag>, snap: boolean): UiJson => {
+        const positions = { ...(ui?.positions ?? {}) };
+        for (const id of g.ids) {
+            const from = g.origin[id]!;
+            const [x, y] = [from.x + g.dx, from.y + g.dy];
+            positions[id] = { ...positions[id], x: snap ? snapToGrid(x) : x, y: snap ? snapToGrid(y) : y };
+        }
+        return withPositions(circuit, { ...ui, schemaVersion: 1 }, positions);
     };
 
     // Which wires the router says are not to be trusted. Built once per drawing rather than searched per
@@ -1022,8 +1287,25 @@ export function SchematicCanvas({
         return out;
     })();
 
-    const rubberBand = (points: readonly (readonly [number, number])[]): Array<readonly [number, number]> => {
+    /** On an owned drawing, the wires exactly as the release will store them, keyed like `routed.wires`. */
+    const previewWires = (() => {
+        if (!owned || !drag?.moved) return null;
+        const next = droppedDrawing(drag, true).wires ?? [];
+        return new Map(next.map((w, i) => [wireKey(w, i), w.points.map((p): Point => [p.x, p.y])]));
+    })();
+    /** And where each dragged part will land, snapped — so the symbol and its wires agree mid-gesture. */
+    const snappedDelta = (id: string): { dx: number; dy: number } => {
+        const from = drag?.origin[id];
+        if (!drag || !from || !owned) return { dx: drag?.dx ?? 0, dy: drag?.dy ?? 0 };
+        return { dx: snapToGrid(from.x + drag.dx) - from.x, dy: snapToGrid(from.y + drag.dy) - from.y };
+    };
+
+    const rubberBand = (
+        points: readonly (readonly [number, number])[],
+        key?: string,
+    ): Array<readonly [number, number]> => {
         if (!drag?.moved) return [...points];
+        if (previewWires && key) return previewWires.get(key) ?? [...points];
         const moved = draggedPins;
         // THE BEND ABSORBS THE MOVEMENT, in the kernel where it can be tested. Moving only the end point —
         // which is what this did — left the last segment at whatever angle the hand travelled, so dragging a
@@ -1056,6 +1338,17 @@ export function SchematicCanvas({
      * Without this the gesture is the drag all over again: you cannot tell what you have until it is done.
      * The box test is a linear scan and free at this size — 0.05ms for sixteen hundred parts.
      */
+    /** Each part's value as printed on the sheet — short, because long model strings belong in the Inspector. */
+    const values = useMemo(
+        () =>
+            new Map(
+                (circuit.components ?? []).flatMap((c) =>
+                    c.value ? [[c.id, c.value.length > 14 ? `${c.value.slice(0, 13)}…` : c.value] as const] : [],
+                ),
+            ),
+        [circuit],
+    );
+
     const catching = new Set(
         marquee ? partsTouching(placed, boxBetween(marquee.from, marquee.to)).map((p) => p.id) : [],
     );
@@ -1064,7 +1357,7 @@ export function SchematicCanvas({
         if (!drag?.moved) return routed.junctions;
         const byNet = new Map<string, ReturnType<typeof segmentsOfWire>>();
         for (const w of routed.wires) {
-            const segs = segmentsOfWire(rubberBand(w.points) as Point[]);
+            const segs = segmentsOfWire(rubberBand(w.points, w.key) as Point[]);
             byNet.set(w.netId, [...(byNet.get(w.netId) ?? []), ...segs]);
         }
         // Where every terminal of a net is NOW, including the ones travelling with the drag.
@@ -1072,8 +1365,8 @@ export function SchematicCanvas({
         const pinsNow = placed.flatMap((p) =>
             p.symbol.pins.map((s) => ({
                 netId: netOfPin.get(`${p.id}.${s.pinId}`) ?? '',
-                x: p.x + s.x + (moving.has(p.id) ? drag.dx : 0),
-                y: p.y + s.y + (moving.has(p.id) ? drag.dy : 0),
+                x: p.x + s.x + (moving.has(p.id) ? snappedDelta(p.id).dx : 0),
+                y: p.y + s.y + (moving.has(p.id) ? snappedDelta(p.id).dy : 0),
                 side: s.side,
             })),
         );
@@ -1098,7 +1391,6 @@ export function SchematicCanvas({
             aria-describedby="schematic-keys"
             tabIndex={0}
             viewBox={`${box.x} ${box.y} ${box.w} ${box.h}`}
-            style={{ width: '100%', height: '100%', touchAction: 'none' }}
             onPointerDown={beginPan}
             // A CLICK ON NOTHING SELECTS NOTHING. Without it a selection could only be replaced, never
             // dropped — and with several things selected and a key that acts on all of them, "how do I stop
@@ -1135,7 +1427,19 @@ export function SchematicCanvas({
                 if (node && !selection.has(pathKey(node.ref.path))) onSelect?.(node);
                 onContextMenu({ x: e.clientX, y: e.clientY }, node);
             }}
-            onPointerMove={marquee ? moveMarquee : wire ? moveWire : pan ? movePan : drag ? moveDrag : undefined}
+            onPointerMove={
+                marquee
+                    ? moveMarquee
+                    : wire
+                      ? moveWire
+                      : pan
+                        ? movePan
+                        : drag
+                          ? moveDrag
+                          : route
+                            ? moveRoute
+                            : undefined
+            }
             onPointerUp={marquee ? endMarquee : wire ? endWire : pan ? endPan : drag ? endDrag : undefined}
             // CANCELLED, NOT FINISHED. This used to route to the same function as pointerup, so a gesture the
             // BROWSER aborted — a device removed, an OS interruption, a touch becoming a two-finger gesture —
@@ -1147,7 +1451,52 @@ export function SchematicCanvas({
                 setDrag(null);
                 setMarquee(null);
             }}
+            data-tool={tool}
+            style={{
+                width: '100%',
+                height: '100%',
+                touchAction: 'none',
+                cursor: tool === 'wire' || route ? 'crosshair' : undefined,
+            }}
         >
+            {/* THE GRID, visible, as in every EDA tool: one dot per pin step, so a hand can see where a part or
+                a corner will land. A pattern rather than elements, so it costs nothing at any size. */}
+            <defs>
+                <pattern
+                    id="sheet-grid"
+                    width={PIN_GRID}
+                    height={PIN_GRID}
+                    patternUnits="userSpaceOnUse"
+                    x={-PIN_GRID / 2}
+                    y={-PIN_GRID / 2}
+                >
+                    <circle cx={PIN_GRID / 2} cy={PIN_GRID / 2} r={0.6} fill="var(--line-bright, #333d45)" />
+                </pattern>
+            </defs>
+            <rect
+                data-testid="grid"
+                x={box.x}
+                y={box.y}
+                width={box.w}
+                height={box.h}
+                fill="url(#sheet-grid)"
+                pointerEvents="none"
+            />
+
+            {/* THE WIRE BEING ROUTED: the corners put down so far, and the L the pointer is pulling. */}
+            {route && (
+                <polyline
+                    data-testid="route-in-flight"
+                    points={[...route.points, ...elbow(route.points[route.points.length - 1]!, route.at, route.hFirst)]
+                        .map((p) => `${p.x},${p.y}`)
+                        .join(' ')}
+                    fill="none"
+                    stroke="var(--good, #5fa87c)"
+                    strokeWidth={1.4}
+                    pointerEvents="none"
+                />
+            )}
+
             {/* THE WIRE BEING DRAWN, which is not a wire yet. Dashed and in the accent colour so it cannot be
                 mistaken for one the document carries, and drawn straight to the pointer rather than routed:
                 routing it would say the connection exists, and it does not until the pointer comes up. */}
@@ -1177,39 +1526,75 @@ export function SchematicCanvas({
                 // exist and the promise was empty. An untrustworthy wire is now drawn as one: dashed, in the
                 // warning colour, and titled with the reason.
                 const lies = untrustworthy.has(w.key);
+                const picked = wireSelection.has(w.key);
+                const pts = rubberBand(w.points, w.key)
+                    .map(([x, y]) => `${x},${y}`)
+                    .join(' ');
                 return (
-                    <polyline
-                        key={w.key}
-                        points={rubberBand(w.points)
-                            .map(([x, y]) => `${x},${y}`)
-                            .join(' ')}
-                        fill="none"
-                        stroke={
-                            netProblem(w.netId) === 'error'
-                                ? 'var(--bad, #e5484d)'
-                                : netProblem(w.netId) !== undefined
-                                  ? 'var(--warn, #e3a008)'
-                                  : lies
-                                    ? 'var(--warn)'
-                                    : 'var(--text-faint)'
-                        }
-                        strokeWidth={netProblem(w.netId) ? 1.6 : 1}
-                        strokeDasharray={lies ? '4 3' : undefined}
-                        data-net={w.netName}
-                        data-problem={netProblem(w.netId) ?? undefined}
-                        // Stated so a reader can tell the difference. A diagonal here is not a style: it is
-                        // the router saying it could not draw this wire at right angles without the drawing
-                        // claiming something the netlist does not.
-                        data-shape={w.shape}
-                        data-trust={lies ? 'unverified' : undefined}
-                    >
-                        {lies && (
-                            <title>
-                                {w.netName}: no line between these terminals shows only what the netlist says — move a
-                                part to fix it
-                            </title>
+                    <g key={w.key}>
+                        {/* A WIDE INVISIBLE TWIN carries the click: a one-unit line cannot be hit by a hand. Only on
+                        an owned sheet, where a wire is an object that can be selected and deleted. */}
+                        {owned && onDeleteWires && (
+                            <polyline
+                                data-testid={`wire-hit-${w.key}`}
+                                points={pts}
+                                fill="none"
+                                stroke="transparent"
+                                strokeWidth={Math.max(4, grabRadius)}
+                                style={{ cursor: 'pointer' }}
+                                onPointerDown={(e) => {
+                                    if ((e.button ?? 0) > 0 || tool === 'wire' || route) return;
+                                    e.stopPropagation(); // a wire press is not a box and not a pan
+                                }}
+                                onClick={(e) => {
+                                    e.stopPropagation();
+                                    setPickedWires((was) =>
+                                        e.shiftKey
+                                            ? was.includes(w.key)
+                                                ? was.filter((k) => k !== w.key)
+                                                : [...was, w.key]
+                                            : [w.key],
+                                    );
+                                    if (!e.shiftKey) onSelect?.(null);
+                                }}
+                            />
                         )}
-                    </polyline>
+                        <polyline
+                            points={pts}
+                            pointerEvents="none"
+                            data-selected={picked ? 'yes' : undefined}
+                            fill="none"
+                            // GREEN AND VISIBLE. The review measured these at 3.87:1 and under a pixel wide; a wire is
+                            // the thing a schematic is made of and has to read before anything else does.
+                            stroke={
+                                picked
+                                    ? 'var(--accent, #6cf)'
+                                    : netProblem(w.netId) === 'error'
+                                      ? 'var(--bad, #e5484d)'
+                                      : netProblem(w.netId) !== undefined
+                                        ? 'var(--warn, #e3a008)'
+                                        : lies
+                                          ? 'var(--warn)'
+                                          : 'var(--wire, #4fbf7a)'
+                            }
+                            strokeWidth={picked ? 2.2 : netProblem(w.netId) ? 1.8 : 1.4}
+                            strokeDasharray={lies ? '4 3' : undefined}
+                            data-net={w.netName}
+                            data-problem={netProblem(w.netId) ?? undefined}
+                            // Stated so a reader can tell the difference. A diagonal here is not a style: it is
+                            // the router saying it could not draw this wire at right angles without the drawing
+                            // claiming something the netlist does not.
+                            data-shape={w.shape}
+                            data-trust={lies ? 'unverified' : undefined}
+                        >
+                            {lies && (
+                                <title>
+                                    {w.netName}: no line between these terminals shows only what the netlist says — move
+                                    a part to fix it
+                                </title>
+                            )}
+                        </polyline>
+                    </g>
                 );
             })}
 
@@ -1225,6 +1610,41 @@ export function SchematicCanvas({
                     r={2}
                     fill="var(--text-faint)"
                 />
+            ))}
+
+            {/* WHAT THE NETLIST HAS AND THE DRAWING DOES NOT SHOW YET — an AI edit, a template's new part.
+                Dashed and thin, like a ratsnest: a connection to draw, never one the program drew for you. */}
+            {!drag?.moved &&
+                pending.map((a, i) => (
+                    <line
+                        key={`air-${a.netId}-${i}`}
+                        data-testid="airwire"
+                        data-net-id={a.netId}
+                        x1={a.from[0]}
+                        y1={a.from[1]}
+                        x2={a.to[0]}
+                        y2={a.to[1]}
+                        stroke="var(--copper, #c87f4a)"
+                        strokeWidth={0.8}
+                        strokeDasharray="3 3"
+                        pointerEvents="none"
+                    />
+                ))}
+            {/* A wire end lying on ANOTHER net's wire reads as a joint the netlist does not have. Marked so it
+                cannot pass for one; it is not merged behind the user's back. */}
+            {misleading.map((m) => (
+                <circle
+                    key={`mis-${m.x},${m.y}`}
+                    data-testid="misleading-joint"
+                    cx={m.x}
+                    cy={m.y}
+                    r={3.5}
+                    fill="none"
+                    stroke="var(--bad, #d96a5a)"
+                    strokeWidth={1.2}
+                >
+                    <title>Two different nets meet here only in the drawing</title>
+                </circle>
             ))}
 
             {/* THE REFERENCE, MARKED AT EVERY PIN THAT REACHES IT. Not selectable and not draggable, because
@@ -1260,7 +1680,9 @@ export function SchematicCanvas({
             <desc id="schematic-keys">
                 Tab reaches the object tree and the arrow keys move within it; Enter selects a row. R turns the
                 selection, X and Y mirror it, Ctrl+D copies it, Delete removes it. With two terminals selected, W joins
-                them into one net; S takes the selected terminals off their net onto a new one, together.
+                them into one net; S takes the selected terminals off their net onto a new one, together. On a drawn
+                sheet W arms the wire tool: click to put down corners, end on a terminal or a wire, slash flips the
+                bend, Backspace takes back a corner, Escape cancels. Middle or right drag pans; Home fits the sheet.
             </desc>
 
             {/* The box, while it is being drawn. Dashed and unfilled at the edges so it never hides what it
@@ -1444,10 +1866,24 @@ export function SchematicCanvas({
                             y={p.symbol.labelAnchor.y}
                             fontSize={10}
                             textAnchor="middle"
-                            fill={isSelected ? 'var(--accent, #d99a5c)' : 'var(--text-faint, #888)'}
+                            fill={isSelected ? 'var(--accent, #d99a5c)' : 'var(--text-dim, #93a1ab)'}
                         >
                             {p.designator}
                         </text>
+                        {/* THE VALUE, which every schematic prints under the name. "R1" alone tells a reader
+                            nothing about the circuit; "R1 10k" does. */}
+                        {values.get(p.id) && (
+                            <text
+                                data-testid={`value-${p.id}`}
+                                x={p.symbol.labelAnchor.x}
+                                y={p.symbol.labelAnchor.y + (p.symbol.labelAnchor.y < 0 ? -10 : 10)}
+                                fontSize={9}
+                                textAnchor="middle"
+                                fill="var(--text-dim, #93a1ab)"
+                            >
+                                {values.get(p.id)}
+                            </text>
+                        )}
                     </g>
                 );
             })}

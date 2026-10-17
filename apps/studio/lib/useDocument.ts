@@ -135,7 +135,7 @@ export interface DocumentState {
     applyMany: (
         label: string,
         edits: ReadonlyArray<(circuit: CircuitJson) => EditResult>,
-        drawing?: (ui: UiJson, created: readonly string[]) => UiJson,
+        drawing?: (ui: UiJson, created: readonly string[], circuit: CircuitJson) => UiJson,
     ) => void;
     /**
      * Replace the drawing as ONE revision — a symbol moved, a symbol turned, a wire drawn.
@@ -349,6 +349,9 @@ export function useDocument(
         // `opened.uiJson`, never `{}`. Hard-coding the empty drawing here is what made the round trip
         // one-way: the server could hold a perfectly good arrangement and the editor would open blank,
         // then send that blank back over it on the first autosave.
+        // The drawing exactly as stored. A design that arrived without wires is frozen by the CANVAS for
+        // display and by the commit kernel on the first edit — the same deterministic result both times — so
+        // merely opening a project writes nothing and offers no phantom recovery.
         setHistory(
             opened.source === 'empty' ? null : adoptDocument({ circuit: opened.circuitJson, ui: opened.uiJson }),
         );
@@ -558,7 +561,7 @@ export function useDocument(
         (
             label: string,
             edits: ReadonlyArray<(c: CircuitJson) => EditResult>,
-            drawing?: (ui: UiJson, created: readonly string[]) => UiJson,
+            drawing?: (ui: UiJson, created: readonly string[], circuit: CircuitJson) => UiJson,
         ) => {
             setHistory((current) => {
                 if (!current) return current;
