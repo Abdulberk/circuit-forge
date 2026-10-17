@@ -156,7 +156,11 @@ describe('the designs this product ships', () => {
 
     it('draws NO WIRE THAT LIES, on any of them', () => {
         // The one absolute. Everything else here is quality; this is truth, and it has no budget.
-        const broken = all.flatMap((t) => draw(t.circuit).lies.slice(0, 2).map((why) => `${t.name}: ${why}`));
+        const broken = all.flatMap((t) =>
+            draw(t.circuit)
+                .lies.slice(0, 2)
+                .map((why) => `${t.name}: ${why}`),
+        );
         expect(broken).toEqual([]);
     });
 
@@ -179,9 +183,11 @@ describe('the designs this product ships', () => {
         // "near a source" and "after everything feeding it" gave 632 and 151,630. These bounds are those
         // numbers with room, so an improvement is welcome and a regression is not silent.
         const alu = draw(all.find((t) => t.name === '01-alu-8bit')!.circuit);
-        expect({ crossings: alu.crossings < 900, length: alu.length < 200_000, undrawable: alu.undrawable < 8 }).toEqual(
-            { crossings: true, length: true, undrawable: true },
-        );
+        expect({
+            crossings: alu.crossings < 900,
+            length: alu.length < 200_000,
+            undrawable: alu.undrawable < 8,
+        }).toEqual({ crossings: true, length: true, undrawable: true });
 
         const dds = draw(all.find((t) => t.name === '02-dds-8bit')!.circuit);
         expect({ crossings: dds.crossings < 200, undrawable: dds.undrawable < 20 }).toEqual({
