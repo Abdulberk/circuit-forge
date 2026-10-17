@@ -16,6 +16,7 @@ export {
     type Org,
     type Paginated,
     type Project,
+    type Template,
     type Version,
     type VersionSummary,
     type WorkingCopy,

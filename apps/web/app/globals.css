@@ -1,71 +1,76 @@
 /*
- * An instrument, not a document.
+ * Tailwind v4, themed from `theme.css`. Two themes (light, dark); every colour comes from a token.
  *
- * Single dark theme, deliberately: this is a workspace a board is viewed inside, and a PCB rendered on white
- * loses the contrast that copper, mask and silkscreen carry. The palette is taken from the materials — a
- * near-black with a faint blue-green cast for the ground, copper for the one accent — so the accent means
- * something in the domain rather than being a brand colour dropped on top.
+ * The class rules below the Tailwind import are the editor panels carried over from the studio prototype,
+ * restyled onto the tokens. New screens use utilities; these shrink as the panels are rebuilt.
  *
  * Identifiers are set in monospace throughout. A designator, a net name and a pad id are code: they are
  * compared character by character, and a proportional face makes R1 and RI look alike at 12px.
  */
-:root {
-    --ground: #0d1013;
-    --panel: #14181c;
-    --panel-raised: #1a1f24;
-    --line: #232a30;
-    --line-bright: #333d45;
-    --text: #dce3e8;
-    --text-dim: #93a1ab;
-    --text-faint: #66727b;
-    --copper: #c87f4a;
-    --copper-dim: #8a5730;
-    --warn: #d9a441;
-    --bad: #d96a5a;
-    --good: #5fa87c;
-    --wire: #4fbf7a;
+@import 'tailwindcss';
+@import './theme.css';
 
-    --ui: ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
-    --mono: ui-monospace, 'SF Mono', 'Cascadia Mono', 'JetBrains Mono', Menlo, Consolas, monospace;
+@custom-variant dark (&:where([data-theme='dark'], [data-theme='dark'] *));
 
-    --row: 24px;
-    --gap: 12px;
-    --radius: 3px;
-
-    color-scheme: dark;
+@theme inline {
+    --color-bg: var(--bg);
+    --color-surface: var(--surface);
+    --color-surface-2: var(--surface-2);
+    --color-surface-3: var(--surface-3);
+    --color-line: var(--line);
+    --color-line-strong: var(--line-strong);
+    --color-fg: var(--fg);
+    --color-muted: var(--fg-muted);
+    --color-subtle: var(--fg-subtle);
+    --color-accent: var(--accent);
+    --color-accent-fg: var(--accent-fg);
+    --color-accent-soft: var(--accent-soft);
+    --color-ok: var(--ok);
+    --color-warn: var(--warn);
+    --color-bad: var(--bad);
+    --color-canvas: var(--canvas);
+    --font-sans: var(--font-sans);
+    --font-mono: var(--font-mono);
+    --radius-md: var(--radius);
 }
 
-* {
-    box-sizing: border-box;
+:root {
+    --row: 26px;
+    --gap: 12px;
 }
 
 html,
 body {
-    margin: 0;
     height: 100%;
 }
 
 body {
-    background: var(--ground);
-    color: var(--text);
-    font-family: var(--ui);
+    background: var(--bg);
+    color: var(--fg);
+    font-family: var(--font-sans);
     font-size: 13px;
     line-height: 1.5;
     -webkit-font-smoothing: antialiased;
 }
 
-button {
+/* ---- Legacy panel controls (studio panels; new code uses components/ui) --------------------------- */
+
+.pane button,
+.stage button,
+.notice button,
+.field button {
     font: inherit;
-    color: inherit;
-    background: var(--panel-raised);
-    border: 1px solid var(--line-bright);
+    color: var(--fg);
+    background: var(--surface);
+    border: 1px solid var(--line-strong);
     border-radius: var(--radius);
-    padding: 4px 10px;
+    padding: 3px 10px;
     cursor: pointer;
 }
 
-button:hover:not(:disabled) {
-    border-color: var(--copper-dim);
+.pane button:hover:not(:disabled),
+.stage button:hover:not(:disabled) {
+    background: var(--surface-2);
 }
 
 button:disabled {
@@ -75,18 +80,18 @@ button:disabled {
 
 /* Focus is never removed, only restyled — an editor is driven from the keyboard as much as the mouse. */
 :focus-visible {
-    outline: 2px solid var(--copper);
+    outline: 2px solid var(--accent);
     outline-offset: 1px;
 }
 
-input,
-select {
+.pane input,
+.pane select {
     font: inherit;
-    color: inherit;
-    background: var(--ground);
-    border: 1px solid var(--line-bright);
+    color: var(--fg);
+    background: var(--surface);
+    border: 1px solid var(--line-strong);
     border-radius: var(--radius);
-    padding: 5px 8px;
+    padding: 4px 8px;
     width: 100%;
 }
 
@@ -96,66 +101,31 @@ code,
     font-size: 12px;
 }
 
-/* ---- Shell ------------------------------------------------------------------------------------------ */
-
-.shell {
-    display: grid;
-    grid-template-rows: 40px 1fr 22px;
-    height: 100vh;
-}
-
-.topbar {
-    display: flex;
-    align-items: center;
-    gap: var(--gap);
-    padding: 0 12px;
-    background: var(--panel);
-    border-bottom: 1px solid var(--line);
-}
-
-.brand {
-    font-weight: 600;
-    letter-spacing: 0.02em;
-}
-
-.brand span {
-    color: var(--copper);
-}
+/* ---- Editor panes ----------------------------------------------------------------------------------- */
 
 .spacer {
     flex: 1;
 }
 
-.panes {
-    display: grid;
-    grid-template-columns: 280px 1fr 300px;
-    min-height: 0;
-}
-
 .pane {
-    background: var(--panel);
-    border-right: 1px solid var(--line);
+    background: var(--surface);
     display: flex;
     flex-direction: column;
     min-height: 0;
-}
-
-.pane:last-child {
-    border-right: 0;
-    border-left: 1px solid var(--line);
 }
 
 .pane-head {
     display: flex;
     align-items: center;
     gap: 8px;
-    height: 28px;
-    padding: 0 10px;
+    height: 32px;
+    padding: 0 12px;
     border-bottom: 1px solid var(--line);
-    color: var(--text-dim);
+    color: var(--fg-muted);
     font-size: 11px;
+    font-weight: 600;
     text-transform: uppercase;
-    letter-spacing: 0.07em;
+    letter-spacing: 0.06em;
 }
 
 .pane-body {
@@ -165,24 +135,25 @@ code,
     padding: 6px 0;
 }
 
+/* The sheet fills the stage; the canvas draws its own background from --canvas. */
 .stage {
-    background: var(--ground);
-    display: grid;
-    place-items: center;
+    position: relative;
+    background: var(--canvas);
     min-height: 0;
-    overflow: auto;
+    overflow: hidden;
 }
 
-.statusbar {
-    display: flex;
-    align-items: center;
-    gap: 16px;
-    padding: 0 12px;
-    background: var(--panel);
-    border-top: 1px solid var(--line);
-    color: var(--text-faint);
-    font-size: 11px;
-    font-family: var(--mono);
+.stage > svg {
+    display: block;
+}
+
+.stage > .notice {
+    position: absolute;
+    top: 8px;
+    left: 50%;
+    transform: translateX(-50%);
+    z-index: 2;
+    max-width: 640px;
 }
 
 /* ---- Tree ------------------------------------------------------------------------------------------- */
@@ -204,12 +175,12 @@ code,
 }
 
 .tree-row:hover {
-    background: var(--panel-raised);
+    background: var(--surface-2);
 }
 
 .tree-row[aria-selected='true'] {
-    background: var(--copper-dim);
-    color: #fff;
+    background: var(--accent-soft);
+    color: var(--fg);
 }
 
 .tree-twist {
@@ -233,7 +204,7 @@ code,
 
 .tree-row[aria-selected='true'] .tree-detail,
 .tree-row[aria-selected='true'] .tree-twist {
-    color: rgba(255, 255, 255, 0.75);
+    color: var(--fg-muted);
 }
 
 /* ---- Inspector -------------------------------------------------------------------------------------- */
@@ -264,9 +235,10 @@ code,
     margin: 8px 10px;
     padding: 8px 10px;
     border-radius: var(--radius);
-    border: 1px solid var(--line-bright);
-    background: var(--panel-raised);
+    border: 1px solid var(--line);
+    background: var(--surface);
     font-size: 12px;
+    box-shadow: 0 1px 2px rgb(0 0 0 / 0.06);
 }
 
 .notice.bad {
@@ -314,35 +286,4 @@ code,
     color: var(--text-faint);
     padding: 10px;
     font-size: 12px;
-}
-
-/* ---- Sign in ---------------------------------------------------------------------------------------- */
-
-.signin {
-    display: grid;
-    place-items: center;
-    height: 100vh;
-}
-
-.signin form {
-    width: 300px;
-    display: grid;
-    gap: 10px;
-    padding: 20px;
-    background: var(--panel);
-    border: 1px solid var(--line);
-    border-radius: 5px;
-}
-
-.signin h1 {
-    margin: 0 0 4px;
-    font-size: 15px;
-    font-weight: 600;
-}
-
-.signin label {
-    display: grid;
-    gap: 4px;
-    font-size: 11px;
-    color: var(--text-dim);
 }

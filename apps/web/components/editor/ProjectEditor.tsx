@@ -1,11 +1,11 @@
 'use client';
 
 /**
- * The workspace: a real vertical slice through the whole stack.
+ * The project editor: one project, opened from its URL (`/projects/[projectId]`).
  *
- * Sign in → list orgs → list projects → load that project's working copy → project it through the editor
- * kernel → render it. Nothing here is fixture-backed; every panel is showing what the API actually returned,
- * which is the only way this harness is worth building inside the product's own workspace.
+ * Load that project's working copy → project it through the editor kernel → render it. Nothing here is
+ * fixture-backed; every panel shows what the API actually returned. Choosing a project is the projects
+ * page's job; this screen only edits the one in its address, so refresh, back and a shared link all work.
  */
 
 import { runErc, type CircuitJson, type Position } from '@circuit-forge/eda-core';
@@ -28,35 +28,30 @@ import {
     pathKey,
     componentPath,
 } from '@circuit-forge/editor-core';
+import Link from 'next/link';
 import { useEffect, useMemo, useState } from 'react';
 
-import { ContextMenu } from '../components/ContextMenu';
-import { EditNotes } from '../components/EditNotes';
-import { ErcNotice } from '../components/ErcNotice';
-import { AddPart, Inspector } from '../components/Inspector';
-import { ObjectTreePanel } from '../components/ObjectTreePanel';
-import { PartLibrary } from '../components/PartLibrary';
-import { SaveStatus } from '../components/SaveStatus';
-import { SchematicCanvas } from '../components/SchematicCanvas';
-import { SignIn } from '../components/SignIn';
-import { API_BASE_URL, type ApiError, type OpenedProject } from '../lib/api';
-import { applySelection } from '../lib/selection';
-import { useAsync } from '../lib/useAsync';
-import { useDocument } from '../lib/useDocument';
-import { useUndoShortcuts } from '../lib/useUndoShortcuts';
+import { useSession } from '../../app/providers';
+import { API_BASE_URL, type ApiError, type OpenedProject } from '../../lib/api';
+import { applySelection } from '../../lib/selection';
+import { useAsync } from '../../lib/useAsync';
+import { useDocument } from '../../lib/useDocument';
+import { useUndoShortcuts } from '../../lib/useUndoShortcuts';
+import { ContextMenu } from '../ContextMenu';
+import { EditNotes } from '../EditNotes';
+import { ErcNotice } from '../ErcNotice';
+import { Inspector } from '../Inspector';
+import { ObjectTreePanel } from '../ObjectTreePanel';
+import { PartLibrary } from '../PartLibrary';
+import { SaveStatus } from '../SaveStatus';
+import { SchematicCanvas } from '../SchematicCanvas';
+import { AppHeader } from '../shell/AppHeader';
+import { Button } from '../ui/Button';
 
-import { useSession } from './providers';
+import { PartPalette } from './PartPalette';
 
 /** How far a copy lands from what it was copied from: far enough to see, near enough to be obviously its. */
 const PASTE_OFFSET = 40;
-
-export default function Page() {
-    const { signedIn } = useSession();
-    // Null means "the browser has not been asked yet". Rendering the sign-in form during that moment would
-    // flash it in front of an already-authenticated user on every reload.
-    if (signedIn === null) return <div className="empty">Loading…</div>;
-    return signedIn ? <Workspace /> : <SignIn />;
-}
 
 function Failure({ error }: { error: ApiError }) {
     return (
@@ -106,25 +101,21 @@ function titleFor(error: ApiError): string {
 function Provenance({ doc }: { doc: OpenedProject | null }): React.JSX.Element | null {
     if (!doc || doc.source === 'empty') return null;
     if (doc.source === 'working-copy') {
-        return (
-            <p className="empty" style={{ color: 'var(--good)' }}>
-                Draft · saved {new Date(doc.updatedAt).toLocaleString()}
-            </p>
-        );
+        return <span className="text-xs text-subtle">Draft · saved {new Date(doc.updatedAt).toLocaleString()}</span>;
     }
     return (
-        <p className="empty" style={{ color: 'var(--warn)' }}>
+        <span className="text-xs text-warn">
             {/* Not "read-only": editing this is allowed and the first keystroke creates a draft descending
                 from it. Saying otherwise was a lie the moment the write path landed. */}
             Opened from saved v{doc.version.versionNumber} of {doc.totalVersions} — editing starts a new draft
-        </p>
+        </span>
     );
 }
 
-function Workspace() {
-    const { api, client } = useSession();
-    const [orgId, setOrgId] = useState<string | null>(null);
-    const [projectId, setProjectId] = useState<string | null>(null);
+export function ProjectEditor({ projectId }: { projectId: string }) {
+    const { api } = useSession();
+    const project = useAsync((signal) => api.project(projectId, signal), [projectId]);
+    const activeProject = projectId;
     /**
      * WHAT IS SELECTED — a list, because an editor without one is an editor you use twenty times to do a
      * thing you meant once.
@@ -145,27 +136,9 @@ function Workspace() {
     const primary = selected[selected.length - 1] ?? null;
     const selectedPaths = selected.map((n) => pathKey(n.ref.path));
 
-    const orgs = useAsync((signal) => api.orgs(signal), []);
-    // The first org is adopted only until the user picks one; `?? ''` keeps the <select> controlled.
-    const activeOrg = orgId ?? orgs.data?.[0]?.id ?? null;
-
-    // A page, not THE list. The default limit is 50 and the picker rendered whatever came back as though it
-    // were everything, so a 51st project was simply unreachable with no indication. Asking for the cap and
-    // disclosing the remainder is honest at any size; real paging belongs with a searchable picker.
-    const projects = useAsync(
-        (signal) => api.projects(activeOrg!, { limit: 100 }, signal),
-        [activeOrg],
-        activeOrg !== null,
-    );
-    const activeProject = projectId ?? projects.data?.items[0]?.id ?? null;
-
     // `openProject`, not `workingCopy`: a project with no draft still has its saved history, and the API's
     // own contract says to open the newest version instead of showing nothing.
-    const opened = useAsync(
-        (signal) => api.openProject(activeProject!, signal),
-        [activeProject],
-        activeProject !== null,
-    );
+    const opened = useAsync((signal) => api.openProject(activeProject, signal), [activeProject]);
 
     // The loader fetches; the document OWNS what is on screen and writes it back. Splitting them is what
     // keeps a local edit instant while the save is debounced, refusable and one-at-a-time.
@@ -248,76 +221,56 @@ function Workspace() {
     );
 
     return (
-        <div className="shell">
-            <header className="topbar">
-                <span className="brand">
-                    Circuit<span>Forge</span>
-                </span>
-
-                <select
-                    aria-label="Organisation"
-                    style={{ width: 170 }}
-                    value={activeOrg ?? ''}
-                    onChange={(e) => {
-                        setOrgId(e.target.value);
-                        setProjectId(null); // a project id from another org would 404
-                        setSelected([]);
-                    }}
-                >
-                    {(orgs.data ?? []).map((o) => (
-                        <option key={o.id} value={o.id}>
-                            {o.name}
-                        </option>
+        <div className="flex h-screen flex-col bg-bg text-fg">
+            <AppHeader>
+                <nav aria-label="Breadcrumb" className="flex min-w-0 items-center gap-2 text-sm">
+                    <Link href="/projects" className="text-muted hover:text-fg">
+                        Projects
+                    </Link>
+                    <span className="text-subtle">/</span>
+                    <span className="truncate font-medium">{project.data?.name ?? '…'}</span>
+                </nav>
+                {/* The tabs the product will grow into. Only the schematic exists today; the others are
+                    shown disabled rather than hidden, so the shape of the product is visible. */}
+                <div role="tablist" aria-label="Views" className="ml-4 hidden items-center gap-1 md:flex">
+                    {['Schematic', 'PCB', 'Simulation', 'BOM'].map((tab, i) => (
+                        <button
+                            key={tab}
+                            role="tab"
+                            aria-selected={i === 0}
+                            disabled={i !== 0}
+                            title={i === 0 ? undefined : 'Coming soon'}
+                            className={
+                                i === 0
+                                    ? 'rounded-md bg-surface-2 px-3 py-1 text-sm font-medium text-fg'
+                                    : 'rounded-md px-3 py-1 text-sm text-subtle disabled:cursor-default'
+                            }
+                        >
+                            {tab}
+                        </button>
                     ))}
-                    {orgs.loading && <option>Loading…</option>}
-                </select>
+                </div>
+                <div className="ml-auto flex items-center gap-1">
+                    {/* Titled with the shortcut, because a disabled button with no explanation reads as broken. */}
+                    <Button variant="ghost" size="sm" onClick={doc.undo} disabled={!doc.canUndo} title="Undo (Ctrl+Z)">
+                        Undo
+                    </Button>
+                    <Button
+                        variant="ghost"
+                        size="sm"
+                        onClick={doc.redo}
+                        disabled={!doc.canRedo}
+                        title="Redo (Ctrl+Shift+Z)"
+                    >
+                        Redo
+                    </Button>
+                </div>
+            </AppHeader>
 
-                <select
-                    aria-label="Project"
-                    style={{ width: 230 }}
-                    value={activeProject ?? ''}
-                    onChange={(e) => {
-                        setProjectId(e.target.value);
-                        setSelected([]);
-                    }}
-                >
-                    {(projects.data?.items ?? []).map((p) => (
-                        <option key={p.id} value={p.id}>
-                            {p.name}
-                        </option>
-                    ))}
-                    {projects.loading && <option>Loading…</option>}
-                    {projects.data?.items.length === 0 && <option value="">No projects</option>}
-                    {projects.data?.hasMore && (
-                        <option disabled>…and {projects.data.total - projects.data.items.length} more not shown</option>
-                    )}
-                </select>
-
-                {/* Titled with the shortcut, because a disabled button with no explanation reads as broken.
-                    Disabled is the truth here: there is genuinely nothing to undo. */}
-                <button onClick={doc.undo} disabled={!doc.canUndo} title="Undo (Ctrl+Z)">
-                    Undo
-                </button>
-                <button onClick={doc.redo} disabled={!doc.canRedo} title="Redo (Ctrl+Shift+Z)">
-                    Redo
-                </button>
-
-                <span className="spacer" />
-                <button
-                    onClick={() => {
-                        void client.signOut();
-                    }}
-                >
-                    Sign out
-                </button>
-            </header>
-
-            <div className="panes">
-                <aside className="pane">
-                    <div className="pane-head">Objects</div>
+            <div className="grid min-h-0 flex-1 grid-cols-[272px_1fr_300px]">
+                <aside className="pane border-r border-line">
                     <div className="pane-body">
-                        {orgs.error && <Failure error={orgs.error} />}
-                        {projects.error && <Failure error={projects.error} />}
+                        {project.error && <Failure error={project.error} />}
                         {opened.error && <Failure error={opened.error} />}
                         {opened.loading && <p className="empty">Opening…</p>}
                         {doc.source === 'empty' && (
@@ -325,33 +278,29 @@ function Workspace() {
                             // not read as a failed load.
                             <p className="empty">This project has no circuit yet — no draft and no saved version.</p>
                         )}
-                        <SaveStatus doc={doc} />
-                        <Provenance doc={opened.data} />
-                        {/* The palette lives beside the tree it adds to, and only once a document is open —
-                            there is nothing to add a part TO before that. */}
-                        {circuit && <AddPart doc={doc} />}
-                        {/* Real parts, from the catalogue. The palette above adds a generic; this adds a
-                            part with an MPN, a footprint and a tolerance — which is what the package
-                            check, the robustness verdict and an orderable BOM all key on. */}
-                        {circuit && <PartLibrary api={api} doc={doc} />}
-                        {/* WHAT the rule check found, beside the drawing that carries the marks saying
-                            WHERE. Held in its own file: what makes it worth reading — three severities kept
-                            apart, a border that follows the worst thing present, a line that names nothing
-                            leaving the selection alone — is behaviour, and behaviour buried in a page can
-                            only be tested by driving the whole page. */}
+                        {/* Generic parts first, each arriving with a sensible value; then real catalogue parts,
+                            which carry the MPN, footprint and tolerance the package check, the robustness
+                            verdict and an orderable BOM all key on. */}
+                        {circuit && <PartPalette doc={doc} />}
+                        {circuit && (
+                            <details className="border-t border-line">
+                                <summary className="pane-head cursor-pointer list-none border-b-0">
+                                    Catalogue parts
+                                </summary>
+                                <div className="px-3 pb-3">
+                                    <PartLibrary api={api} doc={doc} />
+                                </div>
+                            </details>
+                        )}
+                        {/* WHAT the rule check found, beside the drawing that carries the marks saying WHERE. */}
                         <ErcNotice problems={problems} circuit={circuit} onSelect={setSelected} />
                         {circuit && (
-                            // Selection is held HERE and passed down, so the tree and the canvas cannot
-                            // disagree about what is selected. The panel used to keep its own, which meant
-                            // clicking a symbol told the Inspector and left the tree painting some other
-                            // row — two views of one document, each right by its own lights.
-                            //
-                            // The remount-on-switch key went with it: a selection held above cannot outlive
-                            // a document it does not belong to, because whatever changes the document
-                            // clears it. (The key had to be there before: paths look like `root/nets/<id>`
-                            // and `gnd` appears in nearly every design, so a stale selection usually landed
-                            // on a real row belonging to a different circuit.)
-                            <ObjectTreePanel circuit={circuit} selectedPaths={selectedPaths} onSelect={select} />
+                            <div className="border-t border-line">
+                                <div className="pane-head border-b-0">Objects</div>
+                                {/* Selection is held HERE and passed down, so the tree and the canvas cannot
+                                    disagree about what is selected. */}
+                                <ObjectTreePanel circuit={circuit} selectedPaths={selectedPaths} onSelect={select} />
+                            </div>
                         )}
                     </div>
                 </aside>
@@ -372,6 +321,11 @@ function Workspace() {
                         with it, which is the exact loss the note exists to report. Beside the refusal, and
                         deliberately not painted like one: these describe edits that were MADE. */}
                     <EditNotes notes={doc.notes} />
+                    {/* Recovery, conflicts and failed saves are the moments work is at risk: shown over the
+                        sheet where they cannot be missed. The quiet states live in the status bar. */}
+                    {(doc.recovery || doc.save.status === 'conflict' || doc.save.status === 'error') && (
+                        <SaveStatus doc={doc} />
+                    )}
                     {circuit ? (
                         <SchematicCanvas
                             // REMOUNTED PER PROJECT, so the canvas starts fresh. Zoom and pan are the viewer's
@@ -490,8 +444,8 @@ function Workspace() {
                     )}
                 </main>
 
-                <aside className="pane">
-                    <div className="pane-head">Inspector</div>
+                <aside className="pane border-l border-line">
+                    <div className="pane-head">Properties</div>
                     <div className="pane-body">
                         <Inspector selected={primary} selectedCount={selected.length} circuit={circuit} doc={doc} />
                     </div>
@@ -584,17 +538,15 @@ function Workspace() {
                 ]}
             />
 
-            <footer className="statusbar">
-                <span>{API_BASE_URL}</span>
+            <footer className="flex h-7 shrink-0 items-center gap-4 border-t border-line bg-surface px-4 font-mono text-[11px] text-subtle">
                 <span>{counts.components} components</span>
                 <span>{counts.nets} nets</span>
-                {opened.data && opened.data.source !== 'empty' && (
-                    <span>
-                        {opened.data.source === 'working-copy' ? 'draft' : `from v${opened.data.version.versionNumber}`}
-                    </span>
+                <Provenance doc={opened.data} />
+                <span className="flex-1" />
+                <span className="hidden lg:inline">W wire · R rotate · Del delete · Home fit · middle-drag pan</span>
+                {!(doc.recovery || doc.save.status === 'conflict' || doc.save.status === 'error') && (
+                    <SaveStatus doc={doc} />
                 )}
-                <span className="spacer" />
-                <SaveStatus doc={doc} />
             </footer>
         </div>
     );
