@@ -132,6 +132,23 @@ describe('the wire tool draws wires the way KiCad does', () => {
         expect(pts).toContainEqual({ x: 150, y: 0 });
     });
 
+    it('W still joins two selected terminals — the context menu’s "Join terminals" relies on it', () => {
+        const joined: string[][] = [];
+        const { container } = render(
+            <SchematicCanvas
+                circuit={CIRCUIT}
+                ui={UI}
+                selectedPaths={['root/components/r1/pins/2', 'root/components/r2/pins/1']}
+                onSelect={() => {}}
+                onConnect={(a, b) => joined.push([a.componentId, b.componentId])}
+                onDrawWire={() => {}}
+            />,
+        );
+        fireEvent.keyDown(window, { key: 'w' });
+        expect(joined).toEqual([['r1', 'r2']]);
+        expect(container.querySelector('svg')!.getAttribute('data-tool')).toBe('select');
+    });
+
     it('Backspace takes back the last corner and Esc cancels the wire without committing anything', () => {
         const { drafts, press, container } = setup();
         fireEvent.keyDown(window, { key: 'w' });

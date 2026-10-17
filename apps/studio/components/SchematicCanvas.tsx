@@ -909,7 +909,13 @@ export function SchematicCanvas({
             // cancels the wire (and a second Esc leaves the tool). Only on a sheet that stores its wires.
             if (onDrawWire && owned && !isTextEntry(event.target)) {
                 const key = event.key;
-                if (key.toLowerCase() === 'w') {
+                // With exactly two terminals selected, W keeps meaning "join them" — the context menu's "Join
+                // terminals" presses this key, and arming the tool instead silently broke that entry.
+                const twoPins =
+                    selectedPaths
+                        .map((path) => byPath.get(path))
+                        .filter((n) => n?.ref.kind === 'pin' && n.ref.componentId).length === 2;
+                if (key.toLowerCase() === 'w' && !(twoPins && onConnect)) {
                     event.preventDefault();
                     setTool('wire');
                     return;
